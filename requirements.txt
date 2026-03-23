@@ -1,0 +1,10 @@
+flask
+gunicorn
+pandas
+numpy
+requests
+pytz
+pandas_market_calendars
+ib_insync
+google-auth
+google-cloud-compute
