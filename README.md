@@ -186,3 +186,19 @@ IBKR 账户
 3. **VPC**: 创建 Serverless VPC Access connector，与 GCE 在同一网络。部署 Cloud Run 时绑定该 connector。
 4. **防火墙**: 允许 VPC connector 子网访问 GCE 的 TCP 4001 端口。
 5. **Cloud Scheduler**: 创建定时任务 `45 15 * * 1-5`（America/New_York 时区），POST 到 Cloud Run URL。代码内部处理交易日判断。
+
+### Research / 回测
+
+可以用独立脚本对比原始策略和两种 `QQQ` 方案：
+
+```bash
+python3 research/backtest_qqq_variants.py
+```
+
+默认会比较：
+
+- 原始非科技轮动
+- `QQQ` 加入轮动池参与 `Top 2`
+- 固定 `20% / 30% / 40%` 的 `QQQ` 核心仓位，其余仓位继续跑原策略
+
+脚本使用 `yfinance` 的复权收盘价，并自动把回测起点对齐到所有标的都有历史数据的最早公共日期。

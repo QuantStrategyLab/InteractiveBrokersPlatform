@@ -3,6 +3,7 @@ IBKR Global Non-Tech Sector Rotation Strategy.
 Quarterly momentum rotation across 19 non-tech ETFs + daily canary emergency.
 Runs on Cloud Run; connects to IB Gateway on GCE via ib_insync, alerts via Telegram.
 """
+import asyncio
 import os
 import time
 import traceback
@@ -206,7 +207,24 @@ def mark_executed_today():
 # ---------------------------------------------------------------------------
 # IB Gateway connection
 # ---------------------------------------------------------------------------
+def ensure_event_loop():
+    """ib_insync expects an event loop even inside Gunicorn worker threads."""
+    try:
+        loop = asyncio.get_event_loop_policy().get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop
+
+    if loop.is_closed():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    return loop
+
+
 def connect_ib():
+    ensure_event_loop()
     ib = IB()
     ib.connect(IB_HOST, IB_PORT, clientId=IB_CLIENT_ID, timeout=20)
     return ib
