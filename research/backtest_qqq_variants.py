@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Compare the original non-tech rotation strategy with two QQQ variants:
-1. Add QQQ into the rotation pool
-2. Keep a fixed QQQ core weight and run the original strategy on the rest
+Compare the legacy non-tech rotation strategy, the current QQQ-enabled default,
+and a proposed VOO/XLK/SMH structure. Optional QQQ core-satellite variants are
+kept as additional reference benchmarks.
 """
 
 from __future__ import annotations
@@ -24,6 +24,10 @@ BASE_RANKING_POOL = [
     "XLP", "XLU", "XLV", "IHI",
     "VNQ", "KRE",
 ]
+CURRENT_DEFAULT_POOL = BASE_RANKING_POOL + ["QQQ"]
+REPLACE_QQQ_WITH_VOO_POOL = BASE_RANKING_POOL + ["VOO"]
+VOO_PLUS_XLK_POOL = REPLACE_QQQ_WITH_VOO_POOL + ["XLK"]
+VOO_PLUS_XLK_PLUS_SMH_POOL = VOO_PLUS_XLK_POOL + ["SMH"]
 CANARY_ASSETS = ["SPY", "EFA", "EEM", "AGG"]
 SAFE_HAVEN = "BIL"
 
@@ -39,6 +43,17 @@ KEY_PERIODS = [
     ("Tech Bull 2009-2021", "2009-01-01", "2021-11-30"),
     ("Bear 2022", "2022-01-01", "2022-12-31"),
     ("AI Bull 2023+", "2023-01-01", None),
+]
+MAIN_COMPARISON_NAMES = [
+    "baseline_non_tech",
+    "current_default_qqq",
+    "proposed_voo_xlk_smh",
+]
+BUILD_UP_COMPARISON_NAMES = [
+    "current_default_qqq",
+    "replace_qqq_with_voo",
+    "voo_plus_xlk",
+    "voo_plus_xlk_plus_smh",
 ]
 
 
@@ -58,7 +73,7 @@ def parse_args() -> argparse.Namespace:
         nargs="*",
         type=float,
         default=DEFAULT_CORE_WEIGHTS,
-        help="Fixed QQQ core weights for the core-satellite variants, e.g. --qqq-core-weights 0.2 0.3 0.4",
+        help="Optional fixed QQQ core weights for reference core-satellite variants, e.g. --qqq-core-weights 0.2 0.3 0.4",
     )
     return parser.parse_args()
 
@@ -66,7 +81,11 @@ def parse_args() -> argparse.Namespace:
 def build_configs(core_weights: Iterable[float]) -> list[StrategyConfig]:
     configs = [
         StrategyConfig("baseline_non_tech", tuple(BASE_RANKING_POOL)),
-        StrategyConfig("qqq_in_rotation", tuple(BASE_RANKING_POOL + ["QQQ"])),
+        StrategyConfig("current_default_qqq", tuple(CURRENT_DEFAULT_POOL)),
+        StrategyConfig("proposed_voo_xlk_smh", tuple(VOO_PLUS_XLK_PLUS_SMH_POOL)),
+        StrategyConfig("replace_qqq_with_voo", tuple(REPLACE_QQQ_WITH_VOO_POOL)),
+        StrategyConfig("voo_plus_xlk", tuple(VOO_PLUS_XLK_POOL)),
+        StrategyConfig("voo_plus_xlk_plus_smh", tuple(VOO_PLUS_XLK_PLUS_SMH_POOL)),
     ]
     for weight in core_weights:
         if not 0 < weight < 1:
@@ -314,27 +333,63 @@ def format_percent_frame(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.map(lambda value: f"{value * 100:.1f}%" if pd.notna(value) else "nan")
 
 
+def subset_strategy_returns(strategy_returns: dict[str, pd.Series], names: list[str]) -> dict[str, pd.Series]:
+    return {name: strategy_returns[name] for name in names if name in strategy_returns}
+
+
+def print_group_summary(
+    title: str,
+    strategy_returns: dict[str, pd.Series],
+    benchmark_returns: pd.DataFrame,
+    start: str | None,
+    end: str | None,
+) -> None:
+    frame = summarize_period(strategy_returns, benchmark_returns, start, end)
+    print(title)
+    print(format_percent_frame(frame[["Total Return", "CAGR", "Max Drawdown", "Volatility"]]).to_string())
+    print(frame[["Sharpe", "SPY Corr", "QQQ Corr"]].round(2).to_string())
+    print()
+
+
 def print_report(prices: pd.DataFrame, strategy_returns: dict[str, pd.Series]) -> None:
     benchmark_returns = prices[["SPY", "QQQ"]].pct_change().fillna(0.0)
+    main_returns = subset_strategy_returns(strategy_returns, MAIN_COMPARISON_NAMES)
+    build_up_returns = subset_strategy_returns(strategy_returns, BUILD_UP_COMPARISON_NAMES)
+    qqq_core_returns = {
+        name: returns for name, returns in strategy_returns.items() if name.startswith("qqq_core_")
+    }
 
     print(f"Common backtest window: {prices.index[0].date()} -> {prices.index[-1].date()}")
     print(f"Tickers aligned: {', '.join(prices.columns)}")
     print()
 
-    full_sample = summarize_period(strategy_returns, benchmark_returns, None, None)
     print("=== Full Sample Summary ===")
-    print(format_percent_frame(full_sample[["Total Return", "CAGR", "Max Drawdown", "Volatility"]]).to_string())
-    sharpe_corr = full_sample[["Sharpe", "SPY Corr", "QQQ Corr"]].round(2)
-    print(sharpe_corr.to_string())
-    print()
+    print_group_summary("Main Comparison", main_returns, benchmark_returns, None, None)
+    print_group_summary("Build-Up Comparison", build_up_returns, benchmark_returns, None, None)
+    if qqq_core_returns:
+        print_group_summary("QQQ Core Benchmarks", qqq_core_returns, benchmark_returns, None, None)
 
     print("=== Key Periods ===")
     for label, start, end in KEY_PERIODS[1:]:
-        period_frame = summarize_period(strategy_returns, benchmark_returns, start, end)
         print(label)
-        print(format_percent_frame(period_frame[["Total Return", "CAGR", "Max Drawdown"]]).to_string())
-        print(period_frame[["Sharpe", "SPY Corr", "QQQ Corr"]].round(2).to_string())
+        main_frame = summarize_period(main_returns, benchmark_returns, start, end)
+        print("Main Comparison")
+        print(format_percent_frame(main_frame[["Total Return", "CAGR", "Max Drawdown"]]).to_string())
+        print(main_frame[["Sharpe", "SPY Corr", "QQQ Corr"]].round(2).to_string())
         print()
+
+        build_up_frame = summarize_period(build_up_returns, benchmark_returns, start, end)
+        print("Build-Up Comparison")
+        print(format_percent_frame(build_up_frame[["Total Return", "CAGR", "Max Drawdown"]]).to_string())
+        print(build_up_frame[["Sharpe", "SPY Corr", "QQQ Corr"]].round(2).to_string())
+        print()
+
+        if qqq_core_returns:
+            qqq_core_frame = summarize_period(qqq_core_returns, benchmark_returns, start, end)
+            print("QQQ Core Benchmarks")
+            print(format_percent_frame(qqq_core_frame[["Total Return", "CAGR", "Max Drawdown"]]).to_string())
+            print(qqq_core_frame[["Sharpe", "SPY Corr", "QQQ Corr"]].round(2).to_string())
+            print()
 
     annual = compute_annual_returns(strategy_returns)
     print("=== Annual Returns ===")
