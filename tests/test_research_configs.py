@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 
 def load_research_module():
@@ -43,6 +44,20 @@ def test_build_configs_includes_lightweight_experiments():
     assert "switch_threshold_1_0" in names
     assert "hold_bonus_1_0" in names
     assert "hold_bonus_3_0" in names
+
+
+def test_build_configs_includes_rebalance_and_weighting_experiments():
+    module = load_research_module()
+
+    configs = module.build_configs([0.2, 0.3, 0.4])
+    configs_by_name = {config.name: config for config in configs}
+
+    assert configs_by_name["monthly_top2_equal"].rebalance_months_override == tuple(range(1, 13))
+    assert configs_by_name["semiannual_top2_equal"].rebalance_months_override == (6, 12)
+    assert configs_by_name["quarterly_top1_equal"].top_n_override == 1
+    assert configs_by_name["quarterly_top3_equal"].top_n_override == 3
+    assert configs_by_name["quarterly_top2_momentum_weighted"].weighting_mode == "momentum"
+    assert configs_by_name["monthly_top2_momentum_weighted"].weighting_mode == "momentum"
 
 
 def test_compute_rotation_weights_applies_voo_bonus():
@@ -95,3 +110,55 @@ def test_compute_rotation_weights_respects_switch_threshold():
     weights = module.compute_rotation_weights(date, config, momentum, sma_ok, current_weights=current_weights)
 
     assert set(weights) == {"VOO", "XLK"}
+
+
+def test_compute_rotation_weights_uses_top_n_override():
+    module = load_research_module()
+
+    date = pd.Timestamp("2024-03-31")
+    momentum = pd.DataFrame(
+        {
+            "VOO": [0.12],
+            "XLK": [0.09],
+            "SMH": [0.08],
+        },
+        index=[date],
+    )
+    sma_ok = pd.DataFrame(True, index=[date], columns=momentum.columns)
+
+    config = module.StrategyConfig(
+        "top1_test",
+        ("VOO", "XLK", "SMH"),
+        top_n_override=1,
+    )
+
+    weights = module.compute_rotation_weights(date, config, momentum, sma_ok, current_weights={})
+
+    assert weights == {"VOO": 1.0}
+
+
+def test_compute_rotation_weights_supports_momentum_weighting():
+    module = load_research_module()
+
+    date = pd.Timestamp("2024-03-31")
+    momentum = pd.DataFrame(
+        {
+            "VOO": [0.05],
+            "XLK": [0.08],
+            "SMH": [0.12],
+        },
+        index=[date],
+    )
+    sma_ok = pd.DataFrame(True, index=[date], columns=momentum.columns)
+
+    config = module.StrategyConfig(
+        "momentum_weight_test",
+        ("VOO", "XLK", "SMH"),
+        weighting_mode="momentum",
+    )
+
+    weights = module.compute_rotation_weights(date, config, momentum, sma_ok, current_weights={})
+
+    assert set(weights) == {"SMH", "XLK"}
+    assert weights["SMH"] == pytest.approx(0.6)
+    assert weights["XLK"] == pytest.approx(0.4)
