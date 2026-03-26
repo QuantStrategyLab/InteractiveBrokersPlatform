@@ -93,3 +93,7 @@ def test_connect_ib_prepares_event_loop_before_connect(strategy_module, monkeypa
 
     assert observed["args"] == ("127.0.0.1", 4001, 1, 20)
     assert observed["loop"] is not None
+
+
+def test_default_ranking_pool_includes_qqq(strategy_module):
+    assert "QQQ" in strategy_module.RANKING_POOL

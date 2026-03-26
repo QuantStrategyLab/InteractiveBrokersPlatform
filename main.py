@@ -1,6 +1,6 @@
 """
-IBKR Global Non-Tech Sector Rotation Strategy.
-Quarterly momentum rotation across 19 non-tech ETFs + daily canary emergency.
+IBKR Global ETF Rotation Strategy.
+Quarterly momentum rotation across 20 global ETFs + daily canary emergency.
 Runs on Cloud Run; connects to IB Gateway on GCE via ib_insync, alerts via Telegram.
 """
 import asyncio
@@ -90,10 +90,11 @@ NOTIFY_LANG = os.getenv("NOTIFY_LANG", "en")
 # Strategy parameters
 RANKING_POOL = [
     'EWY', 'EWT', 'INDA', 'FXI', 'EWJ', 'VGK',  # International
+    'QQQ',                                          # US large-cap growth / tech
     'GLD', 'SLV', 'USO', 'DBA',                    # Commodities
-    'XLE', 'XLF', 'ITA',                            # US non-tech offensive
-    'XLP', 'XLU', 'XLV', 'IHI',                    # US defensive sectors
-    'VNQ', 'KRE',                                    # Real estate, regional banks
+    'XLE', 'XLF', 'ITA',                           # US cyclical sectors
+    'XLP', 'XLU', 'XLV', 'IHI',                   # US defensive sectors
+    'VNQ', 'KRE',                                  # Real estate, regional banks
 ]
 CANARY_ASSETS = ['SPY', 'EFA', 'EEM', 'AGG']
 SAFE_HAVEN = 'BIL'
