@@ -1,6 +1,3 @@
-from datetime import date
-import types
-
 import pandas as pd
 
 
@@ -39,50 +36,21 @@ def test_handle_request_post_executes_on_market_day(strategy_module, monkeypatch
     assert observed["called"] is True
 
 
-def test_try_acquire_execution_lock_uses_persistent_backend_once(strategy_module, monkeypatch):
-    calls = []
-
-    def fake_persistent_lock(execution_date):
-        calls.append(execution_date)
-        return True
-
+def test_try_acquire_execution_lock_uses_only_in_memory_guard(strategy_module, monkeypatch):
     monkeypatch.setenv("EXECUTION_LOCK_BUCKET", "lock-bucket")
-    monkeypatch.setattr(strategy_module, "try_acquire_persistent_execution_lock", fake_persistent_lock)
+
+    def fail_if_persistent_lock_used(*args, **kwargs):
+        raise AssertionError("persistent execution lock should not be used")
+
+    monkeypatch.setattr(
+        strategy_module,
+        "try_acquire_persistent_execution_lock",
+        fail_if_persistent_lock_used,
+        raising=False,
+    )
 
     assert strategy_module.try_acquire_execution_lock() is True
     assert strategy_module.try_acquire_execution_lock() is False
-    assert len(calls) == 1
-    assert calls[0] == strategy_module.current_execution_date()
-
-
-def test_try_acquire_execution_lock_skips_when_persistent_lock_exists(strategy_module, monkeypatch):
-    monkeypatch.setenv("EXECUTION_LOCK_BUCKET", "lock-bucket")
-    monkeypatch.setattr(strategy_module, "try_acquire_persistent_execution_lock", lambda execution_date: False)
-
-    assert strategy_module.try_acquire_execution_lock() is False
-
-
-def test_try_acquire_persistent_execution_lock_creates_gcs_marker(strategy_module, monkeypatch):
-    observed = {}
-
-    class FakeSession:
-        def post(self, url, data, headers, timeout):
-            observed["url"] = url
-            observed["data"] = data.decode("utf-8")
-            observed["headers"] = headers
-            observed["timeout"] = timeout
-            return types.SimpleNamespace(status_code=200, text="ok")
-
-    monkeypatch.setenv("EXECUTION_LOCK_BUCKET", "lock-bucket")
-    monkeypatch.setenv("EXECUTION_LOCK_PREFIX", "prod/ibkr")
-    monkeypatch.setattr(strategy_module, "build_authorized_session", lambda: FakeSession())
-
-    assert strategy_module.try_acquire_persistent_execution_lock(date(2026, 3, 27)) is True
-    assert "b/lock-bucket/o" in observed["url"]
-    assert "prod%2Fibkr%2Fexecutions%2F2026-03-27.lock" in observed["url"]
-    assert "date=2026-03-27" in observed["data"]
-    assert observed["headers"]["Content-Type"] == "text/plain; charset=utf-8"
-    assert observed["timeout"] == 10
 
 
 def test_send_tg_message_logs_non_200_response(strategy_module, monkeypatch, capsys):

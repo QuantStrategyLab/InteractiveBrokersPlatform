@@ -13,11 +13,9 @@ import pandas as pd
 import pytz
 import pandas_market_calendars as mcal
 from datetime import datetime, timedelta
-from urllib.parse import quote
 from flask import Flask, request
 
 import google.auth
-from google.auth.transport.requests import AuthorizedSession
 try:
     from google.cloud import compute_v1
 except ImportError:
@@ -214,7 +212,7 @@ def send_tg_message(message):
 
 
 # ---------------------------------------------------------------------------
-# Idempotency: prevent duplicate execution on scheduler retries (I2)
+# In-process daily guard to avoid duplicate execution within the same instance.
 # ---------------------------------------------------------------------------
 _last_execution_date = None
 
@@ -224,7 +222,7 @@ def current_execution_date():
 
 
 def check_already_executed_today():
-    """Return True if strategy already ran today (prevents duplicate orders on retry)."""
+    """Return True if this instance already ran the strategy today."""
     global _last_execution_date
     today = current_execution_date()
     if _last_execution_date == today:
@@ -232,72 +230,12 @@ def check_already_executed_today():
     return False
 
 
-def mark_executed_today():
-    global _last_execution_date
-    _last_execution_date = current_execution_date()
-
-
-def get_execution_lock_bucket():
-    return os.getenv("EXECUTION_LOCK_BUCKET", "").strip()
-
-
-def get_execution_lock_object_name(execution_date):
-    prefix = os.getenv("EXECUTION_LOCK_PREFIX", "ibkr-quant").strip().strip("/")
-    if prefix:
-        return f"{prefix}/executions/{execution_date.isoformat()}.lock"
-    return f"executions/{execution_date.isoformat()}.lock"
-
-
-def build_authorized_session():
-    credentials, _ = google.auth.default(
-        scopes=["https://www.googleapis.com/auth/devstorage.read_write"]
-    )
-    return AuthorizedSession(credentials)
-
-
-def try_acquire_persistent_execution_lock(execution_date):
-    bucket = get_execution_lock_bucket()
-    if not bucket:
-        return None
-
-    session = build_authorized_session()
-    object_name = quote(get_execution_lock_object_name(execution_date), safe="")
-    url = (
-        f"https://storage.googleapis.com/upload/storage/v1/b/{bucket}/o"
-        f"?uploadType=media&name={object_name}&ifGenerationMatch=0"
-    )
-    payload = (
-        f"date={execution_date.isoformat()}\n"
-        f"created_at={datetime.utcnow().isoformat()}Z\n"
-    ).encode("utf-8")
-
-    response = session.post(
-        url,
-        data=payload,
-        headers={"Content-Type": "text/plain; charset=utf-8"},
-        timeout=10,
-    )
-    if response.status_code in {200, 201}:
-        return True
-    if response.status_code == 412:
-        return False
-    raise RuntimeError(
-        f"Execution lock write failed ({response.status_code}): {response.text}"
-    )
-
-
 def try_acquire_execution_lock():
     global _last_execution_date
     if check_already_executed_today():
         return False
 
-    today = current_execution_date()
-    persistent_lock = try_acquire_persistent_execution_lock(today)
-    if persistent_lock is False:
-        _last_execution_date = today
-        return False
-
-    _last_execution_date = today
+    _last_execution_date = current_execution_date()
     return True
 
 

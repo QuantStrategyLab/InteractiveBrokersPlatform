@@ -104,13 +104,11 @@ Equity: $2,100.00 | Buying Power: $50.00
 | `IB_GATEWAY_IP_MODE` | No | `internal` (default) or `external`; for Cloud Run, `internal` with Direct VPC egress is recommended |
 | `IB_GATEWAY_PORT` | No | IB Gateway port (default: 4001) |
 | `IB_CLIENT_ID` | No | IB client ID (default: 1) |
-| `EXECUTION_LOCK_BUCKET` | No | GCS bucket for cross-instance daily execution lock; recommended for Cloud Run retries/multi-instance safety |
-| `EXECUTION_LOCK_PREFIX` | No | Object prefix for execution lock files (default: `ibkr-quant`) |
 | `TELEGRAM_TOKEN` | Yes | Telegram bot token |
 | `TELEGRAM_CHAT_ID` | Yes | Telegram chat ID |
 | `NOTIFY_LANG` | No | `en` (default) or `zh` |
 
-Instance name is resolved to internal IP via Compute API at startup by default. The recommended deployment is Cloud Run with Direct VPC egress to the GCE private IP. Set `IB_GATEWAY_IP_MODE=external` only if you intentionally expose the gateway over a public IP and have locked down API access and firewall rules. Service account needs `roles/compute.viewer`. For safer idempotency across Cloud Run retries and multiple instances, set `EXECUTION_LOCK_BUCKET` and grant the service account bucket-level `roles/storage.objectCreator`.
+Instance name is resolved to internal IP via Compute API at startup by default. The recommended deployment is Cloud Run with Direct VPC egress to the GCE private IP. Set `IB_GATEWAY_IP_MODE=external` only if you intentionally expose the gateway over a public IP and have locked down API access and firewall rules. Service account needs `roles/compute.viewer`.
 
 ### Deployment
 
@@ -205,13 +203,11 @@ IBKR 账户
 | `IB_GATEWAY_IP_MODE` | 否 | `internal`（默认）或 `external`；Cloud Run 推荐配合 Direct VPC egress 使用 `internal` |
 | `IB_GATEWAY_PORT` | 否 | IB Gateway 端口 (默认: 4001) |
 | `IB_CLIENT_ID` | 否 | IB 连接客户端 ID (默认: 1) |
-| `EXECUTION_LOCK_BUCKET` | 否 | GCS bucket，用于跨实例的每日执行锁；Cloud Run 重试/多实例时建议配置 |
-| `EXECUTION_LOCK_PREFIX` | 否 | 执行锁对象前缀（默认: `ibkr-quant`） |
 | `TELEGRAM_TOKEN` | 是 | Telegram 机器人 Token |
 | `TELEGRAM_CHAT_ID` | 是 | Telegram Chat ID |
 | `NOTIFY_LANG` | 否 | `en`(默认) 或 `zh` |
 
-实例名称默认会在启动时通过 Compute API 解析为内网 IP。推荐做法是 Cloud Run 通过 Direct VPC egress 访问 GCE 内网地址。只有在你明确要走公网暴露的 GCE 时，才设置 `IB_GATEWAY_IP_MODE=external`。Service account 需要 `roles/compute.viewer` 权限。为了更稳地挡住 Cloud Run 重试和多实例重复执行，建议额外配置 `EXECUTION_LOCK_BUCKET`，并给该 bucket 授予 `roles/storage.objectCreator`。
+实例名称默认会在启动时通过 Compute API 解析为内网 IP。推荐做法是 Cloud Run 通过 Direct VPC egress 访问 GCE 内网地址。只有在你明确要走公网暴露的 GCE 时，才设置 `IB_GATEWAY_IP_MODE=external`。Service account 需要 `roles/compute.viewer` 权限。
 
 ### 部署
 
