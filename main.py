@@ -199,7 +199,16 @@ def send_tg_message(message):
     url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
     try:
         print(f"TG:\n{message}", flush=True)
-        requests.post(url, json={"chat_id": TG_CHAT_ID, "text": message}, timeout=10)
+        response = requests.post(
+            url,
+            json={"chat_id": TG_CHAT_ID, "text": message},
+            timeout=10,
+        )
+        if not 200 <= response.status_code < 300:
+            print(
+                f"Telegram send failed with status {response.status_code}: {response.text}",
+                flush=True,
+            )
     except Exception as e:
         print(f"Telegram send failed: {e}", flush=True)
 

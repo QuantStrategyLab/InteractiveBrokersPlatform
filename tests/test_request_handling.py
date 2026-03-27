@@ -83,3 +83,18 @@ def test_try_acquire_persistent_execution_lock_creates_gcs_marker(strategy_modul
     assert "date=2026-03-27" in observed["data"]
     assert observed["headers"]["Content-Type"] == "text/plain; charset=utf-8"
     assert observed["timeout"] == 10
+
+
+def test_send_tg_message_logs_non_200_response(strategy_module, monkeypatch, capsys):
+    class FakeResponse:
+        status_code = 401
+        text = "unauthorized"
+
+    monkeypatch.setattr(strategy_module, "TG_TOKEN", "token")
+    monkeypatch.setattr(strategy_module, "TG_CHAT_ID", "chat-id")
+    monkeypatch.setattr(strategy_module.requests, "post", lambda *args, **kwargs: FakeResponse())
+
+    strategy_module.send_tg_message("hello")
+
+    captured = capsys.readouterr()
+    assert "Telegram send failed with status 401: unauthorized" in captured.out
