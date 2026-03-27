@@ -158,7 +158,6 @@ I18N = {
         "order_filled":     "✅ 订单成交 | {symbol} {side} {qty}股 均价 ${price} (ID: {order_id})",
         "order_partial":    "⚠️ 部分成交 | {symbol} {side} {executed}/{qty}股 均价 ${price} (ID: {order_id})",
         "order_rejected":   "❌ 订单异常 | {symbol} {side} {qty}股 状态: {status} (ID: {order_id})",
-        "duplicate_skip":   "⏭️ 今日已执行, 跳过",
     },
     "en": {
         "rebalance_title":  "🔔 【Trade Execution Report】",
@@ -180,7 +179,6 @@ I18N = {
         "order_filled":     "✅ Filled | {symbol} {side} {qty} shares avg ${price} (ID: {order_id})",
         "order_partial":    "⚠️ Partial | {symbol} {side} {executed}/{qty} shares avg ${price} (ID: {order_id})",
         "order_rejected":   "❌ Rejected | {symbol} {side} {qty} shares status: {status} (ID: {order_id})",
-        "duplicate_skip":   "⏭️ Already executed today, skipping",
     },
 }
 
@@ -209,34 +207,6 @@ def send_tg_message(message):
             )
     except Exception as e:
         print(f"Telegram send failed: {e}", flush=True)
-
-
-# ---------------------------------------------------------------------------
-# In-process daily guard to avoid duplicate execution within the same instance.
-# ---------------------------------------------------------------------------
-_last_execution_date = None
-
-
-def current_execution_date():
-    return datetime.now(pytz.timezone('America/New_York')).date()
-
-
-def check_already_executed_today():
-    """Return True if this instance already ran the strategy today."""
-    global _last_execution_date
-    today = current_execution_date()
-    if _last_execution_date == today:
-        return True
-    return False
-
-
-def try_acquire_execution_lock():
-    global _last_execution_date
-    if check_already_executed_today():
-        return False
-
-    _last_execution_date = current_execution_date()
-    return True
 
 
 # ---------------------------------------------------------------------------
@@ -575,12 +545,6 @@ def execute_rebalance(ib, target_weights, positions, account_values):
 # Main strategy runner
 # ---------------------------------------------------------------------------
 def run_strategy_core():
-    # Fix I2: Idempotency guard
-    if not try_acquire_execution_lock():
-        msg = t("duplicate_skip")
-        send_tg_message(msg)
-        return "OK - duplicate skipped"
-
     ib = None  # Fix C5: safe disconnect
     try:
         ib = connect_ib()

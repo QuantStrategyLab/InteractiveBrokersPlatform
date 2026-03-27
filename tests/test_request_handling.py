@@ -36,21 +36,32 @@ def test_handle_request_post_executes_on_market_day(strategy_module, monkeypatch
     assert observed["called"] is True
 
 
-def test_try_acquire_execution_lock_uses_only_in_memory_guard(strategy_module, monkeypatch):
-    monkeypatch.setenv("EXECUTION_LOCK_BUCKET", "lock-bucket")
+def test_run_strategy_core_allows_multiple_runs_in_same_process(strategy_module, monkeypatch):
+    observed = {"connect_calls": 0, "disconnect_calls": 0, "messages": []}
 
-    def fail_if_persistent_lock_used(*args, **kwargs):
-        raise AssertionError("persistent execution lock should not be used")
+    class FakeIB:
+        def isConnected(self):
+            return True
 
-    monkeypatch.setattr(
-        strategy_module,
-        "try_acquire_persistent_execution_lock",
-        fail_if_persistent_lock_used,
-        raising=False,
-    )
+        def disconnect(self):
+            observed["disconnect_calls"] += 1
 
-    assert strategy_module.try_acquire_execution_lock() is True
-    assert strategy_module.try_acquire_execution_lock() is False
+    def fake_connect_ib():
+        observed["connect_calls"] += 1
+        return FakeIB()
+
+    monkeypatch.setattr(strategy_module, "connect_ib", fake_connect_ib)
+    monkeypatch.setattr(strategy_module, "get_current_portfolio", lambda ib: ({}, {"equity": 1000.0, "buying_power": 500.0}))
+    monkeypatch.setattr(strategy_module, "compute_signals", lambda ib, holdings: (None, "daily-check", False, "SPY:✅"))
+    monkeypatch.setattr(strategy_module, "send_tg_message", lambda message: observed["messages"].append(message))
+
+    first = strategy_module.run_strategy_core()
+    second = strategy_module.run_strategy_core()
+
+    assert first == "OK - heartbeat"
+    assert second == "OK - heartbeat"
+    assert observed["connect_calls"] == 2
+    assert observed["disconnect_calls"] == 2
 
 
 def test_send_tg_message_logs_non_200_response(strategy_module, monkeypatch, capsys):
