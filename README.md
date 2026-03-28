@@ -130,6 +130,35 @@ In this mode, you do not need to set `IB_GATEWAY_PORT` manually; the app derives
 
 This shared-config mode is only for the **IBKR pair** (`IBKRQuant` + `IBKRGatewayManager`). It is not meant to become a global secret bundle for unrelated quant repos. Across multiple quant projects, the only broadly reusable runtime settings are usually `GLOBAL_TELEGRAM_CHAT_ID` and `NOTIFY_LANG`.
 
+### GitHub-managed Cloud Run env sync
+
+If code deployment still uses Google Cloud Trigger, but you want GitHub to be the single source of truth for runtime env vars, this repo now includes `.github/workflows/sync-cloud-run-env.yml`.
+
+Recommended setup:
+
+- **Repository Variables**
+  - `ENABLE_GITHUB_ENV_SYNC` = `true`
+  - `CLOUD_RUN_REGION`
+  - `CLOUD_RUN_SERVICE`
+  - `IB_CLIENT_ID`
+- **Repository Secrets**
+  - `GCP_SA_KEY`
+  - `TELEGRAM_TOKEN`
+- **Shared Variables already supported**
+  - `IB_GATEWAY_INSTANCE_NAME`
+  - `IB_GATEWAY_ZONE`
+  - `IB_GATEWAY_MODE`
+  - `IB_GATEWAY_IP_MODE`
+  - `GLOBAL_TELEGRAM_CHAT_ID`
+  - `NOTIFY_LANG`
+
+On every push to `main`, the workflow updates the existing Cloud Run service with the values above. It does **not** remove legacy `IB_GATEWAY_HOST`, `IB_GATEWAY_PORT`, or `TELEGRAM_CHAT_ID`, so existing deployments keep working. Once you have confirmed the service is reading the new shared values as intended, you can remove the legacy Cloud Run env vars manually.
+
+Important:
+
+- The workflow only becomes strict when `ENABLE_GITHUB_ENV_SYNC=true`. If this variable is unset, the sync job is skipped and the old Google Cloud Trigger + manual Cloud Run env setup keeps working.
+- Here "shared config" still only means the **IBKR pair** (`IBKRQuant` + `IBKRGatewayManager`). `GCP_SA_KEY` and `TELEGRAM_TOKEN` remain repository-specific.
+
 ### Deployment
 
 1. **GCE**: Set up IB Gateway (paper or live) on a GCE instance. Ensure API access is enabled, remote clients are allowed when needed, and use `4001` for `live` or `4002` for `paper`.
@@ -248,6 +277,35 @@ NOTIFY_LANG=zh
 这种写法下，不需要再手工维护 `IB_GATEWAY_PORT`，程序会按 `IB_GATEWAY_MODE` 自动推导。
 
 这里说的“共享配置”只针对 **IBKR 这一组系统**，也就是 `IBKRQuant` 和 `IBKRGatewayManager` 之间共享。它不是让所有 quant 仓库都共用一套 secrets。对多个量化仓库来说，通常只有 `GLOBAL_TELEGRAM_CHAT_ID` 和 `NOTIFY_LANG` 适合做跨项目共享。
+
+### GitHub 统一管理 Cloud Run 环境变量
+
+如果代码部署继续走 Google Cloud Trigger，但你想把运行时环境变量统一放在 GitHub 管理，这个仓库现在提供了 `.github/workflows/sync-cloud-run-env.yml`。
+
+推荐配置方式：
+
+- **仓库级 Variables**
+  - `ENABLE_GITHUB_ENV_SYNC` = `true`
+  - `CLOUD_RUN_REGION`
+  - `CLOUD_RUN_SERVICE`
+  - `IB_CLIENT_ID`
+- **仓库级 Secrets**
+  - `GCP_SA_KEY`
+  - `TELEGRAM_TOKEN`
+- **已支持的共享 Variables**
+  - `IB_GATEWAY_INSTANCE_NAME`
+  - `IB_GATEWAY_ZONE`
+  - `IB_GATEWAY_MODE`
+  - `IB_GATEWAY_IP_MODE`
+  - `GLOBAL_TELEGRAM_CHAT_ID`
+  - `NOTIFY_LANG`
+
+每次 push 到 `main` 时，这个 workflow 会把上面这些值同步到现有 Cloud Run 服务里。它**不会主动删除**旧的 `IB_GATEWAY_HOST`、`IB_GATEWAY_PORT` 或 `TELEGRAM_CHAT_ID`，这样现有部署不会被硬切断。等你确认服务已经按预期读取新变量后，再手动删除旧的 Cloud Run env 即可。
+
+注意：
+
+- 只有在 `ENABLE_GITHUB_ENV_SYNC=true` 时，这个 workflow 才会严格校验并执行同步。没打开时会直接跳过，不影响原来 Google Cloud Trigger + 手工 Cloud Run env 的老流程。
+- 这里说的“共享配置”仍然只针对 **IBKR 这一组系统**。`GCP_SA_KEY` 和 `TELEGRAM_TOKEN` 依然是这个仓库自己的 secrets，不建议提升成所有 quant 共用的全局 secret。
 
 ### 部署
 
