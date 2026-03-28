@@ -12,56 +12,75 @@ if str(ROOT) not in sys.path:
 
 
 @pytest.fixture
-def strategy_module(monkeypatch):
-    monkeypatch.setenv("IB_GATEWAY_HOST", "127.0.0.1")
-    monkeypatch.delenv("IB_GATEWAY_ZONE", raising=False)
-    monkeypatch.setenv("IB_GATEWAY_PORT", "4001")
-    monkeypatch.setenv("IB_CLIENT_ID", "1")
+def strategy_module_factory(monkeypatch):
+    def load_strategy_module(**env_overrides):
+        defaults = {
+            "IB_GATEWAY_HOST": None,
+            "IB_GATEWAY_INSTANCE_NAME": "127.0.0.1",
+            "IB_GATEWAY_ZONE": None,
+            "IB_GATEWAY_MODE": "live",
+            "IB_GATEWAY_PORT": None,
+            "IB_CLIENT_ID": "1",
+        }
+        defaults.update(env_overrides)
 
-    google_module = types.ModuleType("google")
-    google_module.__path__ = []
+        for key, value in defaults.items():
+            if value is None:
+                monkeypatch.delenv(key, raising=False)
+            else:
+                monkeypatch.setenv(key, value)
 
-    google_auth_module = types.ModuleType("google.auth")
-    google_auth_module.__path__ = []
-    google_auth_module.default = lambda *args, **kwargs: (None, None)
+        google_module = types.ModuleType("google")
+        google_module.__path__ = []
 
-    google_auth_transport_module = types.ModuleType("google.auth.transport")
-    google_auth_transport_module.__path__ = []
-    google_auth_transport_requests_module = types.ModuleType("google.auth.transport.requests")
-    google_auth_transport_requests_module.AuthorizedSession = type("AuthorizedSession", (), {})
+        google_auth_module = types.ModuleType("google.auth")
+        google_auth_module.__path__ = []
+        google_auth_module.default = lambda *args, **kwargs: (None, None)
 
-    google_cloud_module = types.ModuleType("google.cloud")
-    google_cloud_module.__path__ = []
-    compute_v1_module = types.ModuleType("google.cloud.compute_v1")
+        google_auth_transport_module = types.ModuleType("google.auth.transport")
+        google_auth_transport_module.__path__ = []
+        google_auth_transport_requests_module = types.ModuleType("google.auth.transport.requests")
+        google_auth_transport_requests_module.AuthorizedSession = type("AuthorizedSession", (), {})
 
-    google_module.auth = google_auth_module
-    google_auth_module.transport = google_auth_transport_module
-    google_auth_transport_module.requests = google_auth_transport_requests_module
-    google_cloud_module.compute_v1 = compute_v1_module
+        google_cloud_module = types.ModuleType("google.cloud")
+        google_cloud_module.__path__ = []
+        compute_v1_module = types.ModuleType("google.cloud.compute_v1")
 
-    monkeypatch.setitem(sys.modules, "google", google_module)
-    monkeypatch.setitem(sys.modules, "google.auth", google_auth_module)
-    monkeypatch.setitem(sys.modules, "google.auth.transport", google_auth_transport_module)
-    monkeypatch.setitem(sys.modules, "google.auth.transport.requests", google_auth_transport_requests_module)
-    monkeypatch.setitem(sys.modules, "google.cloud", google_cloud_module)
-    monkeypatch.setitem(sys.modules, "google.cloud.compute_v1", compute_v1_module)
+        google_module.auth = google_auth_module
+        google_auth_module.transport = google_auth_transport_module
+        google_auth_transport_module.requests = google_auth_transport_requests_module
+        google_cloud_module.compute_v1 = compute_v1_module
 
-    market_calendars_module = types.ModuleType("pandas_market_calendars")
-    market_calendars_module.get_calendar = lambda name: None
-    monkeypatch.setitem(sys.modules, "pandas_market_calendars", market_calendars_module)
+        monkeypatch.setitem(sys.modules, "google", google_module)
+        monkeypatch.setitem(sys.modules, "google.auth", google_auth_module)
+        monkeypatch.setitem(sys.modules, "google.auth.transport", google_auth_transport_module)
+        monkeypatch.setitem(sys.modules, "google.auth.transport.requests", google_auth_transport_requests_module)
+        monkeypatch.setitem(sys.modules, "google.cloud", google_cloud_module)
+        monkeypatch.setitem(sys.modules, "google.cloud.compute_v1", compute_v1_module)
 
-    ib_insync_module = types.ModuleType("ib_insync")
+        market_calendars_module = types.ModuleType("pandas_market_calendars")
+        market_calendars_module.get_calendar = lambda name: None
+        monkeypatch.setitem(sys.modules, "pandas_market_calendars", market_calendars_module)
 
-    class PlaceholderIB:
-        def connect(self, *args, **kwargs):
-            raise AssertionError("test should patch IB before use")
+        ib_insync_module = types.ModuleType("ib_insync")
 
-    ib_insync_module.IB = PlaceholderIB
-    ib_insync_module.Stock = type("Stock", (), {})
-    ib_insync_module.MarketOrder = type("MarketOrder", (), {})
-    ib_insync_module.LimitOrder = type("LimitOrder", (), {})
-    monkeypatch.setitem(sys.modules, "ib_insync", ib_insync_module)
+        class PlaceholderIB:
+            def connect(self, *args, **kwargs):
+                raise AssertionError("test should patch IB before use")
 
-    sys.modules.pop("main", None)
-    module = importlib.import_module("main")
-    return importlib.reload(module)
+        ib_insync_module.IB = PlaceholderIB
+        ib_insync_module.Stock = type("Stock", (), {})
+        ib_insync_module.MarketOrder = type("MarketOrder", (), {})
+        ib_insync_module.LimitOrder = type("LimitOrder", (), {})
+        monkeypatch.setitem(sys.modules, "ib_insync", ib_insync_module)
+
+        sys.modules.pop("main", None)
+        module = importlib.import_module("main")
+        return importlib.reload(module)
+
+    return load_strategy_module
+
+
+@pytest.fixture
+def strategy_module(strategy_module_factory):
+    return strategy_module_factory()

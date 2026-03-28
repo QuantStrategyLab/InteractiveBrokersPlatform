@@ -81,23 +81,52 @@ def resolve_gce_instance_ip(instance_name, zone):
 def get_ib_host():
     """
     Resolve IB Gateway host.
+    - Prefer IB_GATEWAY_HOST, fallback to IB_GATEWAY_INSTANCE_NAME
     - If IB_GATEWAY_ZONE is set: resolve instance name via Compute API
-    - If IB_GATEWAY_ZONE is not set: use IB_GATEWAY_HOST directly
+    - If IB_GATEWAY_ZONE is not set: use the configured host directly
     """
-    host = os.getenv("IB_GATEWAY_HOST")
+    host = os.getenv("IB_GATEWAY_HOST") or os.getenv("IB_GATEWAY_INSTANCE_NAME")
     if not host:
-        raise EnvironmentError("IB_GATEWAY_HOST is required")
+        raise EnvironmentError("IB_GATEWAY_HOST or IB_GATEWAY_INSTANCE_NAME is required")
     zone = os.getenv("IB_GATEWAY_ZONE", "")
     if zone:
         return resolve_gce_instance_ip(host, zone)
     return host
 
 
+def get_ib_gateway_mode():
+    mode = os.getenv("IB_GATEWAY_MODE", "").strip().lower()
+    if not mode:
+        return ""
+    if mode in {"live", "paper"}:
+        return mode
+    raise EnvironmentError("IB_GATEWAY_MODE must be either 'live' or 'paper'")
+
+
+def get_ib_port():
+    configured_port = os.getenv("IB_GATEWAY_PORT", "").strip()
+    mode = get_ib_gateway_mode()
+
+    if configured_port:
+        port = int(configured_port)
+        expected_port = {"live": 4001, "paper": 4002}.get(mode)
+        if expected_port and port != expected_port:
+            raise EnvironmentError(
+                f"IB_GATEWAY_PORT={port} conflicts with IB_GATEWAY_MODE={mode} "
+                f"(expected {expected_port})"
+            )
+        return port
+
+    if mode == "paper":
+        return 4002
+    return 4001
+
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 IB_HOST = get_ib_host()
-IB_PORT = int(os.getenv("IB_GATEWAY_PORT", "4001"))
+IB_PORT = get_ib_port()
 IB_CLIENT_ID = int(os.getenv("IB_CLIENT_ID", "1"))
 
 TG_TOKEN = os.getenv("TELEGRAM_TOKEN")
