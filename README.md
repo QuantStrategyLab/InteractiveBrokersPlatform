@@ -102,7 +102,7 @@ Equity: $2,100.00 | Buying Power: $50.00
 | `IB_GATEWAY_HOST` | Yes | GCE instance name (e.g. `ib-gateway`) |
 | `IB_GATEWAY_ZONE` | Yes | GCE zone (e.g. `us-central1-a`) |
 | `IB_GATEWAY_IP_MODE` | No | `internal` (default) or `external`; for Cloud Run, `internal` with Direct VPC egress is recommended |
-| `IB_GATEWAY_PORT` | No | IB Gateway port (default: 4001) |
+| `IB_GATEWAY_PORT` | No | IB Gateway API port (default: `4001` for `live`; set `4002` for `paper`) |
 | `IB_CLIENT_ID` | No | IB client ID (default: 1) |
 | `TELEGRAM_TOKEN` | Yes | Telegram bot token |
 | `TELEGRAM_CHAT_ID` | Yes | Telegram chat ID |
@@ -112,10 +112,10 @@ Instance name is resolved to internal IP via Compute API at startup by default. 
 
 ### Deployment
 
-1. **GCE**: Set up IB Gateway (paper or live) on a GCE instance. Ensure API access is enabled, remote clients are allowed when needed, and the gateway listens on `4001`.
+1. **GCE**: Set up IB Gateway (paper or live) on a GCE instance. Ensure API access is enabled, remote clients are allowed when needed, and use `4001` for `live` or `4002` for `paper`.
 2. **VPC / Subnet**: Put Cloud Run and GCE in the same VPC. For cleaner firewall rules, reserve a dedicated subnet for Cloud Run Direct VPC egress.
 3. **Cloud Run**: Deploy or update this Flask app with Direct VPC egress. Set `IB_GATEWAY_HOST` to the GCE instance name, `IB_GATEWAY_ZONE` to its zone, and keep `IB_GATEWAY_IP_MODE=internal`.
-4. **Firewall**: Allow TCP `4001` from the Cloud Run egress subnet CIDR to the GCE instance.
+4. **Firewall**: Allow TCP `4001` (`live`) or `4002` (`paper`) from the Cloud Run egress subnet CIDR to the GCE instance.
 5. **Cloud Scheduler**: Create a job: `45 15 * * 1-5` (America/New_York), POST to the Cloud Run URL. The code handles market calendar checks internally.
 6. **Optional public-IP mode**: Only if you cannot use VPC, set `IB_GATEWAY_IP_MODE=external`, expose the GCE public IP deliberately, and restrict source ranges tightly. This is not the default path.
 
@@ -201,7 +201,7 @@ IBKR 账户
 | `IB_GATEWAY_HOST` | 是 | GCE 实例名称 (如 `ib-gateway`) |
 | `IB_GATEWAY_ZONE` | 是 | GCE zone (如 `us-central1-a`) |
 | `IB_GATEWAY_IP_MODE` | 否 | `internal`（默认）或 `external`；Cloud Run 推荐配合 Direct VPC egress 使用 `internal` |
-| `IB_GATEWAY_PORT` | 否 | IB Gateway 端口 (默认: 4001) |
+| `IB_GATEWAY_PORT` | 否 | IB Gateway API 端口（默认 `live` 用 `4001`；`paper` 需要设成 `4002`） |
 | `IB_CLIENT_ID` | 否 | IB 连接客户端 ID (默认: 1) |
 | `TELEGRAM_TOKEN` | 是 | Telegram 机器人 Token |
 | `TELEGRAM_CHAT_ID` | 是 | Telegram Chat ID |
@@ -211,10 +211,10 @@ IBKR 账户
 
 ### 部署
 
-1. **GCE**: 部署 IB Gateway（模拟或实盘），确认 API 已开启、需要远程连接时已允许非 localhost 客户端，并确认网关监听在 `4001`。
+1. **GCE**: 部署 IB Gateway（模拟或实盘），确认 API 已开启、需要远程连接时已允许非 localhost 客户端，并确认 `live` 使用 `4001`、`paper` 使用 `4002`。
 2. **VPC / 子网**: 让 Cloud Run 和 GCE 处于同一个 VPC。为了让防火墙规则更干净，建议给 Cloud Run Direct VPC egress 单独准备一个子网。
 3. **Cloud Run**: 部署此 Flask 应用时启用 Direct VPC egress，`IB_GATEWAY_HOST` 设为 GCE 实例名，`IB_GATEWAY_ZONE` 设为对应 zone，并保持 `IB_GATEWAY_IP_MODE=internal`。Service account 需要 `roles/compute.viewer` 权限。
-4. **防火墙**: 只允许 Cloud Run 出口子网访问 GCE 的 `TCP 4001`。
+4. **防火墙**: 只允许 Cloud Run 出口子网访问 GCE 的 `TCP 4001`（`live`）或 `TCP 4002`（`paper`）。
 5. **Cloud Scheduler**: 创建定时任务 `45 15 * * 1-5`（America/New_York 时区），POST 到 Cloud Run URL。代码内部处理交易日判断。
 6. **可选公网模式**: 只有在不能走 VPC 时，才设置 `IB_GATEWAY_IP_MODE=external`，并且要明确开放 GCE 公网 IP，同时严格限制来源 IP 和防火墙规则。
 
