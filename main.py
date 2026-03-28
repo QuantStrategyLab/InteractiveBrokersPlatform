@@ -25,6 +25,11 @@ from quant_platform_kit.ibkr import (
     fetch_quote_snapshots,
     submit_order_intent,
 )
+from application.execution_service import (
+    check_order_submitted as application_check_order_submitted,
+    execute_rebalance as application_execute_rebalance,
+    get_market_prices as application_get_market_prices,
+)
 from application.rebalance_service import run_strategy_core as run_rebalance_cycle
 from entrypoints.cloud_run import is_market_open_today
 from strategy.signals import (
@@ -305,118 +310,34 @@ def get_current_portfolio(ib):
 
 
 def get_market_prices(ib, symbols):
-    """Fetch market prices for multiple symbols in one pass."""
-    quotes = fetch_quote_snapshots(ib, symbols)
-    return {symbol: quote.last_price for symbol, quote in quotes.items()}
+    return application_get_market_prices(
+        ib,
+        symbols,
+        fetch_quote_snapshots=fetch_quote_snapshots,
+    )
 
 
 def check_order_submitted(report):
-    """Check if order was accepted. DAY orders auto-expire at close if not filled."""
-    order_id = report.broker_order_id
-    status = report.status
-
-    if status in ['Submitted', 'PreSubmitted', 'Filled']:
-        return True, f"✅ {t('submitted', order_id=order_id)}"
-    else:
-        return False, f"❌ {t('failed', reason=status)}"
+    return application_check_order_submitted(report, translator=t)
 
 
 def execute_rebalance(ib, target_weights, positions, account_values):
-    """Execute trades to reach target weights."""
-    equity = account_values.get('equity', 0)
-    if equity <= 0:
-        return ["❌ No equity"]
-
-    reserved = equity * CASH_RESERVE_RATIO
-    investable = equity - reserved
-    threshold = equity * REBALANCE_THRESHOLD_RATIO
-
-    # Get all prices in one batch (Fix C4)
-    all_symbols = set(target_weights.keys()) | set(positions.keys())
-    strategy_symbols = set(RANKING_POOL + [SAFE_HAVEN])
-    all_symbols = all_symbols & strategy_symbols
-
-    prices = get_market_prices(ib, all_symbols)
-
-    # Current market values
-    current_mv = {}
-    for symbol in all_symbols:
-        qty = positions.get(symbol, {}).get('quantity', 0)
-        price = prices.get(symbol, 0)
-        current_mv[symbol] = qty * price
-
-    # Target market values
-    target_mv = {}
-    for symbol, weight in target_weights.items():
-        target_mv[symbol] = investable * weight
-
-    trade_logs = []
-
-    # --- Sell phase ---
-    sell_executed = False
-    for symbol in all_symbols:
-        current = current_mv.get(symbol, 0)
-        target = target_mv.get(symbol, 0)
-        if current > target + threshold:
-            sell_value = current - target
-            price = prices.get(symbol)
-            if not price:
-                continue
-            qty = int(sell_value / price)
-            if qty <= 0:
-                continue
-
-            report = submit_order_intent(
-                ib,
-                OrderIntent(symbol=symbol, side='sell', quantity=qty),
-            )
-            ok, status_msg = check_order_submitted(report)
-            log = t("market_sell", symbol=symbol, qty=qty) + f" {status_msg}"
-            trade_logs.append(log)
-            if ok:
-                sell_executed = True
-
-    if sell_executed:
-        time.sleep(SELL_SETTLE_DELAY_SEC)
-
-    # --- Buy phase ---
-    account_values_new = {}
-    for av in ib.accountValues():
-        if av.tag == 'AvailableFunds' and av.currency == 'USD':
-            account_values_new['buying_power'] = float(av.value)
-    buying_power = account_values_new.get('buying_power', account_values.get('buying_power', 0))
-
-    for symbol, target in target_mv.items():
-        current = current_mv.get(symbol, 0)
-        if current < target - threshold:
-            buy_value = min(target - current, buying_power * 0.95)
-            price = prices.get(symbol)
-            if not price or buy_value < 50:
-                continue
-
-            limit_price = round(price * LIMIT_BUY_PREMIUM, 2)
-            qty = int(buy_value / limit_price)
-            if qty <= 0:
-                continue
-
-            report = submit_order_intent(
-                ib,
-                OrderIntent(
-                    symbol=symbol,
-                    side='buy',
-                    quantity=qty,
-                    order_type='limit',
-                    limit_price=limit_price,
-                    time_in_force='DAY',
-                ),
-            )
-            ok, status_msg = check_order_submitted(report)
-            log = t("limit_buy", symbol=symbol, qty=qty, price=f"{limit_price:.2f}") + f" {status_msg}"
-            trade_logs.append(log)
-            if ok:
-                buying_power -= qty * limit_price
-
-    return trade_logs
+    return application_execute_rebalance(
+        ib,
+        target_weights,
+        positions,
+        account_values,
+        fetch_quote_snapshots=fetch_quote_snapshots,
+        submit_order_intent=submit_order_intent,
+        order_intent_cls=OrderIntent,
+        translator=t,
+        ranking_pool=RANKING_POOL,
+        safe_haven=SAFE_HAVEN,
+        cash_reserve_ratio=CASH_RESERVE_RATIO,
+        rebalance_threshold_ratio=REBALANCE_THRESHOLD_RATIO,
+        limit_buy_premium=LIMIT_BUY_PREMIUM,
+        sell_settle_delay_sec=SELL_SETTLE_DELAY_SEC,
+    )
 
 
 # ---------------------------------------------------------------------------
