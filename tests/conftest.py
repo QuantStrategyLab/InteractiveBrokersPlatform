@@ -21,6 +21,8 @@ def strategy_module_factory(monkeypatch):
             "IB_GATEWAY_MODE": "live",
             "IB_GATEWAY_PORT": None,
             "IB_CLIENT_ID": "1",
+            "TELEGRAM_CHAT_ID": None,
+            "GLOBAL_TELEGRAM_CHAT_ID": None,
         }
         defaults.update(env_overrides)
 

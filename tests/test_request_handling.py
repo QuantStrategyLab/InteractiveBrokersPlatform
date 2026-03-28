@@ -95,3 +95,12 @@ def test_send_tg_message_logs_non_200_response(strategy_module, monkeypatch, cap
 
     captured = capsys.readouterr()
     assert "Telegram send failed with status 401: unauthorized" in captured.out
+
+
+def test_global_telegram_chat_id_is_used_as_fallback(strategy_module_factory):
+    module = strategy_module_factory(
+        TELEGRAM_CHAT_ID=None,
+        GLOBAL_TELEGRAM_CHAT_ID="shared-chat-id",
+    )
+
+    assert module.TG_CHAT_ID == "shared-chat-id"

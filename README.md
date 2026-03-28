@@ -107,7 +107,8 @@ Equity: $2,100.00 | Buying Power: $50.00
 | `IB_GATEWAY_PORT` | No | Legacy explicit port override. If set together with `IB_GATEWAY_MODE`, it must match (`live`=`4001`, `paper`=`4002`). |
 | `IB_CLIENT_ID` | No | IB client ID (default: 1) |
 | `TELEGRAM_TOKEN` | Yes | Telegram bot token |
-| `TELEGRAM_CHAT_ID` | Yes | Telegram chat ID |
+| `TELEGRAM_CHAT_ID` | Conditional | Per-service Telegram chat ID. If not set, the app falls back to `GLOBAL_TELEGRAM_CHAT_ID`. |
+| `GLOBAL_TELEGRAM_CHAT_ID` | No | Optional shared Telegram chat ID for teams that keep one common destination across multiple quant services. |
 | `NOTIFY_LANG` | No | `en` (default) or `zh` |
 
 `IB_GATEWAY_HOST` and `IB_GATEWAY_INSTANCE_NAME` are backward-compatible alternatives; one of them must be set. If you use instance-name resolution with `IB_GATEWAY_ZONE`, the service account needs `roles/compute.viewer`. The recommended deployment is Cloud Run with Direct VPC egress to the GCE private IP. Set `IB_GATEWAY_IP_MODE=external` only if you intentionally expose the gateway over a public IP and have locked down API access and firewall rules.
@@ -223,7 +224,8 @@ IBKR 账户
 | `IB_GATEWAY_PORT` | 否 | 旧写法，直接指定端口。如果和 `IB_GATEWAY_MODE` 同时配置，必须一致。 |
 | `IB_CLIENT_ID` | 否 | IB 连接客户端 ID (默认: 1) |
 | `TELEGRAM_TOKEN` | 是 | Telegram 机器人 Token |
-| `TELEGRAM_CHAT_ID` | 是 | Telegram Chat ID |
+| `TELEGRAM_CHAT_ID` | 条件必需 | 当前服务自己的 Telegram Chat ID。不填时会回退到 `GLOBAL_TELEGRAM_CHAT_ID`。 |
+| `GLOBAL_TELEGRAM_CHAT_ID` | 否 | 可选的共享 Telegram Chat ID。适合多个 quant 服务共用一个接收目标。 |
 | `NOTIFY_LANG` | 否 | `en`(默认) 或 `zh` |
 
 `IB_GATEWAY_HOST` 和 `IB_GATEWAY_INSTANCE_NAME` 是兼容关系，二选一即可。如果你配了 `IB_GATEWAY_ZONE` 让程序通过实例名解析内网 IP，Cloud Run service account 需要 `roles/compute.viewer` 权限。推荐做法是 Cloud Run 通过 Direct VPC egress 访问 GCE 内网地址。只有在你明确要走公网暴露的 GCE 时，才设置 `IB_GATEWAY_IP_MODE=external`。

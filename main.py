@@ -130,7 +130,7 @@ IB_PORT = get_ib_port()
 IB_CLIENT_ID = int(os.getenv("IB_CLIENT_ID", "1"))
 
 TG_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TG_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+TG_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID") or os.getenv("GLOBAL_TELEGRAM_CHAT_ID")
 NOTIFY_LANG = os.getenv("NOTIFY_LANG", "en")
 
 # Strategy parameters
