@@ -37,7 +37,15 @@ from runtime_config_support import (
     load_platform_runtime_settings,
     resolve_ib_gateway_ip_mode,
 )
-from strategy.signals import (
+from us_equity_strategies.strategies.global_etf_rotation import (
+    CANARY_ASSETS,
+    CANARY_BAD_THRESHOLD,
+    HOLD_BONUS,
+    RANKING_POOL,
+    REBALANCE_MONTHS,
+    SAFE_HAVEN,
+    SMA_PERIOD,
+    TOP_N,
     check_sma as strategy_check_sma,
     compute_13612w_momentum as strategy_compute_13612w_momentum,
     compute_signals as strategy_compute_signals,
@@ -138,24 +146,6 @@ ACCOUNT_IDS = RUNTIME_SETTINGS.account_ids
 TG_TOKEN = RUNTIME_SETTINGS.tg_token
 TG_CHAT_ID = RUNTIME_SETTINGS.tg_chat_id
 NOTIFY_LANG = RUNTIME_SETTINGS.notify_lang
-
-# Strategy parameters
-RANKING_POOL = [
-    'EWY', 'EWT', 'INDA', 'FXI', 'EWJ', 'VGK',  # International
-    'VOO', 'XLK', 'SMH',                            # US broad market, tech, semis
-    'GLD', 'SLV', 'USO', 'DBA',                    # Commodities
-    'XLE', 'XLF', 'ITA',                           # US cyclical sectors
-    'XLP', 'XLU', 'XLV', 'IHI',                   # US defensive sectors
-    'VNQ', 'KRE',                                  # Real estate, regional banks
-]
-CANARY_ASSETS = ['SPY', 'EFA', 'EEM', 'AGG']
-SAFE_HAVEN = 'BIL'
-
-TOP_N = 2
-SMA_PERIOD = 200
-HOLD_BONUS = 0.02           # Existing holdings get +2% momentum bonus
-CANARY_BAD_THRESHOLD = 4    # All 4 canaries bad → emergency defensive
-REBALANCE_MONTHS = {3, 6, 9, 12}  # Quarterly: last trading day of Mar, Jun, Sep, Dec
 
 CASH_RESERVE_RATIO = 0.03
 REBALANCE_THRESHOLD_RATIO = 0.02  # 2% of equity to trigger trades

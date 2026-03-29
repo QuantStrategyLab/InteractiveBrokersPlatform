@@ -14,6 +14,8 @@
 
 Quarterly momentum rotation across 22 global ETFs (international markets, commodities, US sectors, US broad market, tech, and semiconductors) with daily canary emergency check. Designed to stay more stable than high-beta tech strategies while still allowing major tech leadership to enter the rotation. Deployed on GCP Cloud Run, connecting to IB Gateway on GCE.
 
+The current `global_etf_rotation` implementation is sourced from `UsEquityStrategies`.
+
 ### Strategy
 
 **Pool (22 ETFs + 1 safe haven):**
@@ -261,6 +263,8 @@ gcloud run services update ibkr-quant \
 ## 中文
 
 基于 IBKR 的全球 ETF 季度轮动策略（国际市场、商品、美股行业、美股宽基、科技和半导体），含每日金丝雀应急机制。定位上比 `TQQQ`、`SOXL` 这类高弹性科技策略更稳健，但不再把科技完全排除在外。部署在 GCP Cloud Run，连接 GCE 上的 IB Gateway。
+
+当前 `global_etf_rotation` 的策略实现来自 `UsEquityStrategies`。
 
 ### 策略
 
