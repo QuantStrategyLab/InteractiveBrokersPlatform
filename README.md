@@ -217,7 +217,7 @@ Important:
 ### Deployment unit and naming
 
 - `QuantPlatformKit` is only a shared dependency; Cloud Run now deploys `InteractiveBrokersPlatform`.
-- Recommended Cloud Run service name: `interactive-brokers-quant-global-etf-rotation`.
+- Recommended Cloud Run service name: `interactive-brokers-quant-global-etf-rotation-service`.
 - For future multi-account rollout, keep one Cloud Run service per `ACCOUNT_GROUP`, and let each service select its account-group config at runtime.
 - If you later rename or move this repository, reselect the GitHub source in Cloud Build / Cloud Run trigger instead of assuming the existing source binding will update itself.
 - For the shared deployment model and trigger migration checklist, see [`QuantPlatformKit/docs/deployment_model.md`](../QuantPlatformKit/docs/deployment_model.md).
@@ -234,7 +234,7 @@ Important:
 Example deploy/update command:
 
 ```bash
-gcloud run deploy interactive-brokers-quant-global-etf-rotation \
+gcloud run deploy interactive-brokers-quant-global-etf-rotation-service \
   --source . \
   --region us-central1 \
   --service-account ibkr-platform-runtime@PROJECT_ID.iam.gserviceaccount.com \
@@ -429,7 +429,7 @@ IB_GATEWAY_IP_MODE=internal
 ### 部署单元和命名建议
 
 - `QuantPlatformKit` 只是共享依赖，不单独部署；Cloud Run 现在部署的是 `InteractiveBrokersPlatform`。
-- 推荐 Cloud Run 服务名：`interactive-brokers-quant-global-etf-rotation`。
+- 推荐 Cloud Run 服务名：`interactive-brokers-quant-global-etf-rotation-service`。
 - 后续如果扩到多账户，建议按 `ACCOUNT_GROUP` 拆成多个 Cloud Run 服务，并让每个服务在运行时选中自己的账号组配置。
 - 如果后面改 GitHub 仓库名或再次迁组织，Cloud Build / Cloud Run 里的 GitHub 来源需要重新选择，不要假设旧绑定会自动跟过去。
 - 统一部署模型和触发器迁移清单见 [`QuantPlatformKit/docs/deployment_model.md`](../QuantPlatformKit/docs/deployment_model.md)。
@@ -446,7 +446,7 @@ IB_GATEWAY_IP_MODE=internal
 示例部署命令：
 
 ```bash
-gcloud run deploy interactive-brokers-quant-global-etf-rotation \
+gcloud run deploy interactive-brokers-quant-global-etf-rotation-service \
   --source . \
   --region us-central1 \
   --service-account ibkr-platform-runtime@PROJECT_ID.iam.gserviceaccount.com \

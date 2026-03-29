@@ -1,6 +1,6 @@
 # InteractiveBrokersPlatform 配置落地：先跑通 `ACCOUNT_GROUP=default`
 
-这份文档只管当前这一步：**先把 `interactive-brokers-quant-global-etf-rotation` 这一个 Cloud Run 服务，用 `ACCOUNT_GROUP=default` 跑通。**
+这份文档只管当前这一步：**先把 `interactive-brokers-quant-global-etf-rotation-service` 这一个 Cloud Run 服务，用 `ACCOUNT_GROUP=default` 跑通。**
 
 不在这一步里做的事：
 
@@ -225,7 +225,7 @@ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
 6. **检查 Cloud Run 当前 env**
 
 ```bash
-gcloud run services describe interactive-brokers-quant-global-etf-rotation \
+gcloud run services describe interactive-brokers-quant-global-etf-rotation-service \
   --project "${PROJECT_ID}" \
   --region "us-central1" \
   --format="yaml(spec.template.spec.serviceAccountName,spec.template.spec.containers[0].env)"
@@ -234,7 +234,7 @@ gcloud run services describe interactive-brokers-quant-global-etf-rotation \
 7. **看启动日志**
 
 ```bash
-gcloud run services logs read interactive-brokers-quant-global-etf-rotation \
+gcloud run services logs read interactive-brokers-quant-global-etf-rotation-service \
   --project "${PROJECT_ID}" \
   --region "us-central1" \
   --limit=100
