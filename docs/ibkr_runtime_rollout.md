@@ -123,7 +123,7 @@ gcloud secrets versions access latest \
 
 ```bash
 PROJECT_ID="your-gcp-project-id"
-RUNTIME_SA="interactive-brokers-quant-runtime@${PROJECT_ID}.iam.gserviceaccount.com"
+RUNTIME_SA="ibkr-platform-runtime@${PROJECT_ID}.iam.gserviceaccount.com"
 
 gcloud secrets add-iam-policy-binding ibkr-account-groups \
   --project "${PROJECT_ID}" \

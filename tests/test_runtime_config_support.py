@@ -85,7 +85,7 @@ def test_load_platform_runtime_settings_supports_explicit_group_config_values(mo
         '{"groups":{"taxable_main":{"ib_gateway_instance_name":"ib-gateway-main",'
         '"ib_gateway_zone":"us-central1-a","ib_gateway_mode":"live",'
         '"ib_gateway_ip_mode":"external","ib_client_id":7,'
-        '"service_name":"interactive-brokers-quant-main",'
+        '"service_name":"interactive-brokers-quant-global-etf-rotation-taxable-main",'
         '"account_ids":["U1234567"]}}}',
     )
     monkeypatch.setenv("TELEGRAM_TOKEN", "token-1")
@@ -102,7 +102,7 @@ def test_load_platform_runtime_settings_supports_explicit_group_config_values(mo
     assert settings.strategy_profile == DEFAULT_STRATEGY_PROFILE
     assert settings.strategy_domain == US_EQUITY_DOMAIN
     assert settings.account_group == "taxable_main"
-    assert settings.service_name == "interactive-brokers-quant-main"
+    assert settings.service_name == "interactive-brokers-quant-global-etf-rotation-taxable-main"
     assert settings.account_ids == ("U1234567",)
     assert settings.tg_token == "token-1"
     assert settings.tg_chat_id == "chat-1"
@@ -138,7 +138,7 @@ def test_load_platform_runtime_settings_uses_account_group_secret(monkeypatch):
           "ib_gateway_mode": "live",
           "ib_gateway_ip_mode": "external",
           "ib_client_id": 9,
-          "service_name": "interactive-brokers-quant-ira",
+          "service_name": "interactive-brokers-quant-global-etf-rotation-ira",
           "account_ids": ["U1234567", "U7654321"]
         }
       }
@@ -165,7 +165,7 @@ def test_load_platform_runtime_settings_uses_account_group_secret(monkeypatch):
     assert settings.ib_gateway_ip_mode == "external"
     assert settings.ib_client_id == 9
     assert settings.account_group == "ira"
-    assert settings.service_name == "interactive-brokers-quant-ira"
+    assert settings.service_name == "interactive-brokers-quant-global-etf-rotation-ira"
     assert settings.account_ids == ("U1234567", "U7654321")
 
 

@@ -237,7 +237,7 @@ Example deploy/update command:
 gcloud run deploy interactive-brokers-quant-global-etf-rotation \
   --source . \
   --region us-central1 \
-  --service-account interactive-brokers-quant-runtime@PROJECT_ID.iam.gserviceaccount.com \
+  --service-account ibkr-platform-runtime@PROJECT_ID.iam.gserviceaccount.com \
   --network default \
   --subnet cloudrun-direct-egress \
   --vpc-egress private-ranges-only \
@@ -449,7 +449,7 @@ IB_GATEWAY_IP_MODE=internal
 gcloud run deploy interactive-brokers-quant-global-etf-rotation \
   --source . \
   --region us-central1 \
-  --service-account interactive-brokers-quant-runtime@PROJECT_ID.iam.gserviceaccount.com \
+  --service-account ibkr-platform-runtime@PROJECT_ID.iam.gserviceaccount.com \
   --network default \
   --subnet cloudrun-direct-egress \
   --vpc-egress private-ranges-only \
