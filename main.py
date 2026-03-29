@@ -37,19 +37,7 @@ from runtime_config_support import (
     load_platform_runtime_settings,
     resolve_ib_gateway_ip_mode,
 )
-from us_equity_strategies.strategies.global_etf_rotation import (
-    CANARY_ASSETS,
-    CANARY_BAD_THRESHOLD,
-    HOLD_BONUS,
-    RANKING_POOL,
-    REBALANCE_MONTHS,
-    SAFE_HAVEN,
-    SMA_PERIOD,
-    TOP_N,
-    check_sma as strategy_check_sma,
-    compute_13612w_momentum as strategy_compute_13612w_momentum,
-    compute_signals as strategy_compute_signals,
-)
+from strategy_loader import load_signal_logic_module
 
 app = Flask(__name__)
 
@@ -142,6 +130,19 @@ STRATEGY_PROFILE = RUNTIME_SETTINGS.strategy_profile
 ACCOUNT_GROUP = RUNTIME_SETTINGS.account_group
 SERVICE_NAME = RUNTIME_SETTINGS.service_name
 ACCOUNT_IDS = RUNTIME_SETTINGS.account_ids
+
+STRATEGY_LOGIC = load_signal_logic_module(STRATEGY_PROFILE)
+RANKING_POOL = STRATEGY_LOGIC.RANKING_POOL
+CANARY_ASSETS = STRATEGY_LOGIC.CANARY_ASSETS
+SAFE_HAVEN = STRATEGY_LOGIC.SAFE_HAVEN
+TOP_N = STRATEGY_LOGIC.TOP_N
+SMA_PERIOD = STRATEGY_LOGIC.SMA_PERIOD
+HOLD_BONUS = STRATEGY_LOGIC.HOLD_BONUS
+CANARY_BAD_THRESHOLD = STRATEGY_LOGIC.CANARY_BAD_THRESHOLD
+REBALANCE_MONTHS = STRATEGY_LOGIC.REBALANCE_MONTHS
+strategy_check_sma = STRATEGY_LOGIC.check_sma
+strategy_compute_13612w_momentum = STRATEGY_LOGIC.compute_13612w_momentum
+strategy_compute_signals = STRATEGY_LOGIC.compute_signals
 
 TG_TOKEN = RUNTIME_SETTINGS.tg_token
 TG_CHAT_ID = RUNTIME_SETTINGS.tg_chat_id
