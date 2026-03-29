@@ -41,14 +41,24 @@ def test_instance_name_alias_is_used_as_host(strategy_module):
 
 
 def test_ib_gateway_mode_derives_paper_port(strategy_module_factory):
-    module = strategy_module_factory(IB_GATEWAY_MODE="paper")
+    module = strategy_module_factory(
+        IB_ACCOUNT_GROUP_CONFIG_JSON=(
+            '{"groups":{"default":{"ib_gateway_instance_name":"127.0.0.1",'
+            '"ib_gateway_mode":"paper","ib_client_id":1}}}'
+        )
+    )
 
     assert module.IB_PORT == 4002
 
 
 def test_ib_gateway_mode_is_required(strategy_module_factory):
-    with pytest.raises(EnvironmentError, match="IB_GATEWAY_MODE is required"):
-        strategy_module_factory(IB_GATEWAY_MODE=None)
+    with pytest.raises(EnvironmentError, match="requires ib_gateway_mode"):
+        strategy_module_factory(
+            IB_ACCOUNT_GROUP_CONFIG_JSON=(
+                '{"groups":{"default":{"ib_gateway_instance_name":"127.0.0.1",'
+                '"ib_client_id":1}}}'
+            )
+        )
 
 
 def test_resolve_gce_instance_ip_prefers_internal_by_default(strategy_module, monkeypatch):
@@ -116,3 +126,15 @@ def test_default_ranking_pool_uses_voo_xlk_smh(strategy_module):
     assert "XLK" in strategy_module.RANKING_POOL
     assert "SMH" in strategy_module.RANKING_POOL
     assert "QQQ" not in strategy_module.RANKING_POOL
+
+
+def test_group_config_ip_mode_is_used_when_env_not_set(strategy_module_factory):
+    module = strategy_module_factory(
+        IB_GATEWAY_IP_MODE=None,
+        IB_ACCOUNT_GROUP_CONFIG_JSON=(
+            '{"groups":{"default":{"ib_gateway_instance_name":"127.0.0.1",'
+            '"ib_gateway_mode":"live","ib_gateway_ip_mode":"external","ib_client_id":1}}}'
+        ),
+    )
+
+    assert module.get_ib_gateway_ip_mode() == "external"

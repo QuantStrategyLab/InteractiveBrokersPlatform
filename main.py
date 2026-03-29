@@ -58,8 +58,11 @@ def get_project_id():
 
 
 def get_ib_gateway_ip_mode():
+    raw_value = os.getenv("IB_GATEWAY_IP_MODE")
+    if raw_value is None and "RUNTIME_SETTINGS" in globals():
+        raw_value = RUNTIME_SETTINGS.ib_gateway_ip_mode
     return resolve_ib_gateway_ip_mode(
-        os.getenv("IB_GATEWAY_IP_MODE"),
+        raw_value,
         logger=lambda message: print(message, flush=True),
     )
 

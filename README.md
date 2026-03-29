@@ -106,9 +106,9 @@ Equity: $2,100.00 | Buying Power: $50.00
 | `IB_GATEWAY_IP_MODE` | No | `internal` (default) or `external`; for Cloud Run, `internal` with Direct VPC egress is recommended |
 | `IB_GATEWAY_MODE` | Yes | Required mode flag. `live` maps to port `4001`, `paper` maps to port `4002`. |
 | `IB_CLIENT_ID` | No | IB client ID (default: 1) |
-| `STRATEGY_PROFILE` | No | Strategy profile selector (default: `global_etf_rotation`, currently the only supported value) |
-| `ACCOUNT_GROUP` | No | Account-group marker for future multi-account deployment (default: `default`) |
-| `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME` | No | Secret Manager secret name for account-group config JSON. Recommended for multi-account deployment. |
+| `STRATEGY_PROFILE` | Yes | Strategy profile selector. Current required value: `global_etf_rotation` |
+| `ACCOUNT_GROUP` | Yes | Account-group selector. No default fallback. |
+| `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME` | Yes for Cloud Run | Secret Manager secret name for account-group config JSON. Recommended for multi-account deployment. |
 | `IB_ACCOUNT_GROUP_CONFIG_JSON` | No | Local/dev JSON fallback for account-group config. Not recommended for production Cloud Run. |
 | `TELEGRAM_TOKEN` | Yes | Telegram bot token |
 | `GLOBAL_TELEGRAM_CHAT_ID` | Yes | Telegram chat ID used by this service. |
@@ -161,7 +161,12 @@ Recommended account-group config payload:
 }
 ```
 
-When both direct env vars and account-group config are present, the selected `ACCOUNT_GROUP` entry overrides the direct IB connection values. Missing fields still fall back to the direct env vars.
+Current behavior is fail-fast:
+
+- missing `STRATEGY_PROFILE` → startup error
+- missing `ACCOUNT_GROUP` → startup error
+- missing account-group config source → startup error
+- missing key fields in the selected group (`ib_gateway_instance_name`, `ib_gateway_mode`, `ib_client_id`) → startup error
 
 ### GitHub-managed Cloud Run env sync
 
@@ -190,7 +195,7 @@ Recommended setup:
 
 On every push to `main`, the workflow updates the existing Cloud Run service with the values above and removes `IB_GATEWAY_HOST`, `IB_GATEWAY_PORT`, and `TELEGRAM_CHAT_ID`.
 
-For now, `STRATEGY_PROFILE` still only supports one strategy profile. `ACCOUNT_GROUP` now selects one account-group config entry, which can override IB connection details such as `IB_CLIENT_ID` and gateway identity while keeping the trading logic unchanged.
+For now, `STRATEGY_PROFILE` still only supports one strategy profile. `ACCOUNT_GROUP` now selects one account-group config entry, and the service fails fast if that runtime identity is incomplete.
 
 Important:
 
@@ -301,9 +306,9 @@ IBKR 账户
 | `IB_GATEWAY_IP_MODE` | 否 | `internal`（默认）或 `external`；Cloud Run 推荐配合 Direct VPC egress 使用 `internal` |
 | `IB_GATEWAY_MODE` | 是 | 必需。`live` 会映射到 `4001`，`paper` 会映射到 `4002`。 |
 | `IB_CLIENT_ID` | 否 | IB 连接客户端 ID (默认: 1) |
-| `STRATEGY_PROFILE` | 否 | 策略档位选择（默认: `global_etf_rotation`，当前仅支持这个值） |
-| `ACCOUNT_GROUP` | 否 | 为后续多账户部署预留的账号组标记（默认: `default`） |
-| `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME` | 否 | 账号组配置 JSON 在 Secret Manager 里的密钥名。多账户部署推荐使用。 |
+| `STRATEGY_PROFILE` | 是 | 策略档位选择。当前必填值：`global_etf_rotation` |
+| `ACCOUNT_GROUP` | 是 | 账号组选择器，不再提供默认回退。 |
+| `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME` | Cloud Run 建议必填 | 账号组配置 JSON 在 Secret Manager 里的密钥名。多账户部署推荐使用。 |
 | `IB_ACCOUNT_GROUP_CONFIG_JSON` | 否 | 本地开发用的账号组配置 JSON fallback。不建议在生产 Cloud Run 直接使用。 |
 | `TELEGRAM_TOKEN` | 是 | Telegram 机器人 Token |
 | `GLOBAL_TELEGRAM_CHAT_ID` | 是 | 这个服务使用的 Telegram Chat ID。 |
@@ -356,7 +361,12 @@ NOTIFY_LANG=zh
 }
 ```
 
-如果同时配置了直写 env 和账号组配置，选中的 `ACCOUNT_GROUP` 会优先覆盖 IB 连接相关参数；缺失字段再回退到直写 env。
+当前行为改成了 fail-fast：
+
+- 没有 `STRATEGY_PROFILE` → 启动直接报错
+- 没有 `ACCOUNT_GROUP` → 启动直接报错
+- 没有账号组配置来源 → 启动直接报错
+- 选中的账号组缺少关键字段（`ib_gateway_instance_name`、`ib_gateway_mode`、`ib_client_id`）→ 启动直接报错
 
 ### GitHub 统一管理 Cloud Run 环境变量
 
@@ -385,7 +395,7 @@ NOTIFY_LANG=zh
 
 每次 push 到 `main` 时，这个 workflow 会把上面这些值同步到现有 Cloud Run 服务里，并删除旧的 `IB_GATEWAY_HOST`、`IB_GATEWAY_PORT` 和 `TELEGRAM_CHAT_ID`。
 
-当前这一步里，`STRATEGY_PROFILE` 仍然只有一个可用值；`ACCOUNT_GROUP` 则已经可以选中一份账号组配置，并覆盖 `IB_CLIENT_ID`、gateway 标识等连接参数，但交易逻辑本身保持不变。
+当前这一步里，`STRATEGY_PROFILE` 仍然只有一个可用值；`ACCOUNT_GROUP` 已经变成严格必填，并会选中一份账号组配置。只要运行身份不完整，服务就会直接失败，不再静默回退。
 
 注意：
 

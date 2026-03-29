@@ -18,8 +18,13 @@ def strategy_module_factory(monkeypatch):
             "IB_GATEWAY_INSTANCE_NAME": "127.0.0.1",
             "IB_GATEWAY_ZONE": None,
             "IB_GATEWAY_MODE": "live",
+            "STRATEGY_PROFILE": "global_etf_rotation",
+            "ACCOUNT_GROUP": "default",
             "IB_CLIENT_ID": "1",
-            "IB_ACCOUNT_GROUP_CONFIG_JSON": None,
+            "IB_ACCOUNT_GROUP_CONFIG_JSON": (
+                '{"groups":{"default":{"ib_gateway_instance_name":"127.0.0.1",'
+                '"ib_gateway_mode":"live","ib_client_id":1}}}'
+            ),
             "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME": None,
             "GLOBAL_TELEGRAM_CHAT_ID": None,
         }

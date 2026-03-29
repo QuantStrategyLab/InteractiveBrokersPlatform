@@ -45,6 +45,7 @@ def load_platform_runtime_settings(
     secret_client_factory: Callable[[], Any] | None = None,
 ) -> PlatformRuntimeSettings:
     project_id = project_id_resolver()
+    strategy_profile = resolve_strategy_profile(os.getenv("STRATEGY_PROFILE"))
     account_group = resolve_account_group(os.getenv("ACCOUNT_GROUP"))
     group_config = load_account_group_config(
         project_id=project_id,
@@ -54,12 +55,11 @@ def load_platform_runtime_settings(
         secret_client_factory=secret_client_factory,
     )
 
-    instance_name = first_non_empty(
+    instance_name = require_group_string(
         group_config.ib_gateway_instance_name,
-        os.getenv("IB_GATEWAY_INSTANCE_NAME"),
+        field_name="ib_gateway_instance_name",
+        account_group=account_group,
     )
-    if not instance_name:
-        raise EnvironmentError("IB_GATEWAY_INSTANCE_NAME is required")
 
     return PlatformRuntimeSettings(
         project_id=project_id,
@@ -70,16 +70,22 @@ def load_platform_runtime_settings(
         )
         or "",
         ib_gateway_mode=resolve_ib_gateway_mode(
-            first_non_empty(group_config.ib_gateway_mode, os.getenv("IB_GATEWAY_MODE"))
+            require_group_string(
+                group_config.ib_gateway_mode,
+                field_name="ib_gateway_mode",
+                account_group=account_group,
+            )
         ),
         ib_gateway_ip_mode=resolve_ib_gateway_ip_mode(
             first_non_empty(group_config.ib_gateway_ip_mode, os.getenv("IB_GATEWAY_IP_MODE")),
             logger=logger,
         ),
-        ib_client_id=group_config.ib_client_id
-        if group_config.ib_client_id is not None
-        else int(os.getenv("IB_CLIENT_ID", "1")),
-        strategy_profile=resolve_strategy_profile(os.getenv("STRATEGY_PROFILE")),
+        ib_client_id=require_group_int(
+            group_config.ib_client_id,
+            field_name="ib_client_id",
+            account_group=account_group,
+        ),
+        strategy_profile=strategy_profile,
         account_group=account_group,
         service_name=group_config.service_name,
         account_ids=group_config.account_ids,
@@ -90,7 +96,9 @@ def load_platform_runtime_settings(
 
 
 def resolve_strategy_profile(raw_value: str | None) -> str:
-    value = (raw_value or DEFAULT_STRATEGY_PROFILE).strip().lower()
+    value = (raw_value or "").strip().lower()
+    if not value:
+        raise EnvironmentError("STRATEGY_PROFILE is required")
     if value not in SUPPORTED_STRATEGY_PROFILES:
         supported = ", ".join(sorted(SUPPORTED_STRATEGY_PROFILES))
         raise ValueError(
@@ -100,8 +108,10 @@ def resolve_strategy_profile(raw_value: str | None) -> str:
 
 
 def resolve_account_group(raw_value: str | None) -> str:
-    value = (raw_value or DEFAULT_ACCOUNT_GROUP).strip()
-    return value or DEFAULT_ACCOUNT_GROUP
+    value = (raw_value or "").strip()
+    if not value:
+        raise EnvironmentError("ACCOUNT_GROUP is required")
+    return value
 
 
 def load_account_group_config(
@@ -127,7 +137,9 @@ def load_account_group_config(
         payload = raw_json
 
     if not payload:
-        return AccountGroupConfig()
+        raise EnvironmentError(
+            "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME or IB_ACCOUNT_GROUP_CONFIG_JSON is required"
+        )
 
     configs = parse_account_group_configs(payload)
     if account_group not in configs:
@@ -213,6 +225,33 @@ def first_non_empty(*values: str | None) -> str | None:
         if normalized is not None:
             return normalized
     return None
+
+
+def require_group_string(
+    raw_value: str | None,
+    *,
+    field_name: str,
+    account_group: str,
+) -> str:
+    value = normalize_optional_string(raw_value)
+    if value is None:
+        raise EnvironmentError(
+            f"Account group {account_group!r} requires {field_name}"
+        )
+    return value
+
+
+def require_group_int(
+    raw_value: int | None,
+    *,
+    field_name: str,
+    account_group: str,
+) -> int:
+    if raw_value is None:
+        raise EnvironmentError(
+            f"Account group {account_group!r} requires {field_name}"
+        )
+    return int(raw_value)
 
 
 def resolve_ib_gateway_mode(raw_value: str | None) -> str:

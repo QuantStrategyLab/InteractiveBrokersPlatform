@@ -13,8 +13,8 @@ jobs:
       CLOUD_RUN_REGION: ${{ vars.CLOUD_RUN_REGION }}
       CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
       IB_CLIENT_ID: ${{ vars.IB_CLIENT_ID }}
-      STRATEGY_PROFILE: ${{ vars.STRATEGY_PROFILE || 'global_etf_rotation' }}
-      ACCOUNT_GROUP: ${{ vars.ACCOUNT_GROUP || 'default' }}
+      STRATEGY_PROFILE: ${{ vars.STRATEGY_PROFILE }}
+      ACCOUNT_GROUP: ${{ vars.ACCOUNT_GROUP }}
       IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME: ${{ vars.IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME }}
       IB_GATEWAY_INSTANCE_NAME: ${{ vars.IB_GATEWAY_INSTANCE_NAME }}
       IB_GATEWAY_ZONE: ${{ vars.IB_GATEWAY_ZONE }}
@@ -39,7 +39,10 @@ jobs:
           required_vars=(
             CLOUD_RUN_REGION
             CLOUD_RUN_SERVICE
+            STRATEGY_PROFILE
+            ACCOUNT_GROUP
             IB_CLIENT_ID
+            IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME
             IB_GATEWAY_INSTANCE_NAME
             IB_GATEWAY_ZONE
             IB_GATEWAY_MODE
