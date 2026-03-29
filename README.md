@@ -421,7 +421,7 @@ IB_GATEWAY_IP_MODE=internal
 
 每次 push 到 `main` 时，这个 workflow 会把上面这些值同步到现有 Cloud Run 服务里，并清掉已经转移到账号组配置里的旧 env（`IB_CLIENT_ID`、`IB_GATEWAY_INSTANCE_NAME`、`IB_GATEWAY_MODE`）以及更早的传输层 env（`IB_GATEWAY_HOST`、`IB_GATEWAY_PORT`、`TELEGRAM_CHAT_ID`）。如果 GitHub 里没有配置 `IB_GATEWAY_ZONE` 或 `IB_GATEWAY_IP_MODE`，workflow 也会把 Cloud Run 上这两个旧值一起删除，避免双配置源漂移。
 
-当前这一步里，`STRATEGY_PROFILE` 仍然只有一个可用值；当前策略大类是 `us_equity`，仓库里也已经保留了一层很薄的策略注册表，后面可以沿着“策略大类 + 具体策略 + 平台兼容性”继续扩。`ACCOUNT_GROUP` 已经变成严格必填，并会选中一份账号组配置。只要运行身份不完整，服务就会直接失败，不再静默回退。
+`STRATEGY_PROFILE` 当前只有一个可用值；当前策略域是 `us_equity`，本地策略注册表只用于域和 profile 校验。`ACCOUNT_GROUP` 是严格必填项，并会选中一份账号组配置。运行身份不完整时，服务会直接失败，不再静默回退。
 
 注意：
 
