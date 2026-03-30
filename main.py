@@ -4,7 +4,6 @@ Quarterly momentum rotation across 22 global ETFs + daily canary emergency.
 Runs on Cloud Run; connects to IB Gateway on GCE via ib_insync, alerts via Telegram.
 """
 import os
-import time
 import traceback
 import requests
 import pandas as pd
@@ -20,7 +19,6 @@ from notifications.telegram import build_translator, send_telegram_message
 from quant_platform_kit.common.models import OrderIntent
 from quant_platform_kit.ibkr import (
     connect_ib as ibkr_connect_ib,
-    ensure_event_loop,
     fetch_historical_price_series,
     fetch_portfolio_snapshot,
     fetch_quote_snapshots,

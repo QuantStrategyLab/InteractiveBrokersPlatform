@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from strategy_registry import (
-    DEFAULT_STRATEGY_PROFILE,
     IBKR_PLATFORM,
     resolve_strategy_definition,
 )
