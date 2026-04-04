@@ -14,9 +14,13 @@
 
 Quarterly momentum rotation across 22 global ETFs (international markets, commodities, US sectors, US broad market, tech, and semiconductors) with daily canary emergency check. Designed to stay more stable than high-beta tech strategies while still allowing major tech leadership to enter the rotation. Deployed on GCP Cloud Run, connecting to IB Gateway on GCE.
 
-The current `global_etf_rotation` implementation is sourced from `UsEquityStrategies`.
+This runtime now supports multiple `us_equity` profiles sourced from `UsEquityStrategies`.
 
-Full strategy documentation now lives in [`UsEquityStrategies`](https://github.com/QuantStrategyLab/UsEquityStrategies#global_etf_rotation). The strategy section below is kept as an execution-side summary.
+Current runtime-facing profiles:
+- `global_etf_rotation` — quarterly ETF rotation (current rollback line)
+- `cash_buffer_branch_default` — monthly stock-selection branch with an explicit `80%` stock cap and `BOXX` parking
+
+Full strategy documentation lives in `UsEquityStrategies`; the sections here stay focused on execution and deployment.
 
 ### Strategy
 
@@ -109,13 +113,18 @@ The selected `ACCOUNT_GROUP` is now the runtime identity. Keep broker-specific i
 |----------|----------|-------------|
 | `IB_GATEWAY_ZONE` | Optional fallback | GCE zone (for example `us-central1-a`). Recommended to keep in the selected account-group entry; this env var is only a transition fallback. |
 | `IB_GATEWAY_IP_MODE` | Optional fallback | `internal` (default) or `external`. Recommended to keep in the selected account-group entry; this env var is only a transition fallback. |
-| `STRATEGY_PROFILE` | Yes | Strategy profile selector. Current required `us_equity` value: `global_etf_rotation` |
+| `STRATEGY_PROFILE` | Yes | Strategy profile selector. Supported `us_equity` values: `global_etf_rotation`, `cash_buffer_branch_default` |
 | `ACCOUNT_GROUP` | Yes | Account-group selector. No default fallback. |
 | `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME` | Yes for Cloud Run | Secret Manager secret name for account-group config JSON. Recommended production source. |
 | `IB_ACCOUNT_GROUP_CONFIG_JSON` | No | Local/dev JSON fallback for account-group config. Not recommended for production Cloud Run. |
 | `TELEGRAM_TOKEN` | Yes | Telegram bot token. For Cloud Run, prefer a Secret Manager reference instead of a literal env var. |
 | `GLOBAL_TELEGRAM_CHAT_ID` | Yes | Telegram chat ID used by this service. |
 | `NOTIFY_LANG` | No | `en` (default) or `zh` |
+| `IBKR_FEATURE_SNAPSHOT_PATH` | Required for snapshot-based profiles | Latest feature snapshot file path. Required for `cash_buffer_branch_default`. |
+| `IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH` | Required for `cash_buffer_branch_default` | Sidecar manifest path used by runtime freshness / contract checks. |
+| `IBKR_STRATEGY_CONFIG_PATH` | Required for `cash_buffer_branch_default` | Canonical runtime config path used for manifest/config matching. |
+| `IBKR_RECONCILIATION_OUTPUT_PATH` | No | Optional structured reconciliation output path for dry-run / paper execution logs. |
+| `IBKR_DRY_RUN_ONLY` | No | `true` to block order submission and only emit planned actions; `false` for real paper orders. |
 
 The selected account-group entry must provide at least:
 
@@ -135,15 +144,30 @@ If you use instance-name resolution with `ib_gateway_zone`, the Cloud Run runtim
 For the current first rollout, keep GitHub / Cloud Run focused on service-level values:
 
 ```bash
+# rollback / legacy ETF line
 STRATEGY_PROFILE=global_etf_rotation
 ACCOUNT_GROUP=default
 IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=ibkr-account-groups
 GLOBAL_TELEGRAM_CHAT_ID=<telegram-chat-id>
 NOTIFY_LANG=zh
 
-# Optional transition fallback only:
+# optional transition fallback only:
 IB_GATEWAY_ZONE=us-central1-c
 IB_GATEWAY_IP_MODE=internal
+```
+
+```bash
+# snapshot-based stock paper branch
+STRATEGY_PROFILE=cash_buffer_branch_default
+ACCOUNT_GROUP=default
+IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=ibkr-account-groups
+IBKR_FEATURE_SNAPSHOT_PATH=/var/data/cash_buffer_branch_feature_snapshot_latest.csv
+IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH=/var/data/cash_buffer_branch_feature_snapshot_latest.csv.manifest.json
+IBKR_STRATEGY_CONFIG_PATH=/app/research/configs/growth_pullback_cash_buffer_branch_default.json
+IBKR_RECONCILIATION_OUTPUT_PATH=/var/log/ibkr_cash_buffer_branch_reconciliation.json
+IBKR_DRY_RUN_ONLY=true
+GLOBAL_TELEGRAM_CHAT_ID=<telegram-chat-id>
+NOTIFY_LANG=zh
 ```
 
 This shared-config mode is only for the **IBKR pair** (`InteractiveBrokersPlatform` + `IBKRGatewayManager`). It is not meant to become a global secret bundle for unrelated quant repos. Across multiple quant projects, the only broadly reusable runtime settings are usually `GLOBAL_TELEGRAM_CHAT_ID` and `NOTIFY_LANG`.
@@ -195,7 +219,7 @@ Recommended setup:
   - `CLOUD_RUN_REGION`
   - `CLOUD_RUN_SERVICE`
   - `TELEGRAM_TOKEN_SECRET_NAME` (recommended when Cloud Run already uses Secret Manager for `TELEGRAM_TOKEN`)
-  - `STRATEGY_PROFILE` (recommended: `global_etf_rotation`)
+  - `STRATEGY_PROFILE` (recommended: `global_etf_rotation` for rollback, or `cash_buffer_branch_default` for the snapshot-based paper branch)
   - `ACCOUNT_GROUP` (recommended: `default`)
   - `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME`
   - `GLOBAL_TELEGRAM_CHAT_ID`
@@ -208,7 +232,7 @@ Recommended setup:
 
 On every push to `main`, the workflow updates the existing Cloud Run service with the values above and removes legacy env vars that should now live in the account-group config (`IB_CLIENT_ID`, `IB_GATEWAY_INSTANCE_NAME`, `IB_GATEWAY_MODE`) plus the older transport vars (`IB_GATEWAY_HOST`, `IB_GATEWAY_PORT`, `TELEGRAM_CHAT_ID`). If `IB_GATEWAY_ZONE` or `IB_GATEWAY_IP_MODE` are blank in GitHub, the workflow also removes them from Cloud Run to avoid drift.
 
-For now, `STRATEGY_PROFILE` still only supports one strategy profile. The current strategy domain is `us_equity`, and the repo now keeps a thin strategy registry so future expansion can grow by domain + profile instead of mixing strategy and platform in one layer. `ACCOUNT_GROUP` now selects one account-group config entry, and the service fails fast if that runtime identity is incomplete.
+`STRATEGY_PROFILE` now supports both `global_etf_rotation` and `cash_buffer_branch_default` under the shared `us_equity` domain. `ACCOUNT_GROUP` selects one account-group config entry, and the service still fails fast if that runtime identity is incomplete.
 
 Important:
 
@@ -265,9 +289,13 @@ gcloud run services update ibkr-quant \
 
 基于 IBKR 的全球 ETF 季度轮动策略（国际市场、商品、美股行业、美股宽基、科技和半导体），含每日金丝雀应急机制。定位上比 `TQQQ`、`SOXL` 这类高弹性科技策略更稳健，但不再把科技完全排除在外。部署在 GCP Cloud Run，连接 GCE 上的 IB Gateway。
 
-当前 `global_etf_rotation` 的策略实现来自 `UsEquityStrategies`。
+当前这个 runtime 已经可以承载多个来自 `UsEquityStrategies` 的 `us_equity` profile。
 
-完整策略说明现在放在 [`UsEquityStrategies`](https://github.com/QuantStrategyLab/UsEquityStrategies#global_etf_rotation)。下面的策略章节主要保留执行侧摘要。
+当前运行侧最相关的两个 profile：
+- `global_etf_rotation`：季度 ETF 轮动，也是当前 rollback 线
+- `cash_buffer_branch_default`：月频个股分支，`risk_on` 明确只上 `80%` 股票，其余停在 `BOXX`
+
+完整策略说明放在 `UsEquityStrategies`；这里主要保留执行和部署侧摘要。
 
 ### 策略
 
@@ -324,13 +352,18 @@ IBKR 账户
 |------|------|------|
 | `IB_GATEWAY_ZONE` | 可选过渡项 | GCE zone（如 `us-central1-a`）。推荐直接放进选中的账号组配置里；这里只保留过渡 fallback。 |
 | `IB_GATEWAY_IP_MODE` | 可选过渡项 | `internal`（默认）或 `external`。推荐直接放进选中的账号组配置里；这里只保留过渡 fallback。 |
-| `STRATEGY_PROFILE` | 是 | 策略档位选择。当前必填的 `us_equity` 值：`global_etf_rotation` |
+| `STRATEGY_PROFILE` | 是 | 策略档位选择。当前支持的 `us_equity` 值：`global_etf_rotation`、`cash_buffer_branch_default` |
 | `ACCOUNT_GROUP` | 是 | 账号组选择器，不再提供默认回退。 |
 | `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME` | Cloud Run 建议必填 | 账号组配置 JSON 在 Secret Manager 里的密钥名。生产环境推荐使用。 |
 | `IB_ACCOUNT_GROUP_CONFIG_JSON` | 否 | 本地开发用的账号组配置 JSON fallback。不建议在生产 Cloud Run 直接使用。 |
 | `TELEGRAM_TOKEN` | 是 | Telegram 机器人 Token。Cloud Run 上更推荐走 Secret Manager 引用，不要直接写成明文 env。 |
 | `GLOBAL_TELEGRAM_CHAT_ID` | 是 | 这个服务使用的 Telegram Chat ID。 |
 | `NOTIFY_LANG` | 否 | `en`（默认）或 `zh` |
+| `IBKR_FEATURE_SNAPSHOT_PATH` | snapshot 型策略必填 | 最新 feature snapshot 文件路径。`cash_buffer_branch_default` 必填。 |
+| `IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH` | `cash_buffer_branch_default` 必填 | snapshot sidecar manifest 路径，用于 freshness / contract 检查。 |
+| `IBKR_STRATEGY_CONFIG_PATH` | `cash_buffer_branch_default` 必填 | runtime 侧 canonical config 路径，用于 manifest/config 匹配。 |
+| `IBKR_RECONCILIATION_OUTPUT_PATH` | 否 | dry-run / paper 执行后的结构化对账输出路径。 |
+| `IBKR_DRY_RUN_ONLY` | 否 | `true` 时只输出计划动作不下单；`false` 时允许真正的 paper 下单。 |
 
 选中的账号组配置里，至少要有：
 
@@ -410,7 +443,7 @@ IB_GATEWAY_IP_MODE=internal
   - `CLOUD_RUN_REGION`
   - `CLOUD_RUN_SERVICE`
   - `TELEGRAM_TOKEN_SECRET_NAME`（如果 Cloud Run 上的 `TELEGRAM_TOKEN` 已经改成 Secret Manager，建议配置）
-  - `STRATEGY_PROFILE`（建议设为 `global_etf_rotation`）
+  - `STRATEGY_PROFILE`（rollback 建议用 `global_etf_rotation`，snapshot 个股 paper 分支用 `cash_buffer_branch_default`）
   - `ACCOUNT_GROUP`（建议设为 `default`）
   - `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME`
   - `GLOBAL_TELEGRAM_CHAT_ID`
@@ -423,7 +456,7 @@ IB_GATEWAY_IP_MODE=internal
 
 每次 push 到 `main` 时，这个 workflow 会把上面这些值同步到现有 Cloud Run 服务里，并清掉已经转移到账号组配置里的旧 env（`IB_CLIENT_ID`、`IB_GATEWAY_INSTANCE_NAME`、`IB_GATEWAY_MODE`）以及更早的传输层 env（`IB_GATEWAY_HOST`、`IB_GATEWAY_PORT`、`TELEGRAM_CHAT_ID`）。如果 GitHub 里没有配置 `IB_GATEWAY_ZONE` 或 `IB_GATEWAY_IP_MODE`，workflow 也会把 Cloud Run 上这两个旧值一起删除，避免双配置源漂移。
 
-`STRATEGY_PROFILE` 当前只有一个可用值；当前策略域是 `us_equity`，本地策略注册表只用于域和 profile 校验。`ACCOUNT_GROUP` 是严格必填项，并会选中一份账号组配置。运行身份不完整时，服务会直接失败，不再静默回退。
+`STRATEGY_PROFILE` 现在支持 `global_etf_rotation` 和 `cash_buffer_branch_default` 两个 `us_equity` profile。`ACCOUNT_GROUP` 仍然是严格必填项，并会选中一份账号组配置；运行身份不完整时，服务会直接失败，不再静默回退。
 
 注意：
 

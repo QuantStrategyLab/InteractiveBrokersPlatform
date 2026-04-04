@@ -21,6 +21,8 @@ def strategy_module_factory(monkeypatch):
             "STRATEGY_PROFILE": "global_etf_rotation",
             "ACCOUNT_GROUP": "default",
             "IB_CLIENT_ID": "1",
+            "IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH": None,
+            "IBKR_RECONCILIATION_OUTPUT_PATH": None,
             "IB_ACCOUNT_GROUP_CONFIG_JSON": (
                 '{"groups":{"default":{"ib_gateway_instance_name":"127.0.0.1",'
                 '"ib_gateway_mode":"live","ib_client_id":1}}}'

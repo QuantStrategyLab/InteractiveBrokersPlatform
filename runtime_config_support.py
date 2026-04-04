@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 from strategy_registry import (
@@ -36,6 +37,12 @@ class PlatformRuntimeSettings:
     ib_client_id: int
     strategy_profile: str
     strategy_domain: str
+    feature_snapshot_path: str | None
+    feature_snapshot_manifest_path: str | None
+    strategy_config_path: str | None
+    strategy_config_source: str | None
+    reconciliation_output_path: str | None
+    dry_run_only: bool
     account_group: str
     service_name: str | None
     account_ids: tuple[str, ...]
@@ -54,6 +61,13 @@ def load_platform_runtime_settings(
     strategy_definition = resolve_strategy_definition(
         os.getenv("STRATEGY_PROFILE"),
         platform_id=IBKR_PLATFORM,
+    )
+    strategy_config_path, strategy_config_source = resolve_strategy_config_path(
+        strategy_definition.profile,
+        explicit_path=first_non_empty(
+            os.getenv("IBKR_STRATEGY_CONFIG_PATH"),
+            os.getenv("STRATEGY_CONFIG_PATH"),
+        ),
     )
     account_group = resolve_account_group(os.getenv("ACCOUNT_GROUP"))
     group_config = load_account_group_config(
@@ -96,6 +110,21 @@ def load_platform_runtime_settings(
         ),
         strategy_profile=strategy_definition.profile,
         strategy_domain=strategy_definition.domain,
+        feature_snapshot_path=first_non_empty(
+            os.getenv("IBKR_FEATURE_SNAPSHOT_PATH"),
+            os.getenv("FEATURE_SNAPSHOT_PATH"),
+        ),
+        feature_snapshot_manifest_path=first_non_empty(
+            os.getenv("IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH"),
+            os.getenv("FEATURE_SNAPSHOT_MANIFEST_PATH"),
+        ),
+        strategy_config_path=strategy_config_path,
+        strategy_config_source=strategy_config_source,
+        reconciliation_output_path=first_non_empty(
+            os.getenv("IBKR_RECONCILIATION_OUTPUT_PATH"),
+            os.getenv("RECONCILIATION_OUTPUT_PATH"),
+        ),
+        dry_run_only=resolve_bool_env(os.getenv("IBKR_DRY_RUN_ONLY")),
         account_group=account_group,
         service_name=group_config.service_name,
         account_ids=group_config.account_ids,
@@ -117,6 +146,27 @@ def resolve_account_group(raw_value: str | None) -> str:
     if not value:
         raise EnvironmentError("ACCOUNT_GROUP is required")
     return value
+
+
+def resolve_strategy_config_path(
+    strategy_profile: str,
+    *,
+    explicit_path: str | None,
+) -> tuple[str | None, str | None]:
+    path = first_non_empty(explicit_path)
+    if path is not None:
+        return path, "env"
+
+    if str(strategy_profile).strip().lower() == "cash_buffer_branch_default":
+        bundled = (
+            Path(__file__).resolve().parent
+            / "research"
+            / "configs"
+            / "growth_pullback_cash_buffer_branch_default.json"
+        )
+        if bundled.exists():
+            return str(bundled), "bundled_canonical_default"
+    return None, None
 
 
 def load_account_group_config(
@@ -230,6 +280,11 @@ def first_non_empty(*values: str | None) -> str | None:
         if normalized is not None:
             return normalized
     return None
+
+
+def resolve_bool_env(raw_value: str | None) -> bool:
+    value = str(raw_value or "").strip().lower()
+    return value in {"1", "true", "yes", "y", "on"}
 
 
 def require_group_string(

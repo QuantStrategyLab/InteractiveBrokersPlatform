@@ -68,6 +68,12 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.ib_client_id == 1
     assert settings.strategy_profile == DEFAULT_STRATEGY_PROFILE
     assert settings.strategy_domain == US_EQUITY_DOMAIN
+    assert settings.feature_snapshot_path is None
+    assert settings.feature_snapshot_manifest_path is None
+    assert settings.strategy_config_path is None
+    assert settings.strategy_config_source is None
+    assert settings.reconciliation_output_path is None
+    assert settings.dry_run_only is False
     assert settings.account_group == "default"
     assert settings.service_name is None
     assert settings.account_ids == ()
@@ -101,6 +107,8 @@ def test_load_platform_runtime_settings_supports_explicit_group_config_values(mo
     assert settings.ib_client_id == 7
     assert settings.strategy_profile == DEFAULT_STRATEGY_PROFILE
     assert settings.strategy_domain == US_EQUITY_DOMAIN
+    assert settings.feature_snapshot_path is None
+    assert settings.feature_snapshot_manifest_path is None
     assert settings.account_group == "taxable_main"
     assert settings.service_name == "interactive-brokers-quant-global-etf-rotation-taxable-main"
     assert settings.account_ids == ("U1234567",)
@@ -120,7 +128,59 @@ def test_load_platform_runtime_settings_rejects_unknown_strategy_profile(monkeyp
 
 
 def test_platform_supported_profiles_are_filtered_by_registry():
-    assert get_supported_profiles_for_platform(IBKR_PLATFORM) == frozenset({DEFAULT_STRATEGY_PROFILE})
+    assert get_supported_profiles_for_platform(IBKR_PLATFORM) == frozenset(
+        {
+            "cash_buffer_branch_default",
+            "global_etf_rotation",
+            "russell_1000_multi_factor_defensive",
+        }
+    )
+
+
+def test_load_platform_runtime_settings_reads_feature_snapshot_path(monkeypatch):
+    monkeypatch.setenv("STRATEGY_PROFILE", "russell_1000_multi_factor_defensive")
+    monkeypatch.setenv("ACCOUNT_GROUP", "default")
+    monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
+    monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "/tmp/r1000-latest.csv")
+
+    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
+
+    assert settings.feature_snapshot_path == "/tmp/r1000-latest.csv"
+
+
+def test_load_platform_runtime_settings_reads_cash_buffer_runtime_config(monkeypatch):
+    monkeypatch.setenv("STRATEGY_PROFILE", "cash_buffer_branch_default")
+    monkeypatch.setenv("ACCOUNT_GROUP", "default")
+    monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
+    monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "/tmp/cash-buffer.csv")
+    monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH", "/tmp/cash-buffer.csv.manifest.json")
+    monkeypatch.setenv("IBKR_STRATEGY_CONFIG_PATH", "/tmp/cash-buffer-config.json")
+    monkeypatch.setenv("IBKR_RECONCILIATION_OUTPUT_PATH", "/tmp/reconciliation.json")
+    monkeypatch.setenv("IBKR_DRY_RUN_ONLY", "true")
+
+    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
+
+    assert settings.feature_snapshot_path == "/tmp/cash-buffer.csv"
+    assert settings.feature_snapshot_manifest_path == "/tmp/cash-buffer.csv.manifest.json"
+    assert settings.strategy_config_path == "/tmp/cash-buffer-config.json"
+    assert settings.strategy_config_source == "env"
+    assert settings.reconciliation_output_path == "/tmp/reconciliation.json"
+    assert settings.dry_run_only is True
+
+
+def test_load_platform_runtime_settings_uses_bundled_cash_buffer_config_when_env_missing(monkeypatch):
+    monkeypatch.setenv("STRATEGY_PROFILE", "cash_buffer_branch_default")
+    monkeypatch.setenv("ACCOUNT_GROUP", "default")
+    monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
+    monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "/tmp/cash-buffer.csv")
+    monkeypatch.delenv("IBKR_STRATEGY_CONFIG_PATH", raising=False)
+    monkeypatch.delenv("STRATEGY_CONFIG_PATH", raising=False)
+
+    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
+
+    assert settings.strategy_config_path is not None
+    assert settings.strategy_config_path.endswith("growth_pullback_cash_buffer_branch_default.json")
+    assert settings.strategy_config_source == "bundled_canonical_default"
 
 
 

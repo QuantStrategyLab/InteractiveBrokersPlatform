@@ -24,6 +24,11 @@ jobs:
       STRATEGY_PROFILE: ${{ vars.STRATEGY_PROFILE }}
       ACCOUNT_GROUP: ${{ vars.ACCOUNT_GROUP }}
       IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME: ${{ vars.IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME }}
+      IBKR_FEATURE_SNAPSHOT_PATH: ${{ vars.IBKR_FEATURE_SNAPSHOT_PATH }}
+      IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH: ${{ vars.IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH }}
+      IBKR_STRATEGY_CONFIG_PATH: ${{ vars.IBKR_STRATEGY_CONFIG_PATH }}
+      IBKR_RECONCILIATION_OUTPUT_PATH: ${{ vars.IBKR_RECONCILIATION_OUTPUT_PATH }}
+      IBKR_DRY_RUN_ONLY: ${{ vars.IBKR_DRY_RUN_ONLY }}
       IB_GATEWAY_ZONE: ${{ vars.IB_GATEWAY_ZONE }}
       IB_GATEWAY_IP_MODE: ${{ vars.IB_GATEWAY_IP_MODE }}
       GLOBAL_TELEGRAM_CHAT_ID: ${{ vars.GLOBAL_TELEGRAM_CHAT_ID }}
@@ -50,6 +55,14 @@ jobs:
             GLOBAL_TELEGRAM_CHAT_ID
             NOTIFY_LANG
           )
+
+          if [ "${STRATEGY_PROFILE:-}" = "russell_1000_multi_factor_defensive" ] || [ "${STRATEGY_PROFILE:-}" = "cash_buffer_branch_default" ]; then
+            required_vars+=(IBKR_FEATURE_SNAPSHOT_PATH)
+          fi
+
+          if [ "${STRATEGY_PROFILE:-}" = "cash_buffer_branch_default" ]; then
+            required_vars+=(IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH IBKR_STRATEGY_CONFIG_PATH IBKR_RECONCILIATION_OUTPUT_PATH)
+          fi
 
           missing_vars=()
           for var_name in "${required_vars[@]}"; do
@@ -127,6 +140,36 @@ jobs:
             env_pairs+=("IB_GATEWAY_IP_MODE=${IB_GATEWAY_IP_MODE}")
           else
             remove_env_vars+=("IB_GATEWAY_IP_MODE")
+          fi
+
+          if [ -n "${IBKR_FEATURE_SNAPSHOT_PATH:-}" ]; then
+            env_pairs+=("IBKR_FEATURE_SNAPSHOT_PATH=${IBKR_FEATURE_SNAPSHOT_PATH}")
+          else
+            remove_env_vars+=("IBKR_FEATURE_SNAPSHOT_PATH")
+          fi
+
+          if [ -n "${IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH:-}" ]; then
+            env_pairs+=("IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH=${IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH}")
+          else
+            remove_env_vars+=("IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH")
+          fi
+
+          if [ -n "${IBKR_STRATEGY_CONFIG_PATH:-}" ]; then
+            env_pairs+=("IBKR_STRATEGY_CONFIG_PATH=${IBKR_STRATEGY_CONFIG_PATH}")
+          else
+            remove_env_vars+=("IBKR_STRATEGY_CONFIG_PATH")
+          fi
+
+          if [ -n "${IBKR_RECONCILIATION_OUTPUT_PATH:-}" ]; then
+            env_pairs+=("IBKR_RECONCILIATION_OUTPUT_PATH=${IBKR_RECONCILIATION_OUTPUT_PATH}")
+          else
+            remove_env_vars+=("IBKR_RECONCILIATION_OUTPUT_PATH")
+          fi
+
+          if [ -n "${IBKR_DRY_RUN_ONLY:-}" ]; then
+            env_pairs+=("IBKR_DRY_RUN_ONLY=${IBKR_DRY_RUN_ONLY}")
+          else
+            remove_env_vars+=("IBKR_DRY_RUN_ONLY")
           fi
 
           gcloud_args=(
