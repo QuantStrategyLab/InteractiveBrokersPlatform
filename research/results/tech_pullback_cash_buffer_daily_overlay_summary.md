@@ -1,7 +1,7 @@
 # cash_buffer_branch daily overlay research
 
 ## Baseline
-- strategy=cash_buffer_branch_default
+- strategy=tech_pullback_cash_buffer
 - family=tech_heavy_pullback
 - monthly stock exposures={"risk_on": 0.8, "soft_defense": 0.6, "hard_defense": 0.0}
 - holdings=8
@@ -19,12 +19,12 @@
 ## Baseline reference (5 bps, OOS)
 | strategy | CAGR | Max Drawdown | Information Ratio vs QQQ | alpha_ann_vs_qqq | return_2022 | cagr_2023_plus | Turnover/Year | Average Stock Weight | Average BOXX Weight |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| cash_buffer_branch_default_monthly_baseline | 0.340680 | -0.191763 | 0.874353 | 0.256477 | -0.120121 | 0.526419 | 2.798286 | 0.566385 | 0.433615 |
+| tech_pullback_cash_buffer_monthly_baseline | 0.340680 | -0.191763 | 0.874353 | 0.256477 | -0.120121 | 0.526419 | 2.798286 | 0.566385 | 0.433615 |
 
 ## Family selection table (5 bps, OOS)
 | strategy | family | overlay_selection_score | OOS CAGR | OOS MaxDD | Information Ratio vs QQQ | alpha_ann_vs_qqq | 2022 Return | 2023+ CAGR | Turnover/Year | Average Stock Weight | Average BOXX Weight | Overlay Trigger Frequency | Average Days In Throttle | Average Days Trimmed |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| cash_buffer_branch_default_monthly_baseline | monthly_baseline | 0.800000 | 0.340680 | -0.191763 | 0.874353 | 0.256477 | -0.120121 | 0.526419 | 2.798286 | 0.566385 | 0.433615 | 0.000000 | 0.000000 | 0.000000 |
+| tech_pullback_cash_buffer_monthly_baseline | monthly_baseline | 0.800000 | 0.340680 | -0.191763 | 0.874353 | 0.256477 | -0.120121 | 0.526419 | 2.798286 | 0.566385 | 0.433615 | 0.000000 | 0.000000 | 0.000000 |
 | daily_name_level_trim_overlay__20dma_half_confirm2 | daily_name_level_trim_overlay | 0.770000 | 0.254582 | -0.148093 | 0.562249 | 0.195607 | -0.112283 | 0.395667 | 8.218125 | 0.468099 | 0.531901 | 0.632864 | 0.000000 | 12.481481 |
 | daily_name_level_trim_overlay__50dma_zero_confirm2 | daily_name_level_trim_overlay | 0.550000 | 0.214020 | -0.156768 | 0.381910 | 0.169430 | -0.113352 | 0.337437 | 9.655560 | 0.421972 | 0.578028 | 0.581221 | 0.000000 | 12.380000 |
 | daily_portfolio_throttle_overlay__qqq_dma_mom_6state | daily_portfolio_throttle_overlay | 0.480000 | 0.206767 | -0.134282 | 0.344992 | 0.166449 | -0.113148 | 0.326901 | 12.115107 | 0.413333 | 0.586667 | 0.404695 | 8.450980 | 0.000000 |
@@ -48,7 +48,7 @@ _skipped because A/B did not both clear the incremental-value filter_
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | daily_name_level_trim_overlay__20dma_half_confirm2 | daily_name_level_trim_overlay | 0.254582 | 0.152634 | -0.148093 | -0.112283 | 0.395667 | 8.218125 | 6.101313 | 0.468099 | 0.531901 | 0.389330 | 0.195607 | 0.562249 | 0.816321 | 0.167005 | 0.632864 | 0.000000 | 12.481481 |
 | daily_portfolio_throttle_overlay__qqq_dma_mom_6state | daily_portfolio_throttle_overlay | 0.206767 | 0.104818 | -0.134282 | -0.113148 | 0.326901 | 12.115107 | 5.448405 | 0.413333 | 0.586667 | 0.285801 | 0.166449 | 0.344992 | 0.688788 | 0.159194 | 0.404695 | 8.450980 | 0.000000 |
-| cash_buffer_branch_default_monthly_baseline | monthly_baseline | 0.340680 | 0.238732 | -0.191763 | -0.120121 | 0.526419 | 2.798286 | 6.101313 | 0.566385 | 0.433615 | 0.502780 | 0.256477 | 0.874353 | 1.010057 | 0.137830 | 0.000000 | 0.000000 | 0.000000 |
+| tech_pullback_cash_buffer_monthly_baseline | monthly_baseline | 0.340680 | 0.238732 | -0.191763 | -0.120121 | 0.526419 | 2.798286 | 6.101313 | 0.566385 | 0.433615 | 0.502780 | 0.256477 | 0.874353 | 1.010057 | 0.137830 | 0.000000 | 0.000000 | 0.000000 |
 | qqq_plus_current_default | reference | 0.334010 | 0.232062 | -0.323779 | -0.015312 | 0.464792 | 3.706698 | 10.570356 | 0.760188 | 0.239812 | 0.744797 | 0.241211 | 0.836495 | 1.200446 | 0.399330 | 0.000000 | 0.000000 | 0.000000 |
 | russell_1000_multi_factor_defensive | reference | 0.184469 | 0.082521 | -0.254393 | -0.139659 | 0.307094 | 4.530278 | 24.000000 | 0.759287 | 0.240713 | 0.568919 | 0.122988 | 0.344425 | 0.826915 | 0.413046 | 0.000000 | 0.000000 | 0.000000 |
 | QQQ | reference | 0.101948 | 0.000000 | -0.348280 | -0.325770 | 0.282076 | 0.000000 | 1.000000 | 1.000000 | 0.000000 | 1.000000 | 0.000000 |  | 1.000000 | 1.000000 | 0.000000 | 0.000000 | 0.000000 |

@@ -56,11 +56,11 @@ jobs:
             NOTIFY_LANG
           )
 
-          if [ "${STRATEGY_PROFILE:-}" = "russell_1000_multi_factor_defensive" ] || [ "${STRATEGY_PROFILE:-}" = "cash_buffer_branch_default" ]; then
+          if [ "${STRATEGY_PROFILE:-}" = "russell_1000_multi_factor_defensive" ] || [ "${STRATEGY_PROFILE:-}" = "tech_pullback_cash_buffer" ]; then
             required_vars+=(IBKR_FEATURE_SNAPSHOT_PATH)
           fi
 
-          if [ "${STRATEGY_PROFILE:-}" = "cash_buffer_branch_default" ]; then
+          if [ "${STRATEGY_PROFILE:-}" = "tech_pullback_cash_buffer" ]; then
             required_vars+=(IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH IBKR_STRATEGY_CONFIG_PATH IBKR_RECONCILIATION_OUTPUT_PATH)
           fi
 

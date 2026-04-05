@@ -26,7 +26,7 @@ import backtest_stock_alpha_v1_robustness as robust  # noqa: E402
 DEFAULT_RESULTS_DIR = SCRIPT_DIR / "results"
 DEFAULT_CONFIGS_DIR = SCRIPT_DIR / "configs"
 MAIN_COST_BPS = 5.0
-CANONICAL_CONFIG_FILENAME = "growth_pullback_cash_buffer_branch_default.json"
+CANONICAL_CONFIG_FILENAME = "growth_pullback_tech_pullback_cash_buffer.json"
 V14_SUMMARY_FILENAME = "growth_pullback_v1_4_cash_buffer_refinement.csv"
 V14_RECOMMENDATION_FILENAME = "growth_pullback_v1_4_recommendation.json"
 
@@ -72,7 +72,7 @@ def resolve_paths(configs_dir: Path, results_dir: Path) -> dict[str, Path]:
 def build_canonical_spec(center_cfg: gp.GrowthPullbackConfig, previous_candidate_name: str) -> CanonicalBranchSpec:
     config = replace(
         center_cfg,
-        name="cash_buffer_branch_default",
+        name="tech_pullback_cash_buffer",
         holdings_count=8,
         single_name_cap=0.10,
         sector_cap=0.40,
@@ -80,7 +80,7 @@ def build_canonical_spec(center_cfg: gp.GrowthPullbackConfig, previous_candidate
         exposures=gp.suite.ExposureConfig("80_60_0", 0.60, 0.00),
     )
     return CanonicalBranchSpec(
-        name="cash_buffer_branch_default",
+        name="tech_pullback_cash_buffer",
         previous_candidate_name=previous_candidate_name,
         config=config,
         risk_on_exposure=0.80,
@@ -95,7 +95,7 @@ def build_canonical_spec(center_cfg: gp.GrowthPullbackConfig, previous_candidate
 
 def canonical_spec_to_dict(spec: CanonicalBranchSpec) -> dict[str, object]:
     return {
-        "role": "cash_buffer_branch_default",
+        "role": "tech_pullback_cash_buffer",
         "status": "research_only",
         "strategy": "growth_pullback_systematic_v1",
         "branch_name": "cash_buffer_branch",
@@ -295,7 +295,7 @@ def build_consistency_checks(
         },
         {
             "check": "recommendation_matches_branch_default_role",
-            "passed": recommendation_level == "cash_buffer_branch_default",
+            "passed": recommendation_level == "tech_pullback_cash_buffer",
             "detail": f"recommendation={recommendation_level}",
         },
         {
@@ -390,7 +390,7 @@ def build_role_table(
     qqq_full = v12.extract_period_row(qqq_reference_rows, "QQQ", MAIN_COST_BPS, "Full Sample")
     rows.extend([
         {
-            "strategy": "cash_buffer_branch_default",
+            "strategy": "tech_pullback_cash_buffer",
             "role": "cash-buffered parallel branch",
             "full_cagr": canonical_summary["full_cagr"],
             "oos_cagr": canonical_summary["oos_cagr"],
@@ -486,15 +486,15 @@ def build_freeze_recommendation(
         level = "candidate"
         reason = "branch role is valid, but consistency or performance checks are not strong enough for default status"
     elif frozen_blockers:
-        level = "cash_buffer_branch_default"
+        level = "tech_pullback_cash_buffer"
         reason = "canonical naming and branch role are now clear, but avg names / 2022 profile / recent micro-adjustment mean it should stop at default, not frozen"
     else:
-        level = "cash_buffer_branch_default_frozen"
+        level = "tech_pullback_cash_buffer_frozen"
         reason = "branch semantics, deployment consistency, and behavior are all stable enough to freeze"
 
     return {
         "research_recommendation": level,
-        "branch_name": "cash_buffer_branch_default",
+        "branch_name": "tech_pullback_cash_buffer",
         "previous_candidate_name": "cash_buffer_a__hb10__base__adv50",
         "reason": reason,
         "frozen_blockers": frozen_blockers,
@@ -638,7 +638,7 @@ def main() -> None:
         "information_ratio_vs_qqq_oos": float(v12.extract_period_row(full_rows_df, "coherent_full_deployment_branch", MAIN_COST_BPS, "OOS Sample")["Information Ratio vs QQQ"]),
     })
 
-    preliminary_recommendation_level = "cash_buffer_branch_default"
+    preliminary_recommendation_level = "tech_pullback_cash_buffer"
     manifest = build_manifest(
         spec=spec,
         canonical_summary=canonical_summary,

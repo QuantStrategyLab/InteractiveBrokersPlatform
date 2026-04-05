@@ -1,5 +1,5 @@
 {
-  "baseline_strategy": "cash_buffer_branch_default_monthly_baseline",
+  "baseline_strategy": "tech_pullback_cash_buffer_monthly_baseline",
   "overlay_has_incremental_value": false,
   "best_overlay_family": "daily_name_level_trim_overlay",
   "best_overlay_strategy": "daily_name_level_trim_overlay__20dma_half_confirm2",

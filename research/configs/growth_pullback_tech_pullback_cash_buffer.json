@@ -1,9 +1,9 @@
 {
-  "role": "cash_buffer_branch_default",
+  "role": "tech_pullback_cash_buffer",
   "status": "research_only",
   "strategy": "growth_pullback_systematic_v1",
   "branch_name": "cash_buffer_branch",
-  "name": "cash_buffer_branch_default",
+  "name": "tech_pullback_cash_buffer",
   "previous_candidate_name": "cash_buffer_a__hb10__base__adv50",
   "family": "tech_heavy_pullback",
   "universe": "tech_heavy",

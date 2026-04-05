@@ -19,7 +19,7 @@ ROLLBACK_STRATEGY_PROFILE = DEFAULT_STRATEGY_PROFILE
 # 平台启用状态从策略定义层拆出来；当前只让 IBKR 明确启用这三条。
 IBKR_ENABLED_PROFILES = frozenset(
     {
-        "cash_buffer_branch_default",
+        "tech_pullback_cash_buffer",
         "global_etf_rotation",
         "russell_1000_multi_factor_defensive",
     }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Research-only daily overlay backtest for cash_buffer_branch_default."""
+"""Research-only daily overlay backtest for tech_pullback_cash_buffer."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ import backtest_stock_alpha_v1_robustness as robust  # noqa: E402
 
 DEFAULT_RESULTS_DIR = SCRIPT_DIR / "results"
 DEFAULT_CONFIGS_DIR = SCRIPT_DIR / "configs"
-DEFAULT_BASELINE_CONFIG_PATH = DEFAULT_CONFIGS_DIR / "growth_pullback_cash_buffer_branch_default.json"
+DEFAULT_BASELINE_CONFIG_PATH = DEFAULT_CONFIGS_DIR / "growth_pullback_tech_pullback_cash_buffer.json"
 DEFAULT_QQQ_PLUS_RESULTS_PATH = DEFAULT_RESULTS_DIR / "stock_alpha_v1_1_spec_lock.csv"
 QQQ_PLUS_CURRENT_DEFAULT_SCENARIO = "v11_liquid_50m_norm_universe_cross_sectional_h12_cap8_sector30_hold10"
 MAIN_COST_BPS = 5.0
@@ -107,7 +107,7 @@ def load_baseline_spec(path: Path) -> BaselineSpec:
     return BaselineSpec(
         config=config,
         risk_on_exposure=float(payload["exposures"]["risk_on"]),
-        name="cash_buffer_branch_default_monthly_baseline",
+        name="tech_pullback_cash_buffer_monthly_baseline",
         config_payload=payload,
     )
 
@@ -117,7 +117,7 @@ def build_baseline_candidate(spec: BaselineSpec) -> v12.GeometryCandidate:
         spec.name,
         spec.config,
         risk_on_exposure=spec.risk_on_exposure,
-        note="Monthly baseline from canonical cash_buffer_branch_default; month-start chooses names, non-rebalance days are no-op.",
+        note="Monthly baseline from canonical tech_pullback_cash_buffer; month-start chooses names, non-rebalance days are no-op.",
     )
 
 

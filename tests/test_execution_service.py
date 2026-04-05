@@ -51,7 +51,7 @@ def test_execute_rebalance_submits_limit_buy_for_underweight_position(monkeypatc
         order_intent_cls=OrderIntent,
         translator=translate,
         strategy_symbols=["VOO", "BIL"],
-        strategy_profile="cash_buffer_branch_default",
+        strategy_profile="tech_pullback_cash_buffer",
         signal_metadata={
             "regime": "risk_on",
             "breadth_ratio": 0.6,
@@ -98,7 +98,7 @@ def test_execute_rebalance_skips_when_pending_orders_exist():
         order_intent_cls=OrderIntent,
         translator=translate,
         strategy_symbols=["VOO"],
-        strategy_profile="cash_buffer_branch_default",
+        strategy_profile="tech_pullback_cash_buffer",
         signal_metadata={},
         dry_run_only=False,
         cash_reserve_ratio=0.03,
@@ -107,7 +107,7 @@ def test_execute_rebalance_skips_when_pending_orders_exist():
         sell_settle_delay_sec=0,
     )
 
-    assert trade_logs == ["pending_orders_detected profile=cash_buffer_branch_default symbols=VOO"]
+    assert trade_logs == ["pending_orders_detected profile=tech_pullback_cash_buffer symbols=VOO"]
 
 
 def test_execute_rebalance_blocks_same_day_repeat_via_execution_lock(tmp_path, monkeypatch):
@@ -132,7 +132,7 @@ def test_execute_rebalance_blocks_same_day_repeat_via_execution_lock(tmp_path, m
         order_intent_cls=OrderIntent,
         translator=translate,
         strategy_symbols=["VOO", "BOXX"],
-        strategy_profile="cash_buffer_branch_default",
+        strategy_profile="tech_pullback_cash_buffer",
         account_group="default",
         service_name="ibkr-paper",
         account_ids=("DU123",),
@@ -207,7 +207,7 @@ def test_execute_rebalance_skips_when_same_day_fills_detected():
         order_intent_cls=OrderIntent,
         translator=translate,
         strategy_symbols=["VOO"],
-        strategy_profile="cash_buffer_branch_default",
+        strategy_profile="tech_pullback_cash_buffer",
         account_group="default",
         service_name="ibkr-paper",
         account_ids=("DU123",),
@@ -248,7 +248,7 @@ def test_execute_rebalance_returns_structured_summary_when_requested(monkeypatch
         order_intent_cls=OrderIntent,
         translator=translate,
         strategy_symbols=["VOO", "BOXX"],
-        strategy_profile="cash_buffer_branch_default",
+        strategy_profile="tech_pullback_cash_buffer",
         account_group="default",
         service_name="ibkr-paper",
         account_ids=("DU123",),

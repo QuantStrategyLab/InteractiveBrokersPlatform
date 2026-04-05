@@ -1,5 +1,5 @@
 {
-  "branch_name": "cash_buffer_branch_default",
+  "branch_name": "tech_pullback_cash_buffer",
   "previous_candidate_name": "cash_buffer_a__hb10__base__adv50",
   "role": "cash-buffered parallel branch",
   "strategy_family": "tech_heavy_pullback",
@@ -50,7 +50,7 @@
       "OOS CAGR and IR improved with a simple hold_bonus increase from 0.05 to 0.10.",
       "Deployment semantics remain perfectly aligned with the written spec."
     ],
-    "recommendation": "cash_buffer_branch_default",
+    "recommendation": "tech_pullback_cash_buffer",
     "oos_cagr": 0.34068001857447316,
     "oos_cagr_minus_qqq": 0.23873167970694698,
     "oos_max_drawdown": -0.19176289938838953,

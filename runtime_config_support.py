@@ -157,12 +157,12 @@ def resolve_strategy_config_path(
     if path is not None:
         return path, "env"
 
-    if str(strategy_profile).strip().lower() == "cash_buffer_branch_default":
+    if str(strategy_profile).strip().lower() == "tech_pullback_cash_buffer":
         bundled = (
             Path(__file__).resolve().parent
             / "research"
             / "configs"
-            / "growth_pullback_cash_buffer_branch_default.json"
+            / "growth_pullback_tech_pullback_cash_buffer.json"
         )
         if bundled.exists():
             return str(bundled), "bundled_canonical_default"

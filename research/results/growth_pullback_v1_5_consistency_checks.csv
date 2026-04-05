@@ -3,8 +3,8 @@ geometry_capacity_matches_target,True,"theoretical_capacity=0.8000, risk_on_targ
 risk_on_realized_matches_target,True,"realized=0.8000, target=0.8000"
 soft_defense_realized_matches_target,True,"realized=0.6000, target=0.6000"
 hard_defense_realized_zero,True,"realized=0.0000, target=0.0000"
-config_name_matches_canonical_name,True,"config_name=cash_buffer_branch_default, canonical_name=cash_buffer_branch_default"
+config_name_matches_canonical_name,True,"config_name=tech_pullback_cash_buffer, canonical_name=tech_pullback_cash_buffer"
 previous_candidate_mapping_preserved,True,previous_candidate_name=cash_buffer_a__hb10__base__adv50
 canonical_metrics_match_previous_candidate,True,"canonical_oos=0.340680, prev_oos=0.340680; canonical_2022=-0.120121, prev_2022=-0.120121"
-recommendation_matches_branch_default_role,True,recommendation=cash_buffer_branch_default
+recommendation_matches_branch_default_role,True,recommendation=tech_pullback_cash_buffer
 manifest_role_matches_default_branch,True,manifest_role=cash-buffered parallel branch

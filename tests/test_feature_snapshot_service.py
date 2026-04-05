@@ -94,9 +94,9 @@ class FeatureSnapshotServiceTest(unittest.TestCase):
                 run_as_of="2026-04-01",
                 required_columns=("as_of", "symbol", "sector", "mom_6_1"),
                 require_manifest=True,
-                expected_strategy_profile="cash_buffer_branch_default",
-                expected_config_name="cash_buffer_branch_default",
-                expected_contract_version="cash_buffer_branch_default.feature_snapshot.v1",
+                expected_strategy_profile="tech_pullback_cash_buffer",
+                expected_config_name="tech_pullback_cash_buffer",
+                expected_contract_version="tech_pullback_cash_buffer.feature_snapshot.v1",
             )
 
         self.assertIsNone(result.frame)
@@ -111,14 +111,14 @@ class FeatureSnapshotServiceTest(unittest.TestCase):
             snapshot_path = Path(tmp_dir) / "snapshot.csv"
             config_path = Path(tmp_dir) / "config.json"
             snapshot_path.write_text("as_of,symbol,sector,mom_6_1\n2026-03-31,AAA,tech,0.1\n", encoding="utf-8")
-            config_path.write_text(json.dumps({"name": "cash_buffer_branch_default"}), encoding="utf-8")
+            config_path.write_text(json.dumps({"name": "tech_pullback_cash_buffer"}), encoding="utf-8")
             manifest_path = Path(f"{snapshot_path}.manifest.json")
             manifest_path.write_text(
                 json.dumps(
                     {
-                        "contract_version": "cash_buffer_branch_default.feature_snapshot.v1",
-                        "strategy_profile": "cash_buffer_branch_default",
-                        "config_name": "cash_buffer_branch_default",
+                        "contract_version": "tech_pullback_cash_buffer.feature_snapshot.v1",
+                        "strategy_profile": "tech_pullback_cash_buffer",
+                        "config_name": "tech_pullback_cash_buffer",
                         "config_path": str(config_path),
                         "config_sha256": _sha256_file(config_path),
                         "snapshot_path": str(snapshot_path),
@@ -134,16 +134,16 @@ class FeatureSnapshotServiceTest(unittest.TestCase):
                 run_as_of="2026-04-01",
                 required_columns=("as_of", "symbol", "sector", "mom_6_1"),
                 require_manifest=True,
-                expected_strategy_profile="cash_buffer_branch_default",
-                expected_config_name="cash_buffer_branch_default",
+                expected_strategy_profile="tech_pullback_cash_buffer",
+                expected_config_name="tech_pullback_cash_buffer",
                 expected_config_path=str(config_path),
-                expected_contract_version="cash_buffer_branch_default.feature_snapshot.v1",
+                expected_contract_version="tech_pullback_cash_buffer.feature_snapshot.v1",
             )
 
         self.assertIsNotNone(result.frame)
         self.assertEqual(result.metadata["snapshot_guard_decision"], "proceed")
-        self.assertEqual(result.metadata["snapshot_manifest_strategy_profile"], "cash_buffer_branch_default")
-        self.assertEqual(result.metadata["snapshot_manifest_config_name"], "cash_buffer_branch_default")
+        self.assertEqual(result.metadata["snapshot_manifest_strategy_profile"], "tech_pullback_cash_buffer")
+        self.assertEqual(result.metadata["snapshot_manifest_config_name"], "tech_pullback_cash_buffer")
 
 
 if __name__ == "__main__":

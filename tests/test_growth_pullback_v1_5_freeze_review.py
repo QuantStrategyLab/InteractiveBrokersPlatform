@@ -25,11 +25,11 @@ def test_canonical_config_export(tmp_path):
     center = module.gp.load_spec_config(CONFIGS_DIR / module.v14.CENTER_CONFIG_FILENAME)
     spec = module.build_canonical_spec(center, 'cash_buffer_a__hb10__base__adv50')
 
-    out = tmp_path / 'growth_pullback_cash_buffer_branch_default.json'
+    out = tmp_path / 'growth_pullback_tech_pullback_cash_buffer.json'
     module.save_canonical_spec(out, spec)
     payload = json.loads(out.read_text(encoding='utf-8'))
 
-    assert payload['name'] == 'cash_buffer_branch_default'
+    assert payload['name'] == 'tech_pullback_cash_buffer'
     assert payload['previous_candidate_name'] == 'cash_buffer_a__hb10__base__adv50'
     assert payload['holdings_count'] == 8
     assert payload['single_name_cap'] == 0.10
@@ -56,10 +56,10 @@ def test_manifest_fields_non_empty():
             'return_2022': -0.120121,
         },
         qqq_plus_oos=pd.Series({'CAGR': 0.33401}),
-        recommendation_level='cash_buffer_branch_default',
+        recommendation_level='tech_pullback_cash_buffer',
     )
 
-    assert manifest['branch_name'] == 'cash_buffer_branch_default'
+    assert manifest['branch_name'] == 'tech_pullback_cash_buffer'
     assert manifest['role']
     assert manifest['intended_use']
     assert manifest['why_this_is_a_cash_buffer_branch']
@@ -98,7 +98,7 @@ def test_geometry_and_deployment_consistency_checks():
         v14_summary=v14_summary,
         previous_candidate_name='cash_buffer_a__hb10__base__adv50',
         canonical_summary=canonical_summary,
-        recommendation_level='cash_buffer_branch_default',
+        recommendation_level='tech_pullback_cash_buffer',
         manifest=manifest,
     )
 
@@ -123,7 +123,7 @@ def test_recommendation_logic_defaults_but_not_frozen():
         ]),
     )
 
-    assert recommendation['research_recommendation'] == 'cash_buffer_branch_default'
+    assert recommendation['research_recommendation'] == 'tech_pullback_cash_buffer'
     assert recommendation['keep_parallel_branch'] is True
     assert recommendation['role_vs_qqq_plus_current_default'] == '并行分支'
     assert 'average_names_held_still_low' in recommendation['frozen_blockers']
@@ -135,7 +135,7 @@ def test_result_export_not_empty(tmp_path):
     module.write_markdown_report(
         md_path,
         canonical_payload={
-            'name': 'cash_buffer_branch_default',
+            'name': 'tech_pullback_cash_buffer',
             'previous_candidate_name': 'cash_buffer_a__hb10__base__adv50',
             'holdings_count': 8,
             'single_name_cap': 0.10,
@@ -143,7 +143,7 @@ def test_result_export_not_empty(tmp_path):
         },
         comparison_df=pd.DataFrame([
             {
-                'strategy': 'cash_buffer_branch_default',
+                'strategy': 'tech_pullback_cash_buffer',
                 'role': 'cash-buffered parallel branch',
                 'oos_cagr': 0.34068,
             }
@@ -152,16 +152,16 @@ def test_result_export_not_empty(tmp_path):
             {'check': 'geometry_capacity_matches_target', 'passed': True, 'detail': 'ok'}
         ]),
         recommendation={
-            'research_recommendation': 'cash_buffer_branch_default',
+            'research_recommendation': 'tech_pullback_cash_buffer',
             'previous_candidate_name': 'cash_buffer_a__hb10__base__adv50',
-            'branch_name': 'cash_buffer_branch_default',
+            'branch_name': 'tech_pullback_cash_buffer',
             'role_vs_qqq_plus_current_default': '并行分支',
             'keep_parallel_branch': True,
             'reason': 'test',
             'frozen_blockers': ['average_names_held_still_low'],
         },
         manifest={
-            'branch_name': 'cash_buffer_branch_default',
+            'branch_name': 'tech_pullback_cash_buffer',
             'role': 'cash-buffered parallel branch',
             'previous_candidate_name': 'cash_buffer_a__hb10__base__adv50',
             'benchmark': 'QQQ',

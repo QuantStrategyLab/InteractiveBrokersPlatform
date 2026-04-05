@@ -85,7 +85,7 @@
 | QQQ | 2023+ | 0.282076 | -0.227683 | 0.000000 | 1.000000 | 1.000000 | 1.000000 | -0.000000 |  | 1.000000 | 1.000000 |
 
 ## Recommendation
-- research_recommendation=cash_buffer_branch_default
+- research_recommendation=tech_pullback_cash_buffer
 - selected_refined_default=cash_buffer_a__hb10__base__adv50
 - keep_parallel_branch=True
 - role_vs_qqq_plus_current_default=并行分支

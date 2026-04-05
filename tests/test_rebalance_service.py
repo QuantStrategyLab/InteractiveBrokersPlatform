@@ -76,7 +76,7 @@ def test_run_strategy_core_writes_reconciliation_record(tmp_path):
             False,
             "breadth=41.0%",
             {
-                "strategy_profile": "cash_buffer_branch_default",
+                "strategy_profile": "tech_pullback_cash_buffer",
                 "managed_symbols": ("AAA", "BOXX"),
                 "status_icon": "🧲",
                 "trade_date": "2026-04-01",
@@ -120,6 +120,6 @@ def test_run_strategy_core_writes_reconciliation_record(tmp_path):
 
     assert result == "OK - executed"
     payload = json.loads(output_path.read_text(encoding="utf-8"))
-    assert payload["strategy_profile"] == "cash_buffer_branch_default"
+    assert payload["strategy_profile"] == "tech_pullback_cash_buffer"
     assert payload["snapshot_as_of"] == "2026-03-31"
     assert payload["orders_submitted"][0]["symbol"] == "AAA"

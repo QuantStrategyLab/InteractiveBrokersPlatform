@@ -130,14 +130,14 @@ def test_load_platform_runtime_settings_rejects_unknown_strategy_profile(monkeyp
 def test_platform_supported_profiles_are_filtered_by_registry():
     assert get_supported_profiles_for_platform(IBKR_PLATFORM) == frozenset(
         {
-            "cash_buffer_branch_default",
+            "tech_pullback_cash_buffer",
             "global_etf_rotation",
             "russell_1000_multi_factor_defensive",
         }
     )
 
 
-def test_load_platform_runtime_settings_accepts_cash_buffer_alias(monkeypatch):
+def test_load_platform_runtime_settings_accepts_tech_pullback_cash_buffer(monkeypatch):
     monkeypatch.setenv("STRATEGY_PROFILE", "tech_pullback_cash_buffer")
     monkeypatch.setenv("ACCOUNT_GROUP", "default")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
@@ -145,7 +145,7 @@ def test_load_platform_runtime_settings_accepts_cash_buffer_alias(monkeypatch):
 
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
-    assert settings.strategy_profile == "cash_buffer_branch_default"
+    assert settings.strategy_profile == "tech_pullback_cash_buffer"
 
 
 def test_platform_profile_matrix_marks_default_and_rollback():
@@ -153,7 +153,7 @@ def test_platform_profile_matrix_marks_default_and_rollback():
     by_profile = {row["canonical_profile"]: row for row in rows}
     assert by_profile["global_etf_rotation"]["is_default"] is True
     assert by_profile["global_etf_rotation"]["is_rollback"] is True
-    assert by_profile["cash_buffer_branch_default"]["display_name"] == "Tech Pullback Cash Buffer"
+    assert by_profile["tech_pullback_cash_buffer"]["display_name"] == "Tech Pullback Cash Buffer"
 
 
 
@@ -168,8 +168,8 @@ def test_load_platform_runtime_settings_reads_feature_snapshot_path(monkeypatch)
     assert settings.feature_snapshot_path == "/tmp/r1000-latest.csv"
 
 
-def test_load_platform_runtime_settings_reads_cash_buffer_runtime_config(monkeypatch):
-    monkeypatch.setenv("STRATEGY_PROFILE", "cash_buffer_branch_default")
+def test_load_platform_runtime_settings_reads_tech_pullback_runtime_config(monkeypatch):
+    monkeypatch.setenv("STRATEGY_PROFILE", "tech_pullback_cash_buffer")
     monkeypatch.setenv("ACCOUNT_GROUP", "default")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
     monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "/tmp/cash-buffer.csv")
@@ -188,8 +188,8 @@ def test_load_platform_runtime_settings_reads_cash_buffer_runtime_config(monkeyp
     assert settings.dry_run_only is True
 
 
-def test_load_platform_runtime_settings_uses_bundled_cash_buffer_config_when_env_missing(monkeypatch):
-    monkeypatch.setenv("STRATEGY_PROFILE", "cash_buffer_branch_default")
+def test_load_platform_runtime_settings_uses_bundled_tech_pullback_config_when_env_missing(monkeypatch):
+    monkeypatch.setenv("STRATEGY_PROFILE", "tech_pullback_cash_buffer")
     monkeypatch.setenv("ACCOUNT_GROUP", "default")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
     monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "/tmp/cash-buffer.csv")
@@ -199,7 +199,7 @@ def test_load_platform_runtime_settings_uses_bundled_cash_buffer_config_when_env
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
     assert settings.strategy_config_path is not None
-    assert settings.strategy_config_path.endswith("growth_pullback_cash_buffer_branch_default.json")
+    assert settings.strategy_config_path.endswith("growth_pullback_tech_pullback_cash_buffer.json")
     assert settings.strategy_config_source == "bundled_canonical_default"
 
 
@@ -295,3 +295,12 @@ def test_parse_account_group_configs_supports_top_level_mapping():
     assert configs["default"].ib_client_id == 4
     assert configs["default"].account_ids == ("U1",)
     assert configs["default"].service_name == "svc"
+
+
+def test_load_platform_runtime_settings_rejects_legacy_cash_buffer_profile(monkeypatch):
+    monkeypatch.setenv("STRATEGY_PROFILE", "cash_buffer_branch_default")
+    monkeypatch.setenv("ACCOUNT_GROUP", "default")
+    monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
+
+    with pytest.raises(ValueError, match="Unsupported STRATEGY_PROFILE"):
+        load_platform_runtime_settings(project_id_resolver=lambda: "project-1")

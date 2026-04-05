@@ -115,7 +115,7 @@ def test_freeze_decision_logic_can_freeze_current_default():
         all_candidates=candidate_table,
     )
 
-    assert rec['research_recommendation'] == 'cash_buffer_branch_default_frozen'
+    assert rec['research_recommendation'] == 'tech_pullback_cash_buffer_frozen'
     assert rec['keep_parallel_branch'] is True
     assert rec['role_vs_qqq_plus_current_default'] == '并行分支'
 
@@ -154,7 +154,7 @@ def test_result_export_not_empty(tmp_path):
             }
         ]),
         recommendation={
-            'research_recommendation': 'cash_buffer_branch_default',
+            'research_recommendation': 'tech_pullback_cash_buffer',
             'selected_refined_default': 'coherent_cash_buffer_branch',
             'keep_parallel_branch': True,
             'role_vs_qqq_plus_current_default': '并行分支',

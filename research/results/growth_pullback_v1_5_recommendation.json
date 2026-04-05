@@ -1,6 +1,6 @@
 {
-  "research_recommendation": "cash_buffer_branch_default",
-  "branch_name": "cash_buffer_branch_default",
+  "research_recommendation": "tech_pullback_cash_buffer",
+  "branch_name": "tech_pullback_cash_buffer",
   "previous_candidate_name": "cash_buffer_a__hb10__base__adv50",
   "reason": "canonical naming and branch role are now clear, but avg names / 2022 profile / recent micro-adjustment mean it should stop at default, not frozen",
   "frozen_blockers": [

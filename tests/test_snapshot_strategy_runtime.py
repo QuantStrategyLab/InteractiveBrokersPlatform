@@ -22,9 +22,9 @@ def _write_cash_buffer_manifest(snapshot_path: Path, config_path: Path, *, snaps
         json.dumps(
             {
                 "manifest_type": "feature_snapshot",
-                "contract_version": "cash_buffer_branch_default.feature_snapshot.v1",
-                "strategy_profile": "cash_buffer_branch_default",
-                "config_name": "cash_buffer_branch_default",
+                "contract_version": "tech_pullback_cash_buffer.feature_snapshot.v1",
+                "strategy_profile": "tech_pullback_cash_buffer",
+                "config_name": "tech_pullback_cash_buffer",
                 "config_path": str(config_path),
                 "config_sha256": _sha256_file(config_path),
                 "snapshot_path": str(snapshot_path),
@@ -92,11 +92,11 @@ def test_compute_signals_uses_feature_snapshot_for_russell_1000(strategy_module_
     assert result[4]["snapshot_guard_decision"] == "proceed"
 
 
-def test_compute_signals_loads_cash_buffer_branch_default_runtime(strategy_module_factory, monkeypatch, tmp_path):
+def test_compute_signals_loads_tech_pullback_cash_buffer_runtime(strategy_module_factory, monkeypatch, tmp_path):
     pytest.importorskip("pandas")
 
     snapshot_path = tmp_path / "cash_buffer_snapshot.csv"
-    config_path = tmp_path / "cash_buffer_branch_default.json"
+    config_path = tmp_path / "tech_pullback_cash_buffer.json"
     snapshot_path.write_text(
         "\n".join(
             [
@@ -120,7 +120,7 @@ def test_compute_signals_loads_cash_buffer_branch_default_runtime(strategy_modul
     config_path.write_text(
         json.dumps(
             {
-                "name": "cash_buffer_branch_default",
+                "name": "tech_pullback_cash_buffer",
                 "family": "tech_heavy_pullback",
                 "branch_role": "cash-buffered parallel branch",
                 "benchmark_symbol": "QQQ",
@@ -143,7 +143,7 @@ def test_compute_signals_loads_cash_buffer_branch_default_runtime(strategy_modul
     _write_cash_buffer_manifest(snapshot_path, config_path, snapshot_as_of="2026-03-31")
 
     module = strategy_module_factory(
-        STRATEGY_PROFILE="cash_buffer_branch_default",
+        STRATEGY_PROFILE="tech_pullback_cash_buffer",
         IBKR_FEATURE_SNAPSHOT_PATH=str(snapshot_path),
         IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH=str(Path(f"{snapshot_path}.manifest.json")),
         IBKR_STRATEGY_CONFIG_PATH=str(config_path),
@@ -152,7 +152,7 @@ def test_compute_signals_loads_cash_buffer_branch_default_runtime(strategy_modul
     result = module.compute_signals(None, {"AAPL"})
 
     assert result[0]["BOXX"] == pytest.approx(0.2)
-    assert result[4]["strategy_profile"] == "cash_buffer_branch_default"
+    assert result[4]["strategy_profile"] == "tech_pullback_cash_buffer"
     assert result[4]["strategy_config_source"] in {"env", "external_config"}
     assert result[4]["realized_stock_weight"] == pytest.approx(0.8)
     assert result[4]["snapshot_guard_decision"] == "proceed"
@@ -161,7 +161,7 @@ def test_compute_signals_loads_cash_buffer_branch_default_runtime(strategy_modul
 
 def test_compute_signals_fail_closes_when_snapshot_missing(strategy_module_factory):
     module = strategy_module_factory(
-        STRATEGY_PROFILE="cash_buffer_branch_default",
+        STRATEGY_PROFILE="tech_pullback_cash_buffer",
         IBKR_FEATURE_SNAPSHOT_PATH="/tmp/definitely-missing-cash-buffer-snapshot.csv",
         IBKR_RUN_AS_OF_DATE="2026-04-01",
     )
@@ -188,7 +188,7 @@ def test_compute_signals_fail_closes_when_snapshot_is_stale(strategy_module_fact
     )
 
     module = strategy_module_factory(
-        STRATEGY_PROFILE="cash_buffer_branch_default",
+        STRATEGY_PROFILE="tech_pullback_cash_buffer",
         IBKR_FEATURE_SNAPSHOT_PATH=str(snapshot_path),
         IBKR_RUN_AS_OF_DATE="2026-04-05",
     )
@@ -202,7 +202,7 @@ def test_compute_signals_fail_closes_when_snapshot_is_stale(strategy_module_fact
 
 def test_compute_signals_fail_closes_when_manifest_missing(strategy_module_factory, tmp_path):
     snapshot_path = tmp_path / "snapshot.csv"
-    config_path = tmp_path / "cash_buffer_branch_default.json"
+    config_path = tmp_path / "tech_pullback_cash_buffer.json"
     snapshot_path.write_text(
         "\n".join(
             [
@@ -217,7 +217,7 @@ def test_compute_signals_fail_closes_when_manifest_missing(strategy_module_facto
     config_path.write_text(
         json.dumps(
             {
-                "name": "cash_buffer_branch_default",
+                "name": "tech_pullback_cash_buffer",
                 "family": "tech_heavy_pullback",
                 "branch_role": "cash-buffered parallel branch",
                 "benchmark_symbol": "QQQ",
@@ -239,7 +239,7 @@ def test_compute_signals_fail_closes_when_manifest_missing(strategy_module_facto
     )
 
     module = strategy_module_factory(
-        STRATEGY_PROFILE="cash_buffer_branch_default",
+        STRATEGY_PROFILE="tech_pullback_cash_buffer",
         IBKR_FEATURE_SNAPSHOT_PATH=str(snapshot_path),
         IBKR_STRATEGY_CONFIG_PATH=str(config_path),
         IBKR_RUN_AS_OF_DATE="2026-04-01",

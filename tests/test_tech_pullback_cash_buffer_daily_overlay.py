@@ -6,7 +6,7 @@ import pandas as pd
 
 
 def load_module():
-    path = Path(__file__).resolve().parents[1] / 'research' / 'backtest_cash_buffer_branch_daily_overlay.py'
+    path = Path(__file__).resolve().parents[1] / 'research' / 'backtest_tech_pullback_cash_buffer_daily_overlay.py'
     spec = importlib.util.spec_from_file_location('backtest_cash_buffer_branch_daily_overlay_test', path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -71,7 +71,7 @@ def test_result_export_not_empty(tmp_path):
     module = load_module()
     summary_path = tmp_path / 'summary.md'
     baseline_payload = {
-        'name': 'cash_buffer_branch_default',
+        'name': 'tech_pullback_cash_buffer',
         'family': 'tech_heavy_pullback',
         'exposures': {'risk_on': 0.8, 'soft_defense': 0.6, 'hard_defense': 0.0},
         'holdings_count': 8,
@@ -81,7 +81,7 @@ def test_result_export_not_empty(tmp_path):
         'benchmark_symbol': 'QQQ',
     }
     baseline_row = pd.Series({
-        'strategy': 'cash_buffer_branch_default_monthly_baseline',
+        'strategy': 'tech_pullback_cash_buffer_monthly_baseline',
         'CAGR': 0.25,
         'Max Drawdown': -0.2,
         'Information Ratio vs QQQ': 0.8,

@@ -1,6 +1,8 @@
 import sys
 import types
 
+import pytest
+
 from strategy_loader import load_signal_logic_module
 
 
@@ -28,7 +30,7 @@ def test_load_signal_logic_module_resolves_russell_1000_multi_factor_defensive()
     assert module.SIGNAL_SOURCE == "feature_snapshot"
 
 
-def test_load_signal_logic_module_resolves_cash_buffer_branch_default(monkeypatch):
+def test_load_signal_logic_module_resolves_tech_pullback_cash_buffer(monkeypatch):
     try:
         import pandas  # noqa: F401
     except ModuleNotFoundError:
@@ -37,26 +39,24 @@ def test_load_signal_logic_module_resolves_cash_buffer_branch_default(monkeypatc
     market_calendars_module = types.ModuleType("pandas_market_calendars")
     market_calendars_module.get_calendar = lambda name: None
     monkeypatch.setitem(sys.modules, "pandas_market_calendars", market_calendars_module)
-    sys.modules.pop("us_equity_strategies.strategies.cash_buffer_branch_default", None)
-
-    module = load_signal_logic_module("cash_buffer_branch_default")
-
-    assert module.__name__ == "us_equity_strategies.strategies.cash_buffer_branch_default"
-    assert module.SIGNAL_SOURCE == "feature_snapshot"
-
-
-def test_load_signal_logic_module_resolves_cash_buffer_alias(monkeypatch):
-    try:
-        import pandas  # noqa: F401
-    except ModuleNotFoundError:
-        return
-
-    market_calendars_module = types.ModuleType("pandas_market_calendars")
-    market_calendars_module.get_calendar = lambda name: None
-    monkeypatch.setitem(sys.modules, "pandas_market_calendars", market_calendars_module)
-    sys.modules.pop("us_equity_strategies.strategies.cash_buffer_branch_default", None)
+    sys.modules.pop("us_equity_strategies.strategies.tech_pullback_cash_buffer", None)
 
     module = load_signal_logic_module("tech_pullback_cash_buffer")
 
-    assert module.__name__ == "us_equity_strategies.strategies.cash_buffer_branch_default"
+    assert module.__name__ == "us_equity_strategies.strategies.tech_pullback_cash_buffer"
     assert module.SIGNAL_SOURCE == "feature_snapshot"
+
+
+def test_load_signal_logic_module_rejects_legacy_cash_buffer_profile(monkeypatch):
+    try:
+        import pandas  # noqa: F401
+    except ModuleNotFoundError:
+        return
+
+    market_calendars_module = types.ModuleType("pandas_market_calendars")
+    market_calendars_module.get_calendar = lambda name: None
+    monkeypatch.setitem(sys.modules, "pandas_market_calendars", market_calendars_module)
+    sys.modules.pop("us_equity_strategies.strategies.tech_pullback_cash_buffer", None)
+
+    with pytest.raises(ValueError, match="Unsupported STRATEGY_PROFILE"):
+        load_signal_logic_module("cash_buffer_branch_default")
