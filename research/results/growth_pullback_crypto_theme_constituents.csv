@@ -1,0 +1,10 @@
+symbol,theme_bucket,reason,present_in_iwb_proxy,first_seen_start_date
+COIN,exchange_broker,Coinbase: spot + institutional crypto exchange / broker,True,2022-06-30
+MSTR,btc_treasury_proxy,MicroStrategy/Strategy: listed BTC treasury proxy,True,2024-06-28
+HOOD,broker,Robinhood: retail broker with material crypto trading exposure,True,2022-06-30
+SQ,payments_wallet,Block historical ticker SQ: Cash App / bitcoin exposure,True,2018-01-31
+XYZ,payments_wallet,Block current ticker XYZ: Cash App / bitcoin exposure,True,2025-01-31
+PYPL,payments_wallet,PayPal: crypto trading / wallet / stablecoin related initiatives,True,2018-01-31
+IBKR,broker,Interactive Brokers: access rails for crypto trading,True,2018-01-31
+CME,exchange_infra,CME: listed crypto futures / institutional market infrastructure,True,2018-01-31
+CBOE,exchange_infra,Cboe: crypto ETF / options market structure exposure,True,2018-01-31

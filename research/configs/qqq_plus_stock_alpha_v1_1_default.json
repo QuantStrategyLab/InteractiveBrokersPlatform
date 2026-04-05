@@ -1,0 +1,29 @@
+{
+  "role": "default_frozen_spec",
+  "strategy": "qqq_plus_stock_alpha_v1",
+  "status": "research_only",
+  "name": "v11_liquid_50m_norm_universe_cross_sectional_h12_cap8_sector30_hold10",
+  "universe_filter": "liquid_50m",
+  "min_adv20_usd": 50000000.0,
+  "leadership_only": false,
+  "normalization": "universe_cross_sectional",
+  "holdings_count": 12,
+  "single_name_cap": 0.08,
+  "sector_cap": 0.3,
+  "hold_bonus": 0.1,
+  "regime": "qqq_breadth",
+  "benchmark_symbol": "QQQ",
+  "breadth_mode": "broad",
+  "breadth_symbols": [],
+  "exposures": {
+    "risk_on": 1.0,
+    "soft_defense": 0.6,
+    "hard_defense": 0.0
+  },
+  "breadth_thresholds": {
+    "soft": 0.55,
+    "hard": 0.35
+  },
+  "residual_proxy": "simple_excess_return_vs_QQQ",
+  "cost_assumption_bps_one_way": 5.0
+}

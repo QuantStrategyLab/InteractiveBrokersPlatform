@@ -1,0 +1,28 @@
+{
+  "current_default": "coherent_cash_buffer_branch",
+  "selected_refined_default": "cash_buffer_a__hb10__base__adv50",
+  "full_deployment_reference": "coherent_full_deployment_branch",
+  "research_recommendation": "cash_buffer_branch_default",
+  "keep_parallel_branch": true,
+  "role_vs_qqq_plus_current_default": "并行分支",
+  "reason": "a refined honest cash-buffer candidate is strong enough to act as the branch default, but the spec is not fully frozen yet",
+  "checks": {
+    "best_is_current_default": false,
+    "performance_ok": true,
+    "honest_ok": true,
+    "occupancy_ok": false,
+    "concentration_ok": true,
+    "stable_margin": false,
+    "no_material_gain_over_current": true,
+    "regime_micro_tuning_helped_2022": false,
+    "selected_oos_cagr_minus_qqq": 0.23873167970694564,
+    "selected_2022": -0.12012100392137592,
+    "selected_oos_max_drawdown": -0.19176289938838953,
+    "selected_annual_turnover": 2.6466073207171315,
+    "selected_avg_names_held": 5.898989898989899,
+    "selected_avg_top3_stock_weight": 0.2098484848484849,
+    "selected_risk_on_fill_rate": 1.0,
+    "selected_deployment_honesty_score": 0.9999999999999999,
+    "qqq_plus_oos_cagr": 0.3340103912486361
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "original_gate_previous_round": {
+    "recommendation": "no_shadow_tracking",
+    "reason": "fails at least one promotion gate",
+    "oos_positive_rolling_alpha_ratio": 1.0,
+    "oos_cagr_minus_qqq_5bps": 0.1078005496113359,
+    "oos_max_drawdown": -0.2995329938075524,
+    "annual_turnover": 3.57125249003984,
+    "plateau_200bps_share": 0.18518518518518517,
+    "selected_oos_config": "grid_h12_cap9_sector35_hold15"
+  },
+  "original_gate_v1_1_local_grid": {
+    "recommendation": "no_shadow_tracking",
+    "oos_positive_rolling_alpha_ratio": 1.0,
+    "oos_cagr_minus_qqq_5bps": 0.23206203192857555,
+    "oos_max_drawdown": -0.3237786750219295,
+    "annual_turnover": 3.4402863545816738,
+    "plateau_200bps_share": 0.16203703703703703,
+    "thresholds": {
+      "oos_positive_alpha_ratio_min": 0.6,
+      "oos_cagr_not_below_qqq": true,
+      "oos_max_drawdown_floor": -0.4,
+      "annual_turnover_cap": 5.0,
+      "plateau_200bps_share_min": 0.2
+    }
+  },
+  "v1_1_recommendation": "not_ready",
+  "reason": "edge exists but spec-lock / platform width is still insufficient",
+  "default_frozen_spec": "v11_liquid_50m_norm_universe_cross_sectional_h12_cap8_sector30_hold10",
+  "aggressive_alt_spec": "v11_leadership_liquid_norm_universe_cross_sectional_h12_cap9_sector35_hold10"
+}

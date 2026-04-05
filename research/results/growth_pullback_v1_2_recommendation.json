@@ -1,0 +1,25 @@
+{
+  "center_strategy": "center_current",
+  "stable_neighbor_strategy": "local_stable_neighbor",
+  "explicit_cash_buffer_control": "explicit_cash_buffer_control",
+  "best_overall_score_strategy": "local_stable_neighbor",
+  "selected_geometry_repair_default": "feasible_two_sector_50cap",
+  "research_recommendation": "research_default_candidate",
+  "role_vs_qqq_plus_current_default": "并行分支",
+  "reason": "geometry-repaired version still has edge, but occupancy or concentration still needs more tightening",
+  "checks": {
+    "center_oos_cagr": 0.3155716776716817,
+    "explicit_cash_oos_cagr": 0.24931713805609323,
+    "center_oos_maxdd": -0.1841129708630962,
+    "explicit_cash_oos_maxdd": -0.17735441237777672,
+    "center_vs_explicit_close": false,
+    "best_overall_score_strategy": "local_stable_neighbor",
+    "selected_oos_cagr_minus_qqq": 0.16088767110055557,
+    "selected_oos_max_drawdown": -0.21265920912904945,
+    "selected_risk_on_fill_rate": 1.0,
+    "selected_avg_names_held": 8.848484848484848,
+    "selected_underfilled_month_share": 0.26262626262626265,
+    "selected_avg_top3_stock_weight": 0.16919191919191912,
+    "selected_annual_turnover": 3.512641102257636
+  }
+}

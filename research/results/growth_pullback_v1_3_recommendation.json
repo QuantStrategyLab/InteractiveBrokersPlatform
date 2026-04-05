@@ -1,0 +1,20 @@
+{
+  "center_strategy": "center_current",
+  "selected_cash_branch": "coherent_cash_buffer_branch",
+  "selected_full_deployment_branch": "coherent_full_deployment_branch",
+  "selected_research_default": "coherent_cash_buffer_branch",
+  "research_recommendation": "cash_buffer_branch",
+  "role_vs_qqq_plus_current_default": "并行分支",
+  "reason": "the best honest interpretation is still an explicit cash-buffered tech pullback branch, not a standard full-risk offensive branch",
+  "checks": {
+    "center_is_cash_prototype": true,
+    "selected_oos_cagr_minus_qqq": 0.22887162664596006,
+    "selected_oos_max_drawdown": -0.1917628993883893,
+    "selected_annual_turnover": 2.8254731075697213,
+    "selected_risk_on_fill_rate": 1.0,
+    "selected_deployment_honesty_score": 0.9999999999999999,
+    "selected_avg_names_held": 5.898989898989899,
+    "selected_underfilled_month_share": 0.26262626262626265,
+    "selected_avg_top3_stock_weight": 0.2098484848484849
+  }
+}

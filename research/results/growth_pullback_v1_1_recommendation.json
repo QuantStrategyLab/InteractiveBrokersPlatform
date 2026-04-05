@@ -1,0 +1,29 @@
+{
+  "center_strategy": "tech_heavy_pullback_balanced_focused_qqq_breadth",
+  "selected_local_default": "tech_heavy_pullback_balanced_focused_qqq_breadth__single_name_cap_0p08",
+  "selected_is_center": false,
+  "research_recommendation": "research_default_candidate",
+  "role_vs_qqq_plus_current_default": "并行分支",
+  "reason": "edge is good, but occupancy/concentration or local plateau still needs more tightening",
+  "checks": {
+    "center_avg_selected_count": 6.505050505050505,
+    "selected_avg_selected_count": 6.505050505050505,
+    "selected_share_lt_8": 0.26262626262626265,
+    "selected_avg_top3_stock_weight": 0.1633333333333333,
+    "local_plateau_100bps_share": 0.16666666666666666,
+    "local_plateau_200bps_share": 0.16666666666666666,
+    "selected_oos_cagr_minus_qqq": 0.1828894047201861,
+    "selected_oos_max_drawdown": -0.16377679463430528,
+    "selected_annual_turnover": 2.3646663346613543
+  },
+  "thresholds": {
+    "avg_selected_count_min_for_default": 8.0,
+    "share_lt_8_max_for_default": 0.35,
+    "avg_top3_weight_max_for_default": 0.65,
+    "local_plateau_100bps_min_for_default": 0.4,
+    "local_plateau_200bps_min_for_default": 0.6,
+    "oos_cagr_minus_qqq_min": 0.1,
+    "oos_max_drawdown_floor": -0.3,
+    "annual_turnover_cap": 4.5
+  }
+}

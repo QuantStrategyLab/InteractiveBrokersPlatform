@@ -1,0 +1,59 @@
+{
+  "branch_name": "cash_buffer_branch_default",
+  "previous_candidate_name": "cash_buffer_a__hb10__base__adv50",
+  "role": "cash-buffered parallel branch",
+  "strategy_family": "tech_heavy_pullback",
+  "intended_use": "Research-only parallel stock branch for concentrated tech leaders bought on controlled pullbacks with an explicit 20% cash/BOXX buffer in risk-on.",
+  "benchmark": "QQQ",
+  "universe_semantics": "Two-sector tech-heavy large-cap universe: Information Technology + Communication inside the IWB/Russell proxy universe.",
+  "deployment_semantics": {
+    "holdings_count": 8,
+    "single_name_cap": 0.1,
+    "sector_cap": 0.4,
+    "risk_on_target_stock_weight": 0.8,
+    "soft_defense_target_stock_weight": 0.6,
+    "hard_defense_target_stock_weight": 0.0,
+    "risk_on_realized_stock_weight": 0.7999999999999998,
+    "avg_names_held": 5.898989898989899,
+    "risk_on_fill_rate": 1.0
+  },
+  "why_this_is_a_cash_buffer_branch": [
+    "risk_on target is explicitly 80%, not implicit underinvestment.",
+    "Two-sector 40% cap + 8 names + 10% single cap is geometrically self-consistent at 80% stock.",
+    "The branch keeps a persistent safe-haven sleeve even in risk_on by design, not by accident."
+  ],
+  "why_this_is_not_a_replacement_for_qqq_plus_current_default": [
+    "qqq_plus_current_default remains the main full-risk offensive stock default.",
+    "This branch has lower beta (0.503 OOS) and shallower OOS drawdown, but its 2022 result is still weaker than qqq_plus_current_default.",
+    "The intended role is a lower-beta, cash-buffered tech pullback parallel branch, not the primary offensive default."
+  ],
+  "why_this_is_not_frozen": [
+    "Average names held is still only about 5.90.",
+    "2022 return is still -12.01%, so downside behavior is not clean enough to freeze.",
+    "This round finished naming/packaging, but the upgrade from v1.4 is still just a hold_bonus micro-adjustment."
+  ],
+  "key_risks": [
+    "Two-sector concentration remains high.",
+    "2022 behavior is still materially weaker than qqq_plus_current_default.",
+    "Universe is still the public IWB/Russell proxy, not official PIT constituents.",
+    "Residual momentum is still a simple excess-return proxy vs QQQ."
+  ],
+  "preferred_comparison_set": [
+    "qqq_plus_current_default",
+    "coherent_full_deployment_branch",
+    "russell_1000_multi_factor_defensive",
+    "QQQ"
+  ],
+  "promotion_basis": {
+    "why_promoted_to_branch_default": [
+      "Same honest cash-buffer geometry as v1.3 default branch.",
+      "OOS CAGR and IR improved with a simple hold_bonus increase from 0.05 to 0.10.",
+      "Deployment semantics remain perfectly aligned with the written spec."
+    ],
+    "recommendation": "cash_buffer_branch_default",
+    "oos_cagr": 0.34068001857447316,
+    "oos_cagr_minus_qqq": 0.23873167970694698,
+    "oos_max_drawdown": -0.19176289938838953,
+    "return_2022": -0.12012100392137592
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "role": "research_default_v1_1",
+  "strategy": "growth_pullback_systematic_v1",
+  "status": "research_only",
+  "name": "tech_heavy_pullback_balanced_focused_qqq_breadth__single_name_cap_0p08",
+  "family": "tech_heavy_pullback",
+  "universe": "tech_heavy",
+  "normalization": "universe_cross_sectional",
+  "min_adv20_usd": 50000000.0,
+  "leadership_filter": false,
+  "sector_whitelist": [
+    "Information Technology",
+    "Communication"
+  ],
+  "symbol_whitelist": [],
+  "notes": "Sector proxy only: Information Technology + Communication; no sub-industry data available",
+  "score_template": "balanced_pullback",
+  "holdings_count": 12,
+  "single_name_cap": 0.08,
+  "sector_cap": 0.4,
+  "hold_bonus": 0.05,
+  "regime": "qqq_breadth",
+  "benchmark_symbol": "QQQ",
+  "breadth_mode": "broad",
+  "breadth_symbols": [],
+  "exposures": {
+    "risk_on": 1.0,
+    "soft_defense": 0.6,
+    "hard_defense": 0.0
+  },
+  "breadth_thresholds": {
+    "soft": 0.55,
+    "hard": 0.35
+  },
+  "residual_proxy": "simple_excess_return_vs_QQQ",
+  "cost_assumption_bps_one_way": 5.0
+}

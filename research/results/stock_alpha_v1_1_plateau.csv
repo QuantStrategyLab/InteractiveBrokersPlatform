@@ -1,0 +1,97 @@
+scope,dimension,value,neighborhood,count,total,share
+overall,all,all,top_decile_full_cagr,23,216,0.10648148148148148
+axis,universe_filter,leadership_liquid,top_decile_full_cagr,21,108,0.19444444444444445
+axis,universe_filter,liquid_50m,top_decile_full_cagr,2,108,0.018518518518518517
+axis,group_normalization,sector,top_decile_full_cagr,0,108,0.0
+axis,group_normalization,universe,top_decile_full_cagr,23,108,0.21296296296296297
+axis,holdings_count,12,top_decile_full_cagr,23,108,0.21296296296296297
+axis,holdings_count,16,top_decile_full_cagr,0,108,0.0
+axis,single_name_cap,0.08,top_decile_full_cagr,5,72,0.06944444444444445
+axis,single_name_cap,0.09,top_decile_full_cagr,9,72,0.125
+axis,single_name_cap,0.1,top_decile_full_cagr,9,72,0.125
+axis,sector_cap,0.25,top_decile_full_cagr,4,72,0.05555555555555555
+axis,sector_cap,0.3,top_decile_full_cagr,8,72,0.1111111111111111
+axis,sector_cap,0.35,top_decile_full_cagr,11,72,0.1527777777777778
+axis,hold_bonus,0.05,top_decile_full_cagr,10,72,0.1388888888888889
+axis,hold_bonus,0.1,top_decile_full_cagr,5,72,0.06944444444444445
+axis,hold_bonus,0.15,top_decile_full_cagr,8,72,0.1111111111111111
+subspace,universe_filter+group_normalization+holdings_count,leadership_liquid | sector | 12,top_decile_full_cagr,0,27,0.0
+subspace,universe_filter+group_normalization+holdings_count,leadership_liquid | sector | 16,top_decile_full_cagr,0,27,0.0
+subspace,universe_filter+group_normalization+holdings_count,leadership_liquid | universe | 12,top_decile_full_cagr,21,27,0.7777777777777778
+subspace,universe_filter+group_normalization+holdings_count,leadership_liquid | universe | 16,top_decile_full_cagr,0,27,0.0
+subspace,universe_filter+group_normalization+holdings_count,liquid_50m | sector | 12,top_decile_full_cagr,0,27,0.0
+subspace,universe_filter+group_normalization+holdings_count,liquid_50m | sector | 16,top_decile_full_cagr,0,27,0.0
+subspace,universe_filter+group_normalization+holdings_count,liquid_50m | universe | 12,top_decile_full_cagr,2,27,0.07407407407407407
+subspace,universe_filter+group_normalization+holdings_count,liquid_50m | universe | 16,top_decile_full_cagr,0,27,0.0
+overall,all,all,within_100bps_best_cagr_ir_positive,18,216,0.08333333333333333
+axis,universe_filter,leadership_liquid,within_100bps_best_cagr_ir_positive,16,108,0.14814814814814814
+axis,universe_filter,liquid_50m,within_100bps_best_cagr_ir_positive,2,108,0.018518518518518517
+axis,group_normalization,sector,within_100bps_best_cagr_ir_positive,0,108,0.0
+axis,group_normalization,universe,within_100bps_best_cagr_ir_positive,18,108,0.16666666666666666
+axis,holdings_count,12,within_100bps_best_cagr_ir_positive,18,108,0.16666666666666666
+axis,holdings_count,16,within_100bps_best_cagr_ir_positive,0,108,0.0
+axis,single_name_cap,0.08,within_100bps_best_cagr_ir_positive,2,72,0.027777777777777776
+axis,single_name_cap,0.09,within_100bps_best_cagr_ir_positive,8,72,0.1111111111111111
+axis,single_name_cap,0.1,within_100bps_best_cagr_ir_positive,8,72,0.1111111111111111
+axis,sector_cap,0.25,within_100bps_best_cagr_ir_positive,4,72,0.05555555555555555
+axis,sector_cap,0.3,within_100bps_best_cagr_ir_positive,4,72,0.05555555555555555
+axis,sector_cap,0.35,within_100bps_best_cagr_ir_positive,10,72,0.1388888888888889
+axis,hold_bonus,0.05,within_100bps_best_cagr_ir_positive,9,72,0.125
+axis,hold_bonus,0.1,within_100bps_best_cagr_ir_positive,3,72,0.041666666666666664
+axis,hold_bonus,0.15,within_100bps_best_cagr_ir_positive,6,72,0.08333333333333333
+subspace,universe_filter+group_normalization+holdings_count,leadership_liquid | sector | 12,within_100bps_best_cagr_ir_positive,0,27,0.0
+subspace,universe_filter+group_normalization+holdings_count,leadership_liquid | sector | 16,within_100bps_best_cagr_ir_positive,0,27,0.0
+subspace,universe_filter+group_normalization+holdings_count,leadership_liquid | universe | 12,within_100bps_best_cagr_ir_positive,16,27,0.5925925925925926
+subspace,universe_filter+group_normalization+holdings_count,leadership_liquid | universe | 16,within_100bps_best_cagr_ir_positive,0,27,0.0
+subspace,universe_filter+group_normalization+holdings_count,liquid_50m | sector | 12,within_100bps_best_cagr_ir_positive,0,27,0.0
+subspace,universe_filter+group_normalization+holdings_count,liquid_50m | sector | 16,within_100bps_best_cagr_ir_positive,0,27,0.0
+subspace,universe_filter+group_normalization+holdings_count,liquid_50m | universe | 12,within_100bps_best_cagr_ir_positive,2,27,0.07407407407407407
+subspace,universe_filter+group_normalization+holdings_count,liquid_50m | universe | 16,within_100bps_best_cagr_ir_positive,0,27,0.0
+overall,all,all,within_200bps_best_cagr_ir_positive,35,216,0.16203703703703703
+axis,universe_filter,leadership_liquid,within_200bps_best_cagr_ir_positive,26,108,0.24074074074074073
+axis,universe_filter,liquid_50m,within_200bps_best_cagr_ir_positive,9,108,0.08333333333333333
+axis,group_normalization,sector,within_200bps_best_cagr_ir_positive,0,108,0.0
+axis,group_normalization,universe,within_200bps_best_cagr_ir_positive,35,108,0.32407407407407407
+axis,holdings_count,12,within_200bps_best_cagr_ir_positive,35,108,0.32407407407407407
+axis,holdings_count,16,within_200bps_best_cagr_ir_positive,0,108,0.0
+axis,single_name_cap,0.08,within_200bps_best_cagr_ir_positive,9,72,0.125
+axis,single_name_cap,0.09,within_200bps_best_cagr_ir_positive,13,72,0.18055555555555555
+axis,single_name_cap,0.1,within_200bps_best_cagr_ir_positive,13,72,0.18055555555555555
+axis,sector_cap,0.25,within_200bps_best_cagr_ir_positive,10,72,0.1388888888888889
+axis,sector_cap,0.3,within_200bps_best_cagr_ir_positive,9,72,0.125
+axis,sector_cap,0.35,within_200bps_best_cagr_ir_positive,16,72,0.2222222222222222
+axis,hold_bonus,0.05,within_200bps_best_cagr_ir_positive,12,72,0.16666666666666666
+axis,hold_bonus,0.1,within_200bps_best_cagr_ir_positive,12,72,0.16666666666666666
+axis,hold_bonus,0.15,within_200bps_best_cagr_ir_positive,11,72,0.1527777777777778
+subspace,universe_filter+group_normalization+holdings_count,leadership_liquid | sector | 12,within_200bps_best_cagr_ir_positive,0,27,0.0
+subspace,universe_filter+group_normalization+holdings_count,leadership_liquid | sector | 16,within_200bps_best_cagr_ir_positive,0,27,0.0
+subspace,universe_filter+group_normalization+holdings_count,leadership_liquid | universe | 12,within_200bps_best_cagr_ir_positive,26,27,0.9629629629629629
+subspace,universe_filter+group_normalization+holdings_count,leadership_liquid | universe | 16,within_200bps_best_cagr_ir_positive,0,27,0.0
+subspace,universe_filter+group_normalization+holdings_count,liquid_50m | sector | 12,within_200bps_best_cagr_ir_positive,0,27,0.0
+subspace,universe_filter+group_normalization+holdings_count,liquid_50m | sector | 16,within_200bps_best_cagr_ir_positive,0,27,0.0
+subspace,universe_filter+group_normalization+holdings_count,liquid_50m | universe | 12,within_200bps_best_cagr_ir_positive,9,27,0.3333333333333333
+subspace,universe_filter+group_normalization+holdings_count,liquid_50m | universe | 16,within_200bps_best_cagr_ir_positive,0,27,0.0
+candidate_subspace,universe_filter+group_normalization+holdings_count,leadership_liquid | sector | 12,top_decile_full_cagr,0,27,0.0
+candidate_subspace,universe_filter+group_normalization+holdings_count,leadership_liquid | sector | 12,within_100bps_best_cagr_ir_positive,0,27,0.0
+candidate_subspace,universe_filter+group_normalization+holdings_count,leadership_liquid | sector | 12,within_200bps_best_cagr_ir_positive,0,27,0.0
+candidate_subspace,universe_filter+group_normalization+holdings_count,leadership_liquid | sector | 16,top_decile_full_cagr,0,27,0.0
+candidate_subspace,universe_filter+group_normalization+holdings_count,leadership_liquid | sector | 16,within_100bps_best_cagr_ir_positive,0,27,0.0
+candidate_subspace,universe_filter+group_normalization+holdings_count,leadership_liquid | sector | 16,within_200bps_best_cagr_ir_positive,0,27,0.0
+candidate_subspace,universe_filter+group_normalization+holdings_count,leadership_liquid | universe | 12,top_decile_full_cagr,21,27,0.7777777777777778
+candidate_subspace,universe_filter+group_normalization+holdings_count,leadership_liquid | universe | 12,within_100bps_best_cagr_ir_positive,16,27,0.5925925925925926
+candidate_subspace,universe_filter+group_normalization+holdings_count,leadership_liquid | universe | 12,within_200bps_best_cagr_ir_positive,26,27,0.9629629629629629
+candidate_subspace,universe_filter+group_normalization+holdings_count,leadership_liquid | universe | 16,top_decile_full_cagr,0,27,0.0
+candidate_subspace,universe_filter+group_normalization+holdings_count,leadership_liquid | universe | 16,within_100bps_best_cagr_ir_positive,0,27,0.0
+candidate_subspace,universe_filter+group_normalization+holdings_count,leadership_liquid | universe | 16,within_200bps_best_cagr_ir_positive,0,27,0.0
+candidate_subspace,universe_filter+group_normalization+holdings_count,liquid_50m | sector | 12,top_decile_full_cagr,0,27,0.0
+candidate_subspace,universe_filter+group_normalization+holdings_count,liquid_50m | sector | 12,within_100bps_best_cagr_ir_positive,0,27,0.0
+candidate_subspace,universe_filter+group_normalization+holdings_count,liquid_50m | sector | 12,within_200bps_best_cagr_ir_positive,0,27,0.0
+candidate_subspace,universe_filter+group_normalization+holdings_count,liquid_50m | sector | 16,top_decile_full_cagr,0,27,0.0
+candidate_subspace,universe_filter+group_normalization+holdings_count,liquid_50m | sector | 16,within_100bps_best_cagr_ir_positive,0,27,0.0
+candidate_subspace,universe_filter+group_normalization+holdings_count,liquid_50m | sector | 16,within_200bps_best_cagr_ir_positive,0,27,0.0
+candidate_subspace,universe_filter+group_normalization+holdings_count,liquid_50m | universe | 12,top_decile_full_cagr,2,27,0.07407407407407407
+candidate_subspace,universe_filter+group_normalization+holdings_count,liquid_50m | universe | 12,within_100bps_best_cagr_ir_positive,2,27,0.07407407407407407
+candidate_subspace,universe_filter+group_normalization+holdings_count,liquid_50m | universe | 12,within_200bps_best_cagr_ir_positive,9,27,0.3333333333333333
+candidate_subspace,universe_filter+group_normalization+holdings_count,liquid_50m | universe | 16,top_decile_full_cagr,0,27,0.0
+candidate_subspace,universe_filter+group_normalization+holdings_count,liquid_50m | universe | 16,within_100bps_best_cagr_ir_positive,0,27,0.0
+candidate_subspace,universe_filter+group_normalization+holdings_count,liquid_50m | universe | 16,within_200bps_best_cagr_ir_positive,0,27,0.0

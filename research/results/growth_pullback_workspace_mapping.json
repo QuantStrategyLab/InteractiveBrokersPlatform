@@ -1,0 +1,15 @@
+{
+  "qqq_plus_suite": "/Users/lisiyi/Projects/InteractiveBrokersPlatform/research/backtest_stock_alpha_suite.py",
+  "qqq_plus_default_config": "/Users/lisiyi/Projects/InteractiveBrokersPlatform/research/configs/qqq_plus_stock_alpha_v1_1_default.json",
+  "qqq_plus_aggressive_config": "/Users/lisiyi/Projects/InteractiveBrokersPlatform/research/configs/qqq_plus_stock_alpha_v1_1_aggressive.json",
+  "defensive_strategy_entry": "/Users/lisiyi/Projects/UsEquityStrategies/src/us_equity_strategies/strategies/russell_1000_multi_factor_defensive.py",
+  "defensive_backtest_entry": "/Users/lisiyi/Projects/UsEquityStrategies/src/us_equity_strategies/backtests/russell_1000_multi_factor_defensive.py",
+  "interactivebrokers_research_dir": "/Users/lisiyi/Projects/InteractiveBrokersPlatform/research",
+  "us_equity_strategies_read_only_reference": "/Users/lisiyi/Projects/UsEquityStrategies/src/us_equity_strategies",
+  "quant_platform_kit_shared_read_only": "/Users/lisiyi/Projects/QuantPlatformKit/src/quant_platform_kit",
+  "new_research_entry": "/Users/lisiyi/Projects/InteractiveBrokersPlatform/research/backtest_growth_pullback_suite.py",
+  "avoided_repos": [
+    "/Users/lisiyi/Projects/BinancePlatform",
+    "/Users/lisiyi/Projects/CryptoLeaderRotation"
+  ]
+}

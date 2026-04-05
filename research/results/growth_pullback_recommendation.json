@@ -1,0 +1,93 @@
+{
+  "strategy_family": "growth_pullback_systematic_v1",
+  "default_research_spec": {
+    "name": "tech_heavy_pullback_balanced_focused_qqq_breadth",
+    "family": "tech_heavy_pullback",
+    "robustness_score": 0.8375,
+    "full_cagr": 0.230343208703087,
+    "oos_cagr": 0.3155716776716817,
+    "oos_cagr_minus_qqq": 0.21362335925668785,
+    "return_2022": -0.11420526158137101,
+    "cagr_2023_plus": 0.4860629363265818
+  },
+  "aggressive_research_spec": {
+    "name": "trend_only_control_focused_qqq_breadth",
+    "family": "trend_only_control",
+    "robustness_score": 0.7563541666666667,
+    "full_cagr": 0.23151781986171782,
+    "oos_cagr": 0.2603163722812243,
+    "oos_cagr_minus_qqq": 0.15836805386623043
+  },
+  "answers": {
+    "A_user_preference_kernel": {
+      "best_kept_core": "controlled_pullback_inside_strength",
+      "broad_growth_vs_tech": "tech_heavy",
+      "crypto_theme": "no"
+    },
+    "B_remove_from_rules": [
+      "越跌越买",
+      "对熟悉赛道过度集中",
+      "把好公司和好买点混为一谈",
+      "没有统一的退出/降暴露规则"
+    ],
+    "C_stock_line_to_continue": "tech_heavy_pullback",
+    "D_crypto_linked_equity_theme": "no",
+    "E_next_main_direction": "continue_stock_line_spec_lock"
+  },
+  "family_best_summary": [
+    {
+      "family": "tech_heavy_pullback",
+      "strategy": "tech_heavy_pullback_balanced_focused_qqq_breadth",
+      "robustness_score": 0.8375,
+      "full_cagr": 0.230343208703087,
+      "oos_cagr": 0.3155716776716817,
+      "oos_cagr_minus_qqq": 0.21362335925668785,
+      "return_2022": -0.11420526158137101,
+      "cagr_2023_plus": 0.4860629363265818
+    },
+    {
+      "family": "trend_only_control",
+      "strategy": "trend_only_control_focused_qqq_breadth",
+      "robustness_score": 0.7563541666666667,
+      "full_cagr": 0.23151781986171782,
+      "oos_cagr": 0.2603163722812243,
+      "oos_cagr_minus_qqq": 0.15836805386623043,
+      "return_2022": -0.07724812231553546,
+      "cagr_2023_plus": 0.3873651419346702
+    },
+    {
+      "family": "broad_growth_leadership_pullback",
+      "strategy": "broad_large_cap_eligible_balanced_pullback_balanced_qqq_breadth",
+      "robustness_score": 0.7357291666666668,
+      "full_cagr": 0.18768823595798545,
+      "oos_cagr": 0.24449186142520074,
+      "oos_cagr_minus_qqq": 0.14254354301020689,
+      "return_2022": -0.14587933177797008,
+      "cagr_2023_plus": 0.3975227898506668
+    },
+    {
+      "family": "crypto_equity_theme_pullback",
+      "strategy": "crypto_theme_pullback_balanced_diversified_qqq_breadth",
+      "robustness_score": 0.49145833333333333,
+      "full_cagr": 0.06751713925821123,
+      "oos_cagr": 0.09278391737027425,
+      "oos_cagr_minus_qqq": -0.009164401044719606,
+      "return_2022": -0.052430679831973914,
+      "cagr_2023_plus": 0.14185945385941467
+    },
+    {
+      "family": "naive_dip_buy_control",
+      "strategy": "naive_dip_buy_control_diversified_qqq_breadth",
+      "robustness_score": 0.10104166666666668,
+      "full_cagr": 0.005111293595856603,
+      "oos_cagr": -0.09026329440189429,
+      "oos_cagr_minus_qqq": -0.19221161281688814,
+      "return_2022": -0.25250537759969427,
+      "cagr_2023_plus": -0.0334627923397528
+    }
+  ],
+  "valuation_overlay_v1": {
+    "included": false,
+    "reason": "workspace lacks reliable point-in-time historical valuation/fundamental data"
+  }
+}

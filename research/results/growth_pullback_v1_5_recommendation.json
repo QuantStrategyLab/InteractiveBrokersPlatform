@@ -1,0 +1,15 @@
+{
+  "research_recommendation": "cash_buffer_branch_default",
+  "branch_name": "cash_buffer_branch_default",
+  "previous_candidate_name": "cash_buffer_a__hb10__base__adv50",
+  "reason": "canonical naming and branch role are now clear, but avg names / 2022 profile / recent micro-adjustment mean it should stop at default, not frozen",
+  "frozen_blockers": [
+    "average_names_held_still_low",
+    "2022_still_not_clean_enough",
+    "just_canonicalized_from_small_hold_bonus_micro_adjustment"
+  ],
+  "checks_pass": true,
+  "performance_ok": true,
+  "keep_parallel_branch": true,
+  "role_vs_qqq_plus_current_default": "并行分支"
+}

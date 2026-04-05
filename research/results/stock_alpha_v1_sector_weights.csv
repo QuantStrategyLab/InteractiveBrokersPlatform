@@ -1,0 +1,23 @@
+strategy,sector,avg_weight
+defensive_baseline,Information Technology,0.10641666666666666
+defensive_baseline,Industrials,0.09554166666666668
+defensive_baseline,Financials,0.08604166666666668
+defensive_baseline,Consumer Discretionary,0.08491666666666667
+defensive_baseline,Health Care,0.07929166666666666
+defensive_baseline,Materials,0.048125
+defensive_baseline,Real Estate,0.04333333333333333
+defensive_baseline,Communication,0.04062500000000001
+defensive_baseline,Consumer Staples,0.03733333333333333
+defensive_baseline,Utilities,0.03566666666666667
+defensive_baseline,Energy,0.03370833333333333
+qqq_plus_stock_alpha_v1,Information Technology,0.14734848484848484
+qqq_plus_stock_alpha_v1,Industrials,0.12272727272727273
+qqq_plus_stock_alpha_v1,Financials,0.09583333333333333
+qqq_plus_stock_alpha_v1,Consumer Discretionary,0.09583333333333333
+qqq_plus_stock_alpha_v1,Health Care,0.0938131313131313
+qqq_plus_stock_alpha_v1,Materials,0.048989898989898986
+qqq_plus_stock_alpha_v1,Consumer Staples,0.0428030303030303
+qqq_plus_stock_alpha_v1,Communication,0.0422979797979798
+qqq_plus_stock_alpha_v1,Real Estate,0.04078282828282828
+qqq_plus_stock_alpha_v1,Utilities,0.04040404040404041
+qqq_plus_stock_alpha_v1,Energy,0.033207070707070706

@@ -1,0 +1,34 @@
+{
+  "role": "aggressive_research_spec",
+  "strategy": "growth_pullback_systematic_v1",
+  "status": "research_only",
+  "name": "trend_only_control_focused_qqq_breadth",
+  "family": "trend_only_control",
+  "universe": "leadership_growth",
+  "normalization": "sector",
+  "min_adv20_usd": 50000000.0,
+  "leadership_filter": true,
+  "sector_whitelist": [],
+  "symbol_whitelist": [],
+  "notes": "Broad universe but leadership/growth prefilter; not tech-only",
+  "score_template": "trend_only",
+  "holdings_count": 12,
+  "single_name_cap": 0.1,
+  "sector_cap": 0.4,
+  "hold_bonus": 0.05,
+  "regime": "qqq_breadth",
+  "benchmark_symbol": "QQQ",
+  "breadth_mode": "broad",
+  "breadth_symbols": [],
+  "exposures": {
+    "risk_on": 1.0,
+    "soft_defense": 0.6,
+    "hard_defense": 0.0
+  },
+  "breadth_thresholds": {
+    "soft": 0.55,
+    "hard": 0.35
+  },
+  "residual_proxy": "simple_excess_return_vs_QQQ",
+  "cost_assumption_bps_one_way": 5.0
+}

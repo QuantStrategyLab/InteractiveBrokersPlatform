@@ -1,0 +1,37 @@
+{
+  "original_global_gate": {
+    "recommendation": "no_shadow_tracking",
+    "oos_positive_rolling_alpha_ratio": 1.0,
+    "oos_cagr_minus_qqq_5bps": 0.23206203192857555,
+    "oos_max_drawdown": -0.3237786750219295,
+    "annual_turnover": 3.4402863545816738,
+    "plateau_200bps_share": 0.16203703703703703,
+    "thresholds": {
+      "oos_positive_alpha_ratio_min": 0.6,
+      "oos_cagr_not_below_qqq": true,
+      "oos_max_drawdown_floor": -0.4,
+      "annual_turnover_cap": 5.0,
+      "plateau_200bps_share_min": 0.2
+    }
+  },
+  "candidate_centric_recommendation": "not_ready",
+  "reason": "center spec still fails at least one local-neighborhood or holdout stability check",
+  "checks": {
+    "oos_alpha_ann_vs_qqq_5bps": 0.24121131692145067,
+    "oos_max_drawdown_5bps": -0.3237786750219295,
+    "neighbor_plateau_100bps_share": 0.3333333333333333,
+    "neighbor_plateau_200bps_share": 0.3333333333333333,
+    "monthly_jackknife_positive_alpha_share": 1.0,
+    "block_6m_positive_alpha_share": 1.0,
+    "block_12m_positive_alpha_share": 1.0
+  },
+  "thresholds": {
+    "oos_alpha_ann_vs_qqq_min": 0.05,
+    "oos_max_drawdown_floor": -0.35,
+    "neighbor_plateau_100bps_share_min": 0.5,
+    "neighbor_plateau_200bps_share_min": 0.67,
+    "monthly_jackknife_positive_alpha_share_min": 0.9,
+    "block_6m_positive_alpha_share_min": 0.8,
+    "block_12m_positive_alpha_share_min": 0.7
+  }
+}

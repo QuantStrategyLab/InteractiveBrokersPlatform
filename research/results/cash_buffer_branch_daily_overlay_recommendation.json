@@ -1,0 +1,34 @@
+{
+  "baseline_strategy": "cash_buffer_branch_default_monthly_baseline",
+  "overlay_has_incremental_value": false,
+  "best_overlay_family": "daily_name_level_trim_overlay",
+  "best_overlay_strategy": "daily_name_level_trim_overlay__20dma_half_confirm2",
+  "recommended_upgrade_direction": "do_not_upgrade_overlay",
+  "next_step": "直接推进 paper 下单",
+  "answers": {
+    "Q1_incremental_value": false,
+    "Q2_increment_source": "主要是防守改善，但以明显牺牲 CAGR 和更高换手为代价，增量价值不成立",
+    "Q3_upgrade_candidate": false,
+    "Q4_best_overlay_type": "都不值得",
+    "Q5_complexity_risk": true,
+    "Q6_next_step": "直接推进 paper 下单"
+  },
+  "notes": {
+    "portfolio_overlay_tested": [
+      "daily_portfolio_throttle_overlay__qqq_dma_mom_6state",
+      "daily_portfolio_throttle_overlay__held_breadth_5state"
+    ],
+    "name_overlay_tested": [
+      "daily_name_level_trim_overlay__20dma_half_confirm2",
+      "daily_name_level_trim_overlay__50dma_zero_confirm2"
+    ],
+    "combo_tested": [],
+    "comparison_cost_bps": [
+      0.0,
+      5.0,
+      10.0
+    ],
+    "baseline_non_rebalance_days": "no_op",
+    "mid_month_new_names_allowed": false
+  }
+}
