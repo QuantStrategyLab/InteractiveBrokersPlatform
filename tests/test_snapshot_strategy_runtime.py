@@ -4,6 +4,8 @@ import hashlib
 import json
 from types import SimpleNamespace
 
+import strategy_runtime as strategy_runtime_module
+
 
 def _sha256_file(path: Path) -> str:
     hasher = hashlib.sha256()
@@ -71,17 +73,10 @@ def test_compute_signals_uses_feature_snapshot_for_russell_1000(strategy_module_
             },
         )
 
-    monkeypatch.setattr(module, "load_feature_snapshot_guarded", fake_load_feature_snapshot_guarded)
     monkeypatch.setattr(
-        module,
-        "strategy_compute_signals",
-        lambda snapshot, holdings, **kwargs: (
-            {"BOXX": 1.0},
-            "signal",
-            False,
-            "breadth=0.0%",
-            {"managed_symbols": ("BOXX",), "status_icon": "📏"},
-        ),
+        strategy_runtime_module,
+        "load_feature_snapshot_guarded",
+        fake_load_feature_snapshot_guarded,
     )
 
     result = module.compute_signals(None, {"AAA"})

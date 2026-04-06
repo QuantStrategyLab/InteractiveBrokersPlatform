@@ -29,14 +29,14 @@ from application.execution_service import (
     execute_rebalance as application_execute_rebalance,
     get_market_prices as application_get_market_prices,
 )
-from application.feature_snapshot_service import load_feature_snapshot_guarded
 from application.rebalance_service import run_strategy_core as run_rebalance_cycle
+from decision_mapper import map_strategy_decision
 from entrypoints.cloud_run import is_market_open_today
 from runtime_config_support import (
     load_platform_runtime_settings,
     resolve_ib_gateway_ip_mode,
 )
-from strategy_loader import load_signal_logic_module
+from strategy_runtime import load_strategy_runtime
 
 app = Flask(__name__)
 ensure_event_loop = ibkr_ensure_event_loop
@@ -132,123 +132,44 @@ ACCOUNT_GROUP = RUNTIME_SETTINGS.account_group
 SERVICE_NAME = RUNTIME_SETTINGS.service_name
 ACCOUNT_IDS = RUNTIME_SETTINGS.account_ids
 
-STRATEGY_LOGIC = load_signal_logic_module(STRATEGY_PROFILE)
-STRATEGY_SIGNAL_SOURCE = getattr(STRATEGY_LOGIC, "SIGNAL_SOURCE", "market_data")
-STRATEGY_STATUS_ICON = getattr(STRATEGY_LOGIC, "STATUS_ICON", "🐤")
-SAFE_HAVEN = getattr(STRATEGY_LOGIC, "SAFE_HAVEN", "BIL")
-RANKING_POOL = list(getattr(STRATEGY_LOGIC, "RANKING_POOL", ()))
-CANARY_ASSETS = list(getattr(STRATEGY_LOGIC, "CANARY_ASSETS", ()))
-TOP_N = getattr(STRATEGY_LOGIC, "TOP_N", None)
-SMA_PERIOD = getattr(STRATEGY_LOGIC, "SMA_PERIOD", 200)
-CANARY_BAD_THRESHOLD = getattr(STRATEGY_LOGIC, "CANARY_BAD_THRESHOLD", None)
-REBALANCE_MONTHS = getattr(STRATEGY_LOGIC, "REBALANCE_MONTHS", None)
+STRATEGY_RUNTIME = load_strategy_runtime(
+    STRATEGY_PROFILE,
+    runtime_settings=RUNTIME_SETTINGS,
+    logger=lambda message: print(message, flush=True),
+)
+STRATEGY_ENTRYPOINT = STRATEGY_RUNTIME.entrypoint
+STRATEGY_SIGNAL_SOURCE = (
+    "feature_snapshot"
+    if "feature_snapshot" in STRATEGY_RUNTIME.required_inputs
+    else "market_data"
+)
+STRATEGY_STATUS_ICON = STRATEGY_RUNTIME.status_icon
+FEATURE_RUNTIME_PARAMETERS = dict(STRATEGY_RUNTIME.runtime_config)
+STRATEGY_RUNTIME_CONFIG = dict(STRATEGY_RUNTIME.merged_runtime_config)
+SAFE_HAVEN = str(STRATEGY_RUNTIME_CONFIG.get("safe_haven") or "BIL")
+RANKING_POOL = list(STRATEGY_RUNTIME_CONFIG.get("ranking_pool", ()))
+CANARY_ASSETS = list(STRATEGY_RUNTIME_CONFIG.get("canary_assets", ()))
+TOP_N = STRATEGY_RUNTIME_CONFIG.get("top_n")
+SMA_PERIOD = int(STRATEGY_RUNTIME_CONFIG.get("sma_period", 200))
+CANARY_BAD_THRESHOLD = STRATEGY_RUNTIME_CONFIG.get("canary_bad_threshold")
+REBALANCE_MONTHS = STRATEGY_RUNTIME_CONFIG.get("rebalance_months")
 FEATURE_SNAPSHOT_PATH = RUNTIME_SETTINGS.feature_snapshot_path
 FEATURE_SNAPSHOT_MANIFEST_PATH = RUNTIME_SETTINGS.feature_snapshot_manifest_path
-FEATURE_REQUIRE_SNAPSHOT_MANIFEST = bool(getattr(STRATEGY_LOGIC, "REQUIRE_SNAPSHOT_MANIFEST", False))
-FEATURE_SNAPSHOT_CONTRACT_VERSION = getattr(STRATEGY_LOGIC, "SNAPSHOT_CONTRACT_VERSION", None)
-feature_runtime_loader = getattr(STRATEGY_LOGIC, "load_runtime_parameters", None)
-FEATURE_RUNTIME_PARAMETERS = (
-    feature_runtime_loader(
-        config_path=RUNTIME_SETTINGS.strategy_config_path,
-        logger=lambda message: print(message, flush=True),
-    )
-    if STRATEGY_SIGNAL_SOURCE == "feature_snapshot" and callable(feature_runtime_loader)
-    else {}
+FEATURE_RUNTIME_CONFIG_PATH = (
+    STRATEGY_RUNTIME_CONFIG.get("runtime_config_path")
+    or RUNTIME_SETTINGS.strategy_config_path
 )
-HOLD_BONUS = FEATURE_RUNTIME_PARAMETERS.get(
-    "hold_bonus",
-    getattr(STRATEGY_LOGIC, "HOLD_BONUS", getattr(STRATEGY_LOGIC, "DEFAULT_HOLD_BONUS", 0.0)),
-)
-FEATURE_SIGNAL_KWARG_KEYS = tuple(
-    getattr(
-        STRATEGY_LOGIC,
-        "FEATURE_SIGNAL_KWARG_KEYS",
-        (
-            "benchmark_symbol",
-            "safe_haven",
-            "holdings_count",
-            "single_name_cap",
-            "sector_cap",
-            "hold_bonus",
-            "soft_defense_exposure",
-            "hard_defense_exposure",
-            "soft_breadth_threshold",
-            "hard_breadth_threshold",
-        ),
-    )
-)
-FEATURE_BENCHMARK_SYMBOL = FEATURE_RUNTIME_PARAMETERS.get(
-    "benchmark_symbol",
-    getattr(STRATEGY_LOGIC, "BENCHMARK_SYMBOL", "SPY"),
-)
-FEATURE_HOLDINGS_COUNT = FEATURE_RUNTIME_PARAMETERS.get(
-    "holdings_count",
-    getattr(STRATEGY_LOGIC, "DEFAULT_HOLDINGS_COUNT", 24),
-)
-FEATURE_SINGLE_NAME_CAP = FEATURE_RUNTIME_PARAMETERS.get(
-    "single_name_cap",
-    getattr(STRATEGY_LOGIC, "DEFAULT_SINGLE_NAME_CAP", 0.06),
-)
-FEATURE_SECTOR_CAP = FEATURE_RUNTIME_PARAMETERS.get(
-    "sector_cap",
-    getattr(STRATEGY_LOGIC, "DEFAULT_SECTOR_CAP", 0.20),
-)
-FEATURE_RISK_ON_EXPOSURE = FEATURE_RUNTIME_PARAMETERS.get(
-    "risk_on_exposure",
-    1.0,
-)
-FEATURE_SOFT_DEFENSE_EXPOSURE = FEATURE_RUNTIME_PARAMETERS.get(
-    "soft_defense_exposure",
-    getattr(STRATEGY_LOGIC, "DEFAULT_SOFT_DEFENSE_EXPOSURE", 0.50),
-)
-FEATURE_HARD_DEFENSE_EXPOSURE = FEATURE_RUNTIME_PARAMETERS.get(
-    "hard_defense_exposure",
-    getattr(STRATEGY_LOGIC, "DEFAULT_HARD_DEFENSE_EXPOSURE", 0.10),
-)
-FEATURE_SOFT_BREADTH_THRESHOLD = FEATURE_RUNTIME_PARAMETERS.get(
-    "soft_breadth_threshold",
-    getattr(STRATEGY_LOGIC, "DEFAULT_SOFT_BREADTH_THRESHOLD", 0.55),
-)
-FEATURE_HARD_BREADTH_THRESHOLD = FEATURE_RUNTIME_PARAMETERS.get(
-    "hard_breadth_threshold",
-    getattr(STRATEGY_LOGIC, "DEFAULT_HARD_BREADTH_THRESHOLD", 0.35),
-)
-FEATURE_RUNTIME_EXECUTION_WINDOW_TRADING_DAYS = FEATURE_RUNTIME_PARAMETERS.get(
-    "runtime_execution_window_trading_days",
-)
-FEATURE_MIN_ADV20_USD = FEATURE_RUNTIME_PARAMETERS.get("min_adv20_usd")
-FEATURE_SECTOR_WHITELIST = FEATURE_RUNTIME_PARAMETERS.get("sector_whitelist")
-FEATURE_NORMALIZATION = FEATURE_RUNTIME_PARAMETERS.get("normalization")
-FEATURE_SCORE_TEMPLATE = FEATURE_RUNTIME_PARAMETERS.get("score_template")
-FEATURE_RESIDUAL_PROXY = FEATURE_RUNTIME_PARAMETERS.get("residual_proxy")
-FEATURE_RUNTIME_CONFIG_NAME = FEATURE_RUNTIME_PARAMETERS.get(
-    "runtime_config_name",
-    RUNTIME_SETTINGS.strategy_profile,
-)
-FEATURE_RUNTIME_CONFIG_PATH = FEATURE_RUNTIME_PARAMETERS.get(
-    "runtime_config_path",
-    RUNTIME_SETTINGS.strategy_config_path,
-)
-FEATURE_RUNTIME_CONFIG_SOURCE = FEATURE_RUNTIME_PARAMETERS.get(
-    "runtime_config_source",
-    RUNTIME_SETTINGS.strategy_config_source,
+FEATURE_RUNTIME_CONFIG_SOURCE = (
+    STRATEGY_RUNTIME_CONFIG.get("runtime_config_source")
+    or RUNTIME_SETTINGS.strategy_config_source
 )
 RECONCILIATION_OUTPUT_PATH = RUNTIME_SETTINGS.reconciliation_output_path
-strategy_check_sma = getattr(STRATEGY_LOGIC, "check_sma", None)
-strategy_compute_13612w_momentum = getattr(STRATEGY_LOGIC, "compute_13612w_momentum", None)
-strategy_compute_signals = STRATEGY_LOGIC.compute_signals
 
 TG_TOKEN = RUNTIME_SETTINGS.tg_token
 TG_CHAT_ID = RUNTIME_SETTINGS.tg_chat_id
 NOTIFY_LANG = RUNTIME_SETTINGS.notify_lang
 
-DEFAULT_CASH_RESERVE_RATIO = 0.03
-CASH_RESERVE_RATIO = float(
-    FEATURE_RUNTIME_PARAMETERS.get(
-        "execution_cash_reserve_ratio",
-        DEFAULT_CASH_RESERVE_RATIO,
-    )
-)
+CASH_RESERVE_RATIO = STRATEGY_RUNTIME.cash_reserve_ratio
 REBALANCE_THRESHOLD_RATIO = 0.02  # 2% of equity to trigger trades
 LIMIT_BUY_PREMIUM = 1.005
 
@@ -303,210 +224,19 @@ def get_historical_close(ib, symbol, duration="2 Y", bar_size="1 day"):
 # ---------------------------------------------------------------------------
 # Strategy logic
 # ---------------------------------------------------------------------------
-def compute_13612w_momentum(closes, as_of_date=None):
-    if strategy_compute_13612w_momentum is None:
-        raise NotImplementedError(f"{STRATEGY_PROFILE} does not expose 13612W momentum")
-    return strategy_compute_13612w_momentum(closes, as_of_date=as_of_date)
-
-
-def check_sma(closes, period=SMA_PERIOD):
-    if strategy_check_sma is None:
-        raise NotImplementedError(f"{STRATEGY_PROFILE} does not expose SMA filtering")
-    return strategy_check_sma(closes, period=period)
-
-
 def compute_signals(ib, current_holdings):
-    if STRATEGY_SIGNAL_SOURCE == "feature_snapshot":
-        run_as_of = resolve_run_as_of_date()
-        if not FEATURE_SNAPSHOT_PATH:
-            return (
-                None,
-                "feature snapshot required",
-                False,
-                "fail_closed | reason=feature_snapshot_path_missing",
-                {
-                    "strategy_profile": STRATEGY_PROFILE,
-                    "feature_snapshot_path": None,
-                    "strategy_config_path": FEATURE_RUNTIME_CONFIG_PATH,
-                    "strategy_config_source": FEATURE_RUNTIME_CONFIG_SOURCE,
-                    "dry_run_only": RUNTIME_SETTINGS.dry_run_only,
-                    "snapshot_guard_decision": "fail_closed",
-                    "fail_reason": "feature_snapshot_path_missing",
-                    "managed_symbols": (),
-                    "status_icon": "🛑",
-                },
-            )
-        guard_result = load_feature_snapshot_guarded(
-            FEATURE_SNAPSHOT_PATH,
-            run_as_of=run_as_of,
-            required_columns=getattr(STRATEGY_LOGIC, "REQUIRED_FEATURE_COLUMNS", ()),
-            snapshot_date_columns=getattr(
-                STRATEGY_LOGIC,
-                "SNAPSHOT_DATE_COLUMNS",
-                ("as_of", "snapshot_date"),
-            ),
-            max_snapshot_month_lag=int(
-                getattr(STRATEGY_LOGIC, "MAX_SNAPSHOT_MONTH_LAG", 1)
-            ),
-            manifest_path=FEATURE_SNAPSHOT_MANIFEST_PATH,
-            require_manifest=FEATURE_REQUIRE_SNAPSHOT_MANIFEST,
-            expected_strategy_profile=STRATEGY_PROFILE,
-            expected_config_name=FEATURE_RUNTIME_CONFIG_NAME,
-            expected_config_path=FEATURE_RUNTIME_CONFIG_PATH,
-            expected_contract_version=FEATURE_SNAPSHOT_CONTRACT_VERSION,
-        )
-        guard_metadata = dict(guard_result.metadata)
-        print(
-            "snapshot_manifest_summary | "
-            f"profile={STRATEGY_PROFILE} decision={guard_metadata.get('snapshot_guard_decision')} "
-            f"snapshot_path={guard_metadata.get('snapshot_path')} "
-            f"snapshot_as_of={guard_metadata.get('snapshot_as_of')} "
-            f"snapshot_age_days={guard_metadata.get('snapshot_age_days')} "
-            f"snapshot_file_ts={guard_metadata.get('snapshot_file_timestamp')} "
-            f"manifest_path={guard_metadata.get('snapshot_manifest_path')} "
-            f"manifest_exists={guard_metadata.get('snapshot_manifest_exists')} "
-            f"manifest_contract={guard_metadata.get('snapshot_manifest_contract_version')} "
-            f"expected_config={FEATURE_RUNTIME_CONFIG_PATH} "
-            f"expected_profile={STRATEGY_PROFILE}",
-            flush=True,
-        )
-        if guard_result.metadata.get("snapshot_guard_decision") != "proceed":
-            decision = guard_metadata.get("snapshot_guard_decision")
-            reason = guard_metadata.get("fail_reason") or guard_metadata.get("no_op_reason")
-            return (
-                None,
-                "feature snapshot guard blocked execution",
-                False,
-                f"{decision} | reason={reason}",
-                {
-                    "strategy_profile": STRATEGY_PROFILE,
-                    "strategy_config_path": FEATURE_RUNTIME_CONFIG_PATH,
-                    "strategy_config_source": FEATURE_RUNTIME_CONFIG_SOURCE,
-                    "dry_run_only": RUNTIME_SETTINGS.dry_run_only,
-                    "managed_symbols": (),
-                    "status_icon": "🛑",
-                    **guard_metadata,
-                },
-            )
-        feature_snapshot = guard_result.frame
-        feature_kwargs = {
-            "benchmark_symbol": FEATURE_BENCHMARK_SYMBOL,
-            "safe_haven": SAFE_HAVEN,
-            "holdings_count": FEATURE_HOLDINGS_COUNT,
-            "single_name_cap": FEATURE_SINGLE_NAME_CAP,
-            "sector_cap": FEATURE_SECTOR_CAP,
-            "hold_bonus": HOLD_BONUS,
-            "risk_on_exposure": FEATURE_RISK_ON_EXPOSURE,
-            "soft_defense_exposure": FEATURE_SOFT_DEFENSE_EXPOSURE,
-            "hard_defense_exposure": FEATURE_HARD_DEFENSE_EXPOSURE,
-            "soft_breadth_threshold": FEATURE_SOFT_BREADTH_THRESHOLD,
-            "hard_breadth_threshold": FEATURE_HARD_BREADTH_THRESHOLD,
-            "min_adv20_usd": FEATURE_MIN_ADV20_USD,
-            "sector_whitelist": FEATURE_SECTOR_WHITELIST,
-            "normalization": FEATURE_NORMALIZATION,
-            "score_template": FEATURE_SCORE_TEMPLATE,
-            "run_as_of": run_as_of,
-            "runtime_execution_window_trading_days": FEATURE_RUNTIME_EXECUTION_WINDOW_TRADING_DAYS,
-            "runtime_config_name": FEATURE_RUNTIME_CONFIG_NAME,
-            "runtime_config_path": FEATURE_RUNTIME_CONFIG_PATH,
-            "runtime_config_source": FEATURE_RUNTIME_CONFIG_SOURCE,
-            "residual_proxy": FEATURE_RESIDUAL_PROXY,
-        }
-        feature_kwargs = {
-            key: value
-            for key, value in feature_kwargs.items()
-            if key in FEATURE_SIGNAL_KWARG_KEYS and value is not None
-        }
-        try:
-            result = strategy_compute_signals(
-                feature_snapshot,
-                current_holdings,
-                **feature_kwargs,
-            )
-        except Exception as exc:
-            return (
-                None,
-                "feature snapshot compute failed",
-                False,
-                f"fail_closed | reason=feature_snapshot_compute_failed:{type(exc).__name__}:{exc}",
-                {
-                    "strategy_profile": STRATEGY_PROFILE,
-                    "strategy_config_path": FEATURE_RUNTIME_CONFIG_PATH,
-                    "strategy_config_source": FEATURE_RUNTIME_CONFIG_SOURCE,
-                    "dry_run_only": RUNTIME_SETTINGS.dry_run_only,
-                    "managed_symbols": (),
-                    "status_icon": "🛑",
-                    **guard_metadata,
-                    "snapshot_guard_decision": "fail_closed",
-                    "fail_reason": f"feature_snapshot_compute_failed:{type(exc).__name__}:{exc}",
-                },
-            )
-        if len(result) == 5:
-            target_weights, signal_desc, is_emergency, status_desc, metadata = result
-            return (
-                target_weights,
-                signal_desc,
-                is_emergency,
-                status_desc,
-                {
-                    "strategy_profile": STRATEGY_PROFILE,
-                    "feature_snapshot_path": FEATURE_SNAPSHOT_PATH,
-                    "strategy_config_path": FEATURE_RUNTIME_CONFIG_PATH,
-                    "strategy_config_source": FEATURE_RUNTIME_CONFIG_SOURCE,
-                    "safe_haven_symbol": SAFE_HAVEN,
-                    "dry_run_only": RUNTIME_SETTINGS.dry_run_only,
-                    "trade_date": run_as_of.date().isoformat(),
-                    **guard_metadata,
-                    **metadata,
-                },
-            )
-        target_weights, signal_desc, is_emergency, status_desc = result
-        return (
-            target_weights,
-            signal_desc,
-            is_emergency,
-            status_desc,
-            {
-                "strategy_profile": STRATEGY_PROFILE,
-                "feature_snapshot_path": FEATURE_SNAPSHOT_PATH,
-                "strategy_config_path": FEATURE_RUNTIME_CONFIG_PATH,
-                "strategy_config_source": FEATURE_RUNTIME_CONFIG_SOURCE,
-                "safe_haven_symbol": SAFE_HAVEN,
-                "dry_run_only": RUNTIME_SETTINGS.dry_run_only,
-                "trade_date": run_as_of.date().isoformat(),
-                **guard_metadata,
-                "managed_symbols": tuple(
-                    getattr(
-                        STRATEGY_LOGIC,
-                        "extract_managed_symbols",
-                    )(feature_snapshot, benchmark_symbol=FEATURE_BENCHMARK_SYMBOL, safe_haven=SAFE_HAVEN)
-                ),
-                "status_icon": STRATEGY_STATUS_ICON,
-            },
-        )
-
-    return strategy_compute_signals(
-        ib,
-        current_holdings,
-        get_historical_close=get_historical_close,
-        ranking_pool=RANKING_POOL,
-        canary_assets=CANARY_ASSETS,
-        safe_haven=SAFE_HAVEN,
-        top_n=TOP_N,
-        hold_bonus=HOLD_BONUS,
-        canary_bad_threshold=CANARY_BAD_THRESHOLD,
-        rebalance_months=REBALANCE_MONTHS,
+    evaluation = STRATEGY_RUNTIME.evaluate(
+        ib=ib,
+        current_holdings=current_holdings,
+        historical_close_loader=get_historical_close,
+        run_as_of=resolve_run_as_of_date(),
         translator=t,
         pacing_sec=HIST_DATA_PACING_SEC,
-        sma_period=SMA_PERIOD,
-    ) + (
-        {
-            "strategy_profile": STRATEGY_PROFILE,
-            "managed_symbols": tuple(RANKING_POOL + [SAFE_HAVEN]),
-            "status_icon": STRATEGY_STATUS_ICON,
-            "safe_haven_symbol": SAFE_HAVEN,
-            "dry_run_only": RUNTIME_SETTINGS.dry_run_only,
-        },
+    )
+    return map_strategy_decision(
+        evaluation.decision,
+        strategy_profile=STRATEGY_PROFILE,
+        runtime_metadata=evaluation.metadata,
     )
 
 

@@ -3,34 +3,24 @@ import types
 
 import pytest
 
-from strategy_loader import load_signal_logic_module
+from strategy_loader import (
+    load_strategy_entrypoint_for_profile,
+    load_strategy_runtime_adapter_for_profile,
+)
 
 
-def test_load_signal_logic_module_resolves_global_etf_rotation(monkeypatch):
+def test_load_strategy_entrypoint_for_profile_resolves_global_etf_rotation(monkeypatch):
     market_calendars_module = types.ModuleType("pandas_market_calendars")
     market_calendars_module.get_calendar = lambda name: None
     monkeypatch.setitem(sys.modules, "pandas_market_calendars", market_calendars_module)
-    sys.modules.pop("us_equity_strategies.strategies.global_etf_rotation", None)
 
-    module = load_signal_logic_module("global_etf_rotation")
+    entrypoint = load_strategy_entrypoint_for_profile("global_etf_rotation")
 
-    assert module.__name__ == "us_equity_strategies.strategies.global_etf_rotation"
-    assert module.TOP_N == 2
-
-
-def test_load_signal_logic_module_resolves_russell_1000_multi_factor_defensive():
-    try:
-        import pandas  # noqa: F401
-    except ModuleNotFoundError:
-        return
-
-    module = load_signal_logic_module("russell_1000_multi_factor_defensive")
-
-    assert module.__name__ == "us_equity_strategies.strategies.russell_1000_multi_factor_defensive"
-    assert module.SIGNAL_SOURCE == "feature_snapshot"
+    assert entrypoint.manifest.profile == "global_etf_rotation"
+    assert "historical_close_loader" in entrypoint.manifest.required_inputs
 
 
-def test_load_signal_logic_module_resolves_tech_pullback_cash_buffer(monkeypatch):
+def test_load_strategy_entrypoint_for_profile_resolves_tech_pullback_cash_buffer(monkeypatch):
     try:
         import pandas  # noqa: F401
     except ModuleNotFoundError:
@@ -39,15 +29,14 @@ def test_load_signal_logic_module_resolves_tech_pullback_cash_buffer(monkeypatch
     market_calendars_module = types.ModuleType("pandas_market_calendars")
     market_calendars_module.get_calendar = lambda name: None
     monkeypatch.setitem(sys.modules, "pandas_market_calendars", market_calendars_module)
-    sys.modules.pop("us_equity_strategies.strategies.tech_pullback_cash_buffer", None)
 
-    module = load_signal_logic_module("tech_pullback_cash_buffer")
+    entrypoint = load_strategy_entrypoint_for_profile("tech_pullback_cash_buffer")
 
-    assert module.__name__ == "us_equity_strategies.strategies.tech_pullback_cash_buffer"
-    assert module.SIGNAL_SOURCE == "feature_snapshot"
+    assert entrypoint.manifest.profile == "tech_pullback_cash_buffer"
+    assert entrypoint.manifest.default_config["safe_haven"] == "BOXX"
 
 
-def test_load_signal_logic_module_rejects_legacy_cash_buffer_profile(monkeypatch):
+def test_load_strategy_entrypoint_for_profile_rejects_legacy_cash_buffer_profile(monkeypatch):
     try:
         import pandas  # noqa: F401
     except ModuleNotFoundError:
@@ -56,7 +45,23 @@ def test_load_signal_logic_module_rejects_legacy_cash_buffer_profile(monkeypatch
     market_calendars_module = types.ModuleType("pandas_market_calendars")
     market_calendars_module.get_calendar = lambda name: None
     monkeypatch.setitem(sys.modules, "pandas_market_calendars", market_calendars_module)
-    sys.modules.pop("us_equity_strategies.strategies.tech_pullback_cash_buffer", None)
 
     with pytest.raises(ValueError, match="Unsupported STRATEGY_PROFILE"):
-        load_signal_logic_module("cash_buffer_branch_default")
+        load_strategy_entrypoint_for_profile("cash_buffer_branch_default")
+
+
+def test_load_strategy_runtime_adapter_for_profile_resolves_tech_pullback_cash_buffer(monkeypatch):
+    try:
+        import pandas  # noqa: F401
+    except ModuleNotFoundError:
+        return
+
+    market_calendars_module = types.ModuleType("pandas_market_calendars")
+    market_calendars_module.get_calendar = lambda name: None
+    monkeypatch.setitem(sys.modules, "pandas_market_calendars", market_calendars_module)
+
+    adapter = load_strategy_runtime_adapter_for_profile("tech_pullback_cash_buffer")
+
+    assert adapter.status_icon == "🧲"
+    assert adapter.require_snapshot_manifest is True
+    assert adapter.snapshot_contract_version == "tech_pullback_cash_buffer.feature_snapshot.v1"
