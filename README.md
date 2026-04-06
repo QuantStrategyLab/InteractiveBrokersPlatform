@@ -23,6 +23,17 @@ Current strategy implementations are sourced from `UsEquityStrategies`.
 Full strategy documentation now lives in [`UsEquityStrategies`](https://github.com/QuantStrategyLab/UsEquityStrategies). The strategy section below is kept as an execution-side summary.
 This runtime matrix is the authoritative enablement source for IBKR. `UsEquityStrategies` only describes strategy-layer compatibility and human-readable metadata.
 
+### Execution boundary
+
+The mainline runtime now follows one path only:
+
+- `main.py` assembles platform inputs into `StrategyContext`
+- `strategy_runtime.py` loads the unified strategy entrypoint
+- `entrypoint.evaluate(ctx)` returns a shared `StrategyDecision`
+- `decision_mapper.py` maps that decision into IBKR orders, notifications, and runtime updates
+
+`main.py` no longer reads private strategy constants or platform-only fields from strategy return payloads.
+
 ### Strategy
 
 **Supported `STRATEGY_PROFILE` values**
@@ -336,6 +347,17 @@ gcloud run services update ibkr-quant \
 当前 `global_etf_rotation`、`russell_1000_multi_factor_defensive` 和 `tech_pullback_cash_buffer` 的策略实现都来自 `UsEquityStrategies`。
 
 完整策略说明现在放在 [`UsEquityStrategies`](https://github.com/QuantStrategyLab/UsEquityStrategies#global_etf_rotation)。下面的策略章节主要保留执行侧摘要。
+
+### 执行边界
+
+当前主线运行路径已经统一为：
+
+- `main.py` 负责把平台输入组装成 `StrategyContext`
+- `strategy_runtime.py` 负责加载统一策略入口
+- `entrypoint.evaluate(ctx)` 返回共享的 `StrategyDecision`
+- `decision_mapper.py` 再把决策映射成 IBKR 订单、通知和运行时更新
+
+`main.py` 已经不再直接读取策略私有常量，也不再依赖策略返回里的平台专属字段。
 
 ### 策略
 
