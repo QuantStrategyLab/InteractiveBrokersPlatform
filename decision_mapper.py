@@ -1,0 +1,110 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
+
+from quant_platform_kit.strategy_contracts import StrategyDecision
+
+
+_EMERGENCY_FLAGS = frozenset({"emergency", "hard_defense"})
+_NO_EXECUTE_FLAGS = frozenset({"no_execute"})
+
+
+def _derive_target_weights(decision: StrategyDecision) -> dict[str, float]:
+    weights: dict[str, float] = {}
+    for position in decision.positions:
+        if position.target_weight is None:
+            raise ValueError(
+                "IBKR decision mapper only supports weight-based positions; "
+                f"position {position.symbol!r} is missing target_weight"
+            )
+        weights[position.symbol] = float(position.target_weight)
+    return weights
+
+
+def _derive_managed_symbols(
+    decision: StrategyDecision,
+    runtime_metadata: Mapping[str, Any],
+) -> tuple[str, ...]:
+    explicit = runtime_metadata.get("managed_symbols")
+    if explicit:
+        return tuple(str(symbol) for symbol in explicit)
+    return tuple(position.symbol for position in decision.positions)
+
+
+def _derive_safe_haven_symbol(
+    decision: StrategyDecision,
+    runtime_metadata: Mapping[str, Any],
+) -> str | None:
+    explicit = runtime_metadata.get("safe_haven_symbol")
+    if explicit:
+        return str(explicit)
+    for position in decision.positions:
+        if position.role == "safe_haven":
+            return position.symbol
+    return None
+
+
+def _derive_signal_description(
+    decision: StrategyDecision,
+    runtime_metadata: Mapping[str, Any],
+) -> str:
+    diagnostics = decision.diagnostics
+    candidates = (
+        diagnostics.get("signal_description"),
+        diagnostics.get("signal_display"),
+        diagnostics.get("signal_message"),
+        runtime_metadata.get("signal_description"),
+        runtime_metadata.get("signal_display"),
+    )
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if text:
+            return text
+    return "decision_ready"
+
+
+def _derive_status_description(
+    decision: StrategyDecision,
+    runtime_metadata: Mapping[str, Any],
+) -> str:
+    diagnostics = decision.diagnostics
+    candidates = (
+        diagnostics.get("status_description"),
+        diagnostics.get("canary_status"),
+        diagnostics.get("market_status"),
+        runtime_metadata.get("status_description"),
+    )
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if text:
+            return text
+    return _derive_signal_description(decision, runtime_metadata)
+
+
+def map_strategy_decision(
+    decision: StrategyDecision,
+    *,
+    strategy_profile: str,
+    runtime_metadata: Mapping[str, Any] | None = None,
+) -> tuple[dict[str, float] | None, str, bool, str, dict[str, Any]]:
+    runtime_metadata = dict(runtime_metadata or {})
+    diagnostics = dict(decision.diagnostics)
+    risk_flags = tuple(str(flag) for flag in decision.risk_flags)
+    no_execute = bool(_NO_EXECUTE_FLAGS & set(risk_flags))
+    target_weights = None if no_execute else _derive_target_weights(decision)
+    signal_desc = _derive_signal_description(decision, runtime_metadata)
+    status_desc = _derive_status_description(decision, runtime_metadata)
+    is_emergency = bool(_EMERGENCY_FLAGS & set(risk_flags))
+
+    metadata: dict[str, Any] = {**runtime_metadata, **diagnostics}
+    metadata.setdefault("strategy_profile", strategy_profile)
+    metadata.setdefault("status_icon", "🐤")
+    metadata.setdefault("managed_symbols", _derive_managed_symbols(decision, runtime_metadata))
+    safe_haven_symbol = _derive_safe_haven_symbol(decision, runtime_metadata)
+    if safe_haven_symbol:
+        metadata.setdefault("safe_haven_symbol", safe_haven_symbol)
+    metadata.setdefault("risk_flags", risk_flags)
+    metadata.setdefault("actionable", not no_execute)
+
+    return target_weights, signal_desc, is_emergency, status_desc, metadata
