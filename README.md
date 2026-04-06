@@ -34,11 +34,11 @@ This runtime matrix is the authoritative enablement source for IBKR. `UsEquitySt
 
 **IBKR profile matrix**
 
-| Canonical profile | Display name | Alias | Enabled | Default | Rollback | Domain | Runtime note |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `global_etf_rotation` | Global ETF Rotation Defense | `global_macro_etf_rotation` | Yes | Yes | Yes | `us_equity` | current rollback line |
-| `russell_1000_multi_factor_defensive` | Russell 1000 Multi-Factor Defensive | `r1000_multifactor_defensive` | Yes | No | No | `us_equity` | defensive stock baseline |
-| `tech_pullback_cash_buffer` | Tech Pullback Cash Buffer | `—` | Yes | No | No | `us_equity` | current IBKR paper dry-run candidate |
+| Canonical profile | Display name | Enabled | Default | Rollback | Domain | Runtime note |
+| --- | --- | --- | --- | --- | --- | --- |
+| `global_etf_rotation` | Global ETF Rotation Defense | Yes | Yes | Yes | `us_equity` | current rollback line |
+| `russell_1000_multi_factor_defensive` | Russell 1000 Multi-Factor Defensive | Yes | No | No | `us_equity` | defensive stock baseline |
+| `tech_pullback_cash_buffer` | Tech Pullback Cash Buffer | Yes | No | No | `us_equity` | current IBKR paper dry-run candidate |
 
 **Pool (22 ETFs + 1 safe haven):**
 
