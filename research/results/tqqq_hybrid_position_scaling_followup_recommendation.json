@@ -1,0 +1,26 @@
+{
+  "baseline_growth_reference": {
+    "idle_asset": "QQQ",
+    "oos_cagr": 0.3865033426282003,
+    "oos_max_drawdown": -0.3211199338433649,
+    "oos_ulcer": 9.612987986459109,
+    "oos_ir_vs_qqq": 0.751374065832975
+  },
+  "baseline_defensive_reference": {
+    "idle_asset": "BOXX",
+    "oos_cagr": 0.23946594420737966,
+    "oos_max_drawdown": -0.2011224879236717,
+    "oos_ulcer": 7.500255198481181
+  },
+  "best_scaled_candidate": {
+    "scaling": "consensus_score_6",
+    "idle_asset": "QQQ",
+    "oos_cagr": 0.3299672549938357,
+    "oos_max_drawdown": -0.3001197941680209,
+    "oos_ulcer": 9.125673716851056,
+    "oos_ir_vs_qqq": 0.5253430960516513,
+    "turnover_per_year": 8.130003409980178,
+    "average_scale_while_invested": 0.7676121372031661
+  },
+  "verdict": "No tested scaling rule clearly upgrades the current baseline. The score-based variants smooth drawdown a bit, but the gain mostly comes from carrying less TQQQ and paying materially more turnover."
+}

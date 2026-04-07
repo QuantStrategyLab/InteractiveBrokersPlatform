@@ -1,0 +1,50 @@
+{
+  "baseline_attack_only_boxx": {
+    "oos_cagr": 0.23946589243573047,
+    "oos_max_drawdown": -0.20112252780688988,
+    "oos_ir_vs_qqq": -0.17226666681804959,
+    "oos_alpha_ann_vs_qqq": -0.02970471903762832,
+    "return_2022": NaN
+  },
+  "best_attack_only_candidate": {
+    "strategy": "hybrid_tqqq::baseline::qqq",
+    "overlay": "baseline",
+    "idle_asset": "QQQ",
+    "oos_cagr": 0.38650337762547693,
+    "oos_max_drawdown": -0.32111994889021644,
+    "oos_ir_vs_qqq": 0.7513742177806451,
+    "oos_alpha_ann_vs_qqq": -0.052876006297183864,
+    "return_2022": NaN,
+    "turnover_per_year": 1.1420129445246108
+  },
+  "idle_asset_baseline_comparison": [
+    {
+      "idle_asset": "CASH",
+      "CAGR": 0.21153055543754018,
+      "Max Drawdown": -0.2025249507591308,
+      "Information Ratio vs QQQ": -0.33882909960401536,
+      "Alpha Ann vs QQQ": -0.0525637854000517,
+      "2022 Return": NaN,
+      "Turnover/Year": 1.2441727044790705
+    },
+    {
+      "idle_asset": "BOXX",
+      "CAGR": 0.23946589243573047,
+      "Max Drawdown": -0.20112252780688988,
+      "Information Ratio vs QQQ": -0.17226666681804959,
+      "Alpha Ann vs QQQ": -0.02970471903762832,
+      "2022 Return": NaN,
+      "Turnover/Year": 1.2416875639444467
+    },
+    {
+      "idle_asset": "QQQ",
+      "CAGR": 0.38650337762547693,
+      "Max Drawdown": -0.32111994889021644,
+      "Information Ratio vs QQQ": 0.7513742177806451,
+      "Alpha Ann vs QQQ": -0.052876006297183864,
+      "2022 Return": NaN,
+      "Turnover/Year": 1.1420129445246108
+    }
+  ],
+  "verdict": "The tested overlays mainly trade more often; they do not justify upgrading the default logic yet."
+}
