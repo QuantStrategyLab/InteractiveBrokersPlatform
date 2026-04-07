@@ -219,6 +219,10 @@ def send_tg_message(message):
 
 
 def connect_ib():
+    print(
+        f"Connecting to IB gateway {IB_HOST}:{IB_PORT} (mode={RUNTIME_SETTINGS.ib_gateway_mode}, client_id={IB_CLIENT_ID})",
+        flush=True,
+    )
     return ibkr_connect_ib(IB_HOST, IB_PORT, IB_CLIENT_ID)
 
 
@@ -261,6 +265,11 @@ def build_execution_report(log_context):
         },
         diagnostics={
             "strategy_config_source": FEATURE_RUNTIME_CONFIG_SOURCE,
+            "ib_gateway_host": IB_HOST,
+            "ib_gateway_port": IB_PORT,
+            "ib_gateway_mode": RUNTIME_SETTINGS.ib_gateway_mode,
+            "ib_gateway_ip_mode": RUNTIME_SETTINGS.ib_gateway_ip_mode,
+            "ib_client_id": IB_CLIENT_ID,
         },
         artifacts={
             "feature_snapshot_path": FEATURE_SNAPSHOT_PATH,
