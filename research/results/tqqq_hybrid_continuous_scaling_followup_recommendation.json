@@ -1,0 +1,26 @@
+{
+  "baseline_growth_reference": {
+    "idle_asset": "QQQ",
+    "oos_cagr": 0.38770315883497886,
+    "oos_max_drawdown": -0.3211199087725741,
+    "oos_ulcer": 9.627918627041247,
+    "oos_ir_vs_qqq": 0.7502300923853346
+  },
+  "baseline_defensive_reference": {
+    "idle_asset": "BOXX",
+    "oos_cagr": 0.23860213021458554,
+    "oos_max_drawdown": -0.20112252200733738,
+    "oos_ulcer": 7.51404066842126
+  },
+  "continuous_candidate": {
+    "scaling": "ma20_gap_trim_only",
+    "idle_asset": "QQQ",
+    "oos_cagr": 0.3721585108293748,
+    "oos_max_drawdown": -0.31763500064867334,
+    "oos_ulcer": 9.637568131252396,
+    "oos_ir_vs_qqq": 0.695452288733183,
+    "turnover_per_year": 2.8632596159147603,
+    "average_scale_while_invested": 0.9654877542375832
+  },
+  "verdict": "The trim-only continuous mapping is cleaner than the earlier score-based variants, but it still does not clearly beat the baseline. It smooths the path mainly by carrying a bit less TQQQ, not by creating a meaningfully better OOS growth profile."
+}

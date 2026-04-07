@@ -1,0 +1,22 @@
+{
+  "best_baseline_by_cagr": {
+    "idle_asset": "QQQ",
+    "oos_cagr": 0.3865033212434974,
+    "oos_max_drawdown": -0.32111996059789283,
+    "oos_ir_vs_qqq": 0.7513739398647076,
+    "return_2022": null
+  },
+  "safest_baseline_idle_asset": {
+    "idle_asset": "BOXX",
+    "oos_cagr": 0.2394659221932549,
+    "oos_max_drawdown": -0.20112252329052704
+  },
+  "best_throttle_candidate": {
+    "idle_asset": "QQQ",
+    "oos_cagr": 0.37331214938527135,
+    "oos_max_drawdown": -0.293642217228371,
+    "oos_ir_vs_qqq": 0.7329349938113593,
+    "return_2022": null
+  },
+  "verdict": "Keep the baseline. The simple MA60 half-throttle improves 2022 and drawdown only when paired with defensive idle assets, but it gives up too much CAGR and still loses to baseline+QQQ on growth metrics."
+}
