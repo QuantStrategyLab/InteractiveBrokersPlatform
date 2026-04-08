@@ -10,6 +10,7 @@ from strategy_registry import (
     US_EQUITY_DOMAIN,
     get_eligible_profiles_for_platform,
     get_platform_profile_matrix,
+    get_platform_profile_status_matrix,
     get_supported_profiles_for_platform,
 )
 
@@ -180,6 +181,31 @@ def test_platform_profile_matrix_marks_default_and_rollback():
     assert by_profile["global_etf_rotation"]["is_default"] is True
     assert by_profile["global_etf_rotation"]["is_rollback"] is True
     assert by_profile["tech_pullback_cash_buffer"]["display_name"] == "QQQ Tech Enhancement"
+
+
+def test_platform_profile_status_matrix_matches_current_ibkr_rollout():
+    rows = get_platform_profile_status_matrix()
+    by_profile = {row["canonical_profile"]: row for row in rows}
+
+    assert set(by_profile) == {
+        "global_etf_rotation",
+        "russell_1000_multi_factor_defensive",
+        "semiconductor_rotation_income",
+        "tech_pullback_cash_buffer",
+    }
+    assert by_profile["global_etf_rotation"] == {
+        "canonical_profile": "global_etf_rotation",
+        "display_name": "Global ETF Rotation",
+        "domain": "us_equity",
+        "eligible": True,
+        "enabled": True,
+        "is_default": True,
+        "is_rollback": True,
+        "platform": "ibkr",
+    }
+    assert by_profile["semiconductor_rotation_income"]["display_name"] == "SOXL/SOXX Semiconductor Trend Income"
+    assert by_profile["semiconductor_rotation_income"]["eligible"] is True
+    assert by_profile["semiconductor_rotation_income"]["enabled"] is True
 
 
 
