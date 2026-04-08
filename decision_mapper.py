@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from us_equity_strategies.catalog import resolve_canonical_profile
+
 from quant_platform_kit.strategy_contracts import (
     StrategyDecision,
     build_allocation_intent,
@@ -16,7 +18,8 @@ _NO_EXECUTE_FLAGS = frozenset({"no_execute"})
 
 
 def _resolve_allocation_order(strategy_profile: str) -> str:
-    if strategy_profile == "semiconductor_rotation_income":
+    canonical_profile = resolve_canonical_profile(strategy_profile)
+    if canonical_profile == "soxl_soxx_trend_income":
         return "risk_income_safe"
     return "risk_safe_income"
 
@@ -116,6 +119,7 @@ def map_strategy_decision(
     runtime_metadata: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, float] | None, str, bool, str, dict[str, Any]]:
     runtime_metadata = dict(runtime_metadata or {})
+    canonical_profile = resolve_canonical_profile(strategy_profile)
     diagnostics = dict(decision.diagnostics)
     risk_flags = tuple(str(flag) for flag in decision.risk_flags)
     no_execute = bool(_NO_EXECUTE_FLAGS & set(risk_flags))
@@ -126,8 +130,8 @@ def map_strategy_decision(
         allocation_payload = build_allocation_payload(
             build_allocation_intent(
                 normalized_decision,
-                strategy_profile=strategy_profile,
-                strategy_symbols_order=_resolve_allocation_order(strategy_profile),
+                strategy_profile=canonical_profile,
+                strategy_symbols_order=_resolve_allocation_order(canonical_profile),
             )
         )
     signal_desc = _derive_signal_description(decision, runtime_metadata)
@@ -135,7 +139,7 @@ def map_strategy_decision(
     is_emergency = bool(_EMERGENCY_FLAGS & set(risk_flags))
 
     metadata: dict[str, Any] = {**runtime_metadata, **diagnostics}
-    metadata.setdefault("strategy_profile", strategy_profile)
+    metadata.setdefault("strategy_profile", canonical_profile)
     metadata.setdefault("status_icon", "🐤")
     metadata.setdefault(
         "managed_symbols",

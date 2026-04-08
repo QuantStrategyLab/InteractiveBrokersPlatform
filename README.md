@@ -16,7 +16,7 @@ IBKR runtime for shared `us_equity` strategy profiles from `UsEquityStrategies`.
 
 - `global_etf_rotation` (`Global ETF Rotation`): quarterly ETF momentum rotation with daily canary defense
 - `russell_1000_multi_factor_defensive` (`Russell 1000 Multi-Factor`): monthly stock-selection strategy that consumes a precomputed feature snapshot
-- `tech_pullback_cash_buffer` (`QQQ Tech Enhancement`): monthly tech-heavy stock-selection branch with explicit BOXX cash buffer
+- `qqq_tech_enhancement` (`QQQ Tech Enhancement`, alias: `tech_pullback_cash_buffer`): monthly tech-heavy stock-selection branch with explicit BOXX cash buffer
 
 Current strategy implementations are sourced from `UsEquityStrategies`.
 
@@ -40,8 +40,8 @@ The mainline runtime now follows one path only:
 
 - `global_etf_rotation`
 - `russell_1000_multi_factor_defensive`
-- `semiconductor_rotation_income`
-- `tech_pullback_cash_buffer`
+- `soxl_soxx_trend_income` (alias: `semiconductor_rotation_income`)
+- `qqq_tech_enhancement` (alias: `tech_pullback_cash_buffer`)
 
 
 **IBKR profile status**
@@ -50,8 +50,8 @@ The mainline runtime now follows one path only:
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `global_etf_rotation` | Global ETF Rotation | Yes | Yes | Yes | Yes | `us_equity` | current rollback line |
 | `russell_1000_multi_factor_defensive` | Russell 1000 Multi-Factor | Yes | Yes | No | No | `us_equity` | defensive stock baseline |
-| `semiconductor_rotation_income` | SOXL/SOXX Semiconductor Trend Income | Yes | Yes | No | No | `us_equity` | current IBKR dry-run line |
-| `tech_pullback_cash_buffer` | QQQ Tech Enhancement | Yes | Yes | No | No | `us_equity` | enabled feature-snapshot alternative |
+| `soxl_soxx_trend_income` | SOXL/SOXX Semiconductor Trend Income | Yes | Yes | No | No | `us_equity` | current IBKR dry-run line |
+| `qqq_tech_enhancement` | QQQ Tech Enhancement | Yes | Yes | No | No | `us_equity` | enabled feature-snapshot alternative |
 
 Check the current matrix locally:
 
@@ -173,7 +173,7 @@ The selected `ACCOUNT_GROUP` is now the runtime identity. Keep broker-specific i
 |----------|----------|-------------|
 | `IB_GATEWAY_ZONE` | Optional fallback | GCE zone (for example `us-central1-a`). Recommended to keep in the selected account-group entry; this env var is only a transition fallback. |
 | `IB_GATEWAY_IP_MODE` | Optional fallback | `internal` (default) or `external`. Recommended to keep in the selected account-group entry; this env var is only a transition fallback. |
-| `STRATEGY_PROFILE` | Yes | Strategy profile selector. Supported `us_equity` values: `global_etf_rotation`, `russell_1000_multi_factor_defensive`, `semiconductor_rotation_income`, `tech_pullback_cash_buffer` |
+| `STRATEGY_PROFILE` | Yes | Strategy profile selector. Supported `us_equity` values: `global_etf_rotation`, `russell_1000_multi_factor_defensive`, `soxl_soxx_trend_income`, `qqq_tech_enhancement` |
 | `ACCOUNT_GROUP` | Yes | Account-group selector. No default fallback. |
 | `IBKR_FEATURE_SNAPSHOT_PATH` | Conditionally required | Required when `STRATEGY_PROFILE=russell_1000_multi_factor_defensive`. Path to the latest feature snapshot file (`.csv`, `.json`, `.jsonl`, `.parquet`). |
 | `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME` | Yes for Cloud Run | Secret Manager secret name for account-group config JSON. Recommended production source. |
@@ -223,7 +223,7 @@ NOTIFY_LANG=zh
 ```
 
 ```bash
-STRATEGY_PROFILE=tech_pullback_cash_buffer
+STRATEGY_PROFILE=qqq_tech_enhancement
 ACCOUNT_GROUP=default
 IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=ibkr-account-groups
 IBKR_FEATURE_SNAPSHOT_PATH=/var/data/tech_pullback_cash_buffer_feature_snapshot_latest.csv
@@ -352,7 +352,7 @@ gcloud run services update ibkr-quant \
 
 基于 IBKR 的全球 ETF 季度轮动策略（国际市场、商品、美股行业、美股宽基、科技和半导体），含每日金丝雀应急机制。定位上比 `TQQQ`、`SOXL` 这类高弹性科技策略更稳健，但不再把科技完全排除在外。部署在 GCP Cloud Run，连接 GCE 上的 IB Gateway。
 
-当前 `global_etf_rotation`、`russell_1000_multi_factor_defensive`、`semiconductor_rotation_income` 和 `tech_pullback_cash_buffer` 的策略实现都来自 `UsEquityStrategies`。
+当前 `global_etf_rotation`、`russell_1000_multi_factor_defensive`、`soxl_soxx_trend_income` 和 `qqq_tech_enhancement` 的策略实现都来自 `UsEquityStrategies`。
 
 完整策略说明现在放在 [`UsEquityStrategies`](https://github.com/QuantStrategyLab/UsEquityStrategies#global_etf_rotation)。下面的策略章节主要保留执行侧摘要。
 
@@ -422,7 +422,7 @@ IBKR 账户
 |------|------|------|
 | `IB_GATEWAY_ZONE` | 可选过渡项 | GCE zone（如 `us-central1-a`）。推荐直接放进选中的账号组配置里；这里只保留过渡 fallback。 |
 | `IB_GATEWAY_IP_MODE` | 可选过渡项 | `internal`（默认）或 `external`。推荐直接放进选中的账号组配置里；这里只保留过渡 fallback。 |
-| `STRATEGY_PROFILE` | 是 | 策略档位选择。当前可用的 `us_equity` 值：`global_etf_rotation`、`russell_1000_multi_factor_defensive`、`semiconductor_rotation_income`、`tech_pullback_cash_buffer` |
+| `STRATEGY_PROFILE` | 是 | 策略档位选择。当前可用的 `us_equity` 值：`global_etf_rotation`、`russell_1000_multi_factor_defensive`、`soxl_soxx_trend_income`、`qqq_tech_enhancement` |
 | `ACCOUNT_GROUP` | 是 | 账号组选择器，不再提供默认回退。 |
 | `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME` | Cloud Run 建议必填 | 账号组配置 JSON 在 Secret Manager 里的密钥名。生产环境推荐使用。 |
 | `IB_ACCOUNT_GROUP_CONFIG_JSON` | 否 | 本地开发用的账号组配置 JSON fallback。不建议在生产 Cloud Run 直接使用。 |
@@ -448,7 +448,7 @@ IBKR 账户
 当前第一步，建议让 GitHub / Cloud Run 只维护服务级变量：
 
 ```bash
-STRATEGY_PROFILE=semiconductor_rotation_income
+STRATEGY_PROFILE=soxl_soxx_trend_income
 ACCOUNT_GROUP=default
 IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=ibkr-account-groups
 GLOBAL_TELEGRAM_CHAT_ID=<telegram-chat-id>

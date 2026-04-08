@@ -32,7 +32,7 @@ def test_load_strategy_entrypoint_for_profile_resolves_tech_pullback_cash_buffer
 
     entrypoint = load_strategy_entrypoint_for_profile("tech_pullback_cash_buffer")
 
-    assert entrypoint.manifest.profile == "tech_pullback_cash_buffer"
+    assert entrypoint.manifest.profile == "qqq_tech_enhancement"
     assert entrypoint.manifest.default_config["safe_haven"] == "BOXX"
 
 

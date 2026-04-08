@@ -149,8 +149,8 @@ def test_load_platform_runtime_settings_rejects_unknown_strategy_profile(monkeyp
 def test_platform_supported_profiles_are_filtered_by_registry():
     assert get_supported_profiles_for_platform(IBKR_PLATFORM) == frozenset(
         {
-            "semiconductor_rotation_income",
-            "tech_pullback_cash_buffer",
+            "soxl_soxx_trend_income",
+            "qqq_tech_enhancement",
             "global_etf_rotation",
             "russell_1000_multi_factor_defensive",
         }
@@ -160,8 +160,8 @@ def test_platform_supported_profiles_are_filtered_by_registry():
 def test_platform_eligible_profiles_are_exposed_by_capability_matrix():
     assert get_eligible_profiles_for_platform(IBKR_PLATFORM) == frozenset(
         {
-            "semiconductor_rotation_income",
-            "tech_pullback_cash_buffer",
+            "soxl_soxx_trend_income",
+            "qqq_tech_enhancement",
             "global_etf_rotation",
             "russell_1000_multi_factor_defensive",
         }
@@ -176,7 +176,7 @@ def test_load_platform_runtime_settings_accepts_tech_pullback_cash_buffer(monkey
 
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
-    assert settings.strategy_profile == "tech_pullback_cash_buffer"
+    assert settings.strategy_profile == "qqq_tech_enhancement"
     assert settings.strategy_display_name == "QQQ Tech Enhancement"
     assert settings.strategy_target_mode == "weight"
 
@@ -186,7 +186,7 @@ def test_platform_profile_matrix_marks_default_and_rollback():
     by_profile = {row["canonical_profile"]: row for row in rows}
     assert by_profile["global_etf_rotation"]["is_default"] is True
     assert by_profile["global_etf_rotation"]["is_rollback"] is True
-    assert by_profile["tech_pullback_cash_buffer"]["display_name"] == "QQQ Tech Enhancement"
+    assert by_profile["qqq_tech_enhancement"]["display_name"] == "QQQ Tech Enhancement"
 
 
 def test_platform_profile_status_matrix_matches_current_ibkr_rollout():
@@ -196,8 +196,8 @@ def test_platform_profile_status_matrix_matches_current_ibkr_rollout():
     assert set(by_profile) == {
         "global_etf_rotation",
         "russell_1000_multi_factor_defensive",
-        "semiconductor_rotation_income",
-        "tech_pullback_cash_buffer",
+        "soxl_soxx_trend_income",
+        "qqq_tech_enhancement",
     }
     assert by_profile["global_etf_rotation"] == {
         "canonical_profile": "global_etf_rotation",
@@ -209,9 +209,9 @@ def test_platform_profile_status_matrix_matches_current_ibkr_rollout():
         "is_rollback": True,
         "platform": "ibkr",
     }
-    assert by_profile["semiconductor_rotation_income"]["display_name"] == "SOXL/SOXX Semiconductor Trend Income"
-    assert by_profile["semiconductor_rotation_income"]["eligible"] is True
-    assert by_profile["semiconductor_rotation_income"]["enabled"] is True
+    assert by_profile["soxl_soxx_trend_income"]["display_name"] == "SOXL/SOXX Semiconductor Trend Income"
+    assert by_profile["soxl_soxx_trend_income"]["eligible"] is True
+    assert by_profile["soxl_soxx_trend_income"]["enabled"] is True
 
 
 def test_print_strategy_profile_status_json_matches_registry():
@@ -300,17 +300,17 @@ def test_load_platform_runtime_settings_derives_artifact_paths_from_root(monkeyp
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
     assert settings.strategy_artifact_root == str(tmp_path)
-    assert settings.strategy_artifact_dir == str(tmp_path / "tech_pullback_cash_buffer")
+    assert settings.strategy_artifact_dir == str(tmp_path / "qqq_tech_enhancement")
     assert settings.feature_snapshot_path == str(
-        tmp_path / "tech_pullback_cash_buffer" / "tech_pullback_cash_buffer_feature_snapshot_latest.csv"
+        tmp_path / "qqq_tech_enhancement" / "qqq_tech_enhancement_feature_snapshot_latest.csv"
     )
     assert settings.feature_snapshot_manifest_path == str(
         tmp_path
-        / "tech_pullback_cash_buffer"
-        / "tech_pullback_cash_buffer_feature_snapshot_latest.csv.manifest.json"
+        / "qqq_tech_enhancement"
+        / "qqq_tech_enhancement_feature_snapshot_latest.csv.manifest.json"
     )
     assert settings.reconciliation_output_path == str(
-        tmp_path / "tech_pullback_cash_buffer" / "reconciliation"
+        tmp_path / "qqq_tech_enhancement" / "reconciliation"
     )
     assert settings.strategy_config_path is not None
     assert settings.strategy_config_path.endswith("growth_pullback_tech_pullback_cash_buffer.json")

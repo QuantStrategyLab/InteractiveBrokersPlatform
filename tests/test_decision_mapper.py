@@ -17,7 +17,7 @@ def test_map_strategy_decision_maps_weight_positions_and_safe_haven():
 
     target_weights, signal_desc, is_emergency, status_desc, metadata = map_strategy_decision(
         decision,
-        strategy_profile="tech_pullback_cash_buffer",
+        strategy_profile="qqq_tech_enhancement",
         runtime_metadata={"status_icon": "🧲", "dry_run_only": True},
     )
 
@@ -46,7 +46,7 @@ def test_map_strategy_decision_returns_noop_when_flagged_no_execute():
 
     target_weights, signal_desc, is_emergency, status_desc, metadata = map_strategy_decision(
         decision,
-        strategy_profile="tech_pullback_cash_buffer",
+        strategy_profile="qqq_tech_enhancement",
         runtime_metadata={
             "status_icon": "🛑",
             "snapshot_guard_decision": "fail_closed",
@@ -80,7 +80,7 @@ def test_map_strategy_decision_translates_value_targets_for_semiconductor_strate
 
     target_weights, signal_desc, is_emergency, status_desc, metadata = map_strategy_decision(
         decision,
-        strategy_profile="semiconductor_rotation_income",
+        strategy_profile="soxl_soxx_trend_income",
         runtime_metadata={
             "portfolio_total_equity": 50000.0,
             "status_icon": "🚀",

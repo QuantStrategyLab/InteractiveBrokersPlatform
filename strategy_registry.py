@@ -23,10 +23,10 @@ ROLLBACK_STRATEGY_PROFILE = DEFAULT_STRATEGY_PROFILE
 
 IBKR_ROLLOUT_ALLOWLIST = frozenset(
     {
-        "tech_pullback_cash_buffer",
+        "qqq_tech_enhancement",
         "global_etf_rotation",
         "russell_1000_multi_factor_defensive",
-        "semiconductor_rotation_income",
+        "soxl_soxx_trend_income",
     }
 )
 

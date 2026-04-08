@@ -147,7 +147,7 @@ def test_compute_signals_loads_tech_pullback_cash_buffer_runtime(strategy_module
     result = module.compute_signals(None, {"AAPL"})
 
     assert result[0]["BOXX"] == pytest.approx(0.2)
-    assert result[4]["strategy_profile"] == "tech_pullback_cash_buffer"
+    assert result[4]["strategy_profile"] == "qqq_tech_enhancement"
     assert result[4]["strategy_config_source"] in {"env", "external_config"}
     assert result[4]["realized_stock_weight"] == pytest.approx(0.8)
     assert result[4]["snapshot_guard_decision"] == "proceed"
