@@ -63,5 +63,17 @@ def test_load_strategy_runtime_adapter_for_profile_resolves_tech_pullback_cash_b
     adapter = load_strategy_runtime_adapter_for_profile("tech_pullback_cash_buffer")
 
     assert adapter.status_icon == "🧲"
+    assert adapter.available_inputs == frozenset({"feature_snapshot"})
     assert adapter.require_snapshot_manifest is True
     assert adapter.snapshot_contract_version == "tech_pullback_cash_buffer.feature_snapshot.v1"
+
+
+def test_load_strategy_runtime_adapter_for_profile_resolves_global_etf_rotation_inputs(monkeypatch):
+    market_calendars_module = types.ModuleType("pandas_market_calendars")
+    market_calendars_module.get_calendar = lambda name: None
+    monkeypatch.setitem(sys.modules, "pandas_market_calendars", market_calendars_module)
+
+    adapter = load_strategy_runtime_adapter_for_profile("global_etf_rotation")
+
+    assert adapter.available_inputs == frozenset({"historical_close_loader"})
+    assert adapter.available_capabilities == frozenset({"broker_client"})

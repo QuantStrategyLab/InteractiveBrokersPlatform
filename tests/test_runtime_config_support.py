@@ -5,7 +5,13 @@ from runtime_config_support import (
     load_platform_runtime_settings,
     parse_account_group_configs,
 )
-from strategy_registry import IBKR_PLATFORM, US_EQUITY_DOMAIN, get_platform_profile_matrix, get_supported_profiles_for_platform
+from strategy_registry import (
+    IBKR_PLATFORM,
+    US_EQUITY_DOMAIN,
+    get_eligible_profiles_for_platform,
+    get_platform_profile_matrix,
+    get_supported_profiles_for_platform,
+)
 
 
 MINIMAL_GROUP_JSON = (
@@ -67,7 +73,11 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.ib_gateway_ip_mode == "internal"
     assert settings.ib_client_id == 1
     assert settings.strategy_profile == DEFAULT_STRATEGY_PROFILE
+    assert settings.strategy_display_name == "Global ETF Rotation Defense"
     assert settings.strategy_domain == US_EQUITY_DOMAIN
+    assert settings.strategy_target_mode == "weight"
+    assert settings.strategy_artifact_root is None
+    assert settings.strategy_artifact_dir is None
     assert settings.feature_snapshot_path is None
     assert settings.feature_snapshot_manifest_path is None
     assert settings.strategy_config_path is None
@@ -106,7 +116,9 @@ def test_load_platform_runtime_settings_supports_explicit_group_config_values(mo
     assert settings.ib_gateway_ip_mode == "external"
     assert settings.ib_client_id == 7
     assert settings.strategy_profile == DEFAULT_STRATEGY_PROFILE
+    assert settings.strategy_display_name == "Global ETF Rotation Defense"
     assert settings.strategy_domain == US_EQUITY_DOMAIN
+    assert settings.strategy_target_mode == "weight"
     assert settings.feature_snapshot_path is None
     assert settings.feature_snapshot_manifest_path is None
     assert settings.account_group == "taxable_main"
@@ -137,6 +149,16 @@ def test_platform_supported_profiles_are_filtered_by_registry():
     )
 
 
+def test_platform_eligible_profiles_are_exposed_by_capability_matrix():
+    assert get_eligible_profiles_for_platform(IBKR_PLATFORM) == frozenset(
+        {
+            "tech_pullback_cash_buffer",
+            "global_etf_rotation",
+            "russell_1000_multi_factor_defensive",
+        }
+    )
+
+
 def test_load_platform_runtime_settings_accepts_tech_pullback_cash_buffer(monkeypatch):
     monkeypatch.setenv("STRATEGY_PROFILE", "tech_pullback_cash_buffer")
     monkeypatch.setenv("ACCOUNT_GROUP", "default")
@@ -146,6 +168,8 @@ def test_load_platform_runtime_settings_accepts_tech_pullback_cash_buffer(monkey
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
     assert settings.strategy_profile == "tech_pullback_cash_buffer"
+    assert settings.strategy_display_name == "Tech Pullback Cash Buffer"
+    assert settings.strategy_target_mode == "weight"
 
 
 def test_platform_profile_matrix_marks_default_and_rollback():
@@ -198,6 +222,37 @@ def test_load_platform_runtime_settings_uses_bundled_tech_pullback_config_when_e
 
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
+    assert settings.strategy_config_path is not None
+    assert settings.strategy_config_path.endswith("growth_pullback_tech_pullback_cash_buffer.json")
+    assert settings.strategy_config_source == "bundled_canonical_default"
+
+
+def test_load_platform_runtime_settings_derives_artifact_paths_from_root(monkeypatch, tmp_path):
+    monkeypatch.setenv("STRATEGY_PROFILE", "tech_pullback_cash_buffer")
+    monkeypatch.setenv("ACCOUNT_GROUP", "default")
+    monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
+    monkeypatch.setenv("IBKR_STRATEGY_ARTIFACT_ROOT", str(tmp_path))
+    monkeypatch.delenv("IBKR_FEATURE_SNAPSHOT_PATH", raising=False)
+    monkeypatch.delenv("IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH", raising=False)
+    monkeypatch.delenv("IBKR_RECONCILIATION_OUTPUT_PATH", raising=False)
+    monkeypatch.delenv("IBKR_STRATEGY_CONFIG_PATH", raising=False)
+    monkeypatch.delenv("STRATEGY_CONFIG_PATH", raising=False)
+
+    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
+
+    assert settings.strategy_artifact_root == str(tmp_path)
+    assert settings.strategy_artifact_dir == str(tmp_path / "tech_pullback_cash_buffer")
+    assert settings.feature_snapshot_path == str(
+        tmp_path / "tech_pullback_cash_buffer" / "tech_pullback_cash_buffer_feature_snapshot_latest.csv"
+    )
+    assert settings.feature_snapshot_manifest_path == str(
+        tmp_path
+        / "tech_pullback_cash_buffer"
+        / "tech_pullback_cash_buffer_feature_snapshot_latest.csv.manifest.json"
+    )
+    assert settings.reconciliation_output_path == str(
+        tmp_path / "tech_pullback_cash_buffer" / "reconciliation"
+    )
     assert settings.strategy_config_path is not None
     assert settings.strategy_config_path.endswith("growth_pullback_tech_pullback_cash_buffer.json")
     assert settings.strategy_config_source == "bundled_canonical_default"

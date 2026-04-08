@@ -19,11 +19,12 @@ def load_strategy_definition(raw_profile: str | None) -> StrategyDefinition:
 
 def load_strategy_entrypoint_for_profile(raw_profile: str | None) -> StrategyEntrypoint:
     definition = load_strategy_definition(raw_profile)
+    runtime_adapter = load_strategy_runtime_adapter_for_profile(raw_profile)
     return load_strategy_entrypoint(
         definition,
         platform_id=IBKR_PLATFORM,
-        available_inputs=("historical_close_loader", "feature_snapshot"),
-        available_capabilities=("broker_client",),
+        available_inputs=runtime_adapter.available_inputs,
+        available_capabilities=runtime_adapter.available_capabilities,
     )
 
 

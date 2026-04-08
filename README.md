@@ -43,13 +43,19 @@ The mainline runtime now follows one path only:
 - `tech_pullback_cash_buffer`
 
 
-**IBKR profile matrix**
+**IBKR profile status**
 
-| Canonical profile | Display name | Enabled | Default | Rollback | Domain | Runtime note |
-| --- | --- | --- | --- | --- | --- | --- |
-| `global_etf_rotation` | Global ETF Rotation Defense | Yes | Yes | Yes | `us_equity` | current rollback line |
-| `russell_1000_multi_factor_defensive` | Russell 1000 Multi-Factor Defensive | Yes | No | No | `us_equity` | defensive stock baseline |
-| `tech_pullback_cash_buffer` | Tech Pullback Cash Buffer | Yes | No | No | `us_equity` | current IBKR paper dry-run candidate |
+| Canonical profile | Display name | Eligible | Enabled | Default | Rollback | Domain | Runtime note |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `global_etf_rotation` | Global ETF Rotation Defense | Yes | Yes | Yes | Yes | `us_equity` | current rollback line |
+| `russell_1000_multi_factor_defensive` | Russell 1000 Multi-Factor Defensive | Yes | Yes | No | No | `us_equity` | defensive stock baseline |
+| `tech_pullback_cash_buffer` | Tech Pullback Cash Buffer | Yes | Yes | No | No | `us_equity` | current IBKR paper dry-run candidate |
+
+Check the current matrix locally:
+
+```bash
+python3 scripts/print_strategy_profile_status.py
+```
 
 **Pool (22 ETFs + 1 safe haven):**
 
@@ -287,7 +293,7 @@ Recommended setup:
 
 On every push to `main`, the workflow updates the existing Cloud Run service with the values above and removes legacy env vars that should now live in the account-group config (`IB_CLIENT_ID`, `IB_GATEWAY_INSTANCE_NAME`, `IB_GATEWAY_MODE`) plus the older transport vars (`IB_GATEWAY_HOST`, `IB_GATEWAY_PORT`, `TELEGRAM_CHAT_ID`). If `IB_GATEWAY_ZONE` or `IB_GATEWAY_IP_MODE` are blank in GitHub, the workflow also removes them from Cloud Run to avoid drift.
 
-For now, `STRATEGY_PROFILE` still only supports one strategy profile. The current strategy domain is `us_equity`, and the repo now keeps a thin strategy registry so future expansion can grow by domain + profile instead of mixing strategy and platform in one layer. `ACCOUNT_GROUP` now selects one account-group config entry, and the service fails fast if that runtime identity is incomplete.
+`STRATEGY_PROFILE` is now resolved from a platform capability matrix plus a rollout allowlist. The current strategy domain is `us_equity`, and the repo keeps the runtime registry thin: `eligible` means the platform can run the strategy in theory, while `enabled` means the current rollout really allows it. `ACCOUNT_GROUP` now selects one account-group config entry, and the service fails fast if that runtime identity is incomplete.
 
 Important:
 
@@ -513,7 +519,7 @@ IB_GATEWAY_IP_MODE=internal
 
 每次 push 到 `main` 时，这个 workflow 会把上面这些值同步到现有 Cloud Run 服务里，并清掉已经转移到账号组配置里的旧 env（`IB_CLIENT_ID`、`IB_GATEWAY_INSTANCE_NAME`、`IB_GATEWAY_MODE`）以及更早的传输层 env（`IB_GATEWAY_HOST`、`IB_GATEWAY_PORT`、`TELEGRAM_CHAT_ID`）。如果 GitHub 里没有配置 `IB_GATEWAY_ZONE` 或 `IB_GATEWAY_IP_MODE`，workflow 也会把 Cloud Run 上这两个旧值一起删除，避免双配置源漂移。
 
-`STRATEGY_PROFILE` 当前只有一个可用值；当前策略域是 `us_equity`，本地策略注册表只用于域和 profile 校验。`ACCOUNT_GROUP` 是严格必填项，并会选中一份账号组配置。运行身份不完整时，服务会直接失败，不再静默回退。
+`STRATEGY_PROFILE` 现在由平台能力矩阵和 rollout allowlist 一起决定。当前策略域仍是 `us_equity`：`eligible` 表示平台理论上能跑，`enabled` 表示当前 rollout 真正放开。`ACCOUNT_GROUP` 是严格必填项，并会选中一份账号组配置。运行身份不完整时，服务会直接失败，不再静默回退。
 
 注意：
 
