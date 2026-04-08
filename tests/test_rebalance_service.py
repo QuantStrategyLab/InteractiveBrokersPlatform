@@ -4,6 +4,17 @@ from application.rebalance_service import build_dashboard, run_strategy_core
 from notifications.telegram import build_translator
 
 
+def _weight_allocation(targets, *, risk_symbols=(), income_symbols=(), safe_haven_symbols=()):
+    return {
+        "target_mode": "weight",
+        "strategy_symbols": tuple(targets.keys()),
+        "risk_symbols": tuple(risk_symbols),
+        "income_symbols": tuple(income_symbols),
+        "safe_haven_symbols": tuple(safe_haven_symbols),
+        "targets": dict(targets),
+    }
+
+
 def _build_test_translator():
     templates = {
         "heartbeat_title": "heartbeat",
@@ -64,6 +75,7 @@ def test_build_dashboard_localizes_strategy_details():
             "snapshot_age_days": 8,
             "feature_snapshot_path": "gs://bucket/snapshot.csv",
             "strategy_config_source": "external_config",
+            "allocation": _weight_allocation({}, safe_haven_symbols=("BOXX",)),
         },
         translator=build_translator("zh"),
         separator="---",
@@ -108,7 +120,15 @@ def test_run_strategy_core_passes_signal_metadata_to_execution():
             "signal",
             False,
             "breadth=60.0%",
-            {"managed_symbols": ("AAA", "BOXX"), "status_icon": "📏"},
+            {
+                "managed_symbols": ("AAA", "BOXX"),
+                "status_icon": "📏",
+                "allocation": _weight_allocation(
+                    {"AAA": 0.9, "BOXX": 0.1},
+                    risk_symbols=("AAA",),
+                    safe_haven_symbols=("BOXX",),
+                ),
+            },
         ),
         execute_rebalance=fake_execute_rebalance,
         send_tg_message=lambda message: observed["messages"].append(message),
@@ -158,6 +178,11 @@ def test_run_strategy_core_writes_reconciliation_record(tmp_path):
                 "safe_haven_weight": 0.4,
                 "safe_haven_symbol": "BOXX",
                 "dry_run_only": True,
+                "allocation": _weight_allocation(
+                    {"AAA": 0.6, "BOXX": 0.4},
+                    risk_symbols=("AAA",),
+                    safe_haven_symbols=("BOXX",),
+                ),
             },
         ),
         execute_rebalance=lambda *_args, **_kwargs: (

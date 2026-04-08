@@ -181,6 +181,27 @@ def _display_text(value: Any, *, fallback: str) -> str:
     return text or fallback
 
 
+def _resolve_weight_allocation(signal_metadata: dict[str, Any] | None) -> dict[str, Any]:
+    metadata = dict(signal_metadata or {})
+    allocation = dict(metadata.get("allocation") or {})
+    if not allocation:
+        raise ValueError("IBKR execution requires signal_metadata.allocation")
+    if allocation.get("target_mode") != "weight":
+        raise ValueError("IBKR execution requires allocation.target_mode=weight")
+    return {
+        "strategy_symbols": tuple(str(symbol).strip().upper() for symbol in allocation.get("strategy_symbols", ())),
+        "risk_symbols": tuple(str(symbol).strip().upper() for symbol in allocation.get("risk_symbols", ())),
+        "income_symbols": tuple(str(symbol).strip().upper() for symbol in allocation.get("income_symbols", ())),
+        "safe_haven_symbols": tuple(
+            str(symbol).strip().upper() for symbol in allocation.get("safe_haven_symbols", ())
+        ),
+        "targets": {
+            str(symbol).strip().upper(): float(weight)
+            for symbol, weight in dict(allocation.get("targets") or {}).items()
+        },
+    }
+
+
 def _apply_snapshot_price_fallbacks(
     prices: dict[str, float],
     symbols,
@@ -358,10 +379,15 @@ def execute_rebalance(
     return_summary=False,
 ):
     """Execute trades to reach target weights."""
+    del target_weights
     signal_metadata = signal_metadata or {}
+    allocation = _resolve_weight_allocation(signal_metadata)
+    target_weights = dict(allocation["targets"])
+    strategy_symbols = tuple(allocation["strategy_symbols"])
     trade_date = str(signal_metadata.get("trade_date") or "").strip() or None
     snapshot_date = _normalize_date_like(signal_metadata.get("snapshot_as_of"))
-    safe_haven_symbol = str(signal_metadata.get("safe_haven_symbol") or "").strip().upper() or None
+    safe_haven_symbols = tuple(allocation["safe_haven_symbols"])
+    safe_haven_symbol = safe_haven_symbols[0] if safe_haven_symbols else None
     equity = account_values.get("equity", 0)
     execution_summary = {
         "mode": "dry_run" if dry_run_only else "paper",

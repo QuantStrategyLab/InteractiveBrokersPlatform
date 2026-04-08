@@ -150,6 +150,28 @@ def _build_notification_trade_lines(
     return lines
 
 
+def _resolve_weight_allocation(signal_metadata, *, required: bool) -> dict:
+    metadata = dict(signal_metadata or {})
+    allocation = dict(metadata.get("allocation") or {})
+    if not allocation:
+        if required:
+            raise ValueError("IBKR execution requires signal_metadata.allocation")
+        return {}
+    if allocation.get("target_mode") != "weight":
+        raise ValueError("IBKR execution requires allocation.target_mode=weight")
+    targets = {
+        str(symbol).strip().upper(): float(weight)
+        for symbol, weight in dict(allocation.get("targets") or {}).items()
+    }
+    return {
+        "strategy_symbols": tuple(str(symbol) for symbol in allocation.get("strategy_symbols", ())),
+        "risk_symbols": tuple(str(symbol) for symbol in allocation.get("risk_symbols", ())),
+        "income_symbols": tuple(str(symbol) for symbol in allocation.get("income_symbols", ())),
+        "safe_haven_symbols": tuple(str(symbol) for symbol in allocation.get("safe_haven_symbols", ())),
+        "targets": targets,
+    }
+
+
 def build_dashboard(
     positions,
     account_values,
@@ -173,10 +195,10 @@ def build_dashboard(
         position_lines.append(f"  {symbol}: {qty}股 ${market_value:,.2f}")
     position_text = "\n".join(position_lines) if position_lines else translator("empty_positions")
     signal_metadata = signal_metadata or {}
+    allocation = _resolve_weight_allocation(signal_metadata, required=False)
     target_lines = []
-    if target_weights:
-        for symbol, weight in sorted(target_weights.items(), key=lambda item: (-item[1], item[0])):
-            target_lines.append(f"  {symbol}: {weight:.1%}")
+    for symbol, weight in sorted(allocation.get("targets", {}).items(), key=lambda item: (-item[1], item[0])):
+        target_lines.append(f"  {symbol}: {weight:.1%}")
     target_text = "\n".join(target_lines) if target_lines else translator("empty_target_weights")
     regime = signal_metadata.get("regime")
     breadth_ratio = signal_metadata.get("breadth_ratio")
@@ -239,6 +261,8 @@ def run_strategy_core(
         else:
             target_weights, signal_desc, _is_emergency, status_desc = signal_result
             signal_metadata = {}
+        allocation = _resolve_weight_allocation(signal_metadata, required=target_weights is not None)
+        resolved_target_weights = dict(allocation.get("targets") or {}) if target_weights is not None else None
 
         dashboard = build_dashboard(
             positions,
@@ -246,7 +270,7 @@ def run_strategy_core(
             signal_desc,
             status_desc,
             strategy_profile=signal_metadata.get("strategy_profile"),
-            target_weights=target_weights,
+            target_weights=resolved_target_weights,
             signal_metadata=signal_metadata,
             translator=translator,
             separator=separator,
@@ -298,10 +322,10 @@ def run_strategy_core(
 
         execution_result = execute_rebalance(
             ib,
-            target_weights,
+            resolved_target_weights,
             positions,
             account_values,
-            strategy_symbols=signal_metadata.get("managed_symbols"),
+            strategy_symbols=allocation.get("strategy_symbols"),
             signal_metadata=signal_metadata,
         )
         if isinstance(execution_result, tuple) and len(execution_result) == 2:
@@ -315,7 +339,7 @@ def run_strategy_core(
             trade_date=signal_metadata.get("trade_date"),
             snapshot_as_of=signal_metadata.get("snapshot_as_of"),
             signal_metadata=signal_metadata,
-            target_weights=target_weights,
+            target_weights=resolved_target_weights,
             execution_summary=execution_summary,
         )
         record_path = write_reconciliation_record(record, output_path=reconciliation_output_path)
@@ -356,7 +380,7 @@ def run_strategy_core(
                 {
                     "result": "OK - executed",
                     "signal_metadata": dict(signal_metadata or {}),
-                    "target_weights": dict(target_weights or {}),
+                    "target_weights": dict(resolved_target_weights or {}),
                     "execution_summary": dict(execution_summary or {}),
                     "reconciliation_record": dict(record),
                     "reconciliation_record_path": str(record_path),

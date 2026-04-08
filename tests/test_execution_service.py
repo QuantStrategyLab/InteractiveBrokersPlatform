@@ -4,6 +4,36 @@ from application.execution_service import check_order_submitted, execute_rebalan
 from quant_platform_kit.common.models import OrderIntent
 
 
+def _weight_allocation(targets, *, risk_symbols=(), income_symbols=(), safe_haven_symbols=()):
+    ordered_symbols = tuple(targets.keys())
+    return {
+        "target_mode": "weight",
+        "strategy_symbols": ordered_symbols,
+        "risk_symbols": tuple(risk_symbols),
+        "income_symbols": tuple(income_symbols),
+        "safe_haven_symbols": tuple(safe_haven_symbols),
+        "targets": dict(targets),
+    }
+
+
+def _signal_metadata(
+    targets,
+    *,
+    risk_symbols=(),
+    income_symbols=(),
+    safe_haven_symbols=(),
+    **extra,
+):
+    payload = dict(extra)
+    payload["allocation"] = _weight_allocation(
+        targets,
+        risk_symbols=risk_symbols,
+        income_symbols=income_symbols,
+        safe_haven_symbols=safe_haven_symbols,
+    )
+    return payload
+
+
 def translate(key, **kwargs):
     templates = {
         "submitted": "submitted {order_id}",
@@ -66,14 +96,17 @@ def test_execute_rebalance_submits_limit_buy_for_underweight_position(monkeypatc
         translator=translate,
         strategy_symbols=["VOO", "BIL"],
         strategy_profile="tech_pullback_cash_buffer",
-        signal_metadata={
-            "regime": "risk_on",
-            "breadth_ratio": 0.6,
-            "target_stock_weight": 0.8,
-            "realized_stock_weight": 0.8,
-            "trade_date": "2026-04-01",
-            "snapshot_as_of": "2026-03-31",
-        },
+        signal_metadata=_signal_metadata(
+            {"VOO": 1.0},
+            risk_symbols=("VOO",),
+            safe_haven_symbols=("BIL",),
+            regime="risk_on",
+            breadth_ratio=0.6,
+            target_stock_weight=0.8,
+            realized_stock_weight=0.8,
+            trade_date="2026-04-01",
+            snapshot_as_of="2026-03-31",
+        ),
         dry_run_only=False,
         cash_reserve_ratio=0.03,
         rebalance_threshold_ratio=0.02,
@@ -113,7 +146,7 @@ def test_execute_rebalance_skips_when_pending_orders_exist():
         translator=translate,
         strategy_symbols=["VOO"],
         strategy_profile="tech_pullback_cash_buffer",
-        signal_metadata={},
+        signal_metadata=_signal_metadata({"VOO": 1.0}, risk_symbols=("VOO",)),
         dry_run_only=False,
         cash_reserve_ratio=0.03,
         rebalance_threshold_ratio=0.02,
@@ -150,14 +183,17 @@ def test_execute_rebalance_blocks_same_day_repeat_via_execution_lock(tmp_path, m
         account_group="default",
         service_name="ibkr-paper",
         account_ids=("DU123",),
-        signal_metadata={
-            "regime": "risk_on",
-            "breadth_ratio": 0.6,
-            "target_stock_weight": 0.8,
-            "realized_stock_weight": 0.8,
-            "trade_date": "2026-04-01",
-            "snapshot_as_of": "2026-03-31",
-        },
+        signal_metadata=_signal_metadata(
+            {"VOO": 0.8, "BOXX": 0.2},
+            risk_symbols=("VOO",),
+            safe_haven_symbols=("BOXX",),
+            regime="risk_on",
+            breadth_ratio=0.6,
+            target_stock_weight=0.8,
+            realized_stock_weight=0.8,
+            trade_date="2026-04-01",
+            snapshot_as_of="2026-03-31",
+        ),
         cash_reserve_ratio=0.0,
         rebalance_threshold_ratio=0.02,
         limit_buy_premium=1.005,
@@ -225,7 +261,7 @@ def test_execute_rebalance_skips_when_same_day_fills_detected():
         account_group="default",
         service_name="ibkr-paper",
         account_ids=("DU123",),
-        signal_metadata={"trade_date": "2026-04-01"},
+        signal_metadata=_signal_metadata({"VOO": 1.0}, risk_symbols=("VOO",), trade_date="2026-04-01"),
         dry_run_only=False,
         cash_reserve_ratio=0.0,
         rebalance_threshold_ratio=0.02,
@@ -266,16 +302,19 @@ def test_execute_rebalance_returns_structured_summary_when_requested(monkeypatch
         account_group="default",
         service_name="ibkr-paper",
         account_ids=("DU123",),
-        signal_metadata={
-            "regime": "risk_on",
-            "breadth_ratio": 0.6,
-            "target_stock_weight": 0.8,
-            "realized_stock_weight": 0.8,
-            "safe_haven_weight": 0.2,
-            "safe_haven_symbol": "BOXX",
-            "trade_date": "2026-04-01",
-            "snapshot_as_of": "2026-03-31",
-        },
+        signal_metadata=_signal_metadata(
+            {"VOO": 0.8, "BOXX": 0.2},
+            risk_symbols=("VOO",),
+            safe_haven_symbols=("BOXX",),
+            regime="risk_on",
+            breadth_ratio=0.6,
+            target_stock_weight=0.8,
+            realized_stock_weight=0.8,
+            safe_haven_weight=0.2,
+            safe_haven_symbol="BOXX",
+            trade_date="2026-04-01",
+            snapshot_as_of="2026-03-31",
+        ),
         dry_run_only=True,
         cash_reserve_ratio=0.0,
         rebalance_threshold_ratio=0.02,
@@ -315,7 +354,12 @@ def test_execute_rebalance_blocks_when_material_target_has_missing_prices():
         translator=translate,
         strategy_symbols=["VOO"],
         strategy_profile="tech_pullback_cash_buffer",
-        signal_metadata={"trade_date": "2026-04-01", "snapshot_as_of": "2026-03-31"},
+        signal_metadata=_signal_metadata(
+            {"VOO": 1.0},
+            risk_symbols=("VOO",),
+            trade_date="2026-04-01",
+            snapshot_as_of="2026-03-31",
+        ),
         dry_run_only=True,
         cash_reserve_ratio=0.0,
         rebalance_threshold_ratio=0.02,
@@ -352,7 +396,12 @@ def test_execute_rebalance_blocks_when_material_target_has_no_buying_power():
         translator=translate,
         strategy_symbols=["VOO"],
         strategy_profile="tech_pullback_cash_buffer",
-        signal_metadata={"trade_date": "2026-04-01", "snapshot_as_of": "2026-03-31"},
+        signal_metadata=_signal_metadata(
+            {"VOO": 1.0},
+            risk_symbols=("VOO",),
+            trade_date="2026-04-01",
+            snapshot_as_of="2026-03-31",
+        ),
         dry_run_only=True,
         cash_reserve_ratio=0.0,
         rebalance_threshold_ratio=0.02,
@@ -389,11 +438,14 @@ def test_execute_rebalance_uses_snapshot_prices_for_dry_run_when_quotes_missing(
         translator=translate,
         strategy_symbols=["VOO", "BOXX"],
         strategy_profile="tech_pullback_cash_buffer",
-        signal_metadata={
-            "trade_date": "2026-04-01",
-            "snapshot_as_of": "2026-03-31",
-            "dry_run_price_fallbacks": {"VOO": 100.0, "BOXX": 100.0},
-        },
+        signal_metadata=_signal_metadata(
+            {"VOO": 0.6, "BOXX": 0.4},
+            risk_symbols=("VOO",),
+            safe_haven_symbols=("BOXX",),
+            trade_date="2026-04-01",
+            snapshot_as_of="2026-03-31",
+            dry_run_price_fallbacks={"VOO": 100.0, "BOXX": 100.0},
+        ),
         dry_run_only=True,
         cash_reserve_ratio=0.0,
         rebalance_threshold_ratio=0.02,
