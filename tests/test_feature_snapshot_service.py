@@ -150,7 +150,7 @@ class FeatureSnapshotServiceTest(unittest.TestCase):
         _skip_if_missing_pandas()
         from application.feature_snapshot_service import load_feature_snapshot
 
-        with TemporaryDirectory() as tmp_dir:
+        with TemporaryDirectory():
             source_uri = "gs://unit-test-bucket/snapshots/tech_pullback.csv"
 
             def fake_download(uri: str, destination: Path) -> None:
