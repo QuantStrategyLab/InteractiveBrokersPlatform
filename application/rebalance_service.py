@@ -15,6 +15,141 @@ def _format_text(value, *, fallback: str) -> str:
     return text or fallback
 
 
+def _format_symbol_preview(symbols, *, limit: int = 3) -> str:
+    normalized = [str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()]
+    if not normalized:
+        return ""
+    shown = normalized[:limit]
+    remaining = len(normalized) - len(shown)
+    if remaining > 0:
+        shown.append(f"+{remaining}")
+    return ",".join(shown)
+
+
+def _summarize_target_changes(target_vs_current, *, limit: int = 5) -> str | None:
+    rows = []
+    for row in target_vs_current or ():
+        symbol = str(row.get("symbol") or "").strip().upper()
+        if not symbol:
+            continue
+        delta = float(row.get("delta_weight") or 0.0)
+        if abs(delta) < 0.001:
+            continue
+        rows.append((abs(delta), symbol, delta))
+    if not rows:
+        return None
+    rows.sort(key=lambda item: (-item[0], item[1]))
+    preview = [f"{symbol} {delta:+.1%}" for _abs_delta, symbol, delta in rows[:limit]]
+    remaining = len(rows) - len(preview)
+    if remaining > 0:
+        preview.append(f"+{remaining}")
+    return ", ".join(preview)
+
+
+def _summarize_orders(orders, *, limit: int = 3) -> str:
+    preview = []
+    for order in orders[:limit]:
+        symbol = str(order.get("symbol") or "").strip().upper()
+        quantity = int(order.get("quantity") or 0)
+        if symbol and quantity > 0:
+            preview.append(f"{symbol} {quantity}")
+        elif symbol:
+            preview.append(symbol)
+    remaining = len(orders) - len(preview)
+    if remaining > 0:
+        preview.append(f"+{remaining}")
+    return ", ".join(preview)
+
+
+def _build_order_batch_lines(execution_summary, *, translator) -> list[str]:
+    mode = str(execution_summary.get("mode") or "").strip().lower()
+    order_groups = [
+        ("orders_submitted", "dry_run" if mode == "dry_run" else "submitted"),
+        ("orders_filled", "filled"),
+        ("orders_partially_filled", "partial"),
+    ]
+    lines: list[str] = []
+    for field_name, prefix in order_groups:
+        orders = list(execution_summary.get(field_name) or [])
+        if not orders:
+            continue
+        buy_orders = [order for order in orders if str(order.get("side") or "").strip().lower() == "buy"]
+        sell_orders = [order for order in orders if str(order.get("side") or "").strip().lower() == "sell"]
+        if buy_orders:
+            lines.append(
+                translator(
+                    f"{prefix}_buy_batch",
+                    count=len(buy_orders),
+                    details=_summarize_orders(buy_orders),
+                )
+            )
+        if sell_orders:
+            lines.append(
+                translator(
+                    f"{prefix}_sell_batch",
+                    count=len(sell_orders),
+                    details=_summarize_orders(sell_orders),
+                )
+            )
+    return lines
+
+
+def _build_notification_trade_lines(
+    trade_logs,
+    *,
+    execution_summary,
+    translator,
+) -> list[str]:
+    lines: list[str] = []
+    execution_summary = dict(execution_summary or {})
+
+    no_op_reason = str(execution_summary.get("no_op_reason") or "").strip()
+    if no_op_reason.startswith("same_day_execution_locked:"):
+        lines.append(
+            translator(
+                "same_day_execution_locked_notice",
+                mode=_format_text(execution_summary.get("mode"), fallback="<none>"),
+                trade_date=_format_text(execution_summary.get("trade_date"), fallback="<none>"),
+                snapshot_date=_format_text(execution_summary.get("snapshot_as_of"), fallback="<none>"),
+            )
+        )
+
+    fallback_symbols = tuple(execution_summary.get("snapshot_price_fallback_symbols") or ())
+    if execution_summary.get("snapshot_price_fallback_used") and fallback_symbols:
+        lines.append(
+            translator(
+                "dry_run_snapshot_prices",
+                count=len(fallback_symbols),
+                symbols=_format_symbol_preview(fallback_symbols),
+            )
+        )
+
+    target_change_summary = _summarize_target_changes(execution_summary.get("target_vs_current"))
+    if target_change_summary:
+        lines.append(translator("target_diff_summary", details=target_change_summary))
+
+    lines.extend(_build_order_batch_lines(execution_summary, translator=translator))
+
+    for raw_line in trade_logs or ():
+        text = str(raw_line).strip()
+        if not text:
+            continue
+        if text.startswith(("目标差异 ", "target_diff ", "DRY_RUN buy ", "DRY_RUN sell ")):
+            continue
+        if text.startswith(("🧪 dry-run估价:", "🧪 dry-run pricing:")):
+            continue
+        if "execution_lock_acquired" in text or "已获取执行锁" in text:
+            continue
+        if text.startswith(("profile=", "strategy_profile=", "策略=")):
+            continue
+        if "same_day_execution_locked" in text or "当日执行锁已存在" in text:
+            continue
+        if text not in lines:
+            lines.append(text)
+
+    return lines
+
+
 def build_dashboard(
     positions,
     account_values,
@@ -48,12 +183,7 @@ def build_dashboard(
     target_stock_weight = signal_metadata.get("target_stock_weight")
     realized_stock_weight = signal_metadata.get("realized_stock_weight")
     safe_haven_weight = signal_metadata.get("safe_haven_weight")
-    config_source = signal_metadata.get("strategy_config_source")
     snapshot_as_of = signal_metadata.get("snapshot_as_of")
-    snapshot_path = signal_metadata.get("feature_snapshot_path") or signal_metadata.get("snapshot_path")
-    snapshot_age_days = signal_metadata.get("snapshot_age_days")
-    snapshot_file_timestamp = signal_metadata.get("snapshot_file_timestamp")
-    snapshot_decision = signal_metadata.get("snapshot_guard_decision")
     diagnostics = [
         translator("strategy_profile_detail", profile=_format_text(strategy_profile, fallback="<unknown>")),
         translator("regime_detail", value=_format_text(regime, fallback="<none>")) if regime is not None else None,
@@ -63,22 +193,13 @@ def build_dashboard(
         else None,
         translator("realized_stock_detail", value=f"{realized_stock_weight:.1%}")
         if isinstance(realized_stock_weight, (int, float))
+        and isinstance(target_stock_weight, (int, float))
+        and abs(float(realized_stock_weight) - float(target_stock_weight)) >= 0.01
         else None,
         translator("safe_haven_target_detail", value=f"{safe_haven_weight:.1%}")
         if isinstance(safe_haven_weight, (int, float))
         else None,
-        translator("snapshot_decision_detail", value=_format_text(snapshot_decision, fallback="<none>"))
-        if snapshot_decision
-        else None,
         translator("snapshot_as_of_detail", value=_format_text(snapshot_as_of, fallback="<none>")) if snapshot_as_of else None,
-        translator("snapshot_age_days_detail", value=_format_text(snapshot_age_days, fallback="<none>"))
-        if isinstance(snapshot_age_days, (int, float))
-        else None,
-        translator("snapshot_file_ts_detail", value=_format_text(snapshot_file_timestamp, fallback="<none>"))
-        if snapshot_file_timestamp
-        else None,
-        translator("snapshot_path_detail", value=_format_text(snapshot_path, fallback="<none>")) if snapshot_path else None,
-        translator("config_source_detail", value=_format_text(config_source, fallback="<none>")) if config_source else None,
     ]
     diagnostics_text = " | ".join(part for part in diagnostics if part)
     return (
@@ -213,7 +334,12 @@ def run_strategy_core(
             flush=True,
         )
         if trade_logs:
-            trade_lines = "\n".join(trade_logs)
+            notification_trade_lines = _build_notification_trade_lines(
+                trade_logs,
+                execution_summary=execution_summary,
+                translator=translator,
+            )
+            trade_lines = "\n".join(notification_trade_lines)
             message = (
                 f"{translator('rebalance_title')}\n"
                 f"{dashboard}\n"
