@@ -42,6 +42,9 @@ def build_reconciliation_record(
     signal_metadata = dict(signal_metadata or {})
     execution_summary = dict(execution_summary or {})
     target_weights = dict(target_weights or {})
+    allocation = dict(signal_metadata.get("allocation") or {})
+    allocation_safe_haven_symbols = tuple(allocation.get("safe_haven_symbols") or ())
+    allocation_safe_haven_symbol = allocation_safe_haven_symbols[0] if allocation_safe_haven_symbols else None
     record = {
         "strategy_profile": strategy_profile,
         "mode": mode,
@@ -55,7 +58,11 @@ def build_reconciliation_record(
         "realized_stock_weight": signal_metadata.get("realized_stock_weight"),
         "target_safe_haven_weight": signal_metadata.get("safe_haven_weight"),
         "realized_safe_haven_weight": execution_summary.get("realized_safe_haven_weight"),
-        "safe_haven_symbol": execution_summary.get("safe_haven_symbol") or signal_metadata.get("safe_haven_symbol"),
+        "safe_haven_symbol": (
+            execution_summary.get("safe_haven_symbol")
+            or signal_metadata.get("safe_haven_symbol")
+            or allocation_safe_haven_symbol
+        ),
         "target_holdings": [
             {"symbol": symbol, "target_weight": float(weight)}
             for symbol, weight in sorted(target_weights.items(), key=lambda item: (-item[1], item[0]))
@@ -85,6 +92,9 @@ def build_reconciliation_record(
 
 def write_reconciliation_record(record: dict[str, Any], *, output_path: str | Path | None = None) -> Path:
     path = Path(output_path) if output_path else default_reconciliation_output_path(record.get("strategy_profile"))
+    if output_path and path.suffix.lower() != ".json":
+        trade_date = str(record.get("trade_date") or "latest").strip() or "latest"
+        path = path / trade_date / "reconciliation.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(_json_safe(record), ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
     return path

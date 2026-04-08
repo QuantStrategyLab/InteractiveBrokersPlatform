@@ -128,7 +128,6 @@ def map_strategy_decision(
     metadata.setdefault("risk_flags", risk_flags)
     metadata.setdefault("actionable", not no_execute)
     if allocation_payload:
-        metadata.setdefault("target_mode", allocation_payload["target_mode"])
         metadata.setdefault("allocation", allocation_payload)
 
     return target_weights, signal_desc, is_emergency, status_desc, metadata
