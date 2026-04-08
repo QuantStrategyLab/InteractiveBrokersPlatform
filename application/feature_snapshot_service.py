@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import tempfile
 from dataclasses import dataclass
 from datetime import timezone
 from pathlib import Path
@@ -15,6 +16,7 @@ import pandas as pd
 DEFAULT_SNAPSHOT_DATE_COLUMNS = ("as_of", "snapshot_date")
 DEFAULT_MAX_SNAPSHOT_MONTH_LAG = 1
 DEFAULT_SNAPSHOT_MANIFEST_SUFFIX = ".manifest.json"
+DEFAULT_ARTIFACT_CACHE_DIR = Path(tempfile.gettempdir()) / "quant_strategy_artifacts"
 
 
 @dataclass(frozen=True)
@@ -99,6 +101,56 @@ def _resolve_manifest_path(snapshot_path: Path, manifest_path: str | None) -> Pa
     return Path(f"{snapshot_path}{DEFAULT_SNAPSHOT_MANIFEST_SUFFIX}")
 
 
+def _is_gcs_uri(reference: str | None) -> bool:
+    return str(reference or "").strip().startswith("gs://")
+
+
+def _resolve_manifest_reference(snapshot_reference: str, manifest_path: str | None) -> str:
+    raw_manifest = str(manifest_path or "").strip()
+    if raw_manifest:
+        return raw_manifest
+    return f"{str(snapshot_reference).strip()}{DEFAULT_SNAPSHOT_MANIFEST_SUFFIX}"
+
+
+def _parse_gcs_uri(uri: str) -> tuple[str, str]:
+    raw_uri = str(uri or "").strip()
+    if not raw_uri.startswith("gs://"):
+        raise ValueError(f"Unsupported GCS URI: {raw_uri}")
+    bucket_name, _, object_name = raw_uri[5:].partition("/")
+    if not bucket_name or not object_name:
+        raise ValueError(f"Invalid GCS URI: {raw_uri}")
+    return bucket_name, object_name
+
+
+def _download_gcs_object(uri: str, destination: Path) -> None:
+    from google.cloud import storage
+
+    bucket_name, object_name = _parse_gcs_uri(uri)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    client = storage.Client()
+    client.bucket(bucket_name).blob(object_name).download_to_filename(str(destination))
+
+
+def _cache_path_for_remote_artifact(reference: str) -> Path:
+    raw_reference = str(reference or "").strip()
+    digest = hashlib.sha256(raw_reference.encode("utf-8")).hexdigest()[:16]
+    leaf_name = Path(raw_reference).name or "artifact"
+    return DEFAULT_ARTIFACT_CACHE_DIR / digest / leaf_name
+
+
+def _materialize_artifact_path(reference: str) -> tuple[Path, dict[str, object]]:
+    raw_reference = str(reference or "").strip()
+    if not raw_reference:
+        raise ValueError("artifact reference is required")
+
+    if not _is_gcs_uri(raw_reference):
+        return Path(raw_reference), {"source_uri": None, "local_path": raw_reference}
+
+    local_path = _cache_path_for_remote_artifact(raw_reference)
+    _download_gcs_object(raw_reference, local_path)
+    return local_path, {"source_uri": raw_reference, "local_path": str(local_path)}
+
+
 def _normalize_manifest_payload(payload: dict[str, object]) -> dict[str, object]:
     normalized = dict(payload)
     if "snapshot_as_of" in normalized:
@@ -117,7 +169,12 @@ def load_feature_snapshot(path: str) -> pd.DataFrame:
     raw_path = str(path or "").strip()
     if not raw_path:
         raise EnvironmentError("Feature snapshot path is required")
-    snapshot_path = Path(raw_path)
+    try:
+        snapshot_path, _ = _materialize_artifact_path(raw_path)
+    except Exception as exc:
+        raise FileNotFoundError(
+            f"Feature snapshot unavailable: {raw_path} ({type(exc).__name__}: {exc})"
+        ) from exc
     if not snapshot_path.exists():
         raise FileNotFoundError(f"Feature snapshot not found: {snapshot_path}")
     return _load_snapshot_frame(snapshot_path)
@@ -149,6 +206,77 @@ def load_feature_snapshot_guarded(
                 fail_reason="feature_snapshot_path_missing",
             ),
         )
+
+    manifest_reference = _resolve_manifest_reference(raw_path, manifest_path)
+    if _is_gcs_uri(raw_path) or _is_gcs_uri(manifest_reference):
+        try:
+            local_snapshot_path, snapshot_artifact_metadata = _materialize_artifact_path(raw_path)
+        except Exception as exc:
+            return FeatureSnapshotGuardResult(
+                frame=None,
+                metadata=_build_guard_metadata(
+                    snapshot_path=raw_path,
+                    decision="fail_closed",
+                    snapshot_exists=False,
+                    snapshot_source_uri=raw_path if _is_gcs_uri(raw_path) else None,
+                    fail_reason=f"feature_snapshot_download_failed:{type(exc).__name__}:{exc}",
+                ),
+            )
+
+        local_manifest_path = None
+        manifest_artifact_metadata = {
+            "source_uri": manifest_reference if _is_gcs_uri(manifest_reference) else None,
+            "local_path": manifest_reference,
+        }
+        manifest_download_error = None
+        try:
+            local_manifest_path, manifest_artifact_metadata = _materialize_artifact_path(
+                manifest_reference
+            )
+        except Exception as exc:
+            manifest_download_error = f"{type(exc).__name__}:{exc}"
+            if require_manifest:
+                return FeatureSnapshotGuardResult(
+                    frame=None,
+                    metadata=_build_guard_metadata(
+                        snapshot_path=raw_path,
+                        decision="fail_closed",
+                        snapshot_exists=True,
+                        snapshot_source_uri=snapshot_artifact_metadata.get("source_uri"),
+                        snapshot_local_path=snapshot_artifact_metadata.get("local_path"),
+                        snapshot_manifest_path=manifest_reference,
+                        snapshot_manifest_exists=False,
+                        snapshot_manifest_source_uri=manifest_artifact_metadata.get("source_uri"),
+                        snapshot_manifest_download_error=manifest_download_error,
+                        fail_reason=f"feature_snapshot_manifest_download_failed:{manifest_download_error}",
+                    ),
+                )
+
+        result = load_feature_snapshot_guarded(
+            str(local_snapshot_path),
+            run_as_of=run_as_of,
+            required_columns=required_columns,
+            snapshot_date_columns=snapshot_date_columns,
+            max_snapshot_month_lag=max_snapshot_month_lag,
+            manifest_path=str(local_manifest_path) if local_manifest_path is not None else None,
+            require_manifest=require_manifest,
+            expected_strategy_profile=expected_strategy_profile,
+            expected_config_name=expected_config_name,
+            expected_config_path=expected_config_path,
+            expected_contract_version=expected_contract_version,
+        )
+        metadata = dict(result.metadata)
+        metadata["feature_snapshot_path"] = raw_path
+        metadata["snapshot_path"] = raw_path
+        metadata["snapshot_source_uri"] = snapshot_artifact_metadata.get("source_uri")
+        metadata["snapshot_local_path"] = snapshot_artifact_metadata.get("local_path")
+        metadata["snapshot_manifest_path"] = manifest_reference
+        metadata["snapshot_manifest_source_uri"] = manifest_artifact_metadata.get("source_uri")
+        metadata["snapshot_manifest_local_path"] = manifest_artifact_metadata.get("local_path")
+        if manifest_download_error is not None:
+            metadata["snapshot_manifest_download_error"] = manifest_download_error
+            metadata["snapshot_manifest_exists"] = False
+        return FeatureSnapshotGuardResult(frame=result.frame, metadata=metadata)
 
     snapshot_path = Path(raw_path)
     manifest_file = _resolve_manifest_path(snapshot_path, manifest_path)
