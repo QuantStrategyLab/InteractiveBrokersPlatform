@@ -19,5 +19,5 @@ def test_default_account_group_example_is_valid():
     assert default_group.ib_gateway_mode == "paper"
     assert default_group.ib_gateway_ip_mode == "internal"
     assert default_group.ib_client_id == 1
-    assert default_group.service_name == "interactive-brokers-quant-global-etf-rotation"
+    assert default_group.service_name == "interactive-brokers-quant-service"
     assert default_group.account_ids == ("DU1234567",)
