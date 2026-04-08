@@ -95,9 +95,9 @@ class FeatureSnapshotServiceTest(unittest.TestCase):
                 run_as_of="2026-04-01",
                 required_columns=("as_of", "symbol", "sector", "mom_6_1"),
                 require_manifest=True,
-                expected_strategy_profile="tech_pullback_cash_buffer",
+                expected_strategy_profile="qqq_tech_enhancement",
                 expected_config_name="tech_pullback_cash_buffer",
-                expected_contract_version="tech_pullback_cash_buffer.feature_snapshot.v1",
+                expected_contract_version="qqq_tech_enhancement.feature_snapshot.v1",
             )
 
         self.assertIsNone(result.frame)
@@ -135,10 +135,10 @@ class FeatureSnapshotServiceTest(unittest.TestCase):
                 run_as_of="2026-04-01",
                 required_columns=("as_of", "symbol", "sector", "mom_6_1"),
                 require_manifest=True,
-                expected_strategy_profile="tech_pullback_cash_buffer",
+                expected_strategy_profile="qqq_tech_enhancement",
                 expected_config_name="tech_pullback_cash_buffer",
                 expected_config_path=str(config_path),
-                expected_contract_version="tech_pullback_cash_buffer.feature_snapshot.v1",
+                expected_contract_version="qqq_tech_enhancement.feature_snapshot.v1",
             )
 
         self.assertIsNotNone(result.frame)
@@ -211,10 +211,10 @@ class FeatureSnapshotServiceTest(unittest.TestCase):
                     run_as_of="2026-04-01",
                     required_columns=("as_of", "symbol", "sector", "mom_6_1"),
                     require_manifest=True,
-                    expected_strategy_profile="tech_pullback_cash_buffer",
+                    expected_strategy_profile="qqq_tech_enhancement",
                     expected_config_name="tech_pullback_cash_buffer",
                     expected_config_path=str(config_path),
-                    expected_contract_version="tech_pullback_cash_buffer.feature_snapshot.v1",
+                    expected_contract_version="qqq_tech_enhancement.feature_snapshot.v1",
                 )
 
         self.assertIsNotNone(result.frame)

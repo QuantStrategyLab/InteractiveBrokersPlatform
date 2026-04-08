@@ -65,7 +65,7 @@ def test_load_strategy_runtime_adapter_for_profile_resolves_tech_pullback_cash_b
     assert adapter.status_icon == "🧲"
     assert adapter.available_inputs == frozenset({"feature_snapshot"})
     assert adapter.require_snapshot_manifest is True
-    assert adapter.snapshot_contract_version == "tech_pullback_cash_buffer.feature_snapshot.v1"
+    assert adapter.snapshot_contract_version == "qqq_tech_enhancement.feature_snapshot.v1"
 
 
 def test_load_strategy_runtime_adapter_for_profile_resolves_global_etf_rotation_inputs(monkeypatch):
