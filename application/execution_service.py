@@ -434,14 +434,25 @@ def execute_rebalance(
     )
     trade_logs.extend(_format_target_lines(target_weights, current_mv, equity, translator=translator))
 
+    missing_price_symbols: list[str] = []
+    insufficient_buying_power_symbols: list[str] = []
+    min_notional_symbols: list[str] = []
+    quantity_zero_symbols: list[str] = []
+
     has_sell_plan = False
     for symbol in all_symbols:
         current = current_mv.get(symbol, 0.0)
         target = target_mv.get(symbol, 0.0)
+        if current <= target + threshold:
+            continue
         price = prices.get(symbol)
-        if price and current > target + threshold and int((current - target) / price) > 0:
+        if not price:
+            missing_price_symbols.append(symbol)
+            continue
+        if int((current - target) / price) > 0:
             has_sell_plan = True
             break
+        quantity_zero_symbols.append(symbol)
 
     anticipated_buying_power = get_available_buying_power(
         ib,
@@ -450,19 +461,54 @@ def execute_rebalance(
     has_buy_plan = False
     for symbol, target in target_mv.items():
         current = current_mv.get(symbol, 0.0)
+        if current >= target - threshold:
+            continue
         price = prices.get(symbol)
-        if not price or current >= target - threshold:
+        if not price:
+            missing_price_symbols.append(symbol)
             continue
         buy_value = min(target - current, anticipated_buying_power * 0.95)
+        if buy_value <= 0:
+            insufficient_buying_power_symbols.append(symbol)
+            continue
+        if buy_value < 50:
+            min_notional_symbols.append(symbol)
+            continue
         limit_price = round(price * limit_buy_premium, 2)
         qty = int(buy_value / limit_price) if limit_price > 0 else 0
-        if qty > 0 and buy_value >= 50:
+        if qty > 0:
             has_buy_plan = True
             break
+        quantity_zero_symbols.append(symbol)
 
     if not has_sell_plan and not has_buy_plan:
-        execution_summary["execution_status"] = "no_op"
-        execution_summary["no_op_reason"] = "target_diff_below_threshold"
+        reason = "target_diff_below_threshold"
+        status = "no_op"
+        if missing_price_symbols:
+            symbols = ",".join(sorted(dict.fromkeys(missing_price_symbols)))
+            reason = f"missing_price:{symbols}"
+            status = "blocked"
+            execution_summary["orders_skipped"].extend(
+                {"symbol": symbol, "reason": "missing_price"}
+                for symbol in sorted(dict.fromkeys(missing_price_symbols))
+            )
+        elif insufficient_buying_power_symbols:
+            symbols = ",".join(sorted(dict.fromkeys(insufficient_buying_power_symbols)))
+            reason = f"insufficient_buying_power:{symbols}"
+            status = "blocked"
+        elif min_notional_symbols:
+            symbols = ",".join(sorted(dict.fromkeys(min_notional_symbols)))
+            reason = f"min_notional:{symbols}"
+        elif quantity_zero_symbols:
+            symbols = ",".join(sorted(dict.fromkeys(quantity_zero_symbols)))
+            reason = f"quantity_zero:{symbols}"
+
+        execution_summary["execution_status"] = status
+        execution_summary["no_op_reason"] = reason
+        if reason != "target_diff_below_threshold":
+            execution_summary["skipped_reasons"].append(reason)
+            if status == "blocked":
+                trade_logs.append(translator("failed", reason=reason))
         return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
 
     same_day_filled_symbols = _collect_same_day_filled_symbols(ib, set(all_symbols), trade_date)
