@@ -80,10 +80,10 @@ def test_build_dashboard_localizes_strategy_details():
         },
         translator=build_translator("zh"),
         separator="---",
-        strategy_display_name="全球 ETF 轮动防御",
+        strategy_display_name="全球 ETF 轮动",
     )
 
-    assert "🧭 策略: 全球 ETF 轮动防御" in dashboard
+    assert "🧭 策略: 全球 ETF 轮动" in dashboard
     assert "目标持仓" in dashboard
     assert "市场阶段=risk_off" in dashboard
     assert "快照路径" not in dashboard
@@ -136,7 +136,7 @@ def test_run_strategy_core_passes_signal_metadata_to_execution():
         send_tg_message=lambda message: observed["messages"].append(message),
         translator=_build_test_translator(),
         separator="---",
-        strategy_display_name="Global ETF Rotation Defense",
+        strategy_display_name="Global ETF Rotation",
     )
 
     assert result == "OK - executed"
@@ -210,7 +210,7 @@ def test_run_strategy_core_writes_reconciliation_record(tmp_path):
         send_tg_message=lambda message: observed["messages"].append(message),
         translator=_build_test_translator(),
         separator="---",
-        strategy_display_name="Tech Pullback Cash Buffer",
+        strategy_display_name="QQQ Tech Enhancement",
         reconciliation_output_path=output_path,
     )
 
@@ -258,7 +258,7 @@ def test_run_strategy_core_writes_reconciliation_record_under_strategy_dir(tmp_p
         send_tg_message=lambda _message: None,
         translator=_build_test_translator(),
         separator="---",
-        strategy_display_name="Tech Pullback Cash Buffer",
+        strategy_display_name="QQQ Tech Enhancement",
         reconciliation_output_path=output_root,
     )
 

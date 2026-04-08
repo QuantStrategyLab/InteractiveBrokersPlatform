@@ -7,11 +7,29 @@ from quant_platform_kit.strategy_contracts import (
     StrategyDecision,
     build_allocation_intent,
     build_allocation_payload,
+    translate_decision_to_target_mode,
 )
 
 
 _EMERGENCY_FLAGS = frozenset({"emergency", "hard_defense"})
 _NO_EXECUTE_FLAGS = frozenset({"no_execute"})
+
+
+def _resolve_allocation_order(strategy_profile: str) -> str:
+    if strategy_profile == "semiconductor_rotation_income":
+        return "risk_income_safe"
+    return "risk_safe_income"
+
+
+def _normalize_to_weight_decision(
+    decision: StrategyDecision,
+    runtime_metadata: Mapping[str, Any],
+) -> StrategyDecision:
+    return translate_decision_to_target_mode(
+        decision,
+        target_mode="weight",
+        total_equity=runtime_metadata.get("portfolio_total_equity"),
+    )
 
 
 def _derive_target_weights(decision: StrategyDecision) -> dict[str, float]:
@@ -101,14 +119,15 @@ def map_strategy_decision(
     diagnostics = dict(decision.diagnostics)
     risk_flags = tuple(str(flag) for flag in decision.risk_flags)
     no_execute = bool(_NO_EXECUTE_FLAGS & set(risk_flags))
-    target_weights = None if no_execute else _derive_target_weights(decision)
+    normalized_decision = decision if no_execute else _normalize_to_weight_decision(decision, runtime_metadata)
+    target_weights = None if no_execute else _derive_target_weights(normalized_decision)
     allocation_payload = None
-    if not no_execute and decision.positions:
+    if not no_execute and normalized_decision.positions:
         allocation_payload = build_allocation_payload(
             build_allocation_intent(
-                decision,
+                normalized_decision,
                 strategy_profile=strategy_profile,
-                strategy_symbols_order="risk_safe_income",
+                strategy_symbols_order=_resolve_allocation_order(strategy_profile),
             )
         )
     signal_desc = _derive_signal_description(decision, runtime_metadata)
@@ -120,9 +139,9 @@ def map_strategy_decision(
     metadata.setdefault("status_icon", "🐤")
     metadata.setdefault(
         "managed_symbols",
-        _derive_managed_symbols(decision, runtime_metadata, allocation_payload=allocation_payload),
+        _derive_managed_symbols(normalized_decision, runtime_metadata, allocation_payload=allocation_payload),
     )
-    safe_haven_symbol = _derive_safe_haven_symbol(decision, runtime_metadata)
+    safe_haven_symbol = _derive_safe_haven_symbol(normalized_decision, runtime_metadata)
     if safe_haven_symbol:
         metadata.setdefault("safe_haven_symbol", safe_haven_symbol)
     metadata.setdefault("risk_flags", risk_flags)

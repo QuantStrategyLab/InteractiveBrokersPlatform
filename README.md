@@ -14,9 +14,9 @@
 
 IBKR runtime for shared `us_equity` strategy profiles from `UsEquityStrategies`. Today it supports:
 
-- `global_etf_rotation` (`Global ETF Rotation Defense`): quarterly ETF momentum rotation with daily canary defense
-- `russell_1000_multi_factor_defensive` (`Russell 1000 Multi-Factor Defensive`): monthly stock-selection strategy that consumes a precomputed feature snapshot
-- `tech_pullback_cash_buffer` (`Tech Pullback Cash Buffer`): monthly tech-heavy stock-selection branch with explicit BOXX cash buffer
+- `global_etf_rotation` (`Global ETF Rotation`): quarterly ETF momentum rotation with daily canary defense
+- `russell_1000_multi_factor_defensive` (`Russell 1000 Multi-Factor`): monthly stock-selection strategy that consumes a precomputed feature snapshot
+- `tech_pullback_cash_buffer` (`QQQ Tech Enhancement`): monthly tech-heavy stock-selection branch with explicit BOXX cash buffer
 
 Current strategy implementations are sourced from `UsEquityStrategies`.
 
@@ -47,9 +47,9 @@ The mainline runtime now follows one path only:
 
 | Canonical profile | Display name | Eligible | Enabled | Default | Rollback | Domain | Runtime note |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `global_etf_rotation` | Global ETF Rotation Defense | Yes | Yes | Yes | Yes | `us_equity` | current rollback line |
-| `russell_1000_multi_factor_defensive` | Russell 1000 Multi-Factor Defensive | Yes | Yes | No | No | `us_equity` | defensive stock baseline |
-| `tech_pullback_cash_buffer` | Tech Pullback Cash Buffer | Yes | Yes | No | No | `us_equity` | current IBKR paper dry-run candidate |
+| `global_etf_rotation` | Global ETF Rotation | Yes | Yes | Yes | Yes | `us_equity` | current rollback line |
+| `russell_1000_multi_factor_defensive` | Russell 1000 Multi-Factor | Yes | Yes | No | No | `us_equity` | defensive stock baseline |
+| `tech_pullback_cash_buffer` | QQQ Tech Enhancement | Yes | Yes | No | No | `us_equity` | current IBKR paper dry-run candidate |
 
 Check the current matrix locally:
 

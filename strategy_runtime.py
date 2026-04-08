@@ -6,9 +6,14 @@ from typing import Any
 
 import pandas as pd
 
-from application.feature_snapshot_service import load_feature_snapshot_guarded
+from quant_platform_kit.common.feature_snapshot import load_feature_snapshot_guarded
+from quant_platform_kit.ibkr import (
+    build_ibkr_strategy_context,
+    build_market_history_inputs,
+    build_semiconductor_rotation_inputs,
+    fetch_portfolio_snapshot,
+)
 from quant_platform_kit.strategy_contracts import (
-    StrategyContext,
     StrategyDecision,
     StrategyEntrypoint,
     StrategyRuntimeAdapter,
@@ -23,7 +28,9 @@ from strategy_loader import (
 
 DEFAULT_CASH_RESERVE_RATIO = 0.03
 _FEATURE_SNAPSHOT_INPUT = "feature_snapshot"
-_HISTORICAL_CLOSE_INPUT = "historical_close_loader"
+_MARKET_HISTORY_INPUT = "market_history"
+_DERIVED_INDICATORS_INPUT = "derived_indicators"
+_PORTFOLIO_SNAPSHOT_INPUT = "portfolio_snapshot"
 
 
 @dataclass(frozen=True)
@@ -66,9 +73,20 @@ class LoadedStrategyRuntime:
             return self._evaluate_feature_snapshot_strategy(
                 current_holdings=current_holdings,
                 run_as_of=run_as_of,
+                translator=translator,
+                pacing_sec=pacing_sec,
             )
-        if _HISTORICAL_CLOSE_INPUT in self.required_inputs:
+        if _MARKET_HISTORY_INPUT in self.required_inputs:
             return self._evaluate_market_data_strategy(
+                ib=ib,
+                current_holdings=current_holdings,
+                historical_close_loader=historical_close_loader,
+                run_as_of=run_as_of,
+                translator=translator,
+                pacing_sec=pacing_sec,
+            )
+        if {_DERIVED_INDICATORS_INPUT, _PORTFOLIO_SNAPSHOT_INPUT}.issubset(self.required_inputs):
+            return self._evaluate_value_target_strategy(
                 ib=ib,
                 current_holdings=current_holdings,
                 historical_close_loader=historical_close_loader,
@@ -94,12 +112,14 @@ class LoadedStrategyRuntime:
         runtime_config = dict(self.runtime_config)
         runtime_config.setdefault("translator", translator)
         runtime_config.setdefault("pacing_sec", float(pacing_sec))
-        ctx = StrategyContext(
+        ctx = build_ibkr_strategy_context(
+            entrypoint=self.entrypoint,
+            runtime_adapter=self.runtime_adapter,
             as_of=run_as_of,
-            market_data={"historical_close_loader": historical_close_loader},
-            state={"current_holdings": tuple(current_holdings)},
+            market_inputs=build_market_history_inputs(historical_close_loader),
             runtime_config=runtime_config,
-            capabilities={"broker_client": ib},
+            current_holdings=current_holdings,
+            ib=ib,
         )
         decision = self.entrypoint.evaluate(ctx)
         safe_haven_symbol = str(self.merged_runtime_config.get("safe_haven") or "").strip().upper() or None
@@ -118,12 +138,62 @@ class LoadedStrategyRuntime:
             metadata["safe_haven_symbol"] = safe_haven_symbol
         return StrategyEvaluationResult(decision=decision, metadata=metadata)
 
+    def _evaluate_value_target_strategy(
+        self,
+        *,
+        ib,
+        current_holdings,
+        historical_close_loader: Callable[..., Any],
+        run_as_of: pd.Timestamp,
+        translator: Callable[[str], str],
+        pacing_sec: float,
+    ) -> StrategyEvaluationResult:
+        runtime_config = dict(self.runtime_config)
+        runtime_config.setdefault("translator", translator)
+        runtime_config.setdefault("pacing_sec", float(pacing_sec))
+        portfolio_snapshot = fetch_portfolio_snapshot(ib)
+        ctx = build_ibkr_strategy_context(
+            entrypoint=self.entrypoint,
+            runtime_adapter=self.runtime_adapter,
+            as_of=run_as_of,
+            market_inputs=build_semiconductor_rotation_inputs(
+                ib,
+                historical_close_loader,
+                trend_ma_window=int(self.merged_runtime_config.get("trend_ma_window", 150)),
+            ),
+            portfolio_snapshot=portfolio_snapshot,
+            runtime_config=runtime_config,
+            current_holdings=current_holdings,
+            ib=ib,
+        )
+        decision = self.entrypoint.evaluate(ctx)
+        managed_symbols = tuple(
+            str(symbol) for symbol in self.merged_runtime_config.get("managed_symbols", ())
+        )
+        safe_haven_symbol = next(
+            (position.symbol for position in decision.positions if position.role == "safe_haven"),
+            None,
+        )
+        metadata = {
+            "strategy_profile": self.profile,
+            "managed_symbols": managed_symbols,
+            "status_icon": self.status_icon,
+            "dry_run_only": self.runtime_settings.dry_run_only,
+            "portfolio_total_equity": float(portfolio_snapshot.total_equity),
+        }
+        if safe_haven_symbol:
+            metadata["safe_haven_symbol"] = str(safe_haven_symbol)
+        return StrategyEvaluationResult(decision=decision, metadata=metadata)
+
     def _evaluate_feature_snapshot_strategy(
         self,
         *,
         current_holdings,
         run_as_of: pd.Timestamp,
+        translator: Callable[[str], str],
+        pacing_sec: float,
     ) -> StrategyEvaluationResult:
+        del translator, pacing_sec
         if not self.runtime_settings.feature_snapshot_path:
             metadata = {
                 "strategy_profile": self.profile,
@@ -215,11 +285,13 @@ class LoadedStrategyRuntime:
             benchmark_symbol=benchmark_symbol,
             safe_haven_symbol=safe_haven_symbol,
         )
-        ctx = StrategyContext(
+        ctx = build_ibkr_strategy_context(
+            entrypoint=self.entrypoint,
+            runtime_adapter=self.runtime_adapter,
             as_of=run_as_of,
-            market_data={"feature_snapshot": feature_snapshot},
-            state={"current_holdings": tuple(current_holdings)},
+            market_inputs={_FEATURE_SNAPSHOT_INPUT: feature_snapshot},
             runtime_config=dict(self.runtime_config),
+            current_holdings=current_holdings,
         )
         try:
             decision = self.entrypoint.evaluate(ctx)

@@ -17,7 +17,7 @@ def test_load_strategy_entrypoint_for_profile_resolves_global_etf_rotation(monke
     entrypoint = load_strategy_entrypoint_for_profile("global_etf_rotation")
 
     assert entrypoint.manifest.profile == "global_etf_rotation"
-    assert "historical_close_loader" in entrypoint.manifest.required_inputs
+    assert "market_history" in entrypoint.manifest.required_inputs
 
 
 def test_load_strategy_entrypoint_for_profile_resolves_tech_pullback_cash_buffer(monkeypatch):
@@ -75,5 +75,21 @@ def test_load_strategy_runtime_adapter_for_profile_resolves_global_etf_rotation_
 
     adapter = load_strategy_runtime_adapter_for_profile("global_etf_rotation")
 
-    assert adapter.available_inputs == frozenset({"historical_close_loader"})
+    assert adapter.available_inputs == frozenset({"market_history"})
     assert adapter.available_capabilities == frozenset({"broker_client"})
+
+
+def test_load_strategy_runtime_adapter_for_profile_resolves_semiconductor_inputs(monkeypatch):
+    try:
+        import pandas  # noqa: F401
+    except ModuleNotFoundError:
+        return
+
+    market_calendars_module = types.ModuleType("pandas_market_calendars")
+    market_calendars_module.get_calendar = lambda name: None
+    monkeypatch.setitem(sys.modules, "pandas_market_calendars", market_calendars_module)
+
+    adapter = load_strategy_runtime_adapter_for_profile("semiconductor_rotation_income")
+
+    assert adapter.available_inputs == frozenset({"derived_indicators", "portfolio_snapshot"})
+    assert adapter.portfolio_input_name == "portfolio_snapshot"

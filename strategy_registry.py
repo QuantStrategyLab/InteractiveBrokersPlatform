@@ -26,6 +26,7 @@ IBKR_ROLLOUT_ALLOWLIST = frozenset(
         "tech_pullback_cash_buffer",
         "global_etf_rotation",
         "russell_1000_multi_factor_defensive",
+        "semiconductor_rotation_income",
     }
 )
 
@@ -36,8 +37,8 @@ STRATEGY_CATALOG = get_strategy_catalog()
 PLATFORM_CAPABILITY_MATRIX = PlatformCapabilityMatrix(
     platform_id=IBKR_PLATFORM,
     supported_domains=PLATFORM_SUPPORTED_DOMAINS[IBKR_PLATFORM],
-    supported_target_modes=frozenset({"weight"}),
-    supported_inputs=frozenset({"historical_close_loader", "feature_snapshot"}),
+    supported_target_modes=frozenset({"weight", "value"}),
+    supported_inputs=frozenset({"market_history", "feature_snapshot", "derived_indicators", "portfolio_snapshot"}),
     supported_capabilities=frozenset({"broker_client"}),
 )
 ELIGIBLE_STRATEGY_PROFILES = derive_eligible_profiles_for_platform(

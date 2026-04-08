@@ -61,3 +61,44 @@ def test_map_strategy_decision_returns_noop_when_flagged_no_execute():
     assert metadata["actionable"] is False
     assert metadata["snapshot_guard_decision"] == "fail_closed"
     assert "allocation" not in metadata
+
+
+def test_map_strategy_decision_translates_value_targets_for_semiconductor_strategy():
+    decision = StrategyDecision(
+        positions=(
+            PositionTarget(symbol="SOXL", target_value=30000.0),
+            PositionTarget(symbol="SOXX", target_value=0.0),
+            PositionTarget(symbol="QQQI", target_value=3500.0, role="income"),
+            PositionTarget(symbol="SPYI", target_value=1500.0, role="income"),
+            PositionTarget(symbol="BOXX", target_value=15000.0, role="safe_haven"),
+        ),
+        diagnostics={
+            "signal_description": "risk on",
+            "status_description": "soxl>ma150",
+        },
+    )
+
+    target_weights, signal_desc, is_emergency, status_desc, metadata = map_strategy_decision(
+        decision,
+        strategy_profile="semiconductor_rotation_income",
+        runtime_metadata={
+            "portfolio_total_equity": 50000.0,
+            "status_icon": "🚀",
+            "managed_symbols": ("SOXL", "SOXX", "QQQI", "SPYI", "BOXX"),
+        },
+    )
+
+    assert target_weights == {
+        "SOXL": 0.6,
+        "SOXX": 0.0,
+        "QQQI": 0.07,
+        "SPYI": 0.03,
+        "BOXX": 0.3,
+    }
+    assert signal_desc == "risk on"
+    assert is_emergency is False
+    assert status_desc == "soxl>ma150"
+    assert metadata["safe_haven_symbol"] == "BOXX"
+    assert metadata["allocation"]["target_mode"] == "weight"
+    assert metadata["allocation"]["strategy_symbols"] == ("SOXL", "SOXX", "QQQI", "SPYI", "BOXX")
+    assert metadata["allocation"]["targets"]["SOXL"] == 0.6

@@ -19,7 +19,7 @@ def _build_runtime_settings(profile: str = "tech_pullback_cash_buffer") -> Platf
         ib_gateway_ip_mode="internal",
         ib_client_id=1,
         strategy_profile=profile,
-        strategy_display_name="Tech Pullback Cash Buffer",
+        strategy_display_name="QQQ Tech Enhancement",
         strategy_domain="us_equity",
         strategy_target_mode="weight",
         strategy_artifact_root=None,
@@ -104,7 +104,7 @@ def test_load_strategy_runtime_uses_entrypoint_defaults_and_runtime_adapter(monk
         manifest = StrategyManifest(
             profile="tech_pullback_cash_buffer",
             domain="us_equity",
-            display_name="Tech Pullback Cash Buffer",
+            display_name="QQQ Tech Enhancement",
             description="test",
             required_inputs=frozenset({"feature_snapshot"}),
             default_config={"safe_haven": "BOXX", "benchmark_symbol": "QQQ"},
@@ -156,13 +156,15 @@ def test_feature_snapshot_runtime_prefers_unified_runtime_adapter_metadata(monke
         manifest = StrategyManifest(
             profile="tech_pullback_cash_buffer",
             domain="us_equity",
-            display_name="Tech Pullback Cash Buffer",
+            display_name="QQQ Tech Enhancement",
             description="test",
             required_inputs=frozenset({"feature_snapshot"}),
             default_config={"safe_haven": "BOXX", "benchmark_symbol": "QQQ"},
         )
 
         def evaluate(self, ctx):
+            captured["market_data"] = dict(ctx.market_data)
+            captured["runtime_config"] = dict(ctx.runtime_config)
             return StrategyDecision()
 
     runtime = strategy_runtime_module.LoadedStrategyRuntime(
@@ -211,7 +213,50 @@ def test_feature_snapshot_runtime_prefers_unified_runtime_adapter_metadata(monke
     assert captured["max_snapshot_month_lag"] == 2
     assert captured["require_manifest"] is True
     assert captured["expected_contract_version"] == "adapter.contract"
+    assert captured["market_data"]["feature_snapshot"] == [{"as_of": "2026-03-31", "symbol": "AAPL", "close": 1.0}]
+    assert "pacing_sec" not in captured["runtime_config"]
     assert result.metadata["managed_symbols"] == ("AAPL", "BOXX")
+
+
+def test_market_history_runtime_uses_canonical_market_history_key():
+    captured = {}
+
+    class FakeEntrypoint:
+        manifest = StrategyManifest(
+            profile="global_etf_rotation",
+            domain="us_equity",
+            display_name="Global ETF Rotation",
+            description="test",
+            required_inputs=frozenset({"market_history"}),
+            default_config={"safe_haven": "BIL", "ranking_pool": ("AAA",)},
+        )
+
+        def evaluate(self, ctx):
+            captured["market_data"] = dict(ctx.market_data)
+            return StrategyDecision()
+
+    loader = lambda *_args, **_kwargs: None
+    runtime = strategy_runtime_module.LoadedStrategyRuntime(
+        entrypoint=FakeEntrypoint(),
+        runtime_adapter=StrategyRuntimeAdapter(status_icon="🐤"),
+        runtime_settings=_build_runtime_settings(profile="global_etf_rotation"),
+        runtime_config={},
+        merged_runtime_config={"safe_haven": "BIL", "ranking_pool": ("AAA",)},
+        status_icon="🐤",
+        logger=lambda _message: None,
+    )
+
+    runtime.evaluate(
+        ib="fake-ib",
+        current_holdings={"AAA"},
+        historical_close_loader=loader,
+        run_as_of=strategy_runtime_module.pd.Timestamp("2026-04-01"),
+        translator=lambda key, **_kwargs: key,
+        pacing_sec=0.5,
+    )
+
+    assert captured["market_data"]["market_history"] is loader
+    assert "historical_close_loader" not in captured["market_data"]
 
 
 def test_feature_snapshot_runtime_fail_closes_on_entrypoint_exception(monkeypatch):
@@ -219,7 +264,7 @@ def test_feature_snapshot_runtime_fail_closes_on_entrypoint_exception(monkeypatc
         manifest = StrategyManifest(
             profile="tech_pullback_cash_buffer",
             domain="us_equity",
-            display_name="Tech Pullback Cash Buffer",
+            display_name="QQQ Tech Enhancement",
             description="test",
             required_inputs=frozenset({"feature_snapshot"}),
             default_config={"safe_haven": "BOXX"},
@@ -272,3 +317,63 @@ def test_feature_snapshot_runtime_fail_closes_on_entrypoint_exception(monkeypatc
     assert result.metadata["snapshot_guard_decision"] == "fail_closed"
     assert "feature_snapshot_compute_failed:RuntimeError:boom" in result.metadata["fail_reason"]
     assert result.decision.diagnostics["signal_description"] == "feature snapshot compute failed"
+
+
+def test_value_target_runtime_builds_semiconductor_inputs(monkeypatch):
+    captured = {}
+
+    class FakeEntrypoint:
+        manifest = StrategyManifest(
+            profile="semiconductor_rotation_income",
+            domain="us_equity",
+            display_name="SOXL/SOXX Semiconductor Trend Income",
+            description="test",
+            required_inputs=frozenset({"derived_indicators", "portfolio_snapshot"}),
+            default_config={"managed_symbols": ("SOXL", "SOXX", "QQQI", "SPYI", "BOXX")},
+        )
+
+        def evaluate(self, ctx):
+            captured["market_data"] = dict(ctx.market_data)
+            captured["portfolio"] = ctx.portfolio
+            return StrategyDecision(
+                positions=(
+                    PositionTarget(symbol="SOXL", target_value=30000.0),
+                    PositionTarget(symbol="BOXX", target_value=20000.0, role="safe_haven"),
+                )
+            )
+
+    runtime = strategy_runtime_module.LoadedStrategyRuntime(
+        entrypoint=FakeEntrypoint(),
+        runtime_adapter=StrategyRuntimeAdapter(status_icon="🚀", portfolio_input_name="portfolio_snapshot"),
+        runtime_settings=_build_runtime_settings(profile="semiconductor_rotation_income"),
+        runtime_config={},
+        merged_runtime_config={"managed_symbols": ("SOXL", "SOXX", "QQQI", "SPYI", "BOXX")},
+        status_icon="🚀",
+        logger=lambda _message: None,
+    )
+
+    portfolio_snapshot = SimpleNamespace(total_equity=50000.0)
+    monkeypatch.setattr(strategy_runtime_module, "fetch_portfolio_snapshot", lambda _ib: portfolio_snapshot)
+
+    def fake_loader(_ib, symbol, duration="2 Y", bar_size="1 day"):
+        if symbol == "SOXL":
+            return [100.0] * 170
+        if symbol == "SOXX":
+            return [200.0] * 20
+        raise AssertionError(symbol)
+
+    result = runtime.evaluate(
+        ib="fake-ib",
+        current_holdings={"SOXL"},
+        historical_close_loader=fake_loader,
+        run_as_of=strategy_runtime_module.pd.Timestamp("2026-04-01"),
+        translator=lambda key, **_kwargs: key,
+        pacing_sec=0.5,
+    )
+
+    assert captured["market_data"]["derived_indicators"]["soxl"]["price"] == 100.0
+    assert captured["market_data"]["derived_indicators"]["soxl"]["ma_trend"] == 100.0
+    assert captured["market_data"]["derived_indicators"]["soxx"]["price"] == 200.0
+    assert captured["portfolio"] is portfolio_snapshot
+    assert result.metadata["portfolio_total_equity"] == 50000.0
+    assert result.metadata["managed_symbols"] == ("SOXL", "SOXX", "QQQI", "SPYI", "BOXX")

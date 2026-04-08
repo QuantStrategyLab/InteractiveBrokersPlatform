@@ -73,7 +73,7 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.ib_gateway_ip_mode == "internal"
     assert settings.ib_client_id == 1
     assert settings.strategy_profile == DEFAULT_STRATEGY_PROFILE
-    assert settings.strategy_display_name == "Global ETF Rotation Defense"
+    assert settings.strategy_display_name == "Global ETF Rotation"
     assert settings.strategy_domain == US_EQUITY_DOMAIN
     assert settings.strategy_target_mode == "weight"
     assert settings.strategy_artifact_root is None
@@ -116,7 +116,7 @@ def test_load_platform_runtime_settings_supports_explicit_group_config_values(mo
     assert settings.ib_gateway_ip_mode == "external"
     assert settings.ib_client_id == 7
     assert settings.strategy_profile == DEFAULT_STRATEGY_PROFILE
-    assert settings.strategy_display_name == "Global ETF Rotation Defense"
+    assert settings.strategy_display_name == "Global ETF Rotation"
     assert settings.strategy_domain == US_EQUITY_DOMAIN
     assert settings.strategy_target_mode == "weight"
     assert settings.feature_snapshot_path is None
@@ -142,6 +142,7 @@ def test_load_platform_runtime_settings_rejects_unknown_strategy_profile(monkeyp
 def test_platform_supported_profiles_are_filtered_by_registry():
     assert get_supported_profiles_for_platform(IBKR_PLATFORM) == frozenset(
         {
+            "semiconductor_rotation_income",
             "tech_pullback_cash_buffer",
             "global_etf_rotation",
             "russell_1000_multi_factor_defensive",
@@ -152,6 +153,7 @@ def test_platform_supported_profiles_are_filtered_by_registry():
 def test_platform_eligible_profiles_are_exposed_by_capability_matrix():
     assert get_eligible_profiles_for_platform(IBKR_PLATFORM) == frozenset(
         {
+            "semiconductor_rotation_income",
             "tech_pullback_cash_buffer",
             "global_etf_rotation",
             "russell_1000_multi_factor_defensive",
@@ -168,7 +170,7 @@ def test_load_platform_runtime_settings_accepts_tech_pullback_cash_buffer(monkey
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
     assert settings.strategy_profile == "tech_pullback_cash_buffer"
-    assert settings.strategy_display_name == "Tech Pullback Cash Buffer"
+    assert settings.strategy_display_name == "QQQ Tech Enhancement"
     assert settings.strategy_target_mode == "weight"
 
 
@@ -177,7 +179,7 @@ def test_platform_profile_matrix_marks_default_and_rollback():
     by_profile = {row["canonical_profile"]: row for row in rows}
     assert by_profile["global_etf_rotation"]["is_default"] is True
     assert by_profile["global_etf_rotation"]["is_rollback"] is True
-    assert by_profile["tech_pullback_cash_buffer"]["display_name"] == "Tech Pullback Cash Buffer"
+    assert by_profile["tech_pullback_cash_buffer"]["display_name"] == "QQQ Tech Enhancement"
 
 
 
