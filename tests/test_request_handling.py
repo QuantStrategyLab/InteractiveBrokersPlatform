@@ -78,6 +78,8 @@ def test_handle_request_persists_machine_readable_report(strategy_module, monkey
     assert body == "OK - executed"
     assert observed["report"]["status"] == "ok"
     assert observed["report"]["strategy_profile"] == strategy_module.STRATEGY_PROFILE
+    assert observed["report"]["summary"]["strategy_display_name"] == strategy_module.STRATEGY_DISPLAY_NAME
+    assert observed["report"]["summary"]["strategy_display_name_localized"] == strategy_module.strategy_display_name
     assert observed["report"]["run_source"] == "cloud_run"
     assert observed["report"]["account_scope"] == strategy_module.ACCOUNT_GROUP
     assert observed["report"]["summary"]["signal_source"] == strategy_module.STRATEGY_SIGNAL_SOURCE

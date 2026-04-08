@@ -14,7 +14,7 @@ try:
 except ImportError:
     compute_v1 = None
 
-from notifications.telegram import build_translator, send_telegram_message
+from notifications.telegram import build_strategy_display_name, build_translator, send_telegram_message
 from quant_platform_kit.common.models import OrderIntent
 from quant_platform_kit.common.runtime_reports import (
     append_runtime_report_error,
@@ -140,6 +140,7 @@ IB_HOST = get_ib_host()
 IB_PORT = get_ib_port()
 IB_CLIENT_ID = RUNTIME_SETTINGS.ib_client_id
 STRATEGY_PROFILE = RUNTIME_SETTINGS.strategy_profile
+STRATEGY_DISPLAY_NAME = RUNTIME_SETTINGS.strategy_display_name
 ACCOUNT_GROUP = RUNTIME_SETTINGS.account_group
 SERVICE_NAME = RUNTIME_SETTINGS.service_name
 ACCOUNT_IDS = RUNTIME_SETTINGS.account_ids
@@ -193,6 +194,18 @@ SELL_SETTLE_DELAY_SEC = 3
 HIST_DATA_PACING_SEC = 0.5
 
 SEPARATOR = "━━━━━━━━━━━━━━━━━━"
+
+
+def t(key, **kwargs):
+    return build_translator(NOTIFY_LANG)(key, **kwargs)
+
+
+strategy_display_name = build_strategy_display_name(t)(
+    STRATEGY_PROFILE,
+    fallback_name=STRATEGY_DISPLAY_NAME,
+)
+
+
 RUNTIME_LOG_CONTEXT = RuntimeLogContext(
     platform="interactive_brokers",
     deploy_target="cloud_run",
@@ -202,12 +215,15 @@ RUNTIME_LOG_CONTEXT = RuntimeLogContext(
     account_group=ACCOUNT_GROUP,
     project_id=PROJECT_ID,
     instance_name=RUNTIME_SETTINGS.ib_gateway_instance_name,
-    extra_fields={"account_ids": list(ACCOUNT_IDS)},
+    extra_fields={
+        "account_ids": list(ACCOUNT_IDS),
+        "strategy_target_mode": RUNTIME_SETTINGS.strategy_target_mode,
+        "strategy_artifact_dir": RUNTIME_SETTINGS.strategy_artifact_dir,
+        "strategy_display_name": STRATEGY_DISPLAY_NAME,
+        "strategy_display_name_localized": strategy_display_name,
+    },
 )
 LAST_CYCLE_DETAILS: dict[str, object] = {}
-
-def t(key, **kwargs):
-    return build_translator(NOTIFY_LANG)(key, **kwargs)
 
 
 def send_tg_message(message):
@@ -263,6 +279,8 @@ def build_execution_report(log_context):
             "signal_source": STRATEGY_SIGNAL_SOURCE,
             "status_icon": STRATEGY_STATUS_ICON,
             "safe_haven": SAFE_HAVEN,
+            "strategy_display_name": STRATEGY_DISPLAY_NAME,
+            "strategy_display_name_localized": strategy_display_name,
         },
         diagnostics={
             "strategy_config_source": FEATURE_RUNTIME_CONFIG_SOURCE,
@@ -423,6 +441,7 @@ def run_strategy_core():
         send_tg_message=send_tg_message,
         translator=t,
         separator=SEPARATOR,
+        strategy_display_name=strategy_display_name,
         reconciliation_output_path=RECONCILIATION_OUTPUT_PATH,
         result_hook=lambda payload: cycle_details.update(payload or {}),
     )

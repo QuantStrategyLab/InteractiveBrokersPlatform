@@ -9,6 +9,7 @@ I18N = {
         "heartbeat_title": "💓 【心跳检测】",
         "error_title": "🚨 【策略异常】",
         "canary_title": "🐤 【金丝雀检查】",
+        "strategy_label": "🧭 策略: {name}",
         "equity": "净值",
         "buying_power": "购买力",
         "empty_positions": "  (空仓)",
@@ -58,12 +59,18 @@ I18N = {
         "order_filled": "✅ 订单成交 | {symbol} {side} {qty}股 均价 ${price} (ID: {order_id})",
         "order_partial": "⚠️ 部分成交 | {symbol} {side} {executed}/{qty}股 均价 ${price} (ID: {order_id})",
         "order_rejected": "❌ 订单异常 | {symbol} {side} {qty}股 状态: {status} (ID: {order_id})",
+        "strategy_name_global_etf_rotation": "全球 ETF 轮动防御",
+        "strategy_name_russell_1000_multi_factor_defensive": "罗素1000多因子防御",
+        "strategy_name_tech_pullback_cash_buffer": "科技回撤现金缓冲",
+        "strategy_name_hybrid_growth_income": "QQQ/TQQQ 增长收益",
+        "strategy_name_semiconductor_rotation_income": "芯片趋势收益",
     },
     "en": {
         "rebalance_title": "🔔 【Trade Execution Report】",
         "heartbeat_title": "💓 【Heartbeat】",
         "error_title": "🚨 【Strategy Error】",
         "canary_title": "🐤 【Canary Check】",
+        "strategy_label": "🧭 Strategy: {name}",
         "equity": "Equity",
         "buying_power": "Buying Power",
         "empty_positions": "  (No positions)",
@@ -113,6 +120,11 @@ I18N = {
         "order_filled": "✅ Filled | {symbol} {side} {qty} shares avg ${price} (ID: {order_id})",
         "order_partial": "⚠️ Partial | {symbol} {side} {executed}/{qty} shares avg ${price} (ID: {order_id})",
         "order_rejected": "❌ Rejected | {symbol} {side} {qty} shares status: {status} (ID: {order_id})",
+        "strategy_name_global_etf_rotation": "Global ETF Rotation Defense",
+        "strategy_name_russell_1000_multi_factor_defensive": "Russell 1000 Multi-Factor Defensive",
+        "strategy_name_tech_pullback_cash_buffer": "Tech Pullback Cash Buffer",
+        "strategy_name_hybrid_growth_income": "QQQ/TQQQ Growth Income",
+        "strategy_name_semiconductor_rotation_income": "Semiconductor Trend Income",
     },
 }
 
@@ -124,6 +136,20 @@ def build_translator(lang):
         return template.format(**kwargs) if kwargs else template
 
     return translate
+
+
+def build_strategy_display_name(translate_fn):
+    def strategy_display_name(profile: str, *, fallback_name: str | None = None) -> str:
+        key = f"strategy_name_{str(profile or '').strip()}"
+        translated = translate_fn(key)
+        if translated != key:
+            return translated
+        fallback = str(fallback_name or "").strip()
+        if fallback:
+            return fallback
+        return str(profile or "").strip()
+
+    return strategy_display_name
 
 
 def send_telegram_message(

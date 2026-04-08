@@ -6,11 +6,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from quant_platform_kit.common.strategies import derive_strategy_artifact_paths
 from strategy_registry import (
     DEFAULT_STRATEGY_PROFILE as PLATFORM_DEFAULT_STRATEGY_PROFILE,
     IBKR_PLATFORM,
     resolve_strategy_definition,
+    resolve_strategy_metadata,
 )
+from us_equity_strategies import get_strategy_catalog
 
 DEFAULT_ACCOUNT_GROUP = "default"
 DEFAULT_STRATEGY_PROFILE = PLATFORM_DEFAULT_STRATEGY_PROFILE
@@ -36,7 +39,11 @@ class PlatformRuntimeSettings:
     ib_gateway_ip_mode: str
     ib_client_id: int
     strategy_profile: str
+    strategy_display_name: str
     strategy_domain: str
+    strategy_target_mode: str | None
+    strategy_artifact_root: str | None
+    strategy_artifact_dir: str | None
     feature_snapshot_path: str | None
     feature_snapshot_manifest_path: str | None
     strategy_config_path: str | None
@@ -62,11 +69,29 @@ def load_platform_runtime_settings(
         os.getenv("STRATEGY_PROFILE"),
         platform_id=IBKR_PLATFORM,
     )
-    strategy_config_path, strategy_config_source = resolve_strategy_config_path(
+    strategy_metadata = resolve_strategy_metadata(
         strategy_definition.profile,
+        platform_id=IBKR_PLATFORM,
+    )
+    artifact_root = first_non_empty(
+        os.getenv("IBKR_STRATEGY_ARTIFACT_ROOT"),
+        os.getenv("STRATEGY_ARTIFACT_ROOT"),
+    )
+    derived_artifact_paths = derive_strategy_artifact_paths(
+        get_strategy_catalog(),
+        strategy_definition.profile,
+        artifact_root=artifact_root,
+        repo_root=Path(__file__).resolve().parent,
+    )
+    strategy_config_path, strategy_config_source = resolve_strategy_config_path(
         explicit_path=first_non_empty(
             os.getenv("IBKR_STRATEGY_CONFIG_PATH"),
             os.getenv("STRATEGY_CONFIG_PATH"),
+        ),
+        bundled_path=(
+            str(derived_artifact_paths.bundled_config_path)
+            if derived_artifact_paths.bundled_config_path is not None
+            else None
         ),
     )
     account_group = resolve_account_group(os.getenv("ACCOUNT_GROUP"))
@@ -109,20 +134,37 @@ def load_platform_runtime_settings(
             account_group=account_group,
         ),
         strategy_profile=strategy_definition.profile,
+        strategy_display_name=strategy_metadata.display_name,
         strategy_domain=strategy_definition.domain,
+        strategy_target_mode=strategy_definition.target_mode,
+        strategy_artifact_root=str(derived_artifact_paths.artifact_root)
+        if derived_artifact_paths.artifact_root is not None
+        else None,
+        strategy_artifact_dir=str(derived_artifact_paths.artifact_dir)
+        if derived_artifact_paths.artifact_dir is not None
+        else None,
         feature_snapshot_path=first_non_empty(
             os.getenv("IBKR_FEATURE_SNAPSHOT_PATH"),
             os.getenv("FEATURE_SNAPSHOT_PATH"),
+            str(derived_artifact_paths.feature_snapshot_path)
+            if derived_artifact_paths.feature_snapshot_path is not None
+            else None,
         ),
         feature_snapshot_manifest_path=first_non_empty(
             os.getenv("IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH"),
             os.getenv("FEATURE_SNAPSHOT_MANIFEST_PATH"),
+            str(derived_artifact_paths.feature_snapshot_manifest_path)
+            if derived_artifact_paths.feature_snapshot_manifest_path is not None
+            else None,
         ),
         strategy_config_path=strategy_config_path,
         strategy_config_source=strategy_config_source,
         reconciliation_output_path=first_non_empty(
             os.getenv("IBKR_RECONCILIATION_OUTPUT_PATH"),
             os.getenv("RECONCILIATION_OUTPUT_PATH"),
+            str(derived_artifact_paths.reconciliation_output_dir)
+            if derived_artifact_paths.reconciliation_output_dir is not None
+            else None,
         ),
         dry_run_only=resolve_bool_env(os.getenv("IBKR_DRY_RUN_ONLY")),
         account_group=account_group,
@@ -149,23 +191,17 @@ def resolve_account_group(raw_value: str | None) -> str:
 
 
 def resolve_strategy_config_path(
-    strategy_profile: str,
     *,
     explicit_path: str | None,
+    bundled_path: str | None,
 ) -> tuple[str | None, str | None]:
     path = first_non_empty(explicit_path)
     if path is not None:
         return path, "env"
 
-    if str(strategy_profile).strip().lower() == "tech_pullback_cash_buffer":
-        bundled = (
-            Path(__file__).resolve().parent
-            / "research"
-            / "configs"
-            / "growth_pullback_tech_pullback_cash_buffer.json"
-        )
-        if bundled.exists():
-            return str(bundled), "bundled_canonical_default"
+    bundled = first_non_empty(bundled_path)
+    if bundled is not None and Path(bundled).exists():
+        return bundled, "bundled_canonical_default"
     return None, None
 
 

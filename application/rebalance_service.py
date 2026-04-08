@@ -179,6 +179,7 @@ def build_dashboard(
     status_desc,
     *,
     strategy_profile=None,
+    strategy_display_name=None,
     target_weights=None,
     signal_metadata=None,
     translator,
@@ -206,8 +207,12 @@ def build_dashboard(
     realized_stock_weight = signal_metadata.get("realized_stock_weight")
     safe_haven_weight = signal_metadata.get("safe_haven_weight")
     snapshot_as_of = signal_metadata.get("snapshot_as_of")
+    strategy_name = _format_text(
+        strategy_display_name,
+        fallback=_format_text(strategy_profile, fallback="<unknown>"),
+    )
     diagnostics = [
-        translator("strategy_profile_detail", profile=_format_text(strategy_profile, fallback="<unknown>")),
+        translator("strategy_label", name=strategy_name),
         translator("regime_detail", value=_format_text(regime, fallback="<none>")) if regime is not None else None,
         translator("breadth_detail", value=f"{breadth_ratio:.1%}") if isinstance(breadth_ratio, (int, float)) else None,
         translator("target_stock_detail", value=f"{target_stock_weight:.1%}")
@@ -247,6 +252,7 @@ def run_strategy_core(
     send_tg_message,
     translator,
     separator,
+    strategy_display_name=None,
     reconciliation_output_path=None,
     result_hook=None,
 ):
@@ -270,6 +276,7 @@ def run_strategy_core(
             signal_desc,
             status_desc,
             strategy_profile=signal_metadata.get("strategy_profile"),
+            strategy_display_name=strategy_display_name,
             target_weights=resolved_target_weights,
             signal_metadata=signal_metadata,
             translator=translator,
