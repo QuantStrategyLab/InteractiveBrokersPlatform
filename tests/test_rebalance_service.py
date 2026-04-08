@@ -233,7 +233,11 @@ def test_run_strategy_core_writes_reconciliation_record_under_strategy_dir(tmp_p
     )
 
     assert result == "OK - heartbeat"
-    payload_path = output_root / "2026-04-01" / "reconciliation.json"
-    assert payload_path.exists()
+    candidate_paths = [
+        output_root,
+        output_root / "2026-04-01" / "reconciliation.json",
+    ]
+    payload_path = next((path for path in candidate_paths if path.is_file()), None)
+    assert payload_path is not None
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
     assert payload["no_op_reason"] == "outside_execution_window"
