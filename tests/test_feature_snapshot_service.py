@@ -112,14 +112,14 @@ class FeatureSnapshotServiceTest(unittest.TestCase):
             snapshot_path = Path(tmp_dir) / "snapshot.csv"
             config_path = Path(tmp_dir) / "config.json"
             snapshot_path.write_text("as_of,symbol,sector,mom_6_1\n2026-03-31,AAA,tech,0.1\n", encoding="utf-8")
-            config_path.write_text(json.dumps({"name": "tech_pullback_cash_buffer"}), encoding="utf-8")
+            config_path.write_text(json.dumps({"name": "qqq_tech_enhancement"}), encoding="utf-8")
             manifest_path = Path(f"{snapshot_path}.manifest.json")
             manifest_path.write_text(
                 json.dumps(
                     {
-                        "contract_version": "tech_pullback_cash_buffer.feature_snapshot.v1",
-                        "strategy_profile": "tech_pullback_cash_buffer",
-                        "config_name": "tech_pullback_cash_buffer",
+                        "contract_version": "qqq_tech_enhancement.feature_snapshot.v1",
+                        "strategy_profile": "qqq_tech_enhancement",
+                        "config_name": "qqq_tech_enhancement",
                         "config_path": str(config_path),
                         "config_sha256": _sha256_file(config_path),
                         "snapshot_path": str(snapshot_path),
@@ -143,8 +143,8 @@ class FeatureSnapshotServiceTest(unittest.TestCase):
 
         self.assertIsNotNone(result.frame)
         self.assertEqual(result.metadata["snapshot_guard_decision"], "proceed")
-        self.assertEqual(result.metadata["snapshot_manifest_strategy_profile"], "tech_pullback_cash_buffer")
-        self.assertEqual(result.metadata["snapshot_manifest_config_name"], "tech_pullback_cash_buffer")
+        self.assertEqual(result.metadata["snapshot_manifest_strategy_profile"], "qqq_tech_enhancement")
+        self.assertEqual(result.metadata["snapshot_manifest_config_name"], "qqq_tech_enhancement")
 
     def test_load_feature_snapshot_downloads_gcs_csv(self):
         _skip_if_missing_pandas()
@@ -169,9 +169,9 @@ class FeatureSnapshotServiceTest(unittest.TestCase):
 
         with TemporaryDirectory() as tmp_dir:
             config_path = Path(tmp_dir) / "config.json"
-            config_path.write_text(json.dumps({"name": "tech_pullback_cash_buffer"}), encoding="utf-8")
+            config_path.write_text(json.dumps({"name": "qqq_tech_enhancement"}), encoding="utf-8")
 
-            snapshot_uri = "gs://unit-test-bucket/snapshots/tech_pullback_cash_buffer_feature_snapshot_latest.csv"
+            snapshot_uri = "gs://unit-test-bucket/snapshots/qqq_tech_enhancement_feature_snapshot_latest.csv"
             manifest_uri = f"{snapshot_uri}.manifest.json"
             downloaded_snapshot_path: Path | None = None
 
@@ -190,9 +190,9 @@ class FeatureSnapshotServiceTest(unittest.TestCase):
                     destination.write_text(
                         json.dumps(
                             {
-                                "contract_version": "tech_pullback_cash_buffer.feature_snapshot.v1",
-                                "strategy_profile": "tech_pullback_cash_buffer",
-                                "config_name": "tech_pullback_cash_buffer",
+                                "contract_version": "qqq_tech_enhancement.feature_snapshot.v1",
+                                "strategy_profile": "qqq_tech_enhancement",
+                                "config_name": "qqq_tech_enhancement",
                                 "config_path": str(config_path),
                                 "config_sha256": _sha256_file(config_path),
                                 "snapshot_path": snapshot_uri,

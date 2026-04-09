@@ -20,7 +20,7 @@ def test_load_strategy_entrypoint_for_profile_resolves_global_etf_rotation(monke
     assert "market_history" in entrypoint.manifest.required_inputs
 
 
-def test_load_strategy_entrypoint_for_profile_resolves_tech_pullback_cash_buffer(monkeypatch):
+def test_load_strategy_entrypoint_for_profile_resolves_qqq_tech_enhancement(monkeypatch):
     try:
         import pandas  # noqa: F401
     except ModuleNotFoundError:
@@ -30,7 +30,7 @@ def test_load_strategy_entrypoint_for_profile_resolves_tech_pullback_cash_buffer
     market_calendars_module.get_calendar = lambda name: None
     monkeypatch.setitem(sys.modules, "pandas_market_calendars", market_calendars_module)
 
-    entrypoint = load_strategy_entrypoint_for_profile("tech_pullback_cash_buffer")
+    entrypoint = load_strategy_entrypoint_for_profile("qqq_tech_enhancement")
 
     assert entrypoint.manifest.profile == "qqq_tech_enhancement"
     assert entrypoint.manifest.default_config["safe_haven"] == "BOXX"
@@ -47,10 +47,10 @@ def test_load_strategy_entrypoint_for_profile_rejects_legacy_cash_buffer_profile
     monkeypatch.setitem(sys.modules, "pandas_market_calendars", market_calendars_module)
 
     with pytest.raises(ValueError, match="Unsupported STRATEGY_PROFILE"):
-        load_strategy_entrypoint_for_profile("cash_buffer_branch_default")
+        load_strategy_entrypoint_for_profile("tech_pullback_cash_buffer")
 
 
-def test_load_strategy_runtime_adapter_for_profile_resolves_tech_pullback_cash_buffer(monkeypatch):
+def test_load_strategy_runtime_adapter_for_profile_resolves_qqq_tech_enhancement(monkeypatch):
     try:
         import pandas  # noqa: F401
     except ModuleNotFoundError:
@@ -60,7 +60,7 @@ def test_load_strategy_runtime_adapter_for_profile_resolves_tech_pullback_cash_b
     market_calendars_module.get_calendar = lambda name: None
     monkeypatch.setitem(sys.modules, "pandas_market_calendars", market_calendars_module)
 
-    adapter = load_strategy_runtime_adapter_for_profile("tech_pullback_cash_buffer")
+    adapter = load_strategy_runtime_adapter_for_profile("qqq_tech_enhancement")
 
     assert adapter.status_icon == "🧲"
     assert adapter.available_inputs == frozenset({"feature_snapshot"})
@@ -89,7 +89,21 @@ def test_load_strategy_runtime_adapter_for_profile_resolves_semiconductor_inputs
     market_calendars_module.get_calendar = lambda name: None
     monkeypatch.setitem(sys.modules, "pandas_market_calendars", market_calendars_module)
 
-    adapter = load_strategy_runtime_adapter_for_profile("semiconductor_rotation_income")
+    adapter = load_strategy_runtime_adapter_for_profile("soxl_soxx_trend_income")
 
     assert adapter.available_inputs == frozenset({"derived_indicators", "portfolio_snapshot"})
     assert adapter.portfolio_input_name == "portfolio_snapshot"
+
+
+def test_load_strategy_runtime_adapter_for_profile_rejects_legacy_semiconductor_alias(monkeypatch):
+    try:
+        import pandas  # noqa: F401
+    except ModuleNotFoundError:
+        return
+
+    market_calendars_module = types.ModuleType("pandas_market_calendars")
+    market_calendars_module.get_calendar = lambda name: None
+    monkeypatch.setitem(sys.modules, "pandas_market_calendars", market_calendars_module)
+
+    with pytest.raises(ValueError, match="Unsupported STRATEGY_PROFILE"):
+        load_strategy_runtime_adapter_for_profile("semiconductor_rotation_income")

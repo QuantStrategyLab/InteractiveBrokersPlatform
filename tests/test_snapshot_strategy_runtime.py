@@ -24,9 +24,9 @@ def _write_cash_buffer_manifest(snapshot_path: Path, config_path: Path, *, snaps
         json.dumps(
             {
                 "manifest_type": "feature_snapshot",
-                "contract_version": "tech_pullback_cash_buffer.feature_snapshot.v1",
-                "strategy_profile": "tech_pullback_cash_buffer",
-                "config_name": "tech_pullback_cash_buffer",
+                "contract_version": "qqq_tech_enhancement.feature_snapshot.v1",
+                "strategy_profile": "qqq_tech_enhancement",
+                "config_name": "qqq_tech_enhancement",
                 "config_path": str(config_path),
                 "config_sha256": _sha256_file(config_path),
                 "snapshot_path": str(snapshot_path),
@@ -87,11 +87,11 @@ def test_compute_signals_uses_feature_snapshot_for_russell_1000(strategy_module_
     assert result[4]["snapshot_guard_decision"] == "proceed"
 
 
-def test_compute_signals_loads_tech_pullback_cash_buffer_runtime(strategy_module_factory, monkeypatch, tmp_path):
+def test_compute_signals_loads_qqq_tech_enhancement_runtime(strategy_module_factory, monkeypatch, tmp_path):
     pytest.importorskip("pandas")
 
     snapshot_path = tmp_path / "cash_buffer_snapshot.csv"
-    config_path = tmp_path / "tech_pullback_cash_buffer.json"
+    config_path = tmp_path / "qqq_tech_enhancement.json"
     snapshot_path.write_text(
         "\n".join(
             [
@@ -115,7 +115,7 @@ def test_compute_signals_loads_tech_pullback_cash_buffer_runtime(strategy_module
     config_path.write_text(
         json.dumps(
             {
-                "name": "tech_pullback_cash_buffer",
+                "name": "qqq_tech_enhancement",
                 "family": "tech_heavy_pullback",
                 "branch_role": "cash-buffered parallel branch",
                 "benchmark_symbol": "QQQ",
@@ -138,7 +138,7 @@ def test_compute_signals_loads_tech_pullback_cash_buffer_runtime(strategy_module
     _write_cash_buffer_manifest(snapshot_path, config_path, snapshot_as_of="2026-03-31")
 
     module = strategy_module_factory(
-        STRATEGY_PROFILE="tech_pullback_cash_buffer",
+        STRATEGY_PROFILE="qqq_tech_enhancement",
         IBKR_FEATURE_SNAPSHOT_PATH=str(snapshot_path),
         IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH=str(Path(f"{snapshot_path}.manifest.json")),
         IBKR_STRATEGY_CONFIG_PATH=str(config_path),
@@ -156,7 +156,7 @@ def test_compute_signals_loads_tech_pullback_cash_buffer_runtime(strategy_module
 
 def test_compute_signals_fail_closes_when_snapshot_missing(strategy_module_factory):
     module = strategy_module_factory(
-        STRATEGY_PROFILE="tech_pullback_cash_buffer",
+        STRATEGY_PROFILE="qqq_tech_enhancement",
         IBKR_FEATURE_SNAPSHOT_PATH="/tmp/definitely-missing-cash-buffer-snapshot.csv",
         IBKR_RUN_AS_OF_DATE="2026-04-01",
     )
@@ -183,7 +183,7 @@ def test_compute_signals_fail_closes_when_snapshot_is_stale(strategy_module_fact
     )
 
     module = strategy_module_factory(
-        STRATEGY_PROFILE="tech_pullback_cash_buffer",
+        STRATEGY_PROFILE="qqq_tech_enhancement",
         IBKR_FEATURE_SNAPSHOT_PATH=str(snapshot_path),
         IBKR_RUN_AS_OF_DATE="2026-04-05",
     )
@@ -197,7 +197,7 @@ def test_compute_signals_fail_closes_when_snapshot_is_stale(strategy_module_fact
 
 def test_compute_signals_fail_closes_when_manifest_missing(strategy_module_factory, tmp_path):
     snapshot_path = tmp_path / "snapshot.csv"
-    config_path = tmp_path / "tech_pullback_cash_buffer.json"
+    config_path = tmp_path / "qqq_tech_enhancement.json"
     snapshot_path.write_text(
         "\n".join(
             [
@@ -212,7 +212,7 @@ def test_compute_signals_fail_closes_when_manifest_missing(strategy_module_facto
     config_path.write_text(
         json.dumps(
             {
-                "name": "tech_pullback_cash_buffer",
+                "name": "qqq_tech_enhancement",
                 "family": "tech_heavy_pullback",
                 "branch_role": "cash-buffered parallel branch",
                 "benchmark_symbol": "QQQ",
@@ -234,7 +234,7 @@ def test_compute_signals_fail_closes_when_manifest_missing(strategy_module_facto
     )
 
     module = strategy_module_factory(
-        STRATEGY_PROFILE="tech_pullback_cash_buffer",
+        STRATEGY_PROFILE="qqq_tech_enhancement",
         IBKR_FEATURE_SNAPSHOT_PATH=str(snapshot_path),
         IBKR_STRATEGY_CONFIG_PATH=str(config_path),
         IBKR_RUN_AS_OF_DATE="2026-04-01",
@@ -259,7 +259,7 @@ def test_compute_signals_exposes_dry_run_price_fallbacks(strategy_module_factory
     pytest.importorskip("pandas")
 
     snapshot_path = tmp_path / "snapshot.csv"
-    config_path = tmp_path / "tech_pullback_cash_buffer.json"
+    config_path = tmp_path / "qqq_tech_enhancement.json"
     snapshot_path.write_text(
         "\n".join(
             [
@@ -275,7 +275,7 @@ def test_compute_signals_exposes_dry_run_price_fallbacks(strategy_module_factory
     config_path.write_text(
         json.dumps(
             {
-                "name": "tech_pullback_cash_buffer",
+                "name": "qqq_tech_enhancement",
                 "family": "tech_heavy_pullback",
                 "branch_role": "cash-buffered parallel branch",
                 "benchmark_symbol": "QQQ",
@@ -298,7 +298,7 @@ def test_compute_signals_exposes_dry_run_price_fallbacks(strategy_module_factory
     _write_cash_buffer_manifest(snapshot_path, config_path, snapshot_as_of="2026-03-31")
 
     module = strategy_module_factory(
-        STRATEGY_PROFILE="tech_pullback_cash_buffer",
+        STRATEGY_PROFILE="qqq_tech_enhancement",
         IBKR_FEATURE_SNAPSHOT_PATH=str(snapshot_path),
         IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH=str(Path(f"{snapshot_path}.manifest.json")),
         IBKR_STRATEGY_CONFIG_PATH=str(config_path),

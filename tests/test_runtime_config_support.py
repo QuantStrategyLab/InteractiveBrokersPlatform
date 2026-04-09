@@ -168,8 +168,8 @@ def test_platform_eligible_profiles_are_exposed_by_capability_matrix():
     )
 
 
-def test_load_platform_runtime_settings_accepts_tech_pullback_cash_buffer(monkeypatch):
-    monkeypatch.setenv("STRATEGY_PROFILE", "tech_pullback_cash_buffer")
+def test_load_platform_runtime_settings_accepts_qqq_tech_enhancement(monkeypatch):
+    monkeypatch.setenv("STRATEGY_PROFILE", "qqq_tech_enhancement")
     monkeypatch.setenv("ACCOUNT_GROUP", "default")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
     monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "/tmp/cash-buffer.csv")
@@ -179,6 +179,16 @@ def test_load_platform_runtime_settings_accepts_tech_pullback_cash_buffer(monkey
     assert settings.strategy_profile == "qqq_tech_enhancement"
     assert settings.strategy_display_name == "QQQ Tech Enhancement"
     assert settings.strategy_target_mode == "weight"
+
+
+def test_load_platform_runtime_settings_rejects_legacy_qqq_tech_alias(monkeypatch):
+    monkeypatch.setenv("STRATEGY_PROFILE", "tech_pullback_cash_buffer")
+    monkeypatch.setenv("ACCOUNT_GROUP", "default")
+    monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
+    monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "/tmp/cash-buffer.csv")
+
+    with pytest.raises(ValueError, match="Unsupported STRATEGY_PROFILE"):
+        load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
 
 def test_platform_profile_matrix_marks_default_and_rollback():
@@ -252,7 +262,7 @@ def test_load_platform_runtime_settings_reads_feature_snapshot_path(monkeypatch)
 
 
 def test_load_platform_runtime_settings_reads_tech_pullback_runtime_config(monkeypatch):
-    monkeypatch.setenv("STRATEGY_PROFILE", "tech_pullback_cash_buffer")
+    monkeypatch.setenv("STRATEGY_PROFILE", "qqq_tech_enhancement")
     monkeypatch.setenv("ACCOUNT_GROUP", "default")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
     monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "/tmp/cash-buffer.csv")
@@ -272,7 +282,7 @@ def test_load_platform_runtime_settings_reads_tech_pullback_runtime_config(monke
 
 
 def test_load_platform_runtime_settings_uses_bundled_tech_pullback_config_when_env_missing(monkeypatch):
-    monkeypatch.setenv("STRATEGY_PROFILE", "tech_pullback_cash_buffer")
+    monkeypatch.setenv("STRATEGY_PROFILE", "qqq_tech_enhancement")
     monkeypatch.setenv("ACCOUNT_GROUP", "default")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
     monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "/tmp/cash-buffer.csv")
@@ -287,7 +297,7 @@ def test_load_platform_runtime_settings_uses_bundled_tech_pullback_config_when_e
 
 
 def test_load_platform_runtime_settings_derives_artifact_paths_from_root(monkeypatch, tmp_path):
-    monkeypatch.setenv("STRATEGY_PROFILE", "tech_pullback_cash_buffer")
+    monkeypatch.setenv("STRATEGY_PROFILE", "qqq_tech_enhancement")
     monkeypatch.setenv("ACCOUNT_GROUP", "default")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
     monkeypatch.setenv("IBKR_STRATEGY_ARTIFACT_ROOT", str(tmp_path))

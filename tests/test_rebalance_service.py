@@ -168,7 +168,7 @@ def test_run_strategy_core_writes_reconciliation_record(tmp_path):
             False,
             "breadth=41.0%",
             {
-                "strategy_profile": "tech_pullback_cash_buffer",
+                "strategy_profile": "qqq_tech_enhancement",
                 "managed_symbols": ("AAA", "BOXX"),
                 "status_icon": "🧲",
                 "trade_date": "2026-04-01",
@@ -216,7 +216,7 @@ def test_run_strategy_core_writes_reconciliation_record(tmp_path):
 
     assert result == "OK - executed"
     payload = json.loads(output_path.read_text(encoding="utf-8"))
-    assert payload["strategy_profile"] == "tech_pullback_cash_buffer"
+    assert payload["strategy_profile"] == "qqq_tech_enhancement"
     assert payload["snapshot_as_of"] == "2026-03-31"
     assert payload["orders_submitted"][0]["symbol"] == "AAA"
     assert payload["snapshot_price_fallback_used"] is True
@@ -235,7 +235,7 @@ def test_run_strategy_core_writes_reconciliation_record_under_strategy_dir(tmp_p
         def disconnect(self):
             return None
 
-    output_root = tmp_path / "tech_pullback_cash_buffer" / "reconciliation"
+    output_root = tmp_path / "qqq_tech_enhancement" / "reconciliation"
 
     result = run_strategy_core(
         connect_ib=lambda: FakeIB(),
@@ -246,7 +246,7 @@ def test_run_strategy_core_writes_reconciliation_record_under_strategy_dir(tmp_p
             False,
             "outside execution window",
             {
-                "strategy_profile": "tech_pullback_cash_buffer",
+                "strategy_profile": "qqq_tech_enhancement",
                 "trade_date": "2026-04-01",
                 "snapshot_as_of": "2026-03-31",
                 "snapshot_guard_decision": "no_op",

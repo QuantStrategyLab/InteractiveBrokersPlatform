@@ -16,7 +16,7 @@ IBKR runtime for shared `us_equity` strategy profiles from `UsEquityStrategies`.
 
 - `global_etf_rotation` (`Global ETF Rotation`): quarterly ETF momentum rotation with daily canary defense
 - `russell_1000_multi_factor_defensive` (`Russell 1000 Multi-Factor`): monthly stock-selection strategy that consumes a precomputed feature snapshot
-- `qqq_tech_enhancement` (`QQQ Tech Enhancement`, alias: `tech_pullback_cash_buffer`): monthly tech-heavy stock-selection branch with explicit BOXX cash buffer
+- `qqq_tech_enhancement` (`QQQ Tech Enhancement`): monthly tech-heavy stock-selection branch with explicit BOXX cash buffer
 
 Current strategy implementations are sourced from `UsEquityStrategies`.
 
@@ -40,8 +40,8 @@ The mainline runtime now follows one path only:
 
 - `global_etf_rotation`
 - `russell_1000_multi_factor_defensive`
-- `soxl_soxx_trend_income` (alias: `semiconductor_rotation_income`)
-- `qqq_tech_enhancement` (alias: `tech_pullback_cash_buffer`)
+- `soxl_soxx_trend_income`
+- `qqq_tech_enhancement`
 
 
 **IBKR profile status**
@@ -50,7 +50,7 @@ The mainline runtime now follows one path only:
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `global_etf_rotation` | Global ETF Rotation | Yes | Yes | Yes | Yes | `us_equity` | current rollback line |
 | `russell_1000_multi_factor_defensive` | Russell 1000 Multi-Factor | Yes | Yes | No | No | `us_equity` | defensive stock baseline |
-| `soxl_soxx_trend_income` | SOXL/SOXX Semiconductor Trend Income | Yes | Yes | No | No | `us_equity` | current IBKR dry-run line |
+| `soxl_soxx_trend_income` | SOXL/SOXX Semiconductor Trend Income | Yes | Yes | No | No | `us_equity` | current IBKR live line |
 | `qqq_tech_enhancement` | QQQ Tech Enhancement | Yes | Yes | No | No | `us_equity` | enabled feature-snapshot alternative |
 
 Check the current matrix locally:
