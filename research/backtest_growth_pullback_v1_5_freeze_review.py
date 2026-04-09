@@ -72,7 +72,7 @@ def resolve_paths(configs_dir: Path, results_dir: Path) -> dict[str, Path]:
 def build_canonical_spec(center_cfg: gp.GrowthPullbackConfig, previous_candidate_name: str) -> CanonicalBranchSpec:
     config = replace(
         center_cfg,
-        name="tech_pullback_cash_buffer",
+        name="qqq_tech_enhancement",
         holdings_count=8,
         single_name_cap=0.10,
         sector_cap=0.40,
@@ -80,7 +80,7 @@ def build_canonical_spec(center_cfg: gp.GrowthPullbackConfig, previous_candidate
         exposures=gp.suite.ExposureConfig("80_60_0", 0.60, 0.00),
     )
     return CanonicalBranchSpec(
-        name="tech_pullback_cash_buffer",
+        name="qqq_tech_enhancement",
         previous_candidate_name=previous_candidate_name,
         config=config,
         risk_on_exposure=0.80,
@@ -95,7 +95,7 @@ def build_canonical_spec(center_cfg: gp.GrowthPullbackConfig, previous_candidate
 
 def canonical_spec_to_dict(spec: CanonicalBranchSpec) -> dict[str, object]:
     return {
-        "role": "tech_pullback_cash_buffer",
+        "role": "qqq_tech_enhancement",
         "status": "research_only",
         "strategy": "growth_pullback_systematic_v1",
         "branch_name": "cash_buffer_branch",
@@ -295,7 +295,7 @@ def build_consistency_checks(
         },
         {
             "check": "recommendation_matches_branch_default_role",
-            "passed": recommendation_level == "tech_pullback_cash_buffer",
+            "passed": recommendation_level == "qqq_tech_enhancement",
             "detail": f"recommendation={recommendation_level}",
         },
         {
@@ -390,7 +390,7 @@ def build_role_table(
     qqq_full = v12.extract_period_row(qqq_reference_rows, "QQQ", MAIN_COST_BPS, "Full Sample")
     rows.extend([
         {
-            "strategy": "tech_pullback_cash_buffer",
+            "strategy": "qqq_tech_enhancement",
             "role": "cash-buffered parallel branch",
             "full_cagr": canonical_summary["full_cagr"],
             "oos_cagr": canonical_summary["oos_cagr"],
@@ -486,15 +486,15 @@ def build_freeze_recommendation(
         level = "candidate"
         reason = "branch role is valid, but consistency or performance checks are not strong enough for default status"
     elif frozen_blockers:
-        level = "tech_pullback_cash_buffer"
+        level = "qqq_tech_enhancement"
         reason = "canonical naming and branch role are now clear, but avg names / 2022 profile / recent micro-adjustment mean it should stop at default, not frozen"
     else:
-        level = "tech_pullback_cash_buffer_frozen"
+        level = "qqq_tech_enhancement_frozen"
         reason = "branch semantics, deployment consistency, and behavior are all stable enough to freeze"
 
     return {
         "research_recommendation": level,
-        "branch_name": "tech_pullback_cash_buffer",
+        "branch_name": "qqq_tech_enhancement",
         "previous_candidate_name": "cash_buffer_a__hb10__base__adv50",
         "reason": reason,
         "frozen_blockers": frozen_blockers,
@@ -638,7 +638,7 @@ def main() -> None:
         "information_ratio_vs_qqq_oos": float(v12.extract_period_row(full_rows_df, "coherent_full_deployment_branch", MAIN_COST_BPS, "OOS Sample")["Information Ratio vs QQQ"]),
     })
 
-    preliminary_recommendation_level = "tech_pullback_cash_buffer"
+    preliminary_recommendation_level = "qqq_tech_enhancement"
     manifest = build_manifest(
         spec=spec,
         canonical_summary=canonical_summary,

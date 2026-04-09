@@ -394,10 +394,10 @@ def build_recommendation(
         level = "cash_buffer_branch_candidate"
         reason = "cash-buffer branch direction still exists, but the refined candidates do not keep enough relative-to-QQQ edge"
     elif honest_ok and occupancy_ok and concentration_ok and best_is_current_default and (stable_margin or no_material_gain_over_current):
-        level = "tech_pullback_cash_buffer_frozen"
+        level = "qqq_tech_enhancement_frozen"
         reason = "current honest cash-buffer branch is already good enough; small refinements do not justify further spec churn"
     elif honest_ok and performance_ok:
-        level = "tech_pullback_cash_buffer"
+        level = "qqq_tech_enhancement"
         reason = "a refined honest cash-buffer candidate is strong enough to act as the branch default, but the spec is not fully frozen yet"
     else:
         level = "cash_buffer_branch_candidate"
