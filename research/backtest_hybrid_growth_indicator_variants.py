@@ -26,7 +26,7 @@ if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
 import backtest_stock_alpha_suite as suite  # noqa: E402
-from us_equity_strategies.strategies.hybrid_growth_income import get_hybrid_allocation  # noqa: E402
+from us_equity_strategies.strategies.tqqq_growth_income import get_hybrid_allocation  # noqa: E402
 
 DEFAULT_RESULTS_DIR = Path(__file__).resolve().parent / "results"
 DEFAULT_START = "2018-01-01"

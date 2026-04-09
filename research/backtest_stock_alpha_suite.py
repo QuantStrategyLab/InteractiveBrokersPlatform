@@ -51,11 +51,11 @@ from us_equity_strategies.backtests.russell_1000_multi_factor_defensive import (
 from us_equity_strategies.snapshots.russell_1000_multi_factor_defensive import (  # noqa: E402
     read_table,
 )
-from us_equity_strategies.strategies.hybrid_growth_income import (  # noqa: E402
+from us_equity_strategies.strategies.tqqq_growth_income import (  # noqa: E402
     get_hybrid_allocation,
     get_income_ratio as get_hybrid_income_ratio,
 )
-from us_equity_strategies.strategies.semiconductor_rotation_income import (  # noqa: E402
+from us_equity_strategies.strategies.soxl_soxx_trend_income import (  # noqa: E402
     get_dynamic_allocation,
     get_income_layer_ratio as get_semiconductor_income_layer_ratio,
 )
@@ -1733,9 +1733,9 @@ def build_workspace_mapping(results_dir: Path, data_run_dir: Path) -> dict[str, 
         "defensive_code_entry": str(US_EQUITY_STRATEGIES_ROOT / "src/us_equity_strategies/strategies/russell_1000_multi_factor_defensive.py"),
         "defensive_snapshot_entry": str(US_EQUITY_STRATEGIES_ROOT / "src/us_equity_strategies/snapshots/russell_1000_multi_factor_defensive.py"),
         "defensive_backtest_entry": str(US_EQUITY_STRATEGIES_ROOT / "src/us_equity_strategies/backtests/russell_1000_multi_factor_defensive.py"),
-        "hybrid_code_entry": str(US_EQUITY_STRATEGIES_ROOT / "src/us_equity_strategies/strategies/hybrid_growth_income.py"),
+        "hybrid_code_entry": str(US_EQUITY_STRATEGIES_ROOT / "src/us_equity_strategies/strategies/tqqq_growth_income.py"),
         "hybrid_runtime_entry": str(WORKSPACE_ROOT / "CharlesSchwabPlatform/main.py"),
-        "semiconductor_code_entry": str(US_EQUITY_STRATEGIES_ROOT / "src/us_equity_strategies/strategies/semiconductor_rotation_income.py"),
+        "semiconductor_code_entry": str(US_EQUITY_STRATEGIES_ROOT / "src/us_equity_strategies/strategies/soxl_soxx_trend_income.py"),
         "semiconductor_runtime_entry": str(WORKSPACE_ROOT / "LongBridgePlatform/main.py"),
         "existing_research_entry": str(Path(__file__).resolve().parent / "backtest_qqq_variants.py"),
         "new_research_entry": str(Path(__file__).resolve()),
