@@ -1,0 +1,147 @@
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+QPK_SRC = ROOT.parent / "QuantPlatformKit" / "src"
+UES_SRC = ROOT.parent / "UsEquityStrategies" / "src"
+
+for candidate in (ROOT, QPK_SRC, UES_SRC):
+    candidate_str = str(candidate)
+    if candidate_str not in sys.path:
+        sys.path.insert(0, candidate_str)
+
+from quant_platform_kit.common.strategies import derive_strategy_artifact_paths  # noqa: E402
+from strategy_registry import (  # noqa: E402
+    IBKR_PLATFORM,
+    get_platform_profile_status_matrix,
+    resolve_strategy_definition,
+    resolve_strategy_metadata,
+)
+from us_equity_strategies import get_strategy_catalog  # noqa: E402
+
+
+def build_switch_plan(profile: str) -> dict[str, object]:
+    definition = resolve_strategy_definition(profile, platform_id=IBKR_PLATFORM)
+    metadata = resolve_strategy_metadata(definition.profile, platform_id=IBKR_PLATFORM)
+    status_row = next(
+        row for row in get_platform_profile_status_matrix() if row["canonical_profile"] == definition.profile
+    )
+    artifact_paths = derive_strategy_artifact_paths(
+        get_strategy_catalog(),
+        definition.profile,
+        repo_root=ROOT,
+    )
+    requires_feature_snapshot = "feature_snapshot" in definition.required_inputs
+
+    set_env: dict[str, str] = {"STRATEGY_PROFILE": definition.profile}
+    keep_env = [
+        "ACCOUNT_GROUP",
+        "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME",
+    ]
+    optional_env = ["IBKR_DRY_RUN_ONLY"]
+    remove_if_present: list[str] = []
+    notes = [
+        "Keep ACCOUNT_GROUP and IB account-group config aligned with the current service identity.",
+    ]
+
+    if requires_feature_snapshot:
+        set_env["IBKR_FEATURE_SNAPSHOT_PATH"] = "<required>"
+        set_env["IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH"] = "<required>"
+        if artifact_paths.bundled_config_path is not None:
+            set_env["IBKR_STRATEGY_CONFIG_PATH"] = str(artifact_paths.bundled_config_path)
+        else:
+            remove_if_present.append("IBKR_STRATEGY_CONFIG_PATH")
+        if definition.profile == "qqq_tech_enhancement":
+            optional_env.append("IBKR_RECONCILIATION_OUTPUT_PATH")
+        else:
+            remove_if_present.extend(
+                [
+                    "IBKR_STRATEGY_CONFIG_PATH",
+                    "IBKR_RECONCILIATION_OUTPUT_PATH",
+                ]
+            )
+    else:
+        remove_if_present.extend(
+            [
+                "IBKR_FEATURE_SNAPSHOT_PATH",
+                "IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH",
+                "IBKR_STRATEGY_CONFIG_PATH",
+                "IBKR_RECONCILIATION_OUTPUT_PATH",
+            ]
+        )
+
+    hints: dict[str, str] = {}
+    if requires_feature_snapshot:
+        hints["feature_snapshot_filename"] = f"{definition.profile}_feature_snapshot_latest.csv"
+        hints["feature_snapshot_manifest_filename"] = (
+            f"{definition.profile}_feature_snapshot_latest.csv.manifest.json"
+        )
+    if artifact_paths.bundled_config_path is not None:
+        hints["bundled_strategy_config_path"] = str(artifact_paths.bundled_config_path)
+
+    return {
+        "platform": IBKR_PLATFORM,
+        "canonical_profile": definition.profile,
+        "display_name": metadata.display_name,
+        "eligible": status_row["eligible"],
+        "enabled": status_row["enabled"],
+        "required_inputs": sorted(definition.required_inputs),
+        "target_mode": definition.target_mode,
+        "set_env": set_env,
+        "keep_env": keep_env,
+        "optional_env": sorted(optional_env),
+        "remove_if_present": sorted(set(remove_if_present)),
+        "hints": hints,
+        "notes": notes,
+    }
+
+
+def _print_plan(plan: dict[str, object]) -> None:
+    print(f"platform: {plan['platform']}")
+    print(f"profile: {plan['canonical_profile']} ({plan['display_name']})")
+    print(f"eligible: {plan['eligible']}  enabled: {plan['enabled']}")
+    print(f"required_inputs: {', '.join(plan['required_inputs'])}")
+    print(f"target_mode: {plan['target_mode']}")
+    print("\nset_env:")
+    for key, value in plan["set_env"].items():
+        print(f"  {key}={value}")
+    print("\nkeep_env:")
+    for key in plan["keep_env"]:
+        print(f"  {key}")
+    print("\noptional_env:")
+    for key in plan["optional_env"]:
+        print(f"  {key}")
+    print("\nremove_if_present:")
+    for key in plan["remove_if_present"]:
+        print(f"  {key}")
+    if plan["hints"]:
+        print("\nhints:")
+        for key, value in plan["hints"].items():
+            print(f"  {key}: {value}")
+    if plan["notes"]:
+        print("\nnotes:")
+        for note in plan["notes"]:
+            print(f"  - {note}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--profile", required=True)
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args()
+
+    plan = build_switch_plan(args.profile)
+    if args.json:
+        print(json.dumps(plan, indent=2, sort_keys=True))
+        return 0
+    _print_plan(plan)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -25,6 +25,7 @@ MINIMAL_GROUP_JSON = (
     '"ib_gateway_mode":"paper","ib_client_id":1}}}'
 )
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "print_strategy_profile_status.py"
+SWITCH_PLAN_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "print_strategy_switch_env_plan.py"
 
 
 def test_load_platform_runtime_settings_requires_strategy_profile(monkeypatch):
@@ -266,6 +267,42 @@ def test_print_strategy_profile_status_table_contains_expected_headers():
     assert "global_etf_rotation" in result.stdout
     assert "QQQ Tech Enhancement" in result.stdout
     assert "TQQQ Growth Income" in result.stdout
+
+
+def test_print_strategy_switch_env_plan_for_tqqq_growth_income():
+    result = subprocess.run(
+        [sys.executable, str(SWITCH_PLAN_SCRIPT_PATH), "--profile", "tqqq_growth_income", "--json"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    plan = json.loads(result.stdout)
+    assert plan["platform"] == "ibkr"
+    assert plan["canonical_profile"] == "tqqq_growth_income"
+    assert plan["eligible"] is True
+    assert plan["enabled"] is True
+    assert plan["set_env"]["STRATEGY_PROFILE"] == "tqqq_growth_income"
+    assert "ACCOUNT_GROUP" in plan["keep_env"]
+    assert "IBKR_FEATURE_SNAPSHOT_PATH" in plan["remove_if_present"]
+
+
+def test_print_strategy_switch_env_plan_for_feature_snapshot_profile():
+    result = subprocess.run(
+        [sys.executable, str(SWITCH_PLAN_SCRIPT_PATH), "--profile", "qqq_tech_enhancement", "--json"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    plan = json.loads(result.stdout)
+    assert plan["canonical_profile"] == "qqq_tech_enhancement"
+    assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_PATH"] == "<required>"
+    assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH"] == "<required>"
+    assert plan["set_env"]["IBKR_STRATEGY_CONFIG_PATH"].endswith(
+        "growth_pullback_qqq_tech_enhancement.json"
+    )
+    assert "IBKR_RECONCILIATION_OUTPUT_PATH" in plan["optional_env"]
 
 
 
