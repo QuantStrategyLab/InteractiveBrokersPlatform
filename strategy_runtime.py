@@ -160,7 +160,6 @@ class LoadedStrategyRuntime:
     ) -> StrategyEvaluationResult:
         runtime_config = dict(self.runtime_config)
         runtime_config.setdefault("translator", translator)
-        runtime_config.setdefault("pacing_sec", float(pacing_sec))
         portfolio_snapshot = fetch_portfolio_snapshot(ib)
         market_inputs = self._build_value_target_market_inputs(
             ib=ib,

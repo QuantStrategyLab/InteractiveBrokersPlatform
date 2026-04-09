@@ -345,6 +345,7 @@ def test_value_target_runtime_builds_semiconductor_inputs(monkeypatch):
         def evaluate(self, ctx):
             captured["market_data"] = dict(ctx.market_data)
             captured["portfolio"] = ctx.portfolio
+            captured["runtime_config"] = dict(ctx.runtime_config)
             return StrategyDecision(
                 positions=(
                     PositionTarget(symbol="SOXL", target_value=30000.0),
@@ -385,6 +386,7 @@ def test_value_target_runtime_builds_semiconductor_inputs(monkeypatch):
     assert captured["market_data"]["derived_indicators"]["soxl"]["ma_trend"] == 100.0
     assert captured["market_data"]["derived_indicators"]["soxx"]["price"] == 200.0
     assert captured["portfolio"] is portfolio_snapshot
+    assert "pacing_sec" not in captured["runtime_config"]
     assert result.metadata["portfolio_total_equity"] == 50000.0
     assert result.metadata["managed_symbols"] == ("SOXL", "SOXX", "QQQI", "SPYI", "BOXX")
 
@@ -408,6 +410,7 @@ def test_value_target_runtime_builds_tqqq_inputs(monkeypatch):
         def evaluate(self, ctx):
             captured["market_data"] = dict(ctx.market_data)
             captured["portfolio"] = ctx.portfolio
+            captured["runtime_config"] = dict(ctx.runtime_config)
             return StrategyDecision(
                 positions=(
                     PositionTarget(symbol="TQQQ", target_value=30000.0),
@@ -457,6 +460,7 @@ def test_value_target_runtime_builds_tqqq_inputs(monkeypatch):
     assert len(captured["market_data"]["benchmark_history"]) == 220
     assert captured["market_data"]["benchmark_history"][0]["high"] == 101.0
     assert captured["portfolio"] is portfolio_snapshot
+    assert "pacing_sec" not in captured["runtime_config"]
     assert result.metadata["portfolio_total_equity"] == 50000.0
     assert result.metadata["benchmark_symbol"] == "QQQ"
     assert result.metadata["managed_symbols"] == ("TQQQ", "BOXX", "SPYI", "QQQI")
