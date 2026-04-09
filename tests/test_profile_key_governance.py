@@ -16,7 +16,7 @@ def _iter_repo_files():
     for path in sorted(REPO_ROOT.rglob("*")):
         if not path.is_file():
             continue
-        if any(part in {".git", ".venv", "__pycache__", ".pytest_cache", ".ruff_cache"} for part in path.parts):
+        if any(part in {".git", ".venv", "__pycache__", ".pytest_cache", ".ruff_cache", "external"} for part in path.parts):
             continue
         rel = path.relative_to(REPO_ROOT).as_posix()
         if rel.startswith("research/results/"):
