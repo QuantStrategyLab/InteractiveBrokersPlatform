@@ -2,8 +2,8 @@
 """
 Cross-strategy comparison for:
 - russell_1000_multi_factor_defensive
-- hybrid_growth_income
-- semiconductor_rotation_income
+- tqqq_growth_income
+- soxl_soxx_trend_income
 - qqq_plus_stock_alpha_v1 (research-only)
 
 The script keeps the defensive baseline frozen, compares it fairly against the
@@ -62,14 +62,14 @@ from us_equity_strategies.strategies.soxl_soxx_trend_income import (  # noqa: E4
 
 
 SAFE_HAVEN = "BOXX"
-HYBRID_SAFE_CASH = "CASH"
+TQQQ_GROWTH_SAFE_CASH = "CASH"
 OFFENSIVE_NAME = "qqq_plus_stock_alpha_v1"
 
 DEFENSIVE_NAME = "russell_1000_multi_factor_defensive"
-HYBRID_FULL_NAME = "hybrid_growth_income"
-HYBRID_NORMALIZED_NAME = "hybrid_growth_income_no_income"
-SEMICONDUCTOR_FULL_NAME = "semiconductor_rotation_income"
-SEMICONDUCTOR_NORMALIZED_NAME = "semiconductor_rotation_income_no_income"
+TQQQ_GROWTH_FULL_NAME = "tqqq_growth_income"
+TQQQ_GROWTH_NORMALIZED_NAME = "tqqq_growth_income_no_income"
+SOXL_SOXX_TREND_FULL_NAME = "soxl_soxx_trend_income"
+SOXL_SOXX_TREND_NORMALIZED_NAME = "soxl_soxx_trend_income_no_income"
 
 FULL_COMPARISON_LAYER = "full_strategy"
 NORMALIZED_COMPARISON_LAYER = "normalized"
@@ -573,7 +573,7 @@ def build_period_summary_rows(
                     benchmark_returns,
                     start=start,
                     end=end,
-                    safe_haven_symbols=(SAFE_HAVEN, HYBRID_SAFE_CASH),
+                    safe_haven_symbols=(SAFE_HAVEN, TQQQ_GROWTH_SAFE_CASH),
                     full_returns_reference=net_returns,
                 )
                 rows.append(
@@ -620,7 +620,7 @@ def compute_rolling_36m_capm_alpha(strategy_returns: pd.Series, benchmark_return
     )
 
 
-def run_hybrid_growth_income_backtest(
+def run_tqqq_growth_income_backtest(
     qqq_ohlc: pd.DataFrame,
     asset_returns: pd.DataFrame,
     *,
@@ -643,12 +643,12 @@ def run_hybrid_growth_income_backtest(
     entry_line_floor: float,
     entry_line_cap: float,
 ) -> tuple[pd.Series, pd.DataFrame, pd.Series]:
-    strategy_symbols = ["TQQQ", SAFE_HAVEN, "SPYI", "QQQI", HYBRID_SAFE_CASH]
+    strategy_symbols = ["TQQQ", SAFE_HAVEN, "SPYI", "QQQI", TQQQ_GROWTH_SAFE_CASH]
     index = asset_returns.index.intersection(qqq_ohlc.index)
     qqq_history = qqq_ohlc.loc[index].copy()
     returns = asset_returns.reindex(index).fillna(0.0)
     weights_history = pd.DataFrame(0.0, index=index, columns=strategy_symbols)
-    portfolio_returns = pd.Series(0.0, index=index, name=HYBRID_FULL_NAME)
+    portfolio_returns = pd.Series(0.0, index=index, name=TQQQ_GROWTH_FULL_NAME)
     turnover_history = pd.Series(0.0, index=index, name="turnover")
 
     current_weights: dict[str, float] = {SAFE_HAVEN: 1.0}
@@ -712,7 +712,7 @@ def run_hybrid_growth_income_backtest(
             SAFE_HAVEN: target_boxx_value,
             "SPYI": target_spyi_value,
             "QQQI": target_qqqi_value,
-            HYBRID_SAFE_CASH: reserved,
+            TQQQ_GROWTH_SAFE_CASH: reserved,
         }
         target_weights = {
             symbol: value / current_equity
@@ -720,7 +720,7 @@ def run_hybrid_growth_income_backtest(
             if value > 1e-12 and current_equity > 0
         }
         if not target_weights:
-            target_weights = {HYBRID_SAFE_CASH: 1.0}
+            target_weights = {TQQQ_GROWTH_SAFE_CASH: 1.0}
 
         threshold_weight = rebalance_threshold_ratio
         rebalance_needed = any(
@@ -738,7 +738,7 @@ def run_hybrid_growth_income_backtest(
         portfolio_returns.at[next_date] = sum(
             weight * float(next_returns.get(symbol, 0.0))
             for symbol, weight in current_weights.items()
-            if symbol != HYBRID_SAFE_CASH
+            if symbol != TQQQ_GROWTH_SAFE_CASH
         )
         current_equity *= 1.0 + float(portfolio_returns.at[next_date])
 
@@ -748,7 +748,7 @@ def run_hybrid_growth_income_backtest(
     return portfolio_returns, weights_history, turnover_history
 
 
-def run_semiconductor_rotation_income_backtest(
+def run_soxl_soxx_trend_income_backtest(
     soxl_prices: pd.Series,
     asset_returns: pd.DataFrame,
     *,
@@ -772,7 +772,7 @@ def run_semiconductor_rotation_income_backtest(
     soxl_series = soxl_prices.loc[index].copy()
     returns = asset_returns.reindex(index).fillna(0.0)
     weights_history = pd.DataFrame(0.0, index=index, columns=strategy_symbols)
-    portfolio_returns = pd.Series(0.0, index=index, name=SEMICONDUCTOR_FULL_NAME)
+    portfolio_returns = pd.Series(0.0, index=index, name=SOXL_SOXX_TREND_FULL_NAME)
     turnover_history = pd.Series(0.0, index=index, name="turnover")
 
     current_weights: dict[str, float] = {SAFE_HAVEN: 1.0}
@@ -1367,7 +1367,7 @@ def build_strategy_runs(
     ).reindex(master_index)
     soxl_close = etf_frames["close"]["SOXL"].reindex(master_index)
 
-    hybrid_full_returns, hybrid_full_weights, hybrid_full_turnover = run_hybrid_growth_income_backtest(
+    hybrid_full_returns, hybrid_full_weights, hybrid_full_turnover = run_tqqq_growth_income_backtest(
         qqq_ohlc,
         etf_returns_matrix,
         starting_equity=full_account_equity,
@@ -1389,7 +1389,7 @@ def build_strategy_runs(
         entry_line_floor=1.02,
         entry_line_cap=1.08,
     )
-    hybrid_normalized_returns, hybrid_normalized_weights, hybrid_normalized_turnover = run_hybrid_growth_income_backtest(
+    hybrid_normalized_returns, hybrid_normalized_weights, hybrid_normalized_turnover = run_tqqq_growth_income_backtest(
         qqq_ohlc,
         etf_returns_matrix,
         starting_equity=normalized_account_equity,
@@ -1412,7 +1412,7 @@ def build_strategy_runs(
         entry_line_cap=1.08,
     )
 
-    semiconductor_full_returns, semiconductor_full_weights, semiconductor_full_turnover = run_semiconductor_rotation_income_backtest(
+    semiconductor_full_returns, semiconductor_full_weights, semiconductor_full_turnover = run_soxl_soxx_trend_income_backtest(
         soxl_close,
         etf_returns_matrix,
         starting_equity=full_account_equity,
@@ -1430,7 +1430,7 @@ def build_strategy_runs(
         income_layer_qqqi_weight=0.70,
         income_layer_spyi_weight=0.30,
     )
-    semiconductor_normalized_returns, semiconductor_normalized_weights, semiconductor_normalized_turnover = run_semiconductor_rotation_income_backtest(
+    semiconductor_normalized_returns, semiconductor_normalized_weights, semiconductor_normalized_turnover = run_soxl_soxx_trend_income_backtest(
         soxl_close,
         etf_returns_matrix,
         starting_equity=normalized_account_equity,
@@ -1524,8 +1524,8 @@ def build_strategy_runs(
     strategy_runs = [
         defensive_run,
         StrategyRun(
-            strategy_name=HYBRID_FULL_NAME,
-            display_name="hybrid_growth_income::full",
+            strategy_name=TQQQ_GROWTH_FULL_NAME,
+            display_name="tqqq_growth_income::full",
             comparison_layer=FULL_COMPARISON_LAYER,
             gross_returns=hybrid_full_returns,
             weights_history=hybrid_full_weights,
@@ -1533,8 +1533,8 @@ def build_strategy_runs(
             metadata={"research_group": "etf_full", "starting_equity": full_account_equity, "income_layer": "on"},
         ),
         StrategyRun(
-            strategy_name=SEMICONDUCTOR_FULL_NAME,
-            display_name="semiconductor_rotation_income::full",
+            strategy_name=SOXL_SOXX_TREND_FULL_NAME,
+            display_name="soxl_soxx_trend_income::full",
             comparison_layer=FULL_COMPARISON_LAYER,
             gross_returns=semiconductor_full_returns,
             weights_history=semiconductor_full_weights,
@@ -1552,8 +1552,8 @@ def build_strategy_runs(
             metadata={"research_group": "baseline", "group_normalization": "sector", "data_assumption": "official_monthly_v2_alias"},
         ),
         StrategyRun(
-            strategy_name=HYBRID_NORMALIZED_NAME,
-            display_name="hybrid_growth_income::no_income",
+            strategy_name=TQQQ_GROWTH_NORMALIZED_NAME,
+            display_name="tqqq_growth_income::no_income",
             comparison_layer=NORMALIZED_COMPARISON_LAYER,
             gross_returns=hybrid_normalized_returns,
             weights_history=hybrid_normalized_weights,
@@ -1561,8 +1561,8 @@ def build_strategy_runs(
             metadata={"research_group": "etf_normalized", "starting_equity": normalized_account_equity, "income_layer": "off"},
         ),
         StrategyRun(
-            strategy_name=SEMICONDUCTOR_NORMALIZED_NAME,
-            display_name="semiconductor_rotation_income::no_income",
+            strategy_name=SOXL_SOXX_TREND_NORMALIZED_NAME,
+            display_name="soxl_soxx_trend_income::no_income",
             comparison_layer=NORMALIZED_COMPARISON_LAYER,
             gross_returns=semiconductor_normalized_returns,
             weights_history=semiconductor_normalized_weights,

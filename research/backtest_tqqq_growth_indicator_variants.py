@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Research-only TQQQ / hybrid_growth_income indicator overlay study.
+"""Research-only TQQQ / tqqq_growth_income indicator overlay study.
 
 Goal:
 - keep the current hybrid growth attack logic as the baseline;
@@ -521,7 +521,7 @@ def build_summary_rows(strategy_runs: list[StrategyRun], benchmark_returns: pd.S
 
 
 def build_runtime_full_reference(qqq_ohlc: pd.DataFrame, asset_returns: pd.DataFrame) -> StrategyRun:
-    full_returns, full_weights, full_turnover = suite.run_hybrid_growth_income_backtest(
+    full_returns, full_weights, full_turnover = suite.run_tqqq_growth_income_backtest(
         qqq_ohlc,
         asset_returns,
         starting_equity=RUNTIME_FULL_STARTING_EQUITY,
@@ -545,8 +545,8 @@ def build_runtime_full_reference(qqq_ohlc: pd.DataFrame, asset_returns: pd.DataF
     )
     index = full_returns.index
     return StrategyRun(
-        strategy_name="hybrid_growth_income_runtime_full_reference",
-        display_name="hybrid_growth_income_runtime_full_reference",
+        strategy_name="tqqq_growth_income_runtime_full_reference",
+        display_name="tqqq_growth_income_runtime_full_reference",
         gross_returns=full_returns,
         weights_history=full_weights.reindex(index).fillna(0.0),
         turnover_history=full_turnover.reindex(index).fillna(0.0),
@@ -652,12 +652,12 @@ def build_markdown(summary: pd.DataFrame, recommendation: dict[str, object]) -> 
     runtime_reference = focus.loc[focus["income_mode"] == "runtime_full_reference"].copy()
 
     lines = [
-        "# TQQQ / hybrid_growth_income indicator overlay review",
+        "# TQQQ / tqqq_growth_income indicator overlay review",
         "",
         "## Setup",
         "- Baseline signal: current QQQ MA200 + ATR staged TQQQ logic.",
         "- Main research set: attack-only normalization (`income_threshold_usd = 1e9`) so the idle-asset choice is visible.",
-        "- Runtime reference: current full `hybrid_growth_income` with income layer on.",
+        "- Runtime reference: current full `tqqq_growth_income` with income layer on.",
         "- Idle asset candidates: `CASH`, `BOXX`, `QQQ`.",
         "- Extra indicator gates are nested from simple to complex to avoid blind indicator stuffing.",
         "",

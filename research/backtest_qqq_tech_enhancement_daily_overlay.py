@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Research-only daily overlay backtest for tech_pullback_cash_buffer."""
+"""Research-only daily overlay backtest for qqq_tech_enhancement."""
 
 from __future__ import annotations
 
@@ -107,7 +107,7 @@ def load_baseline_spec(path: Path) -> BaselineSpec:
     return BaselineSpec(
         config=config,
         risk_on_exposure=float(payload["exposures"]["risk_on"]),
-        name="tech_pullback_cash_buffer_monthly_baseline",
+        name="qqq_tech_enhancement_monthly_baseline",
         config_payload=payload,
     )
 
@@ -117,7 +117,7 @@ def build_baseline_candidate(spec: BaselineSpec) -> v12.GeometryCandidate:
         spec.name,
         spec.config,
         risk_on_exposure=spec.risk_on_exposure,
-        note="Monthly baseline from canonical tech_pullback_cash_buffer; month-start chooses names, non-rebalance days are no-op.",
+        note="Monthly baseline from canonical qqq_tech_enhancement; month-start chooses names, non-rebalance days are no-op.",
     )
 
 
@@ -901,7 +901,7 @@ def write_summary_markdown(
     best_name = family_scores.loc[family_scores["family"] == "daily_name_level_trim_overlay"].head(1)
     best_combo = family_scores.loc[family_scores["family"] == "daily_portfolio_plus_name_overlay"].head(1)
     lines = [
-        "# cash_buffer_branch daily overlay research",
+        "# qqq_tech_enhancement daily overlay research",
         "",
         "## Baseline",
         f"- strategy={baseline_payload['name']}",

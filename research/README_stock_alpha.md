@@ -4,8 +4,8 @@
 
 1. 复用 `russell_1000_multi_factor_defensive` 的现有真实数据代理回测结果。
 2. 公平比较它和两个高弹性 ETF 策略：
-   - `hybrid_growth_income`
-   - `semiconductor_rotation_income`
+   - `tqqq_growth_income`
+   - `soxl_soxx_trend_income`
 3. 研究一个新的 price-only 进攻型个股候选：`qqq_plus_stock_alpha_v1`。
 
 ## 代码位置

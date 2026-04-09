@@ -583,7 +583,7 @@ def evaluate_period_metrics(
         benchmark_returns,
         start=start,
         end=end,
-        safe_haven_symbols=(suite.SAFE_HAVEN, suite.HYBRID_SAFE_CASH),
+        safe_haven_symbols=(suite.SAFE_HAVEN, suite.TQQQ_GROWTH_SAFE_CASH),
         full_returns_reference=net_returns,
     )
     period_returns = slice_series_or_frame(net_returns, start, end).dropna()

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-MODULE_PATH = Path(__file__).resolve().parents[1] / "research" / "backtest_hybrid_growth_continuous_scaling_followup.py"
+MODULE_PATH = Path(__file__).resolve().parents[1] / "research" / "backtest_tqqq_growth_continuous_scaling_followup.py"
 spec = importlib.util.spec_from_file_location("tqqq_continuous_followup", MODULE_PATH)
 module = importlib.util.module_from_spec(spec)
 assert spec and spec.loader
