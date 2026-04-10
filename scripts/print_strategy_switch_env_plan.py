@@ -23,6 +23,7 @@ from strategy_registry import (  # noqa: E402
     resolve_strategy_metadata,
 )
 from us_equity_strategies import get_strategy_catalog  # noqa: E402
+from us_equity_strategies.runtime_adapters import describe_platform_runtime_requirements  # noqa: E402
 
 
 def build_switch_plan(profile: str) -> dict[str, object]:
@@ -36,7 +37,12 @@ def build_switch_plan(profile: str) -> dict[str, object]:
         definition.profile,
         repo_root=ROOT,
     )
-    requires_feature_snapshot = "feature_snapshot" in definition.required_inputs
+    runtime_requirements = describe_platform_runtime_requirements(
+        definition.profile,
+        platform_id=IBKR_PLATFORM,
+    )
+    requires_feature_snapshot = bool(runtime_requirements["requires_snapshot_artifacts"])
+    requires_strategy_config_path = bool(runtime_requirements["requires_strategy_config_path"])
 
     set_env: dict[str, str] = {"STRATEGY_PROFILE": definition.profile}
     keep_env = [
@@ -52,7 +58,7 @@ def build_switch_plan(profile: str) -> dict[str, object]:
     if requires_feature_snapshot:
         set_env["IBKR_FEATURE_SNAPSHOT_PATH"] = "<required>"
         set_env["IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH"] = "<required>"
-        if artifact_paths.bundled_config_path is not None:
+        if requires_strategy_config_path and artifact_paths.bundled_config_path is not None:
             set_env["IBKR_STRATEGY_CONFIG_PATH"] = str(artifact_paths.bundled_config_path)
         else:
             remove_if_present.append("IBKR_STRATEGY_CONFIG_PATH")
@@ -90,6 +96,7 @@ def build_switch_plan(profile: str) -> dict[str, object]:
         "display_name": metadata.display_name,
         "eligible": status_row["eligible"],
         "enabled": status_row["enabled"],
+        **runtime_requirements,
         "required_inputs": sorted(definition.required_inputs),
         "target_mode": definition.target_mode,
         "set_env": set_env,
@@ -105,7 +112,11 @@ def _print_plan(plan: dict[str, object]) -> None:
     print(f"platform: {plan['platform']}")
     print(f"profile: {plan['canonical_profile']} ({plan['display_name']})")
     print(f"eligible: {plan['eligible']}  enabled: {plan['enabled']}")
+    print(f"profile_group: {plan['profile_group']}")
     print(f"required_inputs: {', '.join(plan['required_inputs'])}")
+    print(f"input_mode: {plan['input_mode']}")
+    print(f"requires_snapshot_artifacts: {plan['requires_snapshot_artifacts']}")
+    print(f"requires_strategy_config_path: {plan['requires_strategy_config_path']}")
     print(f"target_mode: {plan['target_mode']}")
     print("\nset_env:")
     for key, value in plan["set_env"].items():

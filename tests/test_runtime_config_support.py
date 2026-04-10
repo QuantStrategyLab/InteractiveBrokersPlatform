@@ -251,7 +251,33 @@ def test_print_strategy_profile_status_json_matches_registry():
         text=True,
     )
 
-    assert json.loads(result.stdout) == get_platform_profile_status_matrix()
+    rows = json.loads(result.stdout)
+    assert [
+        {
+            key: row[key]
+            for key in (
+                "canonical_profile",
+                "display_name",
+                "domain",
+                "eligible",
+                "enabled",
+                "is_default",
+                "is_rollback",
+                "platform",
+            )
+        }
+        for row in rows
+    ] == get_platform_profile_status_matrix()
+    by_profile = {row["canonical_profile"]: row for row in rows}
+    assert by_profile["global_etf_rotation"]["profile_group"] == "direct_runtime_inputs"
+    assert by_profile["global_etf_rotation"]["input_mode"] == "market_history"
+    assert by_profile["global_etf_rotation"]["requires_snapshot_artifacts"] is False
+    assert by_profile["global_etf_rotation"]["requires_strategy_config_path"] is False
+    assert by_profile["qqq_tech_enhancement"]["profile_group"] == "snapshot_backed"
+    assert by_profile["qqq_tech_enhancement"]["input_mode"] == "feature_snapshot"
+    assert by_profile["qqq_tech_enhancement"]["requires_snapshot_artifacts"] is True
+    assert by_profile["qqq_tech_enhancement"]["requires_strategy_config_path"] is True
+    assert by_profile["russell_1000_multi_factor_defensive"]["requires_strategy_config_path"] is False
 
 
 def test_print_strategy_profile_status_table_contains_expected_headers():
@@ -264,6 +290,9 @@ def test_print_strategy_profile_status_table_contains_expected_headers():
 
     assert "canonical_profile" in result.stdout
     assert "display_name" in result.stdout
+    assert "profile_group" in result.stdout
+    assert "input_mode" in result.stdout
+    assert "requires_snapshot_artifacts" in result.stdout
     assert "global_etf_rotation" in result.stdout
     assert "QQQ Tech Enhancement" in result.stdout
     assert "TQQQ Growth Income" in result.stdout
@@ -282,6 +311,10 @@ def test_print_strategy_switch_env_plan_for_tqqq_growth_income():
     assert plan["canonical_profile"] == "tqqq_growth_income"
     assert plan["eligible"] is True
     assert plan["enabled"] is True
+    assert plan["profile_group"] == "direct_runtime_inputs"
+    assert plan["input_mode"] == "benchmark_history+portfolio_snapshot"
+    assert plan["requires_snapshot_artifacts"] is False
+    assert plan["requires_strategy_config_path"] is False
     assert plan["set_env"]["STRATEGY_PROFILE"] == "tqqq_growth_income"
     assert "ACCOUNT_GROUP" in plan["keep_env"]
     assert "IBKR_FEATURE_SNAPSHOT_PATH" in plan["remove_if_present"]
@@ -297,6 +330,10 @@ def test_print_strategy_switch_env_plan_for_feature_snapshot_profile():
 
     plan = json.loads(result.stdout)
     assert plan["canonical_profile"] == "qqq_tech_enhancement"
+    assert plan["profile_group"] == "snapshot_backed"
+    assert plan["input_mode"] == "feature_snapshot"
+    assert plan["requires_snapshot_artifacts"] is True
+    assert plan["requires_strategy_config_path"] is True
     assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_PATH"] == "<required>"
     assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH"] == "<required>"
     assert plan["set_env"]["IBKR_STRATEGY_CONFIG_PATH"].endswith(
