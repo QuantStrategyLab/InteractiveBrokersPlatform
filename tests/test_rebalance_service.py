@@ -91,6 +91,27 @@ def test_build_dashboard_localizes_strategy_details():
     assert "快照账龄" not in dashboard
 
 
+def test_build_dashboard_localizes_snapshot_guard_text_for_zh():
+    dashboard = build_dashboard(
+        positions={},
+        account_values={"equity": 1000.0, "buying_power": 500.0},
+        signal_desc="feature snapshot guard blocked execution",
+        status_desc="fail_closed | reason=feature_snapshot_path_missing",
+        strategy_profile="qqq_tech_enhancement",
+        target_weights={},
+        signal_metadata={
+            "allocation": _weight_allocation({}, safe_haven_symbols=("BOXX",)),
+        },
+        translator=build_translator("zh"),
+        separator="---",
+        strategy_display_name="QQQ 科技增强",
+        status_icon="🛑",
+    )
+
+    assert "🛑 关闭执行 | 原因=缺少特征快照路径" in dashboard
+    assert "🎯 特征快照校验阻止执行" in dashboard
+
+
 def test_run_strategy_core_passes_signal_metadata_to_execution():
     observed = {"messages": [], "strategy_symbols": None}
 

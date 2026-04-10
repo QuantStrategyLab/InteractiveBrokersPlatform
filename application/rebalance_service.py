@@ -10,6 +10,34 @@ from application.reconciliation_service import (
 )
 
 
+_ZH_REASON_REPLACEMENTS = (
+    ("feature snapshot guard blocked execution", "特征快照校验阻止执行"),
+    ("feature snapshot required", "需要特征快照"),
+    ("feature snapshot compute failed", "特征快照计算失败"),
+    ("feature_snapshot_download_failed", "特征快照下载失败"),
+    ("feature_snapshot_compute_failed", "特征快照计算失败"),
+    ("feature_snapshot_path_missing", "缺少特征快照路径"),
+    ("feature_snapshot_missing", "特征快照不存在"),
+    ("feature_snapshot_stale", "特征快照过旧"),
+    ("feature_snapshot_manifest_missing", "缺少快照清单"),
+    ("feature_snapshot_profile_mismatch", "快照策略名不匹配"),
+    ("feature_snapshot_config_name_mismatch", "快照配置名不匹配"),
+    ("feature_snapshot_config_path_mismatch", "快照配置路径不匹配"),
+    ("feature_snapshot_contract_version_mismatch", "快照契约版本不匹配"),
+    ("outside_execution_window", "当前不在执行窗口"),
+    ("pending_orders_detected", "检测到未完成订单"),
+    ("same_day_execution_locked", "当日执行锁已存在"),
+    ("same_day_fills_detected", "检测到当日成交"),
+    ("insufficient_buying_power", "购买力不足"),
+    ("missing_price", "缺少报价"),
+    ("no_equity", "无净值"),
+    ("fail_closed", "关闭执行"),
+    ("reason=", "原因="),
+    ("fail_reason=", "失败原因="),
+    ("decision=", "决策="),
+)
+
+
 def _format_text(value, *, fallback: str) -> str:
     text = str(value).strip() if value is not None else ""
     return text or fallback
@@ -24,6 +52,21 @@ def _format_symbol_preview(symbols, *, limit: int = 3) -> str:
     if remaining > 0:
         shown.append(f"+{remaining}")
     return ",".join(shown)
+
+
+def _translator_uses_zh(translator) -> bool:
+    sample = str(translator("no_trades"))
+    return any("\u4e00" <= ch <= "\u9fff" for ch in sample)
+
+
+def _localize_notification_text(text: str, *, translator) -> str:
+    value = str(text or "").strip()
+    if not value or not _translator_uses_zh(translator):
+        return value
+    localized = value
+    for source, target in _ZH_REASON_REPLACEMENTS:
+        localized = localized.replace(source, target)
+    return localized
 
 
 def _summarize_target_changes(target_vs_current, *, limit: int = 5) -> str | None:
@@ -229,6 +272,8 @@ def build_dashboard(
         translator("snapshot_as_of_detail", value=_format_text(snapshot_as_of, fallback="<none>")) if snapshot_as_of else None,
     ]
     diagnostics_text = " | ".join(part for part in diagnostics if part)
+    localized_status_desc = _localize_notification_text(status_desc, translator=translator)
+    localized_signal_desc = _localize_notification_text(signal_desc, translator=translator)
     return (
         f"{translator('equity')}: ${equity:,.2f} | {translator('buying_power')}: ${buying_power:,.2f}\n"
         f"{separator}\n"
@@ -236,8 +281,8 @@ def build_dashboard(
         f"{separator}\n"
         f"{diagnostics_text}\n"
         f"{separator}\n"
-        f"{status_icon} {status_desc}\n"
-        f"🎯 {signal_desc}\n"
+        f"{status_icon} {localized_status_desc}\n"
+        f"🎯 {localized_signal_desc}\n"
         f"{separator}\n"
         f"{translator('target_weights_title')}:\n{target_text}"
     )
@@ -290,11 +335,11 @@ def run_strategy_core(
             fail_reason = signal_metadata.get("fail_reason")
             no_op_text = translator("no_trades")
             if decision:
-                no_op_text = f"{no_op_text} | decision={decision}"
+                no_op_text = f"{no_op_text} | {_localize_notification_text(f'decision={decision}', translator=translator)}"
             if no_op_reason:
-                no_op_text = f"{no_op_text} | reason={no_op_reason}"
+                no_op_text = f"{no_op_text} | {_localize_notification_text(f'reason={no_op_reason}', translator=translator)}"
             if fail_reason:
-                no_op_text = f"{no_op_text} | fail_reason={fail_reason}"
+                no_op_text = f"{no_op_text} | {_localize_notification_text(f'fail_reason={fail_reason}', translator=translator)}"
             record = build_reconciliation_record(
                 strategy_profile=signal_metadata.get("strategy_profile"),
                 mode="dry_run" if signal_metadata.get("dry_run_only") else "paper",
