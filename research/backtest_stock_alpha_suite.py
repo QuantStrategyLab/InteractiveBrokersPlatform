@@ -27,10 +27,20 @@ import pandas as pd
 import yfinance as yf
 
 
-WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
-US_EQUITY_STRATEGIES_ROOT = WORKSPACE_ROOT / "UsEquityStrategies"
-US_EQUITY_SNAPSHOT_PIPELINES_ROOT = WORKSPACE_ROOT / "UsEquitySnapshotPipelines"
-QUANT_PLATFORM_KIT_ROOT = WORKSPACE_ROOT / "QuantPlatformKit"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+WORKSPACE_ROOT = REPO_ROOT.parent
+
+
+def _resolve_workspace_repo(repo_name: str) -> Path:
+    for candidate in (WORKSPACE_ROOT / repo_name, REPO_ROOT / "external" / repo_name):
+        if candidate.exists():
+            return candidate
+    return WORKSPACE_ROOT / repo_name
+
+
+US_EQUITY_STRATEGIES_ROOT = _resolve_workspace_repo("UsEquityStrategies")
+US_EQUITY_SNAPSHOT_PIPELINES_ROOT = _resolve_workspace_repo("UsEquitySnapshotPipelines")
+QUANT_PLATFORM_KIT_ROOT = _resolve_workspace_repo("QuantPlatformKit")
 LOCAL_RUNS_ROOT = WORKSPACE_ROOT / "_local_runs"
 
 for candidate in (

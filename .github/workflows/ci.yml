@@ -32,6 +32,16 @@ jobs:
           fi
           echo "ref=${ref}" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve UsEquitySnapshotPipelines ref
+        id: us-equity-snapshot-pipelines-ref
+        run: |
+          set -euo pipefail
+          ref="main"
+          if [ -n "${GITHUB_HEAD_REF:-}" ] && git ls-remote --exit-code --heads https://github.com/QuantStrategyLab/UsEquitySnapshotPipelines.git "${GITHUB_HEAD_REF}" >/dev/null 2>&1; then
+            ref="${GITHUB_HEAD_REF}"
+          fi
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+
       - name: Checkout QuantPlatformKit
         uses: actions/checkout@v6
         with:
@@ -46,6 +56,13 @@ jobs:
           ref: ${{ steps.us-equity-strategies-ref.outputs.ref }}
           path: external/UsEquityStrategies
 
+      - name: Checkout UsEquitySnapshotPipelines
+        uses: actions/checkout@v6
+        with:
+          repository: QuantStrategyLab/UsEquitySnapshotPipelines
+          ref: ${{ steps.us-equity-snapshot-pipelines-ref.outputs.ref }}
+          path: external/UsEquitySnapshotPipelines
+
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
@@ -56,12 +73,12 @@ jobs:
           set -euo pipefail
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt pytest ruff
-          python -m pip install --no-deps -e external/QuantPlatformKit -e external/UsEquityStrategies
+          python -m pip install --no-deps -e external/QuantPlatformKit -e external/UsEquityStrategies -e external/UsEquitySnapshotPipelines
 
       - name: Run ruff
         run: |
           set -euo pipefail
-          ruff check .
+          ruff check --exclude external .
 
       - name: Run unit tests
         run: |
