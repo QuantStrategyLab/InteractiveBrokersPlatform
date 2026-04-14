@@ -1,5 +1,7 @@
 # QQQ Variant Backtest And IB Loop Fix Implementation Plan
 
+> Historical note: this file is an agent planning/research archive from March 2026. It is not the current source of truth for strategy logic, cadence, live runtime configuration, or deployment state. Use `docs/superpowers/README.md` for the archive index and current documentation pointers.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 修复 Python 3.13 在线程中缺少 event loop 导致的 IB 连接失败，并新增独立回测脚本比较原策略与两类引入 QQQ 的方案。

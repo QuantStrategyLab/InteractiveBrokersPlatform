@@ -1,5 +1,7 @@
 # Rebalance Frequency and Weighting Research Design
 
+> Historical note: this file is an agent planning/research archive from March 2026. It is not the current source of truth for strategy logic, cadence, live runtime configuration, or deployment state. Use `docs/superpowers/README.md` for the archive index and current documentation pointers.
+
 ## 1. 背景
 
 当前默认研究基线已经切到统一总池 `VOO + XLK + SMH` 版本，规则是：

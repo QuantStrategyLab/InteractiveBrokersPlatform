@@ -1,5 +1,7 @@
 # VOO XLK SMH Rotation Research Implementation Plan
 
+> Historical note: this file is an agent planning/research archive from March 2026. It is not the current source of truth for strategy logic, cadence, live runtime configuration, or deployment state. Use `docs/superpowers/README.md` for the archive index and current documentation pointers.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 扩展研究脚本，比较旧版非科技池、当前 `QQQ` 版，以及 `VOO + XLK + SMH` 结构版，并输出可直接用于决策的回测结果。

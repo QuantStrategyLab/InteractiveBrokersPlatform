@@ -1,5 +1,7 @@
 # InteractiveBrokersPlatform QQQ Variant Backtest And IB Event Loop Fix Design
 
+> Historical note: this file is an agent planning/research archive from March 2026. It is not the current source of truth for strategy logic, cadence, live runtime configuration, or deployment state. Use `docs/superpowers/README.md` for the archive index and current documentation pointers.
+
 ## 背景
 
 当前仓库实现的是“全球非科技板块季度轮动 + 每日金丝雀应急”，README 明确把它定义为科技仓位的互补策略，而不是覆盖科技牛市的主策略。
