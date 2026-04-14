@@ -57,12 +57,16 @@ jobs:
             NOTIFY_LANG
           )
 
-          if [ "${STRATEGY_PROFILE:-}" = "russell_1000_multi_factor_defensive" ] || [ "${STRATEGY_PROFILE:-}" = "tech_communication_pullback_enhancement" ] || [ "${STRATEGY_PROFILE:-}" = "qqq_tech_enhancement" ]; then
+          if [ "${STRATEGY_PROFILE:-}" = "russell_1000_multi_factor_defensive" ] || [ "${STRATEGY_PROFILE:-}" = "tech_communication_pullback_enhancement" ] || [ "${STRATEGY_PROFILE:-}" = "qqq_tech_enhancement" ] || [ "${STRATEGY_PROFILE:-}" = "mega_cap_leader_rotation_dynamic_top20" ]; then
             required_vars+=(IBKR_FEATURE_SNAPSHOT_PATH)
           fi
 
+          if [ "${STRATEGY_PROFILE:-}" = "tech_communication_pullback_enhancement" ] || [ "${STRATEGY_PROFILE:-}" = "qqq_tech_enhancement" ] || [ "${STRATEGY_PROFILE:-}" = "mega_cap_leader_rotation_dynamic_top20" ]; then
+            required_vars+=(IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH)
+          fi
+
           if [ "${STRATEGY_PROFILE:-}" = "tech_communication_pullback_enhancement" ] || [ "${STRATEGY_PROFILE:-}" = "qqq_tech_enhancement" ]; then
-            required_vars+=(IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH IBKR_STRATEGY_CONFIG_PATH IBKR_RECONCILIATION_OUTPUT_PATH)
+            required_vars+=(IBKR_STRATEGY_CONFIG_PATH IBKR_RECONCILIATION_OUTPUT_PATH)
           fi
 
           missing_vars=()

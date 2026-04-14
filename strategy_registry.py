@@ -26,6 +26,7 @@ IBKR_ROLLOUT_ALLOWLIST = frozenset(
         "tech_communication_pullback_enhancement",
         "qqq_tech_enhancement",
         "global_etf_rotation",
+        "mega_cap_leader_rotation_dynamic_top20",
         "russell_1000_multi_factor_defensive",
         "soxl_soxx_trend_income",
         "tqqq_growth_income",

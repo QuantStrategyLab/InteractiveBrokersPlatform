@@ -53,6 +53,23 @@ def test_load_strategy_entrypoint_for_profile_resolves_tqqq_growth_income(monkey
     assert entrypoint.manifest.default_config["benchmark_symbol"] == "QQQ"
 
 
+def test_load_strategy_entrypoint_for_profile_resolves_mega_cap_dynamic_top20(monkeypatch):
+    try:
+        import pandas  # noqa: F401
+    except ModuleNotFoundError:
+        return
+
+    market_calendars_module = types.ModuleType("pandas_market_calendars")
+    market_calendars_module.get_calendar = lambda name: None
+    monkeypatch.setitem(sys.modules, "pandas_market_calendars", market_calendars_module)
+
+    entrypoint = load_strategy_entrypoint_for_profile("mega_cap_leader_rotation_dynamic_top20")
+
+    assert entrypoint.manifest.profile == "mega_cap_leader_rotation_dynamic_top20"
+    assert entrypoint.manifest.required_inputs == frozenset({"feature_snapshot"})
+    assert entrypoint.manifest.default_config["holdings_count"] == 4
+
+
 def test_load_strategy_entrypoint_for_profile_rejects_legacy_cash_buffer_profile(monkeypatch):
     try:
         import pandas  # noqa: F401
@@ -83,6 +100,24 @@ def test_load_strategy_runtime_adapter_for_profile_resolves_tech_communication_p
     assert adapter.available_inputs == frozenset({"feature_snapshot"})
     assert adapter.require_snapshot_manifest is True
     assert adapter.snapshot_contract_version == "tech_communication_pullback_enhancement.feature_snapshot.v1"
+
+
+def test_load_strategy_runtime_adapter_for_profile_resolves_mega_cap_dynamic_top20(monkeypatch):
+    try:
+        import pandas  # noqa: F401
+    except ModuleNotFoundError:
+        return
+
+    market_calendars_module = types.ModuleType("pandas_market_calendars")
+    market_calendars_module.get_calendar = lambda name: None
+    monkeypatch.setitem(sys.modules, "pandas_market_calendars", market_calendars_module)
+
+    adapter = load_strategy_runtime_adapter_for_profile("mega_cap_leader_rotation_dynamic_top20")
+
+    assert adapter.status_icon == "👑"
+    assert adapter.available_inputs == frozenset({"feature_snapshot"})
+    assert adapter.require_snapshot_manifest is True
+    assert adapter.snapshot_contract_version == "mega_cap_leader_rotation_dynamic_top20.feature_snapshot.v1"
 
 
 def test_load_strategy_runtime_adapter_for_profile_resolves_global_etf_rotation_inputs(monkeypatch):
