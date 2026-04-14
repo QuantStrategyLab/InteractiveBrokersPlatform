@@ -12,18 +12,12 @@
 <a id="english"></a>
 ## English
 
-IBKR runtime for shared `us_equity` strategy profiles from `UsEquityStrategies`. Today it supports:
-
-- `global_etf_rotation` (`Global ETF Rotation`): quarterly ETF momentum rotation with daily canary defense
-- `russell_1000_multi_factor_defensive` (`Russell 1000 Multi-Factor`): monthly stock-selection strategy that consumes a precomputed feature snapshot
-- `tqqq_growth_income` (`TQQQ Growth Income`): QQQ trend-following value-target strategy with BOXX and income sleeve
-- `soxl_soxx_trend_income` (`SOXL/SOXX Semiconductor Trend Income`): semiconductor rotation with income sleeve
-- `tech_communication_pullback_enhancement` (`Tech/Communication Pullback Enhancement`): monthly tech-heavy stock-selection branch with explicit BOXX cash buffer
+IBKR runtime for shared `us_equity` strategy profiles from `UsEquityStrategies`. It supports the `us_equity` profiles listed in the IBKR profile status table below. Strategy logic, cadence, asset universes, parameters, and research/backtest notes live in `UsEquityStrategies`.
 
 Current strategy implementations are sourced from `UsEquityStrategies`.
 
-Full strategy documentation now lives in [`UsEquityStrategies`](https://github.com/QuantStrategyLab/UsEquityStrategies). The strategy section below is kept as an execution-side summary.
-This runtime matrix is the authoritative enablement source for IBKR. `UsEquityStrategies` only describes strategy-layer compatibility and human-readable metadata.
+Full strategy documentation now lives in [`UsEquityStrategies`](https://github.com/QuantStrategyLab/UsEquityStrategies). This README focuses on IBKR runtime behavior, profile enablement, deployment, and credentials.
+This runtime matrix is the authoritative enablement source for IBKR. `UsEquityStrategies` carries strategy-layer logic, cadence, compatibility, and metadata.
 
 ### Execution boundary
 
@@ -36,7 +30,7 @@ The mainline runtime now follows one path only:
 
 `main.py` no longer reads private strategy constants or platform-only fields from strategy return payloads.
 
-### Strategy
+### Strategy profile support
 
 **Supported `STRATEGY_PROFILE` values**
 
@@ -63,65 +57,11 @@ Check the current matrix locally:
 python3 scripts/print_strategy_profile_status.py
 ```
 
-**Pool (22 ETFs + 1 safe haven):**
+### Feature snapshot inputs
 
-| Category | Tickers |
-|----------|---------|
-| Asia | EWY (Korea), EWT (Taiwan), INDA (India), FXI (China), EWJ (Japan) |
-| Europe | VGK |
-| US Broad Market | VOO (S&P 500) |
-| US Tech | XLK (Technology Select Sector) |
-| Semiconductors | SMH (Semiconductor ETF) |
-| Commodities | GLD (Gold), SLV (Silver), USO (Oil), DBA (Agriculture) |
-| US Cyclical | XLE (Energy), XLF (Financials), ITA (Aerospace/Defense) |
-| US Defensive | XLP (Consumer Staples), XLU (Utilities), XLV (Healthcare), IHI (Medical Devices) |
-| Real Estate / Banks | VNQ (REITs), KRE (Regional Banks) |
-| Safe Haven | BIL (Short-term Treasury) |
+Snapshot-backed profiles use upstream artifacts from `UsEquitySnapshotPipelines`. This runtime only needs the artifact location, for example `IBKR_FEATURE_SNAPSHOT_PATH`; strategy logic, cadence, feature definitions, and snapshot schema details live in `UsEquityStrategies` / `UsEquitySnapshotPipelines`.
 
-**Rules:**
-- **Momentum**: 13612W formula (Keller): `(12×R1M + 4×R3M + 2×R6M + R12M) / 19`
-- **Trend filter**: Price > 200-day SMA
-- **Hold bonus**: Existing holdings get +2% momentum bonus (reduces turnover)
-- **Selection**: Top 2 by momentum, equal weight (50/50)
-- **Safe haven**: Positions not filled → BIL
-- **Rebalance**: Quarterly (last trading day of Mar, Jun, Sep, Dec)
-- **Canary emergency**: Daily check of SPY/EFA/EEM/AGG — if all 4 have negative momentum → 100% BIL immediately
-
-**Current default backtest (aligned window: 2012-02-03 to 2026-03-25, `VOO + XLK + SMH` included):**
-- CAGR: 11.6% | Max Drawdown: 23.3%
-- Sharpe: 0.70
-- 2022: +3.1%
-- 2023+ CAGR: 29.2% | Max Drawdown: 20.9%
-- Legacy non-tech baseline and prior `QQQ` default remain available in the research script for comparison
-
-### Snapshot-based stock profile (`russell_1000_multi_factor_defensive`)
-
-- Signal source: precomputed feature snapshot file
-- Default benchmark: `SPY`
-- Default safe haven: `BOXX`
-- Runtime expectation:
-  - the feature snapshot is produced upstream
-  - Cloud Run / local runtime reads the latest file from `IBKR_FEATURE_SNAPSHOT_PATH`
-- Required snapshot columns:
-  - `symbol`, `sector`, `mom_6_1`, `mom_12_1`, `sma200_gap`, `vol_63`, `maxdd_126`
-  - optional passthrough columns such as `as_of`, `close`, `volume`, `adv20_usd`, `history_days`, `eligible`
-
-Recommended upstream task lives in `../UsEquitySnapshotPipelines`:
-
-```bash
-cd ../UsEquitySnapshotPipelines
-PYTHONPATH=src:../UsEquityStrategies/src:../QuantPlatformKit/src python scripts/update_russell_1000_input_data.py \
-  --output-dir data/input/refreshed/r1000_official_monthly_v2_alias \
-  --universe-start 2018-01-01 \
-  --price-start 2018-01-01 \
-  --extra-symbols QQQ,SPY,BOXX
-PYTHONPATH=src:../UsEquityStrategies/src:../QuantPlatformKit/src python scripts/build_russell_1000_feature_snapshot.py \
-  --prices data/input/refreshed/r1000_official_monthly_v2_alias/r1000_price_history.csv \
-  --universe data/input/refreshed/r1000_official_monthly_v2_alias/r1000_universe_history.csv \
-  --output-dir data/output/russell_1000_multi_factor_defensive
-```
-
-Then point this runtime at the generated file:
+Example runtime pointer:
 
 ```bash
 STRATEGY_PROFILE=russell_1000_multi_factor_defensive
@@ -131,7 +71,7 @@ IBKR_FEATURE_SNAPSHOT_PATH=/var/data/r1000_feature_snapshot.csv
 ### Architecture
 
 ```
-Cloud Scheduler (daily, 15:45 ET on weekdays)
+Cloud Scheduler (cron chosen from the strategy-layer cadence in `UsEquityStrategies`)
     ↓ HTTP POST
 Cloud Run (Flask: strategy + orchestration)
     ↓ shared adapter package
@@ -144,39 +84,7 @@ IBKR Account
 
 ### Notifications
 
-Telegram alerts with i18n support (en/zh).
-
-**Rebalance:**
-```
-🔔 【Trade Execution Report】
-Equity: $2,000.00 | Buying Power: $1,950.00
-━━━━━━━━━━━━━━━━━━
-  EWY: 10股 $500.00
-  SLV: 15股 $450.00
-━━━━━━━━━━━━━━━━━━
-🐤 SPY:✅(0.05), EFA:✅(0.03), EEM:❌(-0.01), AGG:✅(0.02)
-🎯 📊 Quarterly Rebalance: Top 2 rotation
-  Top: GLD(0.045), XLE(0.038)
-━━━━━━━━━━━━━━━━━━
-📉 [Market sell] EWY: 10 shares ✅ submitted (ID: 123)
-📉 [Market sell] SLV: 15 shares ✅ submitted (ID: 124)
-📈 [Limit buy] GLD: 3 shares @ $198.50 ✅ submitted (ID: 125)
-📈 [Limit buy] XLE: 5 shares @ $95.20 ✅ submitted (ID: 126)
-```
-
-**Heartbeat (daily, canary OK):**
-```
-💓 【Heartbeat】
-Equity: $2,100.00 | Buying Power: $50.00
-━━━━━━━━━━━━━━━━━━
-  GLD: 3股 $595.50
-  XLE: 5股 $476.00
-━━━━━━━━━━━━━━━━━━
-🐤 SPY:✅(0.04), EFA:✅(0.02), EEM:✅(0.01), AGG:✅(0.03)
-🎯 📋 Daily Check: canary OK, holding
-━━━━━━━━━━━━━━━━━━
-✅ No rebalance needed
-```
+Telegram alerts support English/Chinese execution and heartbeat messages. Strategy-specific signal/status fields come from the selected `UsEquityStrategies` profile; IBKR-specific fields cover order submission, order IDs, account-group context, and runtime state.
 
 ### Runtime env vars
 
@@ -188,7 +96,7 @@ The selected `ACCOUNT_GROUP` is now the runtime identity. Keep broker-specific i
 | `IB_GATEWAY_IP_MODE` | Optional fallback | `internal` (default) or `external`. Recommended to keep in the selected account-group entry; this env var is only a transition fallback. |
 | `STRATEGY_PROFILE` | Yes | Strategy profile selector. Supported `us_equity` values: `global_etf_rotation`, `russell_1000_multi_factor_defensive`, `tqqq_growth_income`, `soxl_soxx_trend_income`, `tech_communication_pullback_enhancement` |
 | `ACCOUNT_GROUP` | Yes | Account-group selector. No default fallback. |
-| `IBKR_FEATURE_SNAPSHOT_PATH` | Conditionally required | Required when `STRATEGY_PROFILE=russell_1000_multi_factor_defensive`. Path to the latest feature snapshot file (`.csv`, `.json`, `.jsonl`, `.parquet`). |
+| `IBKR_FEATURE_SNAPSHOT_PATH` | Conditionally required | Required for snapshot-backed profiles such as `russell_1000_multi_factor_defensive` and `tech_communication_pullback_enhancement`. Path to the latest feature snapshot file (`.csv`, `.json`, `.jsonl`, `.parquet`). |
 | `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME` | Yes for Cloud Run | Secret Manager secret name for account-group config JSON. Recommended production source. |
 | `IB_ACCOUNT_GROUP_CONFIG_JSON` | No | Local/dev JSON fallback for account-group config. Not recommended for production Cloud Run. |
 | `TELEGRAM_TOKEN` | Yes | Telegram bot token. For Cloud Run, prefer a Secret Manager reference instead of a literal env var. |
@@ -332,7 +240,7 @@ Important:
 2. **VPC / Subnet**: Put Cloud Run and GCE in the same VPC. For cleaner firewall rules, reserve a dedicated subnet for Cloud Run Direct VPC egress.
 3. **Cloud Run**: Deploy or update this Flask app with Direct VPC egress. Set `STRATEGY_PROFILE`, `ACCOUNT_GROUP`, and `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME`. Keep `IB_GATEWAY_ZONE` / `IB_GATEWAY_IP_MODE` only as transition fallbacks if the selected account-group payload does not already contain them. The runtime service account needs `roles/secretmanager.secretAccessor` and, for instance-name resolution, `roles/compute.viewer`.
 4. **Firewall**: Allow TCP `4001` (`live`) or `4002` (`paper`) from the Cloud Run egress subnet CIDR to the GCE instance.
-5. **Cloud Scheduler**: Create a job: `45 15 * * 1-5` (America/New_York), POST to the Cloud Run URL. The code handles market calendar checks internally.
+5. **Cloud Scheduler**: Create a job that POSTs to the Cloud Run URL. Choose the cron from the strategy-layer cadence in `UsEquityStrategies`; daily profiles can still use a near-close weekday schedule such as `45 15 * * 1-5` in `America/New_York`.
 6. **Optional public-IP mode**: Only if you cannot use VPC, set `IB_GATEWAY_IP_MODE=external`, expose the GCE public IP deliberately, and restrict source ranges tightly. This is not the default path.
 
 Example deploy/update command:
@@ -364,11 +272,11 @@ gcloud run services update ibkr-quant \
 <a id="中文"></a>
 ## 中文
 
-基于 IBKR 的全球 ETF 季度轮动策略（国际市场、商品、美股行业、美股宽基、科技和半导体），含每日金丝雀应急机制。定位上比 `TQQQ`、`SOXL` 这类高弹性科技策略更稳健，但不再把科技完全排除在外。部署在 GCP Cloud Run，连接 GCE 上的 IB Gateway。
+IBKR runtime 负责把共享的 `us_equity` 策略档位部署到 GCP Cloud Run，并连接 GCE 上的 IB Gateway 执行。策略逻辑、策略频率、标的池、参数和研究/回测说明都放在 `UsEquityStrategies`；这个仓库只维护 IBKR 运行时、账号组、Gateway 连接、下单和通知。
 
 当前 `global_etf_rotation`、`russell_1000_multi_factor_defensive`、`tqqq_growth_income`、`soxl_soxx_trend_income` 和 `tech_communication_pullback_enhancement` 的策略实现都来自 `UsEquityStrategies`。
 
-完整策略说明现在放在 [`UsEquityStrategies`](https://github.com/QuantStrategyLab/UsEquityStrategies#global_etf_rotation)。下面的策略章节主要保留执行侧摘要。
+完整策略说明现在放在 [`UsEquityStrategies`](https://github.com/QuantStrategyLab/UsEquityStrategies)。这个 README 只保留 IBKR 运行时、profile 启用状态、部署和凭据说明。
 
 ### 执行边界
 
@@ -381,43 +289,14 @@ gcloud run services update ibkr-quant \
 
 `main.py` 已经不再直接读取策略私有常量，也不再依赖策略返回里的平台专属字段。
 
-### 策略
+### 策略输入边界
 
-**选池 (22只 + 1只避险):**
-
-| 类别 | 代码 |
-|------|------|
-| 亚洲 | EWY(韩国), EWT(台湾), INDA(印度), FXI(中国), EWJ(日本) |
-| 欧洲 | VGK |
-| 美股宽基 | VOO(S&P 500) |
-| 美股科技 | XLK(科技板块) |
-| 半导体 | SMH(半导体 ETF) |
-| 商品 | GLD(黄金), SLV(白银), USO(石油), DBA(农产品) |
-| 美股周期 | XLE(能源), XLF(金融), ITA(国防航空) |
-| 美股防御 | XLP(必需消费), XLU(公用事业), XLV(医疗), IHI(医疗器械) |
-| 地产/银行 | VNQ(REITs), KRE(区域银行) |
-| 避险 | BIL(超短期国债) |
-
-**规则:**
-- **动量**: 13612W 公式: `(12×R1M + 4×R3M + 2×R6M + R12M) / 19`
-- **趋势过滤**: 价格 > SMA200
-- **持仓惯性**: 已持有标的 +2% 动量加分
-- **选股**: Top 2，各 50%
-- **避险**: 不足2只通过 → 空位转 BIL
-- **调仓**: 季度（3/6/9/12月最后一个交易日）
-- **金丝雀应急**: 每日检查 SPY/EFA/EEM/AGG — 4个全部动量为负 → 立即 100% BIL
-
-**当前默认版本回测 (`VOO + XLK + SMH` 已纳入，公共区间: 2012-02-03 到 2026-03-25):**
-- CAGR: 11.6% | 最大回撤: 23.3%
-- Sharpe: 0.70
-- 2022: +3.1%
-- 2023+ CAGR: 29.2% | 最大回撤: 20.9%
-- 如需对比旧版“非科技基线”和之前的 `QQQ` 默认版，可以直接运行研究脚本
+feature-snapshot 类策略使用 `UsEquitySnapshotPipelines` 发布的上游 artifact。这个运行时只需要 artifact 的位置，例如 `IBKR_FEATURE_SNAPSHOT_PATH`；策略逻辑、策略频率、特征定义和 snapshot schema 说明放在 `UsEquityStrategies` / `UsEquitySnapshotPipelines`。
 
 ### 架构
 
 ```
-Cloud Scheduler (每个交易日 15:45 ET)
+Cloud Scheduler（cron 以 `UsEquityStrategies` 的策略层频率为准）
     ↓ HTTP POST
 Cloud Run (Flask: 策略计算 + 编排)
     ↓ 共享平台适配层
@@ -558,7 +437,7 @@ IB_GATEWAY_IP_MODE=internal
 2. **VPC / 子网**: 让 Cloud Run 和 GCE 处于同一个 VPC。为了让防火墙规则更干净，建议给 Cloud Run Direct VPC egress 单独准备一个子网。
 3. **Cloud Run**: 部署此 Flask 应用时启用 Direct VPC egress。设置 `STRATEGY_PROFILE`、`ACCOUNT_GROUP`、`IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME`；只有在账号组配置里还没放 `ib_gateway_zone` / `ib_gateway_ip_mode` 时，才临时保留 `IB_GATEWAY_ZONE` / `IB_GATEWAY_IP_MODE` 作为过渡 fallback。runtime service account 需要 `roles/secretmanager.secretAccessor`，若走实例名解析，还需要 `roles/compute.viewer`。
 4. **防火墙**: 只允许 Cloud Run 出口子网访问 GCE 的 `TCP 4001`（`live`）或 `TCP 4002`（`paper`）。
-5. **Cloud Scheduler**: 创建定时任务 `45 15 * * 1-5`（America/New_York 时区），POST 到 Cloud Run URL。代码内部处理交易日判断。
+5. **Cloud Scheduler**: 创建定时任务，POST 到 Cloud Run URL。cron 频率以 `UsEquityStrategies` 里的策略层 cadence 为准；日频 profile 仍可使用美股临近收盘的工作日计划，例如 `45 15 * * 1-5`（America/New_York 时区）。
 6. **可选公网模式**: 只有在不能走 VPC 时，才设置 `IB_GATEWAY_IP_MODE=external`，并且要明确开放 GCE 公网 IP，同时严格限制来源 IP 和防火墙规则。
 
 示例部署命令：
@@ -584,20 +463,3 @@ gcloud run services update ibkr-quant \
   --vpc-egress private-ranges-only \
   --update-env-vars IB_GATEWAY_IP_MODE=internal
 ```
-
-### Research / 回测
-
-可以用独立脚本对比旧版非科技基线、当前默认策略，以及 `QQQ` 和 `VOO/XLK/SMH` 的研究方案：
-
-```bash
-python3 research/backtest_qqq_variants.py
-```
-
-默认会比较：
-
-- 旧版非科技轮动
-- 当前默认策略：`VOO + XLK + SMH` 加入统一轮动池参与 `Top 2`
-- `QQQ` 默认版、`VOO` 替换版，以及逐步加入 `XLK / SMH` 的拆解对比
-- 固定 `20% / 30% / 40%` 的 `QQQ` 核心仓位参考方案
-
-脚本使用 `yfinance` 的复权收盘价，并自动把回测起点对齐到所有标的都有历史数据的最早公共日期。
