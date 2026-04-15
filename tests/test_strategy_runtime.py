@@ -491,7 +491,7 @@ def test_value_target_runtime_builds_tqqq_inputs(monkeypatch):
             required_inputs=frozenset({"benchmark_history", "portfolio_snapshot"}),
             default_config={
                 "benchmark_symbol": "QQQ",
-                "managed_symbols": ("TQQQ", "BOXX", "SPYI", "QQQI"),
+                "managed_symbols": ("TQQQ", "QQQ", "BOXX", "SPYI", "QQQI"),
             },
         )
 
@@ -517,7 +517,7 @@ def test_value_target_runtime_builds_tqqq_inputs(monkeypatch):
         runtime_config={},
         merged_runtime_config={
             "benchmark_symbol": "QQQ",
-            "managed_symbols": ("TQQQ", "BOXX", "SPYI", "QQQI"),
+            "managed_symbols": ("TQQQ", "QQQ", "BOXX", "SPYI", "QQQI"),
         },
         status_icon="🐤",
         logger=lambda _message: None,
@@ -551,4 +551,4 @@ def test_value_target_runtime_builds_tqqq_inputs(monkeypatch):
     assert "pacing_sec" not in captured["runtime_config"]
     assert result.metadata["portfolio_total_equity"] == 50000.0
     assert result.metadata["benchmark_symbol"] == "QQQ"
-    assert result.metadata["managed_symbols"] == ("TQQQ", "BOXX", "SPYI", "QQQI")
+    assert result.metadata["managed_symbols"] == ("TQQQ", "QQQ", "BOXX", "SPYI", "QQQI")
