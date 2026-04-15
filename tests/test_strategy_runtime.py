@@ -226,6 +226,94 @@ def test_feature_snapshot_runtime_prefers_unified_runtime_adapter_metadata(monke
     assert result.metadata["managed_symbols"] == ("AAPL", "BOXX")
 
 
+def test_feature_snapshot_runtime_can_add_daily_market_benchmark_and_portfolio_inputs(monkeypatch):
+    captured = {}
+
+    class FakeEntrypoint:
+        manifest = StrategyManifest(
+            profile="dynamic_mega_leveraged_pullback",
+            domain="us_equity",
+            display_name="Dynamic Mega Leveraged Pullback",
+            description="test",
+            required_inputs=frozenset({"feature_snapshot", "market_history", "benchmark_history", "portfolio_snapshot"}),
+            default_config={"safe_haven": "BOXX", "benchmark_symbol": "QQQ"},
+        )
+
+        def evaluate(self, ctx):
+            captured["market_data"] = dict(ctx.market_data)
+            captured["portfolio"] = ctx.portfolio
+            captured["capabilities"] = dict(ctx.capabilities)
+            return StrategyDecision(
+                positions=(
+                    PositionTarget(symbol="NVDL", target_weight=0.4),
+                    PositionTarget(symbol="BOXX", target_weight=0.6, role="safe_haven"),
+                ),
+                diagnostics={"signal_description": "leveraged", "status_description": "ok"},
+            )
+
+    runtime = strategy_runtime_module.LoadedStrategyRuntime(
+        entrypoint=FakeEntrypoint(),
+        runtime_adapter=StrategyRuntimeAdapter(
+            status_icon="2x",
+            available_inputs=frozenset({"feature_snapshot", "market_history", "benchmark_history", "portfolio_snapshot"}),
+            required_feature_columns=frozenset({"symbol", "underlying_symbol"}),
+            snapshot_date_columns=("as_of",),
+            max_snapshot_month_lag=1,
+            require_snapshot_manifest=False,
+            snapshot_contract_version=None,
+            managed_symbols_extractor=lambda *_args, **_kwargs: ("NVDL", "BOXX"),
+            portfolio_input_name="portfolio_snapshot",
+        ),
+        runtime_settings=_build_runtime_settings(profile="dynamic_mega_leveraged_pullback"),
+        runtime_config={},
+        merged_runtime_config={"safe_haven": "BOXX", "benchmark_symbol": "QQQ"},
+        status_icon="2x",
+        logger=lambda _message: None,
+    )
+
+    monkeypatch.setattr(
+        strategy_runtime_module,
+        "load_feature_snapshot_guarded",
+        lambda path, **_kwargs: SimpleNamespace(
+            frame=[{"as_of": "2026-03-31", "symbol": "NVDL", "underlying_symbol": "NVDA"}],
+            metadata={
+                "snapshot_guard_decision": "proceed",
+                "snapshot_as_of": "2026-03-31",
+                "snapshot_path": path,
+                "snapshot_age_days": 1,
+            },
+        ),
+    )
+    portfolio_snapshot = SimpleNamespace(total_equity=50000.0)
+    monkeypatch.setattr(strategy_runtime_module, "fetch_portfolio_snapshot", lambda _ib: portfolio_snapshot)
+
+    def close_loader(_ib, symbol, **_kwargs):
+        return [100.0, 101.0] if symbol == "NVDA" else []
+
+    def candle_loader(_ib, symbol, duration="2 Y", bar_size="1 day"):
+        assert symbol == "QQQ"
+        assert duration == "2 Y"
+        assert bar_size == "1 day"
+        return [{"close": 100.0, "high": 101.0, "low": 99.0}]
+
+    result = runtime.evaluate(
+        ib="fake-ib",
+        current_holdings={"NVDL"},
+        historical_close_loader=close_loader,
+        historical_candle_loader=candle_loader,
+        run_as_of=strategy_runtime_module.pd.Timestamp("2026-04-01"),
+        translator=lambda key, **_kwargs: key,
+        pacing_sec=0.5,
+    )
+
+    assert captured["market_data"]["feature_snapshot"][0]["symbol"] == "NVDL"
+    assert captured["market_data"]["market_history"] is close_loader
+    assert captured["market_data"]["benchmark_history"][0]["high"] == 101.0
+    assert captured["portfolio"] is portfolio_snapshot
+    assert captured["capabilities"]["broker_client"] == "fake-ib"
+    assert result.metadata["managed_symbols"] == ("NVDL", "BOXX")
+
+
 def test_market_history_runtime_uses_canonical_market_history_key():
     captured = {}
 

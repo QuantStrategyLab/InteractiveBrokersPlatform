@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from us_equity_strategies import get_platform_runtime_adapter, get_strategy_catalog
+from us_equity_strategies import (
+    get_platform_runtime_adapter,
+    get_runtime_enabled_profiles,
+    get_strategy_catalog,
+)
 
 from quant_platform_kit.common.strategies import (
     PlatformCapabilityMatrix,
@@ -21,17 +25,7 @@ IBKR_PLATFORM = "ibkr"
 DEFAULT_STRATEGY_PROFILE = "global_etf_rotation"
 ROLLBACK_STRATEGY_PROFILE = DEFAULT_STRATEGY_PROFILE
 
-IBKR_ROLLOUT_ALLOWLIST = frozenset(
-    {
-        "tech_communication_pullback_enhancement",
-        "qqq_tech_enhancement",
-        "global_etf_rotation",
-        "mega_cap_leader_rotation_dynamic_top20",
-        "russell_1000_multi_factor_defensive",
-        "soxl_soxx_trend_income",
-        "tqqq_growth_income",
-    }
-)
+IBKR_ROLLOUT_ALLOWLIST = get_runtime_enabled_profiles()
 
 PLATFORM_SUPPORTED_DOMAINS: dict[str, frozenset[str]] = {
     IBKR_PLATFORM: frozenset({US_EQUITY_DOMAIN}),
