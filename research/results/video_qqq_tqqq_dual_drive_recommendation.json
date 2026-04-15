@@ -1,0 +1,11 @@
+{
+  "findings": [
+    "Best implementable reconstruction is `video_like_pullback_next_close` at 33.96% CAGR / -31.48% MaxDD, well below the video's reported 49.40% CAGR.",
+    "The simple 45/45/10 daily-rebalanced reference is 29.61% CAGR with -58.91% MaxDD, so the video headline is not explained by static QQQ/TQQQ exposure alone.",
+    "The intentionally biased same-close version reaches 41.50% CAGR with -23.80% MaxDD; if a backtest applies close-generated signals to the same close-to-close return, the headline can be inflated.",
+    "Closest CAGR to the video in this local run is `video_like_same_close_lookahead` at 41.50%; it still misses the reported CAGR by 7.90%.",
+    "Raw TQQQ buy-and-hold produces 37.77% CAGR but -81.66% MaxDD, so the video's combination of near-TQQQ-level CAGR and much lower drawdown needs exact state-machine disclosure before trusting it.",
+    "Highest-CAGR video-inspired upgrade for the current full strategy is `tqqq_growth_income_runtime_dual_drive_tqqq_active_100qqq`: 14.56% CAGR / -21.05% MaxDD versus the original 12.77% CAGR / -17.76% MaxDD.",
+    "Most conservative upgrade that keeps drawdown and 2022 close to the original is `tqqq_growth_income_runtime_dual_drive_ma200_slope_50qqq`: 13.57% CAGR / -17.95% MaxDD / 2022 -8.09%."
+  ]
+}
