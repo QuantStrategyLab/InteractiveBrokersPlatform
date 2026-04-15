@@ -22,7 +22,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-import numpy as np
 import pandas as pd
 
 CURRENT_DIR = Path(__file__).resolve().parent
