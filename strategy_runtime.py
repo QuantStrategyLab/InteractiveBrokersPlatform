@@ -74,7 +74,10 @@ class LoadedStrategyRuntime:
         run_as_of = pd.Timestamp(run_as_of).normalize()
         if _FEATURE_SNAPSHOT_INPUT in self.required_inputs:
             return self._evaluate_feature_snapshot_strategy(
+                ib=ib,
                 current_holdings=current_holdings,
+                historical_close_loader=historical_close_loader,
+                historical_candle_loader=historical_candle_loader,
                 run_as_of=run_as_of,
                 translator=translator,
                 pacing_sec=pacing_sec,
@@ -232,7 +235,10 @@ class LoadedStrategyRuntime:
     def _evaluate_feature_snapshot_strategy(
         self,
         *,
+        ib,
         current_holdings,
+        historical_close_loader: Callable[..., Any],
+        historical_candle_loader: Callable[..., Any] | None,
         run_as_of: pd.Timestamp,
         translator: Callable[[str], str],
         pacing_sec: float,
@@ -324,6 +330,24 @@ class LoadedStrategyRuntime:
             return StrategyEvaluationResult(decision=decision, metadata=metadata)
 
         feature_snapshot = guard_result.frame
+        portfolio_snapshot = None
+        if _PORTFOLIO_SNAPSHOT_INPUT in self.required_inputs:
+            portfolio_snapshot = fetch_portfolio_snapshot(ib)
+        market_inputs: dict[str, Any] = {_FEATURE_SNAPSHOT_INPUT: feature_snapshot}
+        if _MARKET_HISTORY_INPUT in self.required_inputs:
+            market_inputs.update(build_market_history_inputs(historical_close_loader))
+        if _BENCHMARK_HISTORY_INPUT in self.required_inputs:
+            if historical_candle_loader is None:
+                raise ValueError(
+                    f"IBKR strategy profile {self.profile!r} requires benchmark_history but no candle loader was provided"
+                )
+            market_inputs.update(
+                build_benchmark_history_inputs(
+                    ib,
+                    historical_candle_loader,
+                    benchmark_symbol=benchmark_symbol,
+                )
+            )
         managed_symbols = self._extract_managed_symbols(
             feature_snapshot,
             benchmark_symbol=benchmark_symbol,
@@ -333,9 +357,11 @@ class LoadedStrategyRuntime:
             entrypoint=self.entrypoint,
             runtime_adapter=self.runtime_adapter,
             as_of=run_as_of,
-            market_inputs={_FEATURE_SNAPSHOT_INPUT: feature_snapshot},
+            market_inputs=market_inputs,
+            portfolio_snapshot=portfolio_snapshot,
             runtime_config=dict(self.runtime_config),
             current_holdings=current_holdings,
+            ib=ib,
         )
         try:
             decision = self.entrypoint.evaluate(ctx)
