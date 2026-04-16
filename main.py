@@ -139,6 +139,25 @@ def get_ib_port():
     return 4002 if mode == "paper" else 4001
 
 
+def get_ib_connect_timeout_seconds():
+    raw_value = os.getenv("IBKR_CONNECT_TIMEOUT_SECONDS", "60")
+    try:
+        timeout_seconds = int(raw_value)
+    except (TypeError, ValueError):
+        print(
+            f"Invalid IBKR_CONNECT_TIMEOUT_SECONDS={raw_value!r}; using 60",
+            flush=True,
+        )
+        return 60
+    if timeout_seconds <= 0:
+        print(
+            f"Invalid IBKR_CONNECT_TIMEOUT_SECONDS={raw_value!r}; using 60",
+            flush=True,
+        )
+        return 60
+    return timeout_seconds
+
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -146,6 +165,7 @@ RUNTIME_SETTINGS = load_platform_runtime_settings(project_id_resolver=get_projec
 IB_HOST = None
 IB_PORT = get_ib_port()
 IB_CLIENT_ID = RUNTIME_SETTINGS.ib_client_id
+IB_CONNECT_TIMEOUT_SECONDS = get_ib_connect_timeout_seconds()
 STRATEGY_PROFILE = RUNTIME_SETTINGS.strategy_profile
 STRATEGY_DISPLAY_NAME = RUNTIME_SETTINGS.strategy_display_name
 ACCOUNT_GROUP = RUNTIME_SETTINGS.account_group
@@ -245,10 +265,19 @@ def send_tg_message(message):
 def connect_ib():
     host = get_ib_host()
     print(
-        f"Connecting to IB gateway {host}:{IB_PORT} (mode={RUNTIME_SETTINGS.ib_gateway_mode}, client_id={IB_CLIENT_ID})",
+        "Connecting to IB gateway "
+        f"{host}:{IB_PORT} "
+        f"(mode={RUNTIME_SETTINGS.ib_gateway_mode}, "
+        f"client_id={IB_CLIENT_ID}, "
+        f"timeout={IB_CONNECT_TIMEOUT_SECONDS}s)",
         flush=True,
     )
-    return ibkr_connect_ib(host, IB_PORT, IB_CLIENT_ID)
+    return ibkr_connect_ib(
+        host,
+        IB_PORT,
+        IB_CLIENT_ID,
+        timeout=IB_CONNECT_TIMEOUT_SECONDS,
+    )
 
 
 def log_runtime_event(log_context, event, **fields):
@@ -297,6 +326,7 @@ def build_execution_report(log_context):
             "ib_gateway_mode": RUNTIME_SETTINGS.ib_gateway_mode,
             "ib_gateway_ip_mode": RUNTIME_SETTINGS.ib_gateway_ip_mode,
             "ib_client_id": IB_CLIENT_ID,
+            "ib_connect_timeout_seconds": IB_CONNECT_TIMEOUT_SECONDS,
         },
         artifacts={
             "feature_snapshot_path": FEATURE_SNAPSHOT_PATH,

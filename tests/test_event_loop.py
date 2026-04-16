@@ -24,8 +24,8 @@ def test_ensure_event_loop_creates_loop_in_worker_thread(strategy_module):
 def test_connect_ib_prepares_event_loop_before_connect(strategy_module, monkeypatch):
     observed = {}
 
-    def fake_ibkr_connect(host, port, client_id):
-        observed["args"] = (host, port, client_id)
+    def fake_ibkr_connect(host, port, client_id, **kwargs):
+        observed["args"] = (host, port, client_id, kwargs)
         return object()
 
     monkeypatch.setattr(strategy_module, "ibkr_connect_ib", fake_ibkr_connect)
@@ -33,7 +33,19 @@ def test_connect_ib_prepares_event_loop_before_connect(strategy_module, monkeypa
     with ThreadPoolExecutor(max_workers=1) as executor:
         executor.submit(strategy_module.connect_ib).result()
 
-    assert observed["args"] == ("127.0.0.1", 4001, 1)
+    assert observed["args"] == ("127.0.0.1", 4001, 1, {"timeout": 60})
+
+
+def test_ib_connect_timeout_can_be_overridden(strategy_module_factory):
+    module = strategy_module_factory(IBKR_CONNECT_TIMEOUT_SECONDS="75")
+
+    assert module.IB_CONNECT_TIMEOUT_SECONDS == 75
+
+
+def test_ib_connect_timeout_falls_back_when_invalid(strategy_module_factory):
+    module = strategy_module_factory(IBKR_CONNECT_TIMEOUT_SECONDS="bad")
+
+    assert module.IB_CONNECT_TIMEOUT_SECONDS == 60
 
 
 def test_instance_name_alias_is_used_as_host(strategy_module):

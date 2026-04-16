@@ -100,6 +100,7 @@ The selected `ACCOUNT_GROUP` is now the runtime identity. Keep broker-specific i
 |----------|----------|-------------|
 | `IB_GATEWAY_ZONE` | Optional fallback | GCE zone (for example `us-central1-a`). Recommended to keep in the selected account-group entry; this env var is only a transition fallback. |
 | `IB_GATEWAY_IP_MODE` | Optional fallback | `internal` (default) or `external`. Recommended to keep in the selected account-group entry; this env var is only a transition fallback. |
+| `IBKR_CONNECT_TIMEOUT_SECONDS` | No | IB API handshake timeout in seconds. Defaults to `60`; raise only if Gateway remote API startup is consistently slow. |
 | `STRATEGY_PROFILE` | Yes | Strategy profile selector. Supported `us_equity` values: `global_etf_rotation`, `russell_1000_multi_factor_defensive`, `tqqq_growth_income`, `soxl_soxx_trend_income`, `tech_communication_pullback_enhancement`, `mega_cap_leader_rotation_aggressive`, `mega_cap_leader_rotation_dynamic_top20`, `dynamic_mega_leveraged_pullback` |
 | `ACCOUNT_GROUP` | Yes | Account-group selector. Set explicitly for each deployment. |
 | `IBKR_FEATURE_SNAPSHOT_PATH` | Conditionally required | Required for snapshot-backed profiles such as `russell_1000_multi_factor_defensive`, `tech_communication_pullback_enhancement`, and `mega_cap_leader_rotation_dynamic_top20`. Path to the latest feature snapshot file (`.csv`, `.json`, `.jsonl`, `.parquet`). |
@@ -331,6 +332,7 @@ IBKR 账户
 |------|------|------|
 | `IB_GATEWAY_ZONE` | 可选过渡项 | GCE zone（如 `us-central1-a`）。推荐直接放进选中的账号组配置里；这里只保留过渡 fallback。 |
 | `IB_GATEWAY_IP_MODE` | 可选过渡项 | `internal`（默认）或 `external`。推荐直接放进选中的账号组配置里；这里只保留过渡 fallback。 |
+| `IBKR_CONNECT_TIMEOUT_SECONDS` | 否 | IB API 握手超时时间，单位秒。默认 `60`；只有 Gateway 远程 API 启动持续偏慢时才需要调高。 |
 | `STRATEGY_PROFILE` | 是 | 策略档位选择。当前可用的 `us_equity` 值：`global_etf_rotation`、`russell_1000_multi_factor_defensive`、`tqqq_growth_income`、`soxl_soxx_trend_income`、`tech_communication_pullback_enhancement`、`mega_cap_leader_rotation_aggressive`、`mega_cap_leader_rotation_dynamic_top20`、`dynamic_mega_leveraged_pullback` |
 | `ACCOUNT_GROUP` | 是 | 账号组选择器，每个部署都要显式设置。 |
 | `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME` | Cloud Run 建议必填 | 账号组配置 JSON 在 Secret Manager 里的密钥名。生产环境推荐使用。 |
