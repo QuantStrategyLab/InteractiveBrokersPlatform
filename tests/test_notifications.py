@@ -1,4 +1,4 @@
-from notifications.telegram import build_translator, send_telegram_message
+from notifications.telegram import build_strategy_display_name, build_translator, send_telegram_message
 
 
 def test_build_translator_supports_chinese():
@@ -7,6 +7,16 @@ def test_build_translator_supports_chinese():
     assert translate("target_weights_title") == "目标持仓"
     assert translate("market_status_risk_on", asset="SOXL") == "🚀 风险开启（SOXL）"
     assert translate("signal_risk_on", window=150, ratio="40.2%") == "SOXL 站上 150 日均线，持有 SOXL，交易层风险仓位 40.2%"
+
+
+def test_strategy_display_name_translates_new_live_profiles():
+    zh_name = build_strategy_display_name(build_translator("zh"))
+    en_name = build_strategy_display_name(build_translator("en"))
+
+    assert zh_name("mega_cap_leader_rotation_dynamic_top20") == "Mega Cap 动态 Top20 龙头轮动"
+    assert zh_name("dynamic_mega_leveraged_pullback") == "Mega Cap 2x 回调策略"
+    assert en_name("mega_cap_leader_rotation_dynamic_top20") == "Mega Cap Leader Rotation Dynamic Top20"
+    assert en_name("dynamic_mega_leveraged_pullback") == "Dynamic Mega Leveraged Pullback"
 
 
 def test_send_telegram_message_logs_non_200_response(capsys):
