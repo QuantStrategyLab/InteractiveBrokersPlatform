@@ -9,6 +9,7 @@ def test_build_translator_supports_chinese():
     assert translate("market_status_risk_on", asset="SOXL") == "🚀 风险开启（SOXL）"
     assert translate("signal_risk_on", window=150, ratio="40.2%") == "SOXL 站上 150 日均线，持有 SOXL，交易层风险仓位 40.2%"
     assert translate("paper_liquidation_only") == "IBKR 模拟账户清仓模式"
+    assert translate("paper_liquidation_positions_seen", count=4) == "识别持仓=4"
     assert translate("market_status_blend_gate_risk_on", asset="SOXX+SOXL") == "🚀 风险开启（SOXX+SOXL）"
     assert (
         translate(

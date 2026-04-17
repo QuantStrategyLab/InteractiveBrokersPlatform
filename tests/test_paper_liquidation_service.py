@@ -8,7 +8,7 @@ from application.paper_liquidation_service import build_liquidation_intents, exe
 def test_build_liquidation_intents_sells_longs_and_buys_shorts():
     positions = {
         "AAPL": {"symbol": "AAPL", "quantity": 3},
-        "TSLA": {"symbol": "TSLA", "quantity": -2},
+        "TSLA": {"symbol": "TSLA", "position": -2},
         "CASH": {"symbol": "CASH", "quantity": 0},
     }
 
