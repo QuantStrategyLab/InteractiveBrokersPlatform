@@ -19,6 +19,17 @@ def test_build_translator_supports_chinese():
         )
         == "SOXX 站上 140 日门槛线，持有 SOXL 70.0% + SOXX 20.0%"
     )
+    assert (
+        translate(
+            "small_account_warning_note",
+            portfolio_equity="$0",
+            min_recommended_equity="$1,000",
+            reason=translate(
+                "small_account_warning_reason_integer_shares_min_position_value_may_prevent_backtest_replication"
+            ),
+        )
+        == "小账户提示：净值 $0 低于建议 $1,000；整数股和最小仓位限制可能导致实盘无法完全复现回测"
+    )
 
 
 def test_strategy_display_name_translates_new_live_profiles():
