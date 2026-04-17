@@ -1,6 +1,7 @@
 import json
 
 from application.rebalance_service import build_dashboard, run_strategy_core
+from application.rebalance_service import _build_notification_trade_lines
 from notifications.telegram import build_translator
 
 
@@ -134,6 +135,26 @@ def test_build_dashboard_localizes_qqq_tech_diagnostics_for_zh():
     assert "市场阶段=软防御 | 市场宽度=41.2% | 目标股票仓位=60.0% | 实际股票仓位=60.0%" in dashboard
     assert "基准趋势=向下" in dashboard
     assert "入选标的数=8 前排标的=CIEN(0.92)" in dashboard
+
+
+def test_notification_trade_lines_localize_runtime_diagnostic_tail_for_zh():
+    lines = _build_notification_trade_lines(
+        [
+            (
+                "执行配置=soxl_soxx_trend_income | 市场阶段=<none> | 宽度=0.0% | "
+                "目标股票仓位=0.0% | 实际股票仓位=0.0% | 快照日期=<none> | 交易日=<none>"
+            )
+        ],
+        execution_summary={},
+        translator=build_translator("zh"),
+    )
+
+    assert lines == [
+        (
+            "执行配置=SOXL/SOXX 半导体趋势收益 | 市场阶段=无 | 宽度=0.0% | "
+            "目标股票仓位=0.0% | 实际股票仓位=0.0% | 快照日期=无 | 交易日=无"
+        )
+    ]
 
 
 def test_run_strategy_core_passes_signal_metadata_to_execution():
