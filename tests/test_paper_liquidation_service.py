@@ -52,6 +52,20 @@ def test_execute_paper_liquidation_supports_dry_run():
     ]
 
 
+def test_execute_paper_liquidation_reports_no_op_when_no_positions():
+    summary = execute_paper_liquidation(
+        object(),
+        {},
+        submit_order_intent=lambda *_args: None,
+        order_intent_cls=OrderIntent,
+        dry_run_only=False,
+    )
+
+    assert summary["mode"] == "paper"
+    assert summary["execution_status"] == "no_op"
+    assert summary["orders_submitted"] == []
+
+
 def test_execute_paper_liquidation_submits_market_orders():
     submitted = []
 

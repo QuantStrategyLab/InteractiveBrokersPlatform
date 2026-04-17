@@ -69,6 +69,9 @@ def execute_paper_liquidation(
         "orders_skipped": [],
         "execution_status": "no_op" if not intents else "dry_run" if dry_run_only else "executing",
     }
+    if not intents:
+        return summary
+
     if dry_run_only:
         summary["orders_submitted"] = [
             {
