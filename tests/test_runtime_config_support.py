@@ -157,6 +157,7 @@ def test_platform_supported_profiles_are_filtered_by_registry():
             "dynamic_mega_leveraged_pullback",
             "mega_cap_leader_rotation_aggressive",
             "mega_cap_leader_rotation_dynamic_top20",
+            "mega_cap_leader_rotation_top50_balanced",
             "russell_1000_multi_factor_defensive",
         }
     )
@@ -172,6 +173,7 @@ def test_platform_eligible_profiles_are_exposed_by_capability_matrix():
             "dynamic_mega_leveraged_pullback",
             "mega_cap_leader_rotation_aggressive",
             "mega_cap_leader_rotation_dynamic_top20",
+            "mega_cap_leader_rotation_top50_balanced",
             "russell_1000_multi_factor_defensive",
         }
     )
@@ -267,6 +269,7 @@ def test_platform_profile_status_matrix_matches_current_ibkr_rollout():
         "tech_communication_pullback_enhancement",
         "mega_cap_leader_rotation_aggressive",
         "mega_cap_leader_rotation_dynamic_top20",
+        "mega_cap_leader_rotation_top50_balanced",
     }
     assert by_profile["global_etf_rotation"] == {
         "canonical_profile": "global_etf_rotation",
@@ -320,6 +323,10 @@ def test_print_strategy_profile_status_json_matches_registry():
     assert by_profile["mega_cap_leader_rotation_dynamic_top20"]["input_mode"] == "feature_snapshot"
     assert by_profile["mega_cap_leader_rotation_dynamic_top20"]["requires_snapshot_artifacts"] is True
     assert by_profile["mega_cap_leader_rotation_dynamic_top20"]["requires_strategy_config_path"] is False
+    assert by_profile["mega_cap_leader_rotation_top50_balanced"]["profile_group"] == "snapshot_backed"
+    assert by_profile["mega_cap_leader_rotation_top50_balanced"]["input_mode"] == "feature_snapshot"
+    assert by_profile["mega_cap_leader_rotation_top50_balanced"]["requires_snapshot_artifacts"] is True
+    assert by_profile["mega_cap_leader_rotation_top50_balanced"]["requires_strategy_config_path"] is False
     assert by_profile["dynamic_mega_leveraged_pullback"]["profile_group"] == "snapshot_backed"
     assert (
         by_profile["dynamic_mega_leveraged_pullback"]["input_mode"]
@@ -388,6 +395,25 @@ def test_print_strategy_switch_env_plan_for_mega_cap_feature_snapshot_profile():
     assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH"] == "<required>"
     assert "IBKR_STRATEGY_CONFIG_PATH" in plan["remove_if_present"]
     assert "IBKR_RECONCILIATION_OUTPUT_PATH" in plan["remove_if_present"]
+
+
+def test_print_strategy_switch_env_plan_for_mega_cap_top50_balanced_profile():
+    result = subprocess.run(
+        [sys.executable, str(SWITCH_PLAN_SCRIPT_PATH), "--profile", "mega_cap_leader_rotation_top50_balanced", "--json"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    plan = json.loads(result.stdout)
+    assert plan["canonical_profile"] == "mega_cap_leader_rotation_top50_balanced"
+    assert plan["profile_group"] == "snapshot_backed"
+    assert plan["input_mode"] == "feature_snapshot"
+    assert plan["requires_snapshot_artifacts"] is True
+    assert plan["requires_strategy_config_path"] is False
+    assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_PATH"] == "<required>"
+    assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH"] == "<required>"
+    assert plan["hints"]["feature_snapshot_filename"] == "mega_cap_leader_rotation_top50_balanced_feature_snapshot_latest.csv"
 
 
 def test_print_strategy_switch_env_plan_for_feature_snapshot_profile():

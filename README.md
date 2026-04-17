@@ -41,6 +41,7 @@ The mainline runtime now follows one path only:
 - `tech_communication_pullback_enhancement`
 - `mega_cap_leader_rotation_aggressive`
 - `mega_cap_leader_rotation_dynamic_top20`
+- `mega_cap_leader_rotation_top50_balanced`
 - `dynamic_mega_leveraged_pullback`
 
 
@@ -55,6 +56,7 @@ The mainline runtime now follows one path only:
 | `tech_communication_pullback_enhancement` | Tech/Communication Pullback Enhancement | Yes | Yes | `us_equity` | enabled feature-snapshot alternative |
 | `mega_cap_leader_rotation_aggressive` | Mega Cap Leader Rotation Aggressive | Yes | Yes | `us_equity` | enabled aggressive leader rotation |
 | `mega_cap_leader_rotation_dynamic_top20` | Mega Cap Leader Rotation Dynamic Top20 | Yes | Yes | `us_equity` | enabled concentrated leader rotation |
+| `mega_cap_leader_rotation_top50_balanced` | Mega Cap Leader Rotation Top50 Balanced | Yes | Yes | `us_equity` | enabled balanced Top50 leader rotation |
 | `dynamic_mega_leveraged_pullback` | Dynamic Mega Leveraged Pullback | Yes | Yes | `us_equity` | enabled 2x mega-cap pullback line |
 
 Check the current matrix locally:
@@ -101,9 +103,9 @@ The selected `ACCOUNT_GROUP` is now the runtime identity. Keep broker-specific i
 | `IB_GATEWAY_ZONE` | Optional fallback | GCE zone (for example `us-central1-a`). Recommended to keep in the selected account-group entry; this env var is only a transition fallback. |
 | `IB_GATEWAY_IP_MODE` | Optional fallback | `internal` (default) or `external`. Recommended to keep in the selected account-group entry; this env var is only a transition fallback. |
 | `IBKR_CONNECT_TIMEOUT_SECONDS` | No | IB API handshake timeout in seconds. Defaults to `60`; raise only if Gateway remote API startup is consistently slow. |
-| `STRATEGY_PROFILE` | Yes | Strategy profile selector. Supported `us_equity` values: `global_etf_rotation`, `russell_1000_multi_factor_defensive`, `tqqq_growth_income`, `soxl_soxx_trend_income`, `tech_communication_pullback_enhancement`, `mega_cap_leader_rotation_aggressive`, `mega_cap_leader_rotation_dynamic_top20`, `dynamic_mega_leveraged_pullback` |
+| `STRATEGY_PROFILE` | Yes | Strategy profile selector. Supported `us_equity` values: `global_etf_rotation`, `russell_1000_multi_factor_defensive`, `tqqq_growth_income`, `soxl_soxx_trend_income`, `tech_communication_pullback_enhancement`, `mega_cap_leader_rotation_aggressive`, `mega_cap_leader_rotation_dynamic_top20`, `mega_cap_leader_rotation_top50_balanced`, `dynamic_mega_leveraged_pullback` |
 | `ACCOUNT_GROUP` | Yes | Account-group selector. Set explicitly for each deployment. |
-| `IBKR_FEATURE_SNAPSHOT_PATH` | Conditionally required | Required for snapshot-backed profiles such as `russell_1000_multi_factor_defensive`, `tech_communication_pullback_enhancement`, and `mega_cap_leader_rotation_dynamic_top20`. Path to the latest feature snapshot file (`.csv`, `.json`, `.jsonl`, `.parquet`). |
+| `IBKR_FEATURE_SNAPSHOT_PATH` | Conditionally required | Required for snapshot-backed profiles such as `russell_1000_multi_factor_defensive`, `tech_communication_pullback_enhancement`, `mega_cap_leader_rotation_dynamic_top20`, and `mega_cap_leader_rotation_top50_balanced`. Path to the latest feature snapshot file (`.csv`, `.json`, `.jsonl`, `.parquet`). |
 | `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME` | Yes for Cloud Run | Secret Manager secret name for account-group config JSON. Recommended production source. |
 | `IB_ACCOUNT_GROUP_CONFIG_JSON` | No | Local/dev JSON fallback for account-group config. Not recommended for production Cloud Run. |
 | `TELEGRAM_TOKEN` | Yes | Telegram bot token. For Cloud Run, prefer a Secret Manager reference instead of a literal env var. |
@@ -291,7 +293,7 @@ gcloud run services update ibkr-quant \
 
 IBKR runtime 负责把共享的 `us_equity` 策略档位部署到 GCP Cloud Run，并连接 GCE 上的 IB Gateway 执行。策略逻辑、策略频率、标的池、参数和研究/回测说明都放在 `UsEquityStrategies`；这个仓库只维护 IBKR 运行时、账号组、Gateway 连接、下单和通知。
 
-当前 `global_etf_rotation`、`russell_1000_multi_factor_defensive`、`tqqq_growth_income`、`soxl_soxx_trend_income`、`tech_communication_pullback_enhancement`、`mega_cap_leader_rotation_aggressive`、`mega_cap_leader_rotation_dynamic_top20` 和 `dynamic_mega_leveraged_pullback` 的策略实现都来自 `UsEquityStrategies`。
+当前 `global_etf_rotation`、`russell_1000_multi_factor_defensive`、`tqqq_growth_income`、`soxl_soxx_trend_income`、`tech_communication_pullback_enhancement`、`mega_cap_leader_rotation_aggressive`、`mega_cap_leader_rotation_dynamic_top20`、`mega_cap_leader_rotation_top50_balanced` 和 `dynamic_mega_leveraged_pullback` 的策略实现都来自 `UsEquityStrategies`。
 
 完整策略说明现在放在 [`UsEquityStrategies`](https://github.com/QuantStrategyLab/UsEquityStrategies)。这个 README 只保留 IBKR 运行时、profile 启用状态、部署和凭据说明。
 
@@ -333,7 +335,7 @@ IBKR 账户
 | `IB_GATEWAY_ZONE` | 可选过渡项 | GCE zone（如 `us-central1-a`）。推荐直接放进选中的账号组配置里；这里只保留过渡 fallback。 |
 | `IB_GATEWAY_IP_MODE` | 可选过渡项 | `internal`（默认）或 `external`。推荐直接放进选中的账号组配置里；这里只保留过渡 fallback。 |
 | `IBKR_CONNECT_TIMEOUT_SECONDS` | 否 | IB API 握手超时时间，单位秒。默认 `60`；只有 Gateway 远程 API 启动持续偏慢时才需要调高。 |
-| `STRATEGY_PROFILE` | 是 | 策略档位选择。当前可用的 `us_equity` 值：`global_etf_rotation`、`russell_1000_multi_factor_defensive`、`tqqq_growth_income`、`soxl_soxx_trend_income`、`tech_communication_pullback_enhancement`、`mega_cap_leader_rotation_aggressive`、`mega_cap_leader_rotation_dynamic_top20`、`dynamic_mega_leveraged_pullback` |
+| `STRATEGY_PROFILE` | 是 | 策略档位选择。当前可用的 `us_equity` 值：`global_etf_rotation`、`russell_1000_multi_factor_defensive`、`tqqq_growth_income`、`soxl_soxx_trend_income`、`tech_communication_pullback_enhancement`、`mega_cap_leader_rotation_aggressive`、`mega_cap_leader_rotation_dynamic_top20`、`mega_cap_leader_rotation_top50_balanced`、`dynamic_mega_leveraged_pullback` |
 | `ACCOUNT_GROUP` | 是 | 账号组选择器，每个部署都要显式设置。 |
 | `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME` | Cloud Run 建议必填 | 账号组配置 JSON 在 Secret Manager 里的密钥名。生产环境推荐使用。 |
 | `IB_ACCOUNT_GROUP_CONFIG_JSON` | 否 | 本地开发用的账号组配置 JSON fallback。不建议在生产 Cloud Run 直接使用。 |
