@@ -85,6 +85,14 @@ def test_handle_request_persists_machine_readable_report(strategy_module, monkey
     assert observed["report"]["summary"]["signal_source"] == strategy_module.STRATEGY_SIGNAL_SOURCE
 
 
+def test_execution_report_prefers_configured_managed_symbols_without_ranking_pool(strategy_module_factory):
+    module = strategy_module_factory(STRATEGY_PROFILE="soxl_soxx_trend_income")
+    report = module.build_execution_report(module.RUNTIME_LOG_CONTEXT.with_run("run-001"))
+
+    assert report["summary"]["managed_symbols"] == ["SOXL", "SOXX", "BOXX", "QQQI", "SPYI"]
+    assert report["summary"]["safe_haven"] == "BIL"
+
+
 def test_handle_request_enriches_runtime_report_with_cycle_details(strategy_module, monkeypatch):
     observed = {}
 

@@ -297,12 +297,11 @@ def log_runtime_event(log_context, event, **fields):
 
 
 def build_execution_report(log_context):
+    configured_managed_symbols = STRATEGY_RUNTIME_CONFIG.get("managed_symbols")
+    fallback_managed_symbols = tuple(dict.fromkeys([*RANKING_POOL, SAFE_HAVEN])) if RANKING_POOL else (SAFE_HAVEN,)
     managed_symbols = tuple(
         str(symbol)
-        for symbol in (
-            STRATEGY_RUNTIME_CONFIG.get("managed_symbols")
-            or tuple(dict.fromkeys([*RANKING_POOL, SAFE_HAVEN])) if RANKING_POOL else (SAFE_HAVEN,)
-        )
+        for symbol in (configured_managed_symbols or fallback_managed_symbols)
         if str(symbol or "").strip()
     )
     return build_runtime_report_base(
