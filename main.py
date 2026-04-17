@@ -36,6 +36,7 @@ from application.execution_service import (
     execute_rebalance as application_execute_rebalance,
     get_market_prices as application_get_market_prices,
 )
+from application.paper_liquidation_service import execute_paper_liquidation
 from application.rebalance_service import run_strategy_core as run_rebalance_cycle
 from decision_mapper import map_strategy_decision
 from entrypoints.cloud_run import is_market_open_today
@@ -158,6 +159,10 @@ def get_ib_connect_timeout_seconds():
     return timeout_seconds
 
 
+def _env_flag(name: str) -> bool:
+    return str(os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -205,6 +210,7 @@ FEATURE_RUNTIME_CONFIG_SOURCE = (
     or RUNTIME_SETTINGS.strategy_config_source
 )
 RECONCILIATION_OUTPUT_PATH = RUNTIME_SETTINGS.reconciliation_output_path
+PAPER_LIQUIDATE_ONLY = _env_flag("IBKR_PAPER_LIQUIDATE_ONLY")
 
 TG_TOKEN = RUNTIME_SETTINGS.tg_token
 TG_CHAT_ID = RUNTIME_SETTINGS.tg_chat_id
@@ -476,11 +482,58 @@ def execute_rebalance(
     )
 
 
+def _format_liquidation_orders(orders) -> str:
+    preview = []
+    for order in orders or ():
+        symbol = str(order.get("symbol") or "").strip().upper()
+        side = str(order.get("side") or "").strip().lower()
+        quantity = float(order.get("quantity") or 0.0)
+        status = str(order.get("status") or "").strip()
+        if symbol:
+            preview.append(f"{symbol} {side} {quantity:g} {status}".strip())
+    return ", ".join(preview) if preview else t("no_trades")
+
+
+def run_paper_liquidation_cycle():
+    if RUNTIME_SETTINGS.ib_gateway_mode != "paper":
+        raise RuntimeError("IBKR_PAPER_LIQUIDATE_ONLY is only allowed when ib_gateway_mode=paper")
+
+    ib = connect_ib()
+    try:
+        positions, _account_values = get_current_portfolio(ib)
+        summary = execute_paper_liquidation(
+            ib,
+            positions,
+            submit_order_intent=submit_order_intent,
+            order_intent_cls=OrderIntent,
+            dry_run_only=RUNTIME_SETTINGS.dry_run_only,
+        )
+        message = (
+            f"{t('rebalance_title')}\n"
+            f"{t('strategy_label', name=strategy_display_name)}\n"
+            f"{t('paper_liquidation_only')}\n"
+            f"{t('paper_liquidation_status', mode=summary['mode'], status=summary['execution_status'])}\n"
+            f"{SEPARATOR}\n"
+            f"{_format_liquidation_orders(summary.get('orders_submitted'))}"
+        )
+        send_tg_message(message)
+        print(message, flush=True)
+        global LAST_CYCLE_DETAILS
+        LAST_CYCLE_DETAILS = {"execution_summary": summary}
+        return "OK"
+    finally:
+        if ib is not None and hasattr(ib, "disconnect"):
+            ib.disconnect()
+
+
 # ---------------------------------------------------------------------------
 # Main strategy runner
 # ---------------------------------------------------------------------------
 def run_strategy_core():
     global LAST_CYCLE_DETAILS
+    if PAPER_LIQUIDATE_ONLY:
+        return run_paper_liquidation_cycle()
+
     cycle_details: dict[str, object] = {}
     result = run_rebalance_cycle(
         connect_ib=connect_ib,

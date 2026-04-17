@@ -17,9 +17,12 @@ jobs:
         run: |
           set -euo pipefail
           ref="main"
-          if [ -n "${GITHUB_HEAD_REF:-}" ] && git ls-remote --exit-code --heads https://github.com/QuantStrategyLab/QuantPlatformKit.git "${GITHUB_HEAD_REF}" >/dev/null 2>&1; then
-            ref="${GITHUB_HEAD_REF}"
-          fi
+          for candidate in "${GITHUB_HEAD_REF:-}" "${GITHUB_BASE_REF:-}"; do
+            if [ -n "$candidate" ] && git ls-remote --exit-code --heads https://github.com/QuantStrategyLab/QuantPlatformKit.git "$candidate" >/dev/null 2>&1; then
+              ref="$candidate"
+              break
+            fi
+          done
           echo "ref=${ref}" >> "$GITHUB_OUTPUT"
 
       - name: Resolve UsEquityStrategies ref
@@ -27,9 +30,12 @@ jobs:
         run: |
           set -euo pipefail
           ref="main"
-          if [ -n "${GITHUB_HEAD_REF:-}" ] && git ls-remote --exit-code --heads https://github.com/QuantStrategyLab/UsEquityStrategies.git "${GITHUB_HEAD_REF}" >/dev/null 2>&1; then
-            ref="${GITHUB_HEAD_REF}"
-          fi
+          for candidate in "${GITHUB_HEAD_REF:-}" "${GITHUB_BASE_REF:-}"; do
+            if [ -n "$candidate" ] && git ls-remote --exit-code --heads https://github.com/QuantStrategyLab/UsEquityStrategies.git "$candidate" >/dev/null 2>&1; then
+              ref="$candidate"
+              break
+            fi
+          done
           echo "ref=${ref}" >> "$GITHUB_OUTPUT"
 
       - name: Resolve UsEquitySnapshotPipelines ref
@@ -37,9 +43,12 @@ jobs:
         run: |
           set -euo pipefail
           ref="main"
-          if [ -n "${GITHUB_HEAD_REF:-}" ] && git ls-remote --exit-code --heads https://github.com/QuantStrategyLab/UsEquitySnapshotPipelines.git "${GITHUB_HEAD_REF}" >/dev/null 2>&1; then
-            ref="${GITHUB_HEAD_REF}"
-          fi
+          for candidate in "${GITHUB_HEAD_REF:-}" "${GITHUB_BASE_REF:-}"; do
+            if [ -n "$candidate" ] && git ls-remote --exit-code --heads https://github.com/QuantStrategyLab/UsEquitySnapshotPipelines.git "$candidate" >/dev/null 2>&1; then
+              ref="$candidate"
+              break
+            fi
+          done
           echo "ref=${ref}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout QuantPlatformKit
