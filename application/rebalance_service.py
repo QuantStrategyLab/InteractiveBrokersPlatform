@@ -379,6 +379,39 @@ def build_dashboard(
     )
 
 
+def _first_prefixed_line(prefix: str, text: str, *, translator) -> str | None:
+    localized = _localize_notification_text(text, translator=translator)
+    lines = _format_prefixed_text(prefix, localized)
+    return lines[0] if lines else None
+
+
+def _build_compact_message(
+    *,
+    title: str,
+    strategy_display_name: str | None,
+    signal_desc: str,
+    status_desc: str,
+    status_icon: str,
+    translator,
+    separator: str,
+    body_lines,
+) -> str:
+    lines = [title]
+    strategy_name = _format_text(strategy_display_name, fallback="<unknown>")
+    lines.append(translator("strategy_label", name=strategy_name))
+    status_line = _first_prefixed_line(status_icon, status_desc, translator=translator)
+    if status_line:
+        lines.append(status_line)
+    signal_line = _first_prefixed_line("🎯", signal_desc, translator=translator)
+    if signal_line:
+        lines.append(signal_line)
+    compact_body = [str(line).strip() for line in body_lines or () if str(line).strip()]
+    if compact_body:
+        lines.append(separator)
+        lines.extend(compact_body)
+    return "\n".join(lines)
+
+
 def run_strategy_core(
     *,
     connect_ib,
@@ -448,9 +481,19 @@ def run_strategy_core(
                 + json.dumps({"path": str(record_path), "status": record.get("execution_status"), "no_op_reason": record.get("no_op_reason")}, ensure_ascii=False),
                 flush=True,
             )
-            message = f"{translator('heartbeat_title')}\n{dashboard}\n{separator}\n{no_op_text}"
-            send_tg_message(message)
-            print(message, flush=True)
+            detailed_message = f"{translator('heartbeat_title')}\n{dashboard}\n{separator}\n{no_op_text}"
+            compact_message = _build_compact_message(
+                title=translator("heartbeat_title"),
+                strategy_display_name=strategy_display_name,
+                signal_desc=signal_desc,
+                status_desc=status_desc,
+                status_icon=signal_metadata.get("status_icon", "🐤"),
+                translator=translator,
+                separator=separator,
+                body_lines=[no_op_text],
+            )
+            print(detailed_message, flush=True)
+            send_tg_message(compact_message)
             if callable(result_hook):
                 result_hook(
                     {
@@ -508,17 +551,37 @@ def run_strategy_core(
                 translator=translator,
             )
             trade_lines = "\n".join(notification_trade_lines)
-            message = (
+            detailed_message = (
                 f"{translator('rebalance_title')}\n"
                 f"{dashboard}\n"
                 f"{separator}\n"
                 f"{trade_lines}"
             )
+            compact_message = _build_compact_message(
+                title=translator("rebalance_title"),
+                strategy_display_name=strategy_display_name,
+                signal_desc=signal_desc,
+                status_desc=status_desc,
+                status_icon=signal_metadata.get("status_icon", "🐤"),
+                translator=translator,
+                separator=separator,
+                body_lines=notification_trade_lines,
+            )
         else:
-            message = f"{translator('heartbeat_title')}\n{dashboard}\n{separator}\n{translator('no_trades')}"
+            detailed_message = f"{translator('heartbeat_title')}\n{dashboard}\n{separator}\n{translator('no_trades')}"
+            compact_message = _build_compact_message(
+                title=translator("heartbeat_title"),
+                strategy_display_name=strategy_display_name,
+                signal_desc=signal_desc,
+                status_desc=status_desc,
+                status_icon=signal_metadata.get("status_icon", "🐤"),
+                translator=translator,
+                separator=separator,
+                body_lines=[translator("no_trades")],
+            )
 
-        send_tg_message(message)
-        print(message, flush=True)
+        print(detailed_message, flush=True)
+        send_tg_message(compact_message)
         if callable(result_hook):
             result_hook(
                 {

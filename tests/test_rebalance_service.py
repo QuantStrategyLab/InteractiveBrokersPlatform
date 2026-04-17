@@ -220,11 +220,11 @@ def test_run_strategy_core_passes_signal_metadata_to_execution():
     assert observed["strategy_symbols"] == ("AAA", "BOXX")
     assert observed["signal_metadata"]["managed_symbols"] == ("AAA", "BOXX")
     assert observed["messages"]
-    assert "Account Summary" in observed["messages"][0]
-    assert "Current Positions" in observed["messages"][0]
-    assert "Execution Summary" in observed["messages"][0]
+    assert "Account Summary" not in observed["messages"][0]
+    assert "Current Positions" not in observed["messages"][0]
+    assert "Execution Summary" not in observed["messages"][0]
     assert "📏 breadth=60.0%" in observed["messages"][0]
-    assert "Target Weights" in observed["messages"][0]
+    assert "Target Weights" not in observed["messages"][0]
 
 
 def test_run_strategy_core_writes_reconciliation_record(tmp_path):
