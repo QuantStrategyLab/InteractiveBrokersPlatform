@@ -20,6 +20,20 @@ def test_build_liquidation_intents_sells_longs_and_buys_shorts():
     ]
 
 
+def test_build_liquidation_intents_uses_dict_keys_as_symbol_fallbacks():
+    positions = {
+        "AAPL": {"quantity": 3},
+        "TSLA": {"position": -2},
+    }
+
+    intents = build_liquidation_intents(positions, order_intent_cls=OrderIntent)
+
+    assert [(intent.symbol, intent.side, intent.quantity) for intent in intents] == [
+        ("AAPL", "sell", 3),
+        ("TSLA", "buy", 2),
+    ]
+
+
 def test_execute_paper_liquidation_supports_dry_run():
     positions = {"AAPL": {"symbol": "AAPL", "quantity": 3}}
 

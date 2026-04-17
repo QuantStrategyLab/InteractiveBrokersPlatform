@@ -6,10 +6,10 @@ from dataclasses import asdict, is_dataclass
 from typing import Any
 
 
-def _position_symbol(position: Any) -> str:
+def _position_symbol(position: Any, *, fallback: str | None = None) -> str:
     if isinstance(position, dict):
-        return str(position.get("symbol") or "").strip().upper()
-    return str(getattr(position, "symbol", "") or "").strip().upper()
+        return str(position.get("symbol") or fallback or "").strip().upper()
+    return str(getattr(position, "symbol", fallback or "") or "").strip().upper()
 
 
 def _position_quantity(position: Any) -> float:
@@ -20,9 +20,13 @@ def _position_quantity(position: Any) -> float:
 
 def build_liquidation_intents(positions, *, order_intent_cls) -> tuple[Any, ...]:
     intents = []
-    iterable = positions.values() if isinstance(positions, dict) else positions
-    for position in iterable or ():
-        symbol = _position_symbol(position)
+    iterable = (
+        positions.items()
+        if isinstance(positions, dict)
+        else ((None, position) for position in positions or ())
+    )
+    for symbol_hint, position in iterable:
+        symbol = _position_symbol(position, fallback=symbol_hint)
         quantity = _position_quantity(position)
         if not symbol or quantity == 0:
             continue
