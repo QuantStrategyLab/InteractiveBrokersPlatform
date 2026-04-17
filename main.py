@@ -1,5 +1,6 @@
 """IBKR strategy runner for shared us_equity strategy profiles."""
 import os
+import time
 import traceback
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -501,6 +502,10 @@ def run_paper_liquidation_cycle():
     ib = connect_ib()
     try:
         positions, _account_values = get_current_portfolio(ib)
+        if not positions:
+            print("paper_liquidation_positions_empty_retry", flush=True)
+            time.sleep(2.0)
+            positions, _account_values = get_current_portfolio(ib)
         summary = execute_paper_liquidation(
             ib,
             positions,
@@ -513,6 +518,7 @@ def run_paper_liquidation_cycle():
             f"{t('strategy_label', name=strategy_display_name)}\n"
             f"{t('paper_liquidation_only')}\n"
             f"{t('paper_liquidation_status', mode=summary['mode'], status=summary['execution_status'])}\n"
+            f"{t('paper_liquidation_positions_seen', count=summary['positions_seen'])}\n"
             f"{SEPARATOR}\n"
             f"{_format_liquidation_orders(summary.get('orders_submitted'))}"
         )

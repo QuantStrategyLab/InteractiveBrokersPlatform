@@ -14,8 +14,8 @@ def _position_symbol(position: Any) -> str:
 
 def _position_quantity(position: Any) -> float:
     if isinstance(position, dict):
-        return float(position.get("quantity") or 0.0)
-    return float(getattr(position, "quantity", 0.0) or 0.0)
+        return float(position.get("quantity", position.get("position", 0.0)) or 0.0)
+    return float(getattr(position, "quantity", getattr(position, "position", 0.0)) or 0.0)
 
 
 def build_liquidation_intents(positions, *, order_intent_cls) -> tuple[Any, ...]:
