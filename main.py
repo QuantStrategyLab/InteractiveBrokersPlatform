@@ -30,8 +30,8 @@ from quant_platform_kit.ibkr import (
     fetch_historical_price_series,
     fetch_portfolio_snapshot,
     fetch_quote_snapshots,
-    submit_order_intent,
 )
+from application.ibkr_order_execution import submit_order_intent
 from application.execution_service import (
     check_order_submitted as application_check_order_submitted,
     execute_rebalance as application_execute_rebalance,
