@@ -1,5 +1,6 @@
 """IBKR strategy runner for shared us_equity strategy profiles."""
 import os
+import threading
 import time
 import traceback
 from datetime import datetime, timezone
@@ -56,6 +57,7 @@ from strategy_runtime import load_strategy_runtime
 app = Flask(__name__)
 ensure_event_loop = ibkr_ensure_event_loop
 NEW_YORK_TZ = ZoneInfo("America/New_York")
+STRATEGY_RUN_LOCK = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +162,32 @@ def get_ib_connect_timeout_seconds():
     return timeout_seconds
 
 
+def get_positive_int_env(name, default):
+    raw_value = os.getenv(name, str(default))
+    try:
+        parsed = int(raw_value)
+    except (TypeError, ValueError):
+        print(f"Invalid {name}={raw_value!r}; using {default}", flush=True)
+        return default
+    if parsed <= 0:
+        print(f"Invalid {name}={raw_value!r}; using {default}", flush=True)
+        return default
+    return parsed
+
+
+def get_non_negative_float_env(name, default):
+    raw_value = os.getenv(name, str(default))
+    try:
+        parsed = float(raw_value)
+    except (TypeError, ValueError):
+        print(f"Invalid {name}={raw_value!r}; using {default}", flush=True)
+        return default
+    if parsed < 0:
+        print(f"Invalid {name}={raw_value!r}; using {default}", flush=True)
+        return default
+    return parsed
+
+
 def _env_flag(name: str) -> bool:
     return str(os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -172,6 +200,9 @@ IB_HOST = None
 IB_PORT = get_ib_port()
 IB_CLIENT_ID = RUNTIME_SETTINGS.ib_client_id
 IB_CONNECT_TIMEOUT_SECONDS = get_ib_connect_timeout_seconds()
+IB_CONNECT_ATTEMPTS = get_positive_int_env("IBKR_CONNECT_ATTEMPTS", 3)
+IB_CONNECT_RETRY_DELAY_SECONDS = get_non_negative_float_env("IBKR_CONNECT_RETRY_DELAY_SECONDS", 5.0)
+IB_CLIENT_ID_RETRY_OFFSET = get_positive_int_env("IBKR_CLIENT_ID_RETRY_OFFSET", 100)
 STRATEGY_PROFILE = RUNTIME_SETTINGS.strategy_profile
 STRATEGY_DISPLAY_NAME = RUNTIME_SETTINGS.strategy_display_name
 ACCOUNT_GROUP = RUNTIME_SETTINGS.account_group
@@ -255,6 +286,8 @@ RUNTIME_LOG_CONTEXT = RuntimeLogContext(
         "strategy_artifact_dir": RUNTIME_SETTINGS.strategy_artifact_dir,
         "strategy_display_name": STRATEGY_DISPLAY_NAME,
         "strategy_display_name_localized": strategy_display_name,
+        "ib_connect_attempts": IB_CONNECT_ATTEMPTS,
+        "ib_client_id_retry_offset": IB_CLIENT_ID_RETRY_OFFSET,
     },
 )
 LAST_CYCLE_DETAILS: dict[str, object] = {}
@@ -271,20 +304,39 @@ def send_tg_message(message):
 
 def connect_ib():
     host = get_ib_host()
-    print(
-        "Connecting to IB gateway "
-        f"{host}:{IB_PORT} "
-        f"(mode={RUNTIME_SETTINGS.ib_gateway_mode}, "
-        f"client_id={IB_CLIENT_ID}, "
-        f"timeout={IB_CONNECT_TIMEOUT_SECONDS}s)",
-        flush=True,
-    )
-    return ibkr_connect_ib(
-        host,
-        IB_PORT,
-        IB_CLIENT_ID,
-        timeout=IB_CONNECT_TIMEOUT_SECONDS,
-    )
+    last_error = None
+    for attempt in range(1, IB_CONNECT_ATTEMPTS + 1):
+        client_id = IB_CLIENT_ID + ((attempt - 1) * IB_CLIENT_ID_RETRY_OFFSET)
+        print(
+            "Connecting to IB gateway "
+            f"{host}:{IB_PORT} "
+            f"(mode={RUNTIME_SETTINGS.ib_gateway_mode}, "
+            f"client_id={client_id}, "
+            f"attempt={attempt}/{IB_CONNECT_ATTEMPTS}, "
+            f"timeout={IB_CONNECT_TIMEOUT_SECONDS}s)",
+            flush=True,
+        )
+        try:
+            return ibkr_connect_ib(
+                host,
+                IB_PORT,
+                client_id,
+                timeout=IB_CONNECT_TIMEOUT_SECONDS,
+            )
+        except (ConnectionError, TimeoutError, OSError) as exc:
+            last_error = exc
+            print(
+                "IB gateway connection attempt failed "
+                f"(attempt={attempt}/{IB_CONNECT_ATTEMPTS}, "
+                f"client_id={client_id}, "
+                f"error_type={type(exc).__name__}, "
+                f"error={exc})",
+                flush=True,
+            )
+            if attempt < IB_CONNECT_ATTEMPTS and IB_CONNECT_RETRY_DELAY_SECONDS > 0:
+                time.sleep(IB_CONNECT_RETRY_DELAY_SECONDS)
+
+    raise last_error
 
 
 def log_runtime_event(log_context, event, **fields):
@@ -568,6 +620,7 @@ def handle_request():
     LAST_CYCLE_DETAILS = {}
     log_context = build_request_log_context()
     report = build_execution_report(log_context)
+    lock_acquired = STRATEGY_RUN_LOCK.acquire(blocking=False)
     try:
         log_runtime_event(
             log_context,
@@ -575,6 +628,19 @@ def handle_request():
             message="Received strategy execution request",
             http_method=request.method,
         )
+        if not lock_acquired:
+            log_runtime_event(
+                log_context,
+                "strategy_cycle_already_running",
+                message="Another strategy execution is already running; skip overlapping request",
+                severity="WARNING",
+            )
+            finalize_runtime_report(
+                report,
+                status="skipped",
+                diagnostics={"skip_reason": "already_running"},
+            )
+            return "Already Running", 200
         if not is_market_open_today():
             log_runtime_event(
                 log_context,
@@ -654,6 +720,8 @@ def handle_request():
         print(error_msg, flush=True)
         return "Error", 500
     finally:
+        if lock_acquired:
+            STRATEGY_RUN_LOCK.release()
         try:
             report_path = persist_execution_report(report)
             print(f"execution_report {report_path}", flush=True)

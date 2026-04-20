@@ -29,6 +29,32 @@ def test_handle_request_post_executes_on_market_day(strategy_module, monkeypatch
     assert observed["called"] is True
 
 
+def test_handle_request_skips_overlapping_post(strategy_module, monkeypatch):
+    observed = {}
+
+    def fail_if_called():
+        raise AssertionError("overlapping request should not execute strategy")
+
+    monkeypatch.setattr(strategy_module, "run_strategy_core", fail_if_called)
+    monkeypatch.setattr(
+        strategy_module,
+        "persist_execution_report",
+        lambda report: observed.setdefault("report", dict(report)) or "/tmp/runtime-report.json",
+    )
+
+    strategy_module.STRATEGY_RUN_LOCK.acquire()
+    try:
+        with strategy_module.app.test_request_context("/", method="POST"):
+            body, status = strategy_module.handle_request()
+    finally:
+        strategy_module.STRATEGY_RUN_LOCK.release()
+
+    assert status == 200
+    assert body == "Already Running"
+    assert observed["report"]["status"] == "skipped"
+    assert observed["report"]["diagnostics"]["skip_reason"] == "already_running"
+
+
 def test_handle_request_emits_structured_runtime_events(strategy_module, monkeypatch):
     observed = []
 

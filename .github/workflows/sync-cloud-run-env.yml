@@ -289,6 +289,8 @@ jobs:
           gcloud_args=(
             run services update "${CLOUD_RUN_SERVICE}"
             --region "${CLOUD_RUN_REGION}"
+            --concurrency 1
+            --max-instances 1
             --remove-env-vars "$(IFS=,; echo "${remove_env_vars[*]}")"
             --update-env-vars "$(IFS=,; echo "${env_pairs[*]}")"
           )
