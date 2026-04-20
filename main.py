@@ -16,6 +16,7 @@ try:
 except ImportError:
     compute_v1 = None
 
+from notifications.events import NotificationPublisher, RenderedNotification
 from notifications.telegram import build_strategy_display_name, build_translator, send_telegram_message
 from quant_platform_kit.common.models import OrderIntent
 from quant_platform_kit.common.runtime_reports import (
@@ -302,6 +303,19 @@ def send_tg_message(message):
     )
 
 
+def publish_notification(*, detailed_text, compact_text):
+    publisher = NotificationPublisher(
+        log_message=lambda message: print(message, flush=True),
+        send_message=send_tg_message,
+    )
+    publisher.publish(
+        RenderedNotification(
+            detailed_text=detailed_text,
+            compact_text=compact_text,
+        )
+    )
+
+
 def connect_ib():
     host = get_ib_host()
     last_error = None
@@ -573,8 +587,7 @@ def run_paper_liquidation_cycle():
             f"{SEPARATOR}\n"
             f"{_format_liquidation_orders(summary.get('orders_submitted'))}"
         )
-        send_tg_message(message)
-        print(message, flush=True)
+        publish_notification(detailed_text=message, compact_text=message)
         global LAST_CYCLE_DETAILS
         LAST_CYCLE_DETAILS = {"execution_summary": summary}
         return "OK"
@@ -716,8 +729,7 @@ def handle_request():
             error_message=str(exc),
         )
         error_msg = f"{t('error_title')}\n{traceback.format_exc()}"
-        send_tg_message(error_msg)
-        print(error_msg, flush=True)
+        publish_notification(detailed_text=error_msg, compact_text=error_msg)
         return "Error", 500
     finally:
         if lock_acquired:

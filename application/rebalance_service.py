@@ -10,6 +10,7 @@ from application.reconciliation_service import (
     build_reconciliation_record,
     write_reconciliation_record,
 )
+from notifications.events import NotificationPublisher, RenderedNotification
 
 
 _ZH_REASON_REPLACEMENTS = (
@@ -455,6 +456,10 @@ def run_strategy_core(
     reconciliation_output_path=None,
     result_hook=None,
 ):
+    notification_publisher = NotificationPublisher(
+        log_message=lambda message: print(message, flush=True),
+        send_message=send_tg_message,
+    )
     ib = None
     try:
         ib = connect_ib()
@@ -524,8 +529,12 @@ def run_strategy_core(
                 body_lines=[no_op_text],
                 dashboard_text=strategy_dashboard,
             )
-            print(detailed_message, flush=True)
-            send_tg_message(compact_message)
+            notification_publisher.publish(
+                RenderedNotification(
+                    detailed_text=detailed_message,
+                    compact_text=compact_message,
+                )
+            )
             if callable(result_hook):
                 result_hook(
                     {
@@ -614,8 +623,12 @@ def run_strategy_core(
                 dashboard_text=strategy_dashboard,
             )
 
-        print(detailed_message, flush=True)
-        send_tg_message(compact_message)
+        notification_publisher.publish(
+            RenderedNotification(
+                detailed_text=detailed_message,
+                compact_text=compact_message,
+            )
+        )
         if callable(result_hook):
             result_hook(
                 {
