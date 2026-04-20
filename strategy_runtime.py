@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import pandas as pd
@@ -23,6 +23,8 @@ from quant_platform_kit.strategy_contracts import (
     StrategyDecision,
     StrategyEntrypoint,
     StrategyRuntimeAdapter,
+    build_strategy_context_from_available_inputs,
+    build_strategy_evaluation_inputs,
 )
 from runtime_config_support import PlatformRuntimeSettings
 from strategy_loader import (
@@ -64,6 +66,68 @@ class LoadedStrategyRuntime:
     @property
     def required_inputs(self) -> frozenset[str]:
         return frozenset(self.entrypoint.manifest.required_inputs)
+
+    def _runtime_adapter_with_portfolio(
+        self,
+        runtime_adapter: StrategyRuntimeAdapter,
+        portfolio_snapshot: Any | None,
+    ) -> StrategyRuntimeAdapter:
+        if portfolio_snapshot is None or runtime_adapter.portfolio_input_name:
+            return runtime_adapter
+        available_inputs = set(runtime_adapter.available_inputs or self.required_inputs)
+        available_inputs.update(self.required_inputs)
+        available_inputs.add(_PORTFOLIO_SNAPSHOT_INPUT)
+        return replace(
+            runtime_adapter,
+            available_inputs=frozenset(available_inputs),
+            portfolio_input_name=_PORTFOLIO_SNAPSHOT_INPUT,
+        )
+
+    def _fetch_portfolio_snapshot_for_context(self, ib, *, required: bool) -> Any | None:
+        if ib is None and not required:
+            return None
+        if required:
+            return fetch_portfolio_snapshot(ib)
+        try:
+            return fetch_portfolio_snapshot(ib)
+        except Exception as exc:
+            self.logger(
+                "strategy_dashboard_portfolio_snapshot_failed | "
+                f"profile={self.profile} error_type={type(exc).__name__} error={exc}"
+            )
+            return None
+
+    def _build_strategy_context(
+        self,
+        *,
+        runtime_adapter: StrategyRuntimeAdapter,
+        as_of: pd.Timestamp,
+        market_inputs: Mapping[str, Any],
+        portfolio_snapshot: Any | None,
+        runtime_config: Mapping[str, Any],
+        current_holdings,
+        ib,
+    ):
+        context_adapter = self._runtime_adapter_with_portfolio(runtime_adapter, portfolio_snapshot)
+        available_inputs = set(context_adapter.available_inputs or self.required_inputs)
+        available_inputs.update(self.required_inputs)
+        evaluation_inputs = build_strategy_evaluation_inputs(
+            available_inputs=available_inputs,
+            market_inputs=market_inputs,
+            portfolio_snapshot=portfolio_snapshot,
+        )
+        capabilities = {}
+        if ib is not None:
+            capabilities["broker_client"] = ib
+        return build_strategy_context_from_available_inputs(
+            entrypoint=self.entrypoint,
+            runtime_adapter=context_adapter,
+            as_of=as_of,
+            available_inputs=evaluation_inputs,
+            runtime_config=runtime_config,
+            state={"current_holdings": tuple(current_holdings)},
+            capabilities=capabilities,
+        )
 
     def evaluate(
         self,
@@ -129,11 +193,12 @@ class LoadedStrategyRuntime:
         runtime_config = dict(self.runtime_config)
         runtime_config.setdefault("translator", translator)
         runtime_config.setdefault("pacing_sec", float(pacing_sec))
-        ctx = build_ibkr_strategy_context(
-            entrypoint=self.entrypoint,
+        portfolio_snapshot = self._fetch_portfolio_snapshot_for_context(ib, required=False)
+        ctx = self._build_strategy_context(
             runtime_adapter=self.runtime_adapter,
             as_of=run_as_of,
             market_inputs=build_market_history_inputs(historical_close_loader),
+            portfolio_snapshot=portfolio_snapshot,
             runtime_config=runtime_config,
             current_holdings=current_holdings,
             ib=ib,
@@ -151,6 +216,8 @@ class LoadedStrategyRuntime:
             "status_icon": self.status_icon,
             "dry_run_only": self.runtime_settings.dry_run_only,
         }
+        if portfolio_snapshot is not None:
+            metadata["portfolio_total_equity"] = float(getattr(portfolio_snapshot, "total_equity", 0.0) or 0.0)
         if safe_haven_symbol:
             metadata["safe_haven_symbol"] = safe_haven_symbol
         return StrategyEvaluationResult(decision=decision, metadata=metadata)
@@ -248,14 +315,24 @@ class LoadedStrategyRuntime:
         translator: Callable[[str], str],
         pacing_sec: float,
     ) -> StrategyEvaluationResult:
-        del translator, pacing_sec
+        del pacing_sec
         runtime_config_path = self.merged_runtime_config.get("runtime_config_path") or self.runtime_settings.strategy_config_path
         benchmark_symbol = str(self.merged_runtime_config.get("benchmark_symbol") or "SPY").strip().upper()
         portfolio_snapshot_holder: dict[str, Any] = {}
+        runtime_config = dict(self.runtime_config)
+        runtime_config.setdefault("translator", translator)
 
         def build_available_inputs(feature_snapshot) -> Mapping[str, Any]:
-            if _PORTFOLIO_SNAPSHOT_INPUT in self.required_inputs:
-                portfolio_snapshot_holder["portfolio_snapshot"] = fetch_portfolio_snapshot(ib)
+            requires_portfolio = (
+                _PORTFOLIO_SNAPSHOT_INPUT in self.required_inputs
+                or self.runtime_adapter.portfolio_input_name == _PORTFOLIO_SNAPSHOT_INPUT
+            )
+            portfolio_snapshot = self._fetch_portfolio_snapshot_for_context(
+                ib,
+                required=requires_portfolio,
+            )
+            if portfolio_snapshot is not None:
+                portfolio_snapshot_holder["portfolio_snapshot"] = portfolio_snapshot
             market_inputs: dict[str, Any] = {_FEATURE_SNAPSHOT_INPUT: feature_snapshot}
             if _MARKET_HISTORY_INPUT in self.required_inputs:
                 market_inputs.update(build_market_history_inputs(historical_close_loader))
@@ -274,15 +351,25 @@ class LoadedStrategyRuntime:
             return market_inputs
 
         def build_context(request: FeatureSnapshotContextRequest):
-            return build_ibkr_strategy_context(
+            portfolio_snapshot = portfolio_snapshot_holder.get("portfolio_snapshot")
+            runtime_adapter = self._runtime_adapter_with_portfolio(
+                request.runtime_adapter,
+                portfolio_snapshot,
+            )
+            available_inputs = dict(request.available_inputs)
+            if portfolio_snapshot is not None:
+                available_inputs[_PORTFOLIO_SNAPSHOT_INPUT] = portfolio_snapshot
+            capabilities = {}
+            if ib is not None:
+                capabilities["broker_client"] = ib
+            return build_strategy_context_from_available_inputs(
                 entrypoint=request.entrypoint,
-                runtime_adapter=request.runtime_adapter,
+                runtime_adapter=runtime_adapter,
                 as_of=request.as_of,
-                market_inputs=request.available_inputs,
-                portfolio_snapshot=portfolio_snapshot_holder.get("portfolio_snapshot"),
+                available_inputs=available_inputs,
                 runtime_config=request.runtime_config,
-                current_holdings=current_holdings,
-                ib=ib,
+                state={"current_holdings": tuple(current_holdings)},
+                capabilities=capabilities,
             )
 
         def log_guard_metadata(guard_metadata: Mapping[str, Any]) -> None:
@@ -323,7 +410,7 @@ class LoadedStrategyRuntime:
                 strategy_config_source=self.runtime_settings.strategy_config_source,
                 dry_run_only=self.runtime_settings.dry_run_only,
             ),
-            runtime_config=dict(self.runtime_config),
+            runtime_config=runtime_config,
             merged_runtime_config=self.merged_runtime_config,
             as_of=run_as_of,
             base_managed_symbols=(),

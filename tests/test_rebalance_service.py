@@ -202,6 +202,16 @@ def test_run_strategy_core_passes_signal_metadata_to_execution():
             {
                 "managed_symbols": ("AAA", "BOXX"),
                 "status_icon": "📏",
+                "execution_annotations": {
+                    "dashboard_text": (
+                        "📌 Strategy portfolio\n"
+                        "  - Total assets (strategy symbols + cash): $1,000.00\n"
+                        "  - Buying power: $500.00\n"
+                        "💼 Strategy holdings\n"
+                        "  - AAA: $0.00 / 0 shares\n"
+                        "  - BOXX: $0.00 / 0 shares"
+                    )
+                },
                 "allocation": _weight_allocation(
                     {"AAA": 0.9, "BOXX": 0.1},
                     risk_symbols=("AAA",),
@@ -223,6 +233,9 @@ def test_run_strategy_core_passes_signal_metadata_to_execution():
     assert "Account Summary" not in observed["messages"][0]
     assert "Current Positions" not in observed["messages"][0]
     assert "Execution Summary" not in observed["messages"][0]
+    assert "📌 Strategy portfolio" in observed["messages"][0]
+    assert "Total assets (strategy symbols + cash): $1,000.00" in observed["messages"][0]
+    assert "💼 Strategy holdings" in observed["messages"][0]
     assert "📏 breadth=60.0%" in observed["messages"][0]
     assert "Target Weights" not in observed["messages"][0]
 

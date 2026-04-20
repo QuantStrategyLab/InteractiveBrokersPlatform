@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import json
 import re
 
@@ -297,6 +298,27 @@ def _resolve_weight_allocation(signal_metadata, *, required: bool) -> dict:
     }
 
 
+def _format_dashboard_text(text) -> str:
+    lines = [line.rstrip() for line in str(text or "").strip().splitlines()]
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "\n".join(lines)
+
+
+def _strategy_dashboard_text(signal_metadata) -> str:
+    metadata = signal_metadata if isinstance(signal_metadata, Mapping) else {}
+    raw_annotations = metadata.get("execution_annotations")
+    annotations = raw_annotations if isinstance(raw_annotations, Mapping) else {}
+    return _format_dashboard_text(
+        annotations.get("dashboard_text")
+        or metadata.get("dashboard_text")
+        or metadata.get("dashboard")
+        or ""
+    )
+
+
 def build_dashboard(
     positions,
     account_values,
@@ -311,6 +333,10 @@ def build_dashboard(
     separator,
     status_icon="🐤",
 ):
+    signal_metadata = signal_metadata or {}
+    strategy_dashboard = _strategy_dashboard_text(signal_metadata)
+    if strategy_dashboard:
+        return strategy_dashboard
     equity = account_values.get("equity", 0)
     buying_power = account_values.get("buying_power", 0)
     position_lines = []
@@ -320,7 +346,6 @@ def build_dashboard(
         market_value = qty * avg
         position_lines.append(f"  - {symbol}: {qty}股 | ${market_value:,.2f}")
     position_text = "\n".join(position_lines) if position_lines else translator("empty_positions")
-    signal_metadata = signal_metadata or {}
     allocation = _resolve_weight_allocation(signal_metadata, required=False)
     target_lines = []
     for symbol, weight in sorted(allocation.get("targets", {}).items(), key=lambda item: (-item[1], item[0])):
@@ -395,10 +420,15 @@ def _build_compact_message(
     translator,
     separator: str,
     body_lines,
+    dashboard_text: str = "",
 ) -> str:
     lines = [title]
     strategy_name = _format_text(strategy_display_name, fallback="<unknown>")
     lines.append(translator("strategy_label", name=strategy_name))
+    dashboard = _format_dashboard_text(dashboard_text)
+    if dashboard:
+        lines.append(separator)
+        lines.extend(dashboard.splitlines())
     status_line = _first_prefixed_line(status_icon, status_desc, translator=translator)
     if status_line:
         lines.append(status_line)
@@ -452,6 +482,7 @@ def run_strategy_core(
             separator=separator,
             status_icon=signal_metadata.get("status_icon", "🐤"),
         )
+        strategy_dashboard = _strategy_dashboard_text(signal_metadata)
 
         if target_weights is None:
             decision = signal_metadata.get("snapshot_guard_decision")
@@ -491,6 +522,7 @@ def run_strategy_core(
                 translator=translator,
                 separator=separator,
                 body_lines=[no_op_text],
+                dashboard_text=strategy_dashboard,
             )
             print(detailed_message, flush=True)
             send_tg_message(compact_message)
@@ -566,6 +598,7 @@ def run_strategy_core(
                 translator=translator,
                 separator=separator,
                 body_lines=notification_trade_lines,
+                dashboard_text=strategy_dashboard,
             )
         else:
             detailed_message = f"{translator('heartbeat_title')}\n{dashboard}\n{separator}\n{translator('no_trades')}"
@@ -578,6 +611,7 @@ def run_strategy_core(
                 translator=translator,
                 separator=separator,
                 body_lines=[translator("no_trades")],
+                dashboard_text=strategy_dashboard,
             )
 
         print(detailed_message, flush=True)

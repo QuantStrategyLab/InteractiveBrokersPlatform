@@ -112,6 +112,20 @@ def _derive_status_description(
     return _derive_signal_description(decision, runtime_metadata)
 
 
+def _derive_execution_annotations(
+    diagnostics: Mapping[str, Any],
+    runtime_metadata: Mapping[str, Any],
+) -> dict[str, Any]:
+    annotations: dict[str, Any] = {}
+    raw_runtime_annotations = runtime_metadata.get("execution_annotations")
+    if isinstance(raw_runtime_annotations, Mapping):
+        annotations.update(raw_runtime_annotations)
+    raw_diagnostic_annotations = diagnostics.get("execution_annotations")
+    if isinstance(raw_diagnostic_annotations, Mapping):
+        annotations.update(raw_diagnostic_annotations)
+    return annotations
+
+
 def map_strategy_decision(
     decision: StrategyDecision,
     *,
@@ -152,5 +166,16 @@ def map_strategy_decision(
     metadata.setdefault("actionable", not no_execute)
     if allocation_payload:
         metadata.setdefault("allocation", allocation_payload)
+    execution_annotations = _derive_execution_annotations(diagnostics, runtime_metadata)
+    if execution_annotations:
+        metadata.setdefault("execution_annotations", execution_annotations)
+    dashboard_text = str(
+        execution_annotations.get("dashboard_text")
+        or diagnostics.get("dashboard")
+        or metadata.get("dashboard_text")
+        or ""
+    ).strip()
+    if dashboard_text:
+        metadata.setdefault("dashboard_text", dashboard_text)
 
     return target_weights, signal_desc, is_emergency, status_desc, metadata

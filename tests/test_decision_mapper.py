@@ -12,6 +12,7 @@ def test_map_strategy_decision_maps_weight_positions_and_safe_haven():
         diagnostics={
             "signal_description": "risk on",
             "status_description": "breadth=60.0%",
+            "execution_annotations": {"dashboard_text": "strategy dashboard"},
         },
     )
 
@@ -32,6 +33,8 @@ def test_map_strategy_decision_maps_weight_positions_and_safe_haven():
     assert metadata["allocation"]["strategy_symbols"] == ("AAA", "BOXX")
     assert metadata["allocation"]["targets"] == {"AAA": 0.6, "BOXX": 0.4}
     assert metadata["allocation"]["positions"][1]["role"] == "safe_haven"
+    assert metadata["execution_annotations"]["dashboard_text"] == "strategy dashboard"
+    assert metadata["dashboard_text"] == "strategy dashboard"
     assert "target_mode" not in metadata
 
 

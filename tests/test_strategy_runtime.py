@@ -172,6 +172,7 @@ def test_feature_snapshot_runtime_prefers_unified_runtime_adapter_metadata(monke
 
         def evaluate(self, ctx):
             captured["market_data"] = dict(ctx.market_data)
+            captured["portfolio"] = ctx.portfolio
             captured["runtime_config"] = dict(ctx.runtime_config)
             return StrategyDecision()
 
@@ -206,9 +207,11 @@ def test_feature_snapshot_runtime_prefers_unified_runtime_adapter_metadata(monke
         )
 
     monkeypatch.setattr(strategy_runtime_module, "load_feature_snapshot_guarded", fake_guard)
+    portfolio_snapshot = SimpleNamespace(total_equity=25000.0)
+    monkeypatch.setattr(strategy_runtime_module, "fetch_portfolio_snapshot", lambda _ib: portfolio_snapshot)
 
     result = runtime.evaluate(
-        ib=None,
+        ib="fake-ib",
         current_holdings={"AAPL"},
         historical_close_loader=lambda *_args, **_kwargs: None,
         run_as_of=strategy_runtime_module.pd.Timestamp("2026-04-01"),
@@ -222,6 +225,8 @@ def test_feature_snapshot_runtime_prefers_unified_runtime_adapter_metadata(monke
     assert captured["require_manifest"] is True
     assert captured["expected_contract_version"] == "adapter.contract"
     assert captured["market_data"]["feature_snapshot"] == [{"as_of": "2026-03-31", "symbol": "AAPL", "close": 1.0}]
+    assert captured["portfolio"] is portfolio_snapshot
+    assert captured["runtime_config"]["translator"]("equity") == "equity"
     assert "pacing_sec" not in captured["runtime_config"]
     assert result.metadata["managed_symbols"] == ("AAPL", "BOXX")
 
@@ -314,7 +319,7 @@ def test_feature_snapshot_runtime_can_add_daily_market_benchmark_and_portfolio_i
     assert result.metadata["managed_symbols"] == ("NVDL", "BOXX")
 
 
-def test_market_history_runtime_uses_canonical_market_history_key():
+def test_market_history_runtime_uses_canonical_market_history_key(monkeypatch):
     captured = {}
 
     class FakeEntrypoint:
@@ -329,6 +334,7 @@ def test_market_history_runtime_uses_canonical_market_history_key():
 
         def evaluate(self, ctx):
             captured["market_data"] = dict(ctx.market_data)
+            captured["portfolio"] = ctx.portfolio
             return StrategyDecision()
 
     def loader(*_args, **_kwargs):
@@ -343,6 +349,8 @@ def test_market_history_runtime_uses_canonical_market_history_key():
         status_icon="🐤",
         logger=lambda _message: None,
     )
+    portfolio_snapshot = SimpleNamespace(total_equity=1200.0)
+    monkeypatch.setattr(strategy_runtime_module, "fetch_portfolio_snapshot", lambda _ib: portfolio_snapshot)
 
     runtime.evaluate(
         ib="fake-ib",
@@ -354,6 +362,7 @@ def test_market_history_runtime_uses_canonical_market_history_key():
     )
 
     assert captured["market_data"]["market_history"] is loader
+    assert captured["portfolio"] is portfolio_snapshot
     assert "historical_close_loader" not in captured["market_data"]
 
 
