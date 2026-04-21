@@ -1,0 +1,24 @@
+{
+  "baseline_pullback": {
+    "strategy": "pullback_baseline",
+    "cagr": 0.3414544893929359,
+    "max_drawdown": -0.314771504640206,
+    "turnover_per_year": 3.9745576526098505,
+    "average_tqqq_weight": 0.38408993576017136
+  },
+  "best_scaled_pullback_candidate": {
+    "strategy": "pullback_trend_score_4",
+    "scaling": "trend_score_4",
+    "cagr": 0.3146500075330574,
+    "max_drawdown": -0.2856852755886097,
+    "turnover_per_year": 6.654960557357713,
+    "average_tqqq_weight": 0.3795032119914347,
+    "average_scale_while_invested": 0.9880522088353413
+  },
+  "findings": [
+    "Pullback baseline: 34.15% CAGR / -31.48% MaxDD / turnover 3.97/yr.",
+    "Best scaled pullback candidate: `trend_score_4` at 31.47% CAGR / -28.57% MaxDD / turnover 6.65/yr.",
+    "Scaling smooths drawdown, but it lowers CAGR and adds turnover; this is not a clear upgrade."
+  ],
+  "verdict": "Scaling smooths drawdown, but it lowers CAGR and adds turnover; this is not a clear upgrade."
+}

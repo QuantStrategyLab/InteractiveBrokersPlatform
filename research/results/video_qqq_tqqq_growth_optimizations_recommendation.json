@@ -1,0 +1,77 @@
+{
+  "baseline": {
+    "strategy": "baseline_pullback_45_45",
+    "cagr": 0.3414544893929359,
+    "max_drawdown": -0.314771504640206,
+    "turnover_per_year": 3.9745576526098505,
+    "cagr_2023_plus": 0.41905202815209286
+  },
+  "best_cagr": {
+    "strategy": "attack_25_65",
+    "theme": "attack_weight",
+    "cagr": 0.4077959861515288,
+    "max_drawdown": -0.37439718027321944,
+    "turnover_per_year": 3.9745576526098505,
+    "cagr_2023_plus": 0.49967397543082726,
+    "average_qqq_weight": 0.21338329764453962,
+    "average_tqqq_weight": 0.5547965738758031
+  },
+  "best_near_baseline_drawdown": {
+    "strategy": "attack_30_60",
+    "theme": "attack_weight",
+    "cagr": 0.3915155866222344,
+    "max_drawdown": -0.35982863051214653,
+    "turnover_per_year": 3.9745576526098505,
+    "cagr_2023_plus": 0.479709960730206,
+    "average_qqq_weight": 0.2560599571734475,
+    "average_tqqq_weight": 0.512119914346895
+  },
+  "best_2023_plus": {
+    "strategy": "attack_25_65",
+    "theme": "attack_weight",
+    "cagr": 0.4077959861515288,
+    "max_drawdown": -0.37439718027321944,
+    "turnover_per_year": 3.9745576526098505,
+    "cagr_2023_plus": 0.49967397543082726,
+    "average_qqq_weight": 0.21338329764453962,
+    "average_tqqq_weight": 0.5547965738758031
+  },
+  "best_by_theme": {
+    "attack_weight": {
+      "strategy": "attack_25_65",
+      "cagr": 0.4077959861515288,
+      "max_drawdown": -0.37439718027321944,
+      "turnover_per_year": 3.9745576526098505,
+      "cagr_delta_vs_baseline": 0.06634149675859291
+    },
+    "combo": {
+      "strategy": "attack_40_50_quality_pullback_35_55_idle_25qqq",
+      "cagr": 0.36512871704565764,
+      "max_drawdown": -0.348449694379411,
+      "turnover_per_year": 2.789730168092009,
+      "cagr_delta_vs_baseline": 0.023674227652721758
+    },
+    "idle_exposure": {
+      "strategy": "idle_50qqq_positive_ma20",
+      "cagr": 0.3444028003599169,
+      "max_drawdown": -0.31477150464020587,
+      "turnover_per_year": 4.033799026835743,
+      "cagr_delta_vs_baseline": 0.002948310966981005
+    },
+    "pullback_quality": {
+      "strategy": "pullback_quality_30_60",
+      "cagr": 0.35152692598370705,
+      "max_drawdown": -0.3149302533516919,
+      "turnover_per_year": 3.9584009141846064,
+      "cagr_delta_vs_baseline": 0.010072436590771172
+    }
+  },
+  "findings": [
+    "Baseline: 34.15% CAGR / -31.48% MaxDD / 41.91% 2023+ CAGR.",
+    "Best CAGR candidate: `attack_25_65` at 40.78% CAGR / -37.44% MaxDD.",
+    "Best candidate within 5pp worse MaxDD than baseline: `attack_30_60` at 39.15% CAGR / -35.98% MaxDD.",
+    "Best 2023+ candidate: `attack_25_65` at 49.97% 2023+ CAGR / -37.44% MaxDD.",
+    "The cleanest growth lever is shifting a moderate amount of QQQ into TQQQ during risk-on states. Idle QQQ exposure helps less, and stricter pullback quality gates mostly give up too much upside."
+  ],
+  "verdict": "The cleanest growth lever is shifting a moderate amount of QQQ into TQQQ during risk-on states. Idle QQQ exposure helps less, and stricter pullback quality gates mostly give up too much upside."
+}
