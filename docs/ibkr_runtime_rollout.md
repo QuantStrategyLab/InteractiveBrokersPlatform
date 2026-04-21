@@ -151,6 +151,38 @@ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
 
 如果你后面改成直接配固定私网 host，而且代码不再走实例名解析，这个权限可以再收回。**但按现在这套推荐部署，先给上更稳。**
 
+## 3.1 Cloud Run source deploy 的 staging bucket 权限
+
+如果部署路径是 `gcloud run deploy --source`，或 Cloud Run 绑定 GitHub/source trigger，那么还要检查 staging bucket：
+
+- bucket 一般是 `gs://run-sources-${PROJECT_ID}-${REGION}`
+- 至少需要给下面这些身份授予 `roles/storage.objectViewer`
+  - build service account
+  - deploy service account
+  - 默认 compute service account：`${PROJECT_NUMBER}-compute@developer.gserviceaccount.com`
+
+少了这层权限，部署会在“源码上传完成后、Cloud Build 启动前”直接失败，报错类似：
+
+```text
+storage.objects.get denied on gs://run-sources-...
+```
+
+示例：
+
+```bash
+gcloud storage buckets add-iam-policy-binding "gs://run-sources-${PROJECT_ID}-${REGION}" \
+  --member="serviceAccount:${BUILD_SA}" \
+  --role="roles/storage.objectViewer"
+
+gcloud storage buckets add-iam-policy-binding "gs://run-sources-${PROJECT_ID}-${REGION}" \
+  --member="serviceAccount:${DEPLOY_SA}" \
+  --role="roles/storage.objectViewer"
+
+gcloud storage buckets add-iam-policy-binding "gs://run-sources-${PROJECT_ID}-${REGION}" \
+  --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+  --role="roles/storage.objectViewer"
+```
+
 ### 当前这一步不用先加的权限
 
 - 不需要为了这个仓库再加 Storage 锁相关权限；当前代码已经不靠 `EXECUTION_LOCK_BUCKET` 那套 GCS 锁运行。
