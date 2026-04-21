@@ -1,7 +1,7 @@
 import json
 
-from application.rebalance_service import build_dashboard, run_strategy_core
-from application.rebalance_service import _build_notification_trade_lines
+from application.rebalance_service import run_strategy_core
+from notifications.renderers import _build_notification_trade_lines, build_dashboard
 from notifications.telegram import build_translator
 
 
@@ -226,7 +226,7 @@ def test_run_strategy_core_passes_signal_metadata_to_execution():
         strategy_display_name="Global ETF Rotation",
     )
 
-    assert result == "OK - executed"
+    assert result.result == "OK - executed"
     assert observed["strategy_symbols"] == ("AAA", "BOXX")
     assert observed["signal_metadata"]["managed_symbols"] == ("AAA", "BOXX")
     assert observed["messages"]
@@ -307,7 +307,7 @@ def test_run_strategy_core_writes_reconciliation_record(tmp_path):
         reconciliation_output_path=output_path,
     )
 
-    assert result == "OK - executed"
+    assert result.result == "OK - executed"
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["strategy_profile"] == "tech_communication_pullback_enhancement"
     assert payload["snapshot_as_of"] == "2026-03-31"
@@ -355,7 +355,7 @@ def test_run_strategy_core_writes_reconciliation_record_under_strategy_dir(tmp_p
         reconciliation_output_path=output_root,
     )
 
-    assert result == "OK - heartbeat"
+    assert result.result == "OK - heartbeat"
     candidate_paths = [
         output_root,
         output_root / "2026-04-01" / "reconciliation.json",

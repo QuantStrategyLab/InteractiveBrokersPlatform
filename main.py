@@ -1,24 +1,30 @@
 """IBKR strategy runner for shared us_equity strategy profiles."""
+
 import os
 import threading
 import time
 import traceback
-from datetime import datetime, timezone
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
-import requests
+import google.auth
 import pandas as pd
+import requests
 from flask import Flask, request
 
-import google.auth
 try:
     from google.cloud import compute_v1
 except ImportError:
     compute_v1 = None
 
-from notifications.events import NotificationPublisher, RenderedNotification
+from application.cycle_result import coerce_strategy_cycle_result
+from application.runtime_broker_adapters import build_runtime_broker_adapters
+from application.runtime_composer import build_runtime_composer
+from application.runtime_strategy_adapters import build_runtime_strategy_adapters
+from application.rebalance_service import run_strategy_core as run_rebalance_cycle
+from decision_mapper import map_strategy_decision
+from entrypoints.cloud_run import is_market_open_today
 from notifications.telegram import build_strategy_display_name, build_translator, send_telegram_message
-from quant_platform_kit.common.models import OrderIntent
 from quant_platform_kit.common.runtime_reports import (
     append_runtime_report_error,
     build_runtime_report_base,
@@ -40,19 +46,8 @@ from application.execution_service import (
     get_market_prices as application_get_market_prices,
 )
 from application.paper_liquidation_service import execute_paper_liquidation
-from application.rebalance_service import run_strategy_core as run_rebalance_cycle
-from decision_mapper import map_strategy_decision
-from entrypoints.cloud_run import is_market_open_today
-from runtime_logging import (
-    RuntimeLogContext,
-    build_run_id,
-    emit_runtime_log,
-    extract_cloud_trace,
-)
-from runtime_config_support import (
-    load_platform_runtime_settings,
-    resolve_ib_gateway_ip_mode,
-)
+from runtime_logging import RuntimeLogContext, build_run_id, emit_runtime_log, extract_cloud_trace
+from runtime_config_support import load_platform_runtime_settings, resolve_ib_gateway_ip_mode
 from strategy_runtime import load_strategy_runtime
 
 app = Flask(__name__)
@@ -61,9 +56,6 @@ NEW_YORK_TZ = ZoneInfo("America/New_York")
 STRATEGY_RUN_LOCK = threading.Lock()
 
 
-# ---------------------------------------------------------------------------
-# GCE instance resolver: find IB Gateway by instance name instead of IP
-# ---------------------------------------------------------------------------
 def get_project_id():
     try:
         _, project_id = google.auth.default()
@@ -83,7 +75,6 @@ def get_ib_gateway_ip_mode():
 
 
 def resolve_gce_instance_ip(instance_name, zone):
-    """Resolve GCE instance IP by name via Compute API."""
     if not compute_v1:
         print(f"google-cloud-compute not installed, using {instance_name} as host directly", flush=True)
         return instance_name
@@ -110,23 +101,15 @@ def resolve_gce_instance_ip(instance_name, zone):
             if ip:
                 print(f"Resolved {instance_name} → {ip} ({label}, mode={ip_mode})", flush=True)
                 return ip
-    except Exception as e:
-        print(f"GCE resolve failed for {instance_name}: {e}, using as hostname", flush=True)
+    except Exception as exc:
+        print(f"GCE resolve failed for {instance_name}: {exc}, using as hostname", flush=True)
     return instance_name
 
 
 def get_ib_host():
-    """
-    Resolve IB Gateway host lazily.
-    - Read IB_GATEWAY_INSTANCE_NAME only
-    - If IB_GATEWAY_ZONE is set: resolve instance name via Compute API
-    - If IB_GATEWAY_ZONE is not set: use the configured instance name directly
-    """
     global IB_HOST
-
     if IB_HOST:
         return IB_HOST
-
     host = RUNTIME_SETTINGS.ib_gateway_instance_name
     zone = RUNTIME_SETTINGS.ib_gateway_zone
     if zone:
@@ -140,8 +123,7 @@ def get_ib_gateway_mode():
 
 
 def get_ib_port():
-    mode = get_ib_gateway_mode()
-    return 4002 if mode == "paper" else 4001
+    return 4002 if get_ib_gateway_mode() == "paper" else 4001
 
 
 def get_ib_connect_timeout_seconds():
@@ -149,16 +131,10 @@ def get_ib_connect_timeout_seconds():
     try:
         timeout_seconds = int(raw_value)
     except (TypeError, ValueError):
-        print(
-            f"Invalid IBKR_CONNECT_TIMEOUT_SECONDS={raw_value!r}; using 60",
-            flush=True,
-        )
+        print(f"Invalid IBKR_CONNECT_TIMEOUT_SECONDS={raw_value!r}; using 60", flush=True)
         return 60
     if timeout_seconds <= 0:
-        print(
-            f"Invalid IBKR_CONNECT_TIMEOUT_SECONDS={raw_value!r}; using 60",
-            flush=True,
-        )
+        print(f"Invalid IBKR_CONNECT_TIMEOUT_SECONDS={raw_value!r}; using 60", flush=True)
         return 60
     return timeout_seconds
 
@@ -193,9 +169,6 @@ def _env_flag(name: str) -> bool:
     return str(os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
 RUNTIME_SETTINGS = load_platform_runtime_settings(project_id_resolver=get_project_id)
 IB_HOST = None
 IB_PORT = get_ib_port()
@@ -250,15 +223,10 @@ TG_CHAT_ID = RUNTIME_SETTINGS.tg_chat_id
 NOTIFY_LANG = RUNTIME_SETTINGS.notify_lang
 
 CASH_RESERVE_RATIO = STRATEGY_RUNTIME.cash_reserve_ratio
-REBALANCE_THRESHOLD_RATIO = 0.02  # 2% of equity to trigger trades
+REBALANCE_THRESHOLD_RATIO = 0.02
 LIMIT_BUY_PREMIUM = 1.005
-
-# Execution
 SELL_SETTLE_DELAY_SEC = 3
-
-# IBKR pacing: delay between historical data requests
 HIST_DATA_PACING_SEC = 0.5
-
 SEPARATOR = "━━━━━━━━━━━━━━━━━━"
 
 
@@ -270,7 +238,6 @@ strategy_display_name = build_strategy_display_name(t)(
     STRATEGY_PROFILE,
     fallback_name=STRATEGY_DISPLAY_NAME,
 )
-
 
 RUNTIME_LOG_CONTEXT = RuntimeLogContext(
     platform="interactive_brokers",
@@ -291,7 +258,110 @@ RUNTIME_LOG_CONTEXT = RuntimeLogContext(
         "ib_client_id_retry_offset": IB_CLIENT_ID_RETRY_OFFSET,
     },
 )
-LAST_CYCLE_DETAILS: dict[str, object] = {}
+
+
+def resolve_reporting_managed_symbols() -> tuple[str, ...]:
+    configured_managed_symbols = STRATEGY_RUNTIME_CONFIG.get("managed_symbols")
+    fallback_managed_symbols = tuple(dict.fromkeys([*RANKING_POOL, SAFE_HAVEN])) if RANKING_POOL else (SAFE_HAVEN,)
+    return tuple(
+        str(symbol)
+        for symbol in (configured_managed_symbols or fallback_managed_symbols)
+        if str(symbol or "").strip()
+    )
+
+
+def build_strategy_adapters():
+    return build_runtime_strategy_adapters(
+        strategy_runtime=STRATEGY_RUNTIME,
+        strategy_profile=STRATEGY_PROFILE,
+        translator=t,
+        pacing_sec=HIST_DATA_PACING_SEC,
+        resolve_run_as_of_date_fn=resolve_run_as_of_date,
+        fetch_historical_price_series_fn=fetch_historical_price_series,
+        fetch_historical_price_candles_fn=fetch_historical_price_candles,
+        map_strategy_decision_fn=map_strategy_decision,
+    )
+
+
+def build_broker_adapters():
+    return build_runtime_broker_adapters(
+        host_resolver=get_ib_host,
+        ib_port=IB_PORT,
+        ib_client_id=IB_CLIENT_ID,
+        connect_timeout_seconds=IB_CONNECT_TIMEOUT_SECONDS,
+        connect_attempts=IB_CONNECT_ATTEMPTS,
+        connect_retry_delay_seconds=IB_CONNECT_RETRY_DELAY_SECONDS,
+        client_id_retry_offset=IB_CLIENT_ID_RETRY_OFFSET,
+        ensure_event_loop_fn=ensure_event_loop,
+        connect_ib_fn=ibkr_connect_ib,
+        fetch_portfolio_snapshot_fn=fetch_portfolio_snapshot,
+        fetch_quote_snapshots_fn=fetch_quote_snapshots,
+        submit_order_intent_fn=submit_order_intent,
+        application_get_market_prices_fn=application_get_market_prices,
+        application_check_order_submitted_fn=application_check_order_submitted,
+        application_execute_rebalance_fn=application_execute_rebalance,
+        execute_paper_liquidation_fn=execute_paper_liquidation,
+        translator=t,
+        strategy_profile=STRATEGY_PROFILE,
+        account_group=ACCOUNT_GROUP,
+        service_name=SERVICE_NAME,
+        account_ids=tuple(ACCOUNT_IDS),
+        dry_run_only=RUNTIME_SETTINGS.dry_run_only,
+        cash_reserve_ratio=CASH_RESERVE_RATIO,
+        rebalance_threshold_ratio=REBALANCE_THRESHOLD_RATIO,
+        limit_buy_premium=LIMIT_BUY_PREMIUM,
+        sell_settle_delay_sec=SELL_SETTLE_DELAY_SEC,
+        separator=SEPARATOR,
+        strategy_display_name=strategy_display_name,
+        sleep_fn=time.sleep,
+        printer=print,
+    )
+
+
+def build_composer():
+    return build_runtime_composer(
+        service_name=SERVICE_NAME or os.getenv("K_SERVICE", "interactive-brokers-platform"),
+        strategy_profile=STRATEGY_PROFILE,
+        strategy_domain=RUNTIME_SETTINGS.strategy_domain,
+        account_group=ACCOUNT_GROUP,
+        project_id=PROJECT_ID,
+        instance_name=RUNTIME_SETTINGS.ib_gateway_instance_name,
+        account_ids=tuple(ACCOUNT_IDS),
+        strategy_target_mode=RUNTIME_SETTINGS.strategy_target_mode,
+        strategy_artifact_dir=RUNTIME_SETTINGS.strategy_artifact_dir,
+        strategy_display_name=STRATEGY_DISPLAY_NAME,
+        strategy_display_name_localized=strategy_display_name,
+        managed_symbols=resolve_reporting_managed_symbols(),
+        signal_source=STRATEGY_SIGNAL_SOURCE,
+        status_icon=STRATEGY_STATUS_ICON,
+        safe_haven=SAFE_HAVEN,
+        dry_run_only=RUNTIME_SETTINGS.dry_run_only,
+        strategy_config_source=FEATURE_RUNTIME_CONFIG_SOURCE,
+        ib_gateway_host_resolver=get_ib_host,
+        ib_gateway_port=IB_PORT,
+        ib_gateway_mode=RUNTIME_SETTINGS.ib_gateway_mode,
+        ib_gateway_ip_mode=RUNTIME_SETTINGS.ib_gateway_ip_mode,
+        ib_client_id=IB_CLIENT_ID,
+        ib_connect_timeout_seconds=IB_CONNECT_TIMEOUT_SECONDS,
+        feature_snapshot_path=FEATURE_SNAPSHOT_PATH,
+        feature_snapshot_manifest_path=FEATURE_SNAPSHOT_MANIFEST_PATH,
+        strategy_config_path=FEATURE_RUNTIME_CONFIG_PATH,
+        reconciliation_output_path=RECONCILIATION_OUTPUT_PATH,
+        translator=t,
+        separator=SEPARATOR,
+        send_message=send_tg_message,
+        connect_ib_fn=connect_ib,
+        build_portfolio_snapshot_fn=build_portfolio_snapshot,
+        compute_signals_fn=compute_signals,
+        execute_rebalance_fn=execute_rebalance,
+        run_id_builder=build_run_id,
+        event_logger=emit_runtime_log,
+        report_builder=build_runtime_report_base,
+        report_persister=persist_runtime_report,
+        trace_extractor=extract_cloud_trace,
+        env_reader=os.getenv,
+        printer=print,
+    )
 
 
 def send_tg_message(message):
@@ -304,128 +374,31 @@ def send_tg_message(message):
 
 
 def publish_notification(*, detailed_text, compact_text):
-    publisher = NotificationPublisher(
-        log_message=lambda message: print(message, flush=True),
-        send_message=send_tg_message,
-    )
-    publisher.publish(
-        RenderedNotification(
-            detailed_text=detailed_text,
-            compact_text=compact_text,
-        )
+    build_composer().build_notification_adapters().publish_cycle_notification(
+        detailed_text=detailed_text,
+        compact_text=compact_text,
     )
 
 
 def connect_ib():
-    host = get_ib_host()
-    last_error = None
-    for attempt in range(1, IB_CONNECT_ATTEMPTS + 1):
-        client_id = IB_CLIENT_ID + ((attempt - 1) * IB_CLIENT_ID_RETRY_OFFSET)
-        print(
-            "Connecting to IB gateway "
-            f"{host}:{IB_PORT} "
-            f"(mode={RUNTIME_SETTINGS.ib_gateway_mode}, "
-            f"client_id={client_id}, "
-            f"attempt={attempt}/{IB_CONNECT_ATTEMPTS}, "
-            f"timeout={IB_CONNECT_TIMEOUT_SECONDS}s)",
-            flush=True,
-        )
-        try:
-            return ibkr_connect_ib(
-                host,
-                IB_PORT,
-                client_id,
-                timeout=IB_CONNECT_TIMEOUT_SECONDS,
-            )
-        except (ConnectionError, TimeoutError, OSError) as exc:
-            last_error = exc
-            print(
-                "IB gateway connection attempt failed "
-                f"(attempt={attempt}/{IB_CONNECT_ATTEMPTS}, "
-                f"client_id={client_id}, "
-                f"error_type={type(exc).__name__}, "
-                f"error={exc})",
-                flush=True,
-            )
-            if attempt < IB_CONNECT_ATTEMPTS and IB_CONNECT_RETRY_DELAY_SECONDS > 0:
-                time.sleep(IB_CONNECT_RETRY_DELAY_SECONDS)
-
-    raise last_error
+    return build_broker_adapters().connect_ib()
 
 
 def log_runtime_event(log_context, event, **fields):
-    return emit_runtime_log(
-        log_context,
-        event,
-        printer=lambda line: print(line, flush=True),
-        **fields,
-    )
+    return build_composer().build_reporting_adapters().log_event(log_context, event, **fields)
 
 
 def build_execution_report(log_context):
-    configured_managed_symbols = STRATEGY_RUNTIME_CONFIG.get("managed_symbols")
-    fallback_managed_symbols = tuple(dict.fromkeys([*RANKING_POOL, SAFE_HAVEN])) if RANKING_POOL else (SAFE_HAVEN,)
-    managed_symbols = tuple(
-        str(symbol)
-        for symbol in (configured_managed_symbols or fallback_managed_symbols)
-        if str(symbol or "").strip()
-    )
-    return build_runtime_report_base(
-        platform=log_context.platform,
-        deploy_target=log_context.deploy_target,
-        service_name=log_context.service_name,
-        strategy_profile=STRATEGY_PROFILE,
-        strategy_domain=RUNTIME_SETTINGS.strategy_domain,
-        account_scope=log_context.account_scope,
-        account_group=log_context.account_group,
-        run_id=log_context.run_id,
-        run_source="cloud_run",
-        dry_run=RUNTIME_SETTINGS.dry_run_only,
-        started_at=datetime.now(timezone.utc),
-        summary={
-            "account_ids": list(ACCOUNT_IDS),
-            "managed_symbols": list(managed_symbols),
-            "signal_source": STRATEGY_SIGNAL_SOURCE,
-            "status_icon": STRATEGY_STATUS_ICON,
-            "safe_haven": SAFE_HAVEN,
-            "strategy_display_name": STRATEGY_DISPLAY_NAME,
-            "strategy_display_name_localized": strategy_display_name,
-        },
-        diagnostics={
-            "strategy_config_source": FEATURE_RUNTIME_CONFIG_SOURCE,
-            "ib_gateway_host": get_ib_host(),
-            "ib_gateway_port": IB_PORT,
-            "ib_gateway_mode": RUNTIME_SETTINGS.ib_gateway_mode,
-            "ib_gateway_ip_mode": RUNTIME_SETTINGS.ib_gateway_ip_mode,
-            "ib_client_id": IB_CLIENT_ID,
-            "ib_connect_timeout_seconds": IB_CONNECT_TIMEOUT_SECONDS,
-        },
-        artifacts={
-            "feature_snapshot_path": FEATURE_SNAPSHOT_PATH,
-            "feature_snapshot_manifest_path": FEATURE_SNAPSHOT_MANIFEST_PATH,
-            "strategy_config_path": FEATURE_RUNTIME_CONFIG_PATH,
-            "reconciliation_output_path": RECONCILIATION_OUTPUT_PATH,
-        },
-    )
+    return build_composer().build_reporting_adapters().build_report(log_context)
 
 
 def persist_execution_report(report):
-    persisted = persist_runtime_report(
-        report,
-        base_dir=os.getenv("EXECUTION_REPORT_OUTPUT_DIR"),
-        gcs_prefix_uri=os.getenv("EXECUTION_REPORT_GCS_URI"),
-        gcp_project_id=PROJECT_ID,
-    )
-    return persisted.gcs_uri or persisted.local_path
+    return build_composer().build_reporting_adapters().persist_execution_report(report)
 
 
 def build_request_log_context():
-    return RUNTIME_LOG_CONTEXT.with_run(
-        build_run_id(),
-        trace=extract_cloud_trace(
-            PROJECT_ID,
-            request.headers.get("X-Cloud-Trace-Context"),
-        ),
+    return build_composer().build_reporting_adapters().build_log_context(
+        trace_header=request.headers.get("X-Cloud-Trace-Context"),
     )
 
 
@@ -437,24 +410,16 @@ def resolve_run_as_of_date() -> pd.Timestamp:
 
 
 def get_historical_close(ib, symbol, duration="2 Y", bar_size="1 day"):
-    """Fetch daily close prices from IBKR via QuantPlatformKit."""
-    series = fetch_historical_price_series(
+    return build_strategy_adapters().get_historical_close(
         ib,
         symbol,
         duration=duration,
         bar_size=bar_size,
-    )
-    if not series.points:
-        return pd.Series(dtype=float)
-    return pd.Series(
-        data=[point.close for point in series.points],
-        index=pd.to_datetime([point.as_of for point in series.points]),
     )
 
 
 def get_historical_candles(ib, symbol, duration="2 Y", bar_size="1 day"):
-    """Fetch daily OHLC candles from IBKR via QuantPlatformKit."""
-    return fetch_historical_price_candles(
+    return build_strategy_adapters().get_historical_candles(
         ib,
         symbol,
         duration=duration,
@@ -462,57 +427,27 @@ def get_historical_candles(ib, symbol, duration="2 Y", bar_size="1 day"):
     )
 
 
-# ---------------------------------------------------------------------------
-# Strategy logic
-# ---------------------------------------------------------------------------
 def compute_signals(ib, current_holdings):
-    evaluation = STRATEGY_RUNTIME.evaluate(
-        ib=ib,
-        current_holdings=current_holdings,
-        historical_close_loader=get_historical_close,
-        historical_candle_loader=get_historical_candles,
-        run_as_of=resolve_run_as_of_date(),
-        translator=t,
-        pacing_sec=HIST_DATA_PACING_SEC,
-    )
-    return map_strategy_decision(
-        evaluation.decision,
-        strategy_profile=STRATEGY_PROFILE,
-        runtime_metadata=evaluation.metadata,
-    )
+    return build_strategy_adapters().compute_signals(ib, current_holdings)
 
 
-# ---------------------------------------------------------------------------
-# Portfolio execution
-# ---------------------------------------------------------------------------
 def get_current_portfolio(ib):
-    """Get current positions and account values."""
-    snapshot = fetch_portfolio_snapshot(ib)
-    positions = {}
-    for position in snapshot.positions:
-        positions[position.symbol] = {
-            'quantity': int(position.quantity),
-            'avg_cost': float(position.average_cost or 0.0),
-        }
+    return build_broker_adapters().get_current_portfolio(ib)
 
-    account_values = {
-        'equity': snapshot.total_equity,
-        'buying_power': snapshot.buying_power or 0.0,
-    }
 
-    return positions, account_values
+def build_portfolio_snapshot(ib):
+    return build_broker_adapters().build_portfolio_snapshot(
+        ib,
+        get_current_portfolio_fallback=get_current_portfolio,
+    )
 
 
 def get_market_prices(ib, symbols):
-    return application_get_market_prices(
-        ib,
-        symbols,
-        fetch_quote_snapshots=fetch_quote_snapshots,
-    )
+    return build_broker_adapters().get_market_prices(ib, symbols)
 
 
 def check_order_submitted(report):
-    return application_check_order_submitted(report, translator=t)
+    return build_broker_adapters().check_order_submitted(report)
 
 
 def execute_rebalance(
@@ -524,113 +459,45 @@ def execute_rebalance(
     strategy_symbols=None,
     signal_metadata=None,
 ):
-    return application_execute_rebalance(
+    return build_broker_adapters().execute_rebalance(
         ib,
         target_weights,
         positions,
         account_values,
-        fetch_quote_snapshots=fetch_quote_snapshots,
-        submit_order_intent=submit_order_intent,
-        order_intent_cls=OrderIntent,
-        translator=t,
         strategy_symbols=strategy_symbols,
-        signal_metadata=signal_metadata or {},
-        strategy_profile=STRATEGY_PROFILE,
-        account_group=ACCOUNT_GROUP,
-        service_name=SERVICE_NAME,
-        account_ids=ACCOUNT_IDS,
-        dry_run_only=RUNTIME_SETTINGS.dry_run_only,
-        cash_reserve_ratio=CASH_RESERVE_RATIO,
-        rebalance_threshold_ratio=REBALANCE_THRESHOLD_RATIO,
-        limit_buy_premium=LIMIT_BUY_PREMIUM,
-        sell_settle_delay_sec=SELL_SETTLE_DELAY_SEC,
-        return_summary=True,
+        signal_metadata=signal_metadata,
     )
 
 
 def _format_liquidation_orders(orders) -> str:
-    preview = []
-    for order in orders or ():
-        symbol = str(order.get("symbol") or "").strip().upper()
-        side = str(order.get("side") or "").strip().lower()
-        quantity = float(order.get("quantity") or 0.0)
-        status = str(order.get("status") or "").strip()
-        if symbol:
-            preview.append(f"{symbol} {side} {quantity:g} {status}".strip())
-    return ", ".join(preview) if preview else t("no_trades")
+    return build_broker_adapters().format_liquidation_orders(orders)
 
 
 def run_paper_liquidation_cycle():
     if RUNTIME_SETTINGS.ib_gateway_mode != "paper":
         raise RuntimeError("IBKR_PAPER_LIQUIDATE_ONLY is only allowed when ib_gateway_mode=paper")
-
-    ib = connect_ib()
-    try:
-        positions, _account_values = get_current_portfolio(ib)
-        if not positions:
-            print("paper_liquidation_positions_empty_retry", flush=True)
-            time.sleep(2.0)
-            positions, _account_values = get_current_portfolio(ib)
-        summary = execute_paper_liquidation(
-            ib,
-            positions,
-            submit_order_intent=submit_order_intent,
-            order_intent_cls=OrderIntent,
-            dry_run_only=RUNTIME_SETTINGS.dry_run_only,
-        )
-        message = (
-            f"{t('rebalance_title')}\n"
-            f"{t('strategy_label', name=strategy_display_name)}\n"
-            f"{t('paper_liquidation_only')}\n"
-            f"{t('paper_liquidation_status', mode=summary['mode'], status=summary['execution_status'])}\n"
-            f"{t('paper_liquidation_positions_seen', count=summary['positions_seen'])}\n"
-            f"{SEPARATOR}\n"
-            f"{_format_liquidation_orders(summary.get('orders_submitted'))}"
-        )
-        publish_notification(detailed_text=message, compact_text=message)
-        global LAST_CYCLE_DETAILS
-        LAST_CYCLE_DETAILS = {"execution_summary": summary}
-        return "OK"
-    finally:
-        if ib is not None and hasattr(ib, "disconnect"):
-            ib.disconnect()
+    return build_broker_adapters().run_paper_liquidation_cycle(
+        connect_ib_fn=connect_ib,
+        get_current_portfolio_fn=get_current_portfolio,
+        publish_notification_fn=publish_notification,
+    )
 
 
-# ---------------------------------------------------------------------------
-# Main strategy runner
-# ---------------------------------------------------------------------------
 def run_strategy_core():
-    global LAST_CYCLE_DETAILS
     if PAPER_LIQUIDATE_ONLY:
         return run_paper_liquidation_cycle()
-
-    cycle_details: dict[str, object] = {}
-    result = run_rebalance_cycle(
-        connect_ib=connect_ib,
-        get_current_portfolio=get_current_portfolio,
-        compute_signals=compute_signals,
-        execute_rebalance=execute_rebalance,
-        send_tg_message=send_tg_message,
-        translator=t,
-        separator=SEPARATOR,
-        strategy_display_name=strategy_display_name,
-        reconciliation_output_path=RECONCILIATION_OUTPUT_PATH,
-        result_hook=lambda payload: cycle_details.update(payload or {}),
+    composer = build_composer()
+    return run_rebalance_cycle(
+        runtime=composer.build_rebalance_runtime(),
+        config=composer.build_rebalance_config(),
     )
-    LAST_CYCLE_DETAILS = cycle_details
-    return result
 
 
-# ---------------------------------------------------------------------------
-# Flask routes
-# ---------------------------------------------------------------------------
 @app.route("/", methods=["POST", "GET"])
 def handle_request():
     if request.method == "GET":
         return "OK - use POST to execute strategy", 200
 
-    global LAST_CYCLE_DETAILS
-    LAST_CYCLE_DETAILS = {}
     log_context = build_request_log_context()
     report = build_execution_report(log_context)
     lock_acquired = STRATEGY_RUN_LOCK.acquire(blocking=False)
@@ -671,19 +538,26 @@ def handle_request():
             "strategy_cycle_started",
             message="Starting strategy execution",
         )
-        result = run_strategy_core()
-        cycle_details = dict(LAST_CYCLE_DETAILS or {})
-        execution_summary = dict(cycle_details.get("execution_summary") or {})
-        reconciliation_record = dict(cycle_details.get("reconciliation_record") or {})
+        cycle_result = coerce_strategy_cycle_result(run_strategy_core())
+        execution_summary = dict(cycle_result.execution_summary or {})
+        reconciliation_record = dict(cycle_result.reconciliation_record or {})
         finalize_runtime_report(
             report,
             status="ok",
             summary={
-                "result": result,
+                "result": cycle_result.result,
                 "execution_status": execution_summary.get("execution_status") or reconciliation_record.get("execution_status"),
                 "no_op_reason": execution_summary.get("no_op_reason") or reconciliation_record.get("no_op_reason"),
-                "orders_submitted_count": len(execution_summary.get("orders_submitted") or reconciliation_record.get("orders_submitted") or ()),
-                "orders_skipped_count": len(execution_summary.get("orders_skipped") or reconciliation_record.get("orders_skipped") or ()),
+                "orders_submitted_count": len(
+                    execution_summary.get("orders_submitted")
+                    or reconciliation_record.get("orders_submitted")
+                    or ()
+                ),
+                "orders_skipped_count": len(
+                    execution_summary.get("orders_skipped")
+                    or reconciliation_record.get("orders_skipped")
+                    or ()
+                ),
                 "snapshot_price_fallback_used": bool(
                     execution_summary.get("snapshot_price_fallback_used")
                     or reconciliation_record.get("snapshot_price_fallback_used")
@@ -695,23 +569,23 @@ def handle_request():
                 ),
             },
             diagnostics={
-                "result": result,
+                "result": cycle_result.result,
                 "price_source_mode": execution_summary.get("price_source_mode") or reconciliation_record.get("price_source_mode"),
                 "snapshot_price_fallback_symbols": execution_summary.get("snapshot_price_fallback_symbols")
                 or reconciliation_record.get("snapshot_price_fallback_symbols")
                 or [],
             },
             artifacts={
-                "reconciliation_record_path": cycle_details.get("reconciliation_record_path"),
+                "reconciliation_record_path": cycle_result.reconciliation_record_path,
             },
         )
         log_runtime_event(
             log_context,
             "strategy_cycle_completed",
             message="Strategy execution completed",
-            result=result,
+            result=cycle_result.result,
         )
-        return result, 200
+        return cycle_result.result, 200
     except Exception as exc:
         append_runtime_report_error(
             report,
@@ -747,4 +621,4 @@ def health():
 
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))

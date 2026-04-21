@@ -1,22 +1,11 @@
-"""Application orchestration for InteractiveBrokersPlatform."""
+"""Notification rendering helpers for InteractiveBrokersPlatform."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime, timezone
-import json
 import re
 
-from application.cycle_result import StrategyCycleResult
-from application.runtime_dependencies import IBKRRebalanceConfig, IBKRRebalanceRuntime
-from application.reconciliation_service import (
-    build_reconciliation_record,
-    write_reconciliation_record,
-)
-from notifications.events import NotificationPublisher
-from notifications import renderers as notification_renderers
-from quant_platform_kit.common.models import PortfolioSnapshot, Position
-from quant_platform_kit.common.port_adapters import CallableNotificationPort, CallablePortfolioPort
+from notifications.events import RenderedNotification
 
 
 _ZH_REASON_REPLACEMENTS = (
@@ -449,218 +438,81 @@ def _build_compact_message(
     return "\n".join(lines)
 
 
-def _legacy_portfolio_snapshot(ib, *, get_current_portfolio) -> PortfolioSnapshot:
-    positions, account_values = get_current_portfolio(ib)
-    snapshot_positions = tuple(
-        Position(
-            symbol=str(symbol).strip().upper(),
-            quantity=float(details.get("quantity") or 0),
-            market_value=float(details.get("quantity") or 0) * float(details.get("avg_cost") or 0.0),
-            average_cost=float(details.get("avg_cost") or 0.0),
-        )
-        for symbol, details in dict(positions or {}).items()
-    )
-    return PortfolioSnapshot(
-        as_of=datetime.now(timezone.utc),
-        total_equity=float(account_values.get("equity") or 0.0),
-        buying_power=float(account_values.get("buying_power") or 0.0),
-        positions=snapshot_positions,
-    )
-
-
-def _snapshot_to_portfolio_view(snapshot) -> tuple[dict[str, dict[str, float | int]], dict[str, float]]:
-    positions = {}
-    for position in getattr(snapshot, "positions", ()) or ():
-        positions[str(position.symbol).strip().upper()] = {
-            "quantity": int(position.quantity),
-            "avg_cost": float(position.average_cost or 0.0),
-        }
-    account_values = {
-        "equity": float(getattr(snapshot, "total_equity", 0.0) or 0.0),
-        "buying_power": float(getattr(snapshot, "buying_power", 0.0) or 0.0),
-    }
-    return positions, account_values
-
-
-def run_strategy_core(
+def render_heartbeat_notification(
     *,
-    runtime: IBKRRebalanceRuntime | None = None,
-    config: IBKRRebalanceConfig | None = None,
-    connect_ib=None,
-    get_current_portfolio=None,
-    compute_signals=None,
-    execute_rebalance=None,
-    send_tg_message=None,
-    translator=None,
-    separator=None,
-    strategy_display_name=None,
-    reconciliation_output_path=None,
-):
-    if runtime is None:
-        if not all((connect_ib, get_current_portfolio, compute_signals, execute_rebalance, send_tg_message)):
-            raise ValueError("Legacy IBKR rebalance call requires connect_ib/get_current_portfolio/compute_signals/execute_rebalance/send_tg_message")
-        runtime = IBKRRebalanceRuntime(
-            connect_ib=connect_ib,
-            portfolio_port_factory=lambda ib: CallablePortfolioPort(
-                lambda: _legacy_portfolio_snapshot(ib, get_current_portfolio=get_current_portfolio)
-            ),
-            compute_signals=compute_signals,
-            execute_rebalance=execute_rebalance,
-            notifications=CallableNotificationPort(send_tg_message),
+    dashboard,
+    strategy_dashboard,
+    no_op_text,
+    signal_desc,
+    status_desc,
+    status_icon,
+    translator,
+    separator,
+    strategy_display_name,
+) -> RenderedNotification:
+    detailed_text = f"{translator('heartbeat_title')}\n{dashboard}\n{separator}\n{no_op_text}"
+    compact_text = _build_compact_message(
+        title=translator("heartbeat_title"),
+        strategy_display_name=strategy_display_name,
+        signal_desc=signal_desc,
+        status_desc=status_desc,
+        status_icon=status_icon,
+        translator=translator,
+        separator=separator,
+        body_lines=[no_op_text],
+        dashboard_text=strategy_dashboard,
+    )
+    return RenderedNotification(detailed_text=detailed_text, compact_text=compact_text)
+
+
+def render_trade_notification(
+    *,
+    dashboard,
+    strategy_dashboard,
+    trade_logs,
+    execution_summary,
+    signal_desc,
+    status_desc,
+    status_icon,
+    translator,
+    separator,
+    strategy_display_name,
+) -> RenderedNotification:
+    if trade_logs:
+        notification_trade_lines = _build_notification_trade_lines(
+            trade_logs,
+            execution_summary=execution_summary,
+            translator=translator,
         )
-    if config is None:
-        if translator is None or separator is None:
-            raise ValueError("IBKR rebalance config requires translator and separator")
-        config = IBKRRebalanceConfig(
+        detailed_text = (
+            f"{translator('rebalance_title')}\n"
+            f"{dashboard}\n"
+            f"{separator}\n"
+            f"{chr(10).join(notification_trade_lines)}"
+        )
+        compact_text = _build_compact_message(
+            title=translator("rebalance_title"),
+            strategy_display_name=strategy_display_name,
+            signal_desc=signal_desc,
+            status_desc=status_desc,
+            status_icon=status_icon,
             translator=translator,
             separator=separator,
-            strategy_display_name=strategy_display_name,
-            reconciliation_output_path=reconciliation_output_path,
+            body_lines=notification_trade_lines,
+            dashboard_text=strategy_dashboard,
         )
+        return RenderedNotification(detailed_text=detailed_text, compact_text=compact_text)
 
-    notification_publisher = NotificationPublisher(
-        log_message=lambda message: print(message, flush=True),
-        send_message=runtime.notifications.send_text,
+    detailed_text = f"{translator('heartbeat_title')}\n{dashboard}\n{separator}\n{translator('no_trades')}"
+    compact_text = _build_compact_message(
+        title=translator("heartbeat_title"),
+        strategy_display_name=strategy_display_name,
+        signal_desc=signal_desc,
+        status_desc=status_desc,
+        status_icon=status_icon,
+        translator=translator,
+        separator=separator,
+        body_lines=[translator("no_trades")],
+        dashboard_text=strategy_dashboard,
     )
-    ib = None
-    try:
-        ib = runtime.connect_ib()
-        snapshot = runtime.portfolio_port_factory(ib).get_portfolio_snapshot()
-        positions, account_values = _snapshot_to_portfolio_view(snapshot)
-        current_holdings = set(positions.keys())
-        signal_result = runtime.compute_signals(ib, current_holdings)
-        if len(signal_result) == 5:
-            target_weights, signal_desc, _is_emergency, status_desc, signal_metadata = signal_result
-        else:
-            target_weights, signal_desc, _is_emergency, status_desc = signal_result
-            signal_metadata = {}
-        allocation = _resolve_weight_allocation(signal_metadata, required=target_weights is not None)
-        resolved_target_weights = dict(allocation.get("targets") or {}) if target_weights is not None else None
-
-        dashboard = notification_renderers.build_dashboard(
-            positions,
-            account_values,
-            signal_desc,
-            status_desc,
-            strategy_profile=signal_metadata.get("strategy_profile"),
-            strategy_display_name=config.strategy_display_name,
-            target_weights=resolved_target_weights,
-            signal_metadata=signal_metadata,
-            translator=config.translator,
-            separator=config.separator,
-            status_icon=signal_metadata.get("status_icon", "🐤"),
-        )
-        strategy_dashboard = _strategy_dashboard_text(signal_metadata)
-
-        if target_weights is None:
-            decision = signal_metadata.get("snapshot_guard_decision")
-            no_op_reason = signal_metadata.get("no_op_reason")
-            fail_reason = signal_metadata.get("fail_reason")
-            no_op_text = config.translator("no_trades")
-            if decision:
-                no_op_text = f"{no_op_text} | {_localize_notification_text(f'decision={decision}', translator=config.translator)}"
-            if no_op_reason:
-                no_op_text = f"{no_op_text} | {_localize_notification_text(f'reason={no_op_reason}', translator=config.translator)}"
-            if fail_reason:
-                no_op_text = f"{no_op_text} | {_localize_notification_text(f'fail_reason={fail_reason}', translator=config.translator)}"
-            no_op_text = "\n".join(_split_labeled_text(no_op_text))
-            record = build_reconciliation_record(
-                strategy_profile=signal_metadata.get("strategy_profile"),
-                mode="dry_run" if signal_metadata.get("dry_run_only") else "paper",
-                trade_date=signal_metadata.get("trade_date"),
-                snapshot_as_of=signal_metadata.get("snapshot_as_of"),
-                signal_metadata=signal_metadata,
-                target_weights=None,
-                execution_summary=None,
-                no_op_reason=no_op_reason or fail_reason or decision,
-            )
-            record_path = write_reconciliation_record(record, output_path=config.reconciliation_output_path)
-            print(
-                "reconciliation_record "
-                + json.dumps({"path": str(record_path), "status": record.get("execution_status"), "no_op_reason": record.get("no_op_reason")}, ensure_ascii=False),
-                flush=True,
-            )
-            notification_publisher.publish(
-                notification_renderers.render_heartbeat_notification(
-                    dashboard=dashboard,
-                    strategy_dashboard=strategy_dashboard,
-                    no_op_text=no_op_text,
-                    signal_desc=signal_desc,
-                    status_desc=status_desc,
-                    status_icon=signal_metadata.get("status_icon", "🐤"),
-                    translator=config.translator,
-                    separator=config.separator,
-                    strategy_display_name=config.strategy_display_name,
-                )
-            )
-            return StrategyCycleResult(
-                result="OK - heartbeat",
-                signal_metadata=dict(signal_metadata or {}),
-                target_weights=None,
-                execution_summary={},
-                reconciliation_record=dict(record),
-                reconciliation_record_path=str(record_path),
-            )
-
-        execution_result = runtime.execute_rebalance(
-            ib,
-            resolved_target_weights,
-            positions,
-            account_values,
-            strategy_symbols=allocation.get("strategy_symbols"),
-            signal_metadata=signal_metadata,
-        )
-        if isinstance(execution_result, tuple) and len(execution_result) == 2:
-            trade_logs, execution_summary = execution_result
-        else:
-            trade_logs = execution_result
-            execution_summary = None
-        record = build_reconciliation_record(
-            strategy_profile=signal_metadata.get("strategy_profile"),
-            mode="dry_run" if execution_summary and execution_summary.get("mode") == "dry_run" else "paper",
-            trade_date=signal_metadata.get("trade_date"),
-            snapshot_as_of=signal_metadata.get("snapshot_as_of"),
-            signal_metadata=signal_metadata,
-            target_weights=resolved_target_weights,
-            execution_summary=execution_summary,
-        )
-        record_path = write_reconciliation_record(record, output_path=config.reconciliation_output_path)
-        print(
-            "reconciliation_record "
-            + json.dumps(
-                {
-                    "path": str(record_path),
-                    "status": record.get("execution_status"),
-                    "orders_submitted": len(record.get("orders_submitted") or ()),
-                    "orders_filled": len(record.get("orders_filled") or ()),
-                    "orders_skipped": len(record.get("orders_skipped") or ()),
-                },
-                ensure_ascii=False,
-            ),
-            flush=True,
-        )
-        notification_publisher.publish(
-            notification_renderers.render_trade_notification(
-                dashboard=dashboard,
-                strategy_dashboard=strategy_dashboard,
-                trade_logs=trade_logs,
-                execution_summary=execution_summary,
-                signal_desc=signal_desc,
-                status_desc=status_desc,
-                status_icon=signal_metadata.get("status_icon", "🐤"),
-                translator=config.translator,
-                separator=config.separator,
-                strategy_display_name=config.strategy_display_name,
-            )
-        )
-        return StrategyCycleResult(
-            result="OK - executed",
-            signal_metadata=dict(signal_metadata or {}),
-            target_weights=dict(resolved_target_weights or {}),
-            execution_summary=dict(execution_summary or {}),
-            reconciliation_record=dict(record),
-            reconciliation_record_path=str(record_path),
-        )
-    finally:
-        if ib is not None and ib.isConnected():
-            ib.disconnect()
+    return RenderedNotification(detailed_text=detailed_text, compact_text=compact_text)

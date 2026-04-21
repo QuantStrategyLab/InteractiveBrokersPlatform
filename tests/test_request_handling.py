@@ -1,3 +1,6 @@
+from application.cycle_result import StrategyCycleResult
+
+
 def test_handle_request_get_returns_safe_message(strategy_module, monkeypatch):
     def fail_if_called():
         raise AssertionError("GET should not execute strategy")
@@ -126,8 +129,9 @@ def test_handle_request_enriches_runtime_report_with_cycle_details(strategy_modu
     monkeypatch.setattr(strategy_module, "is_market_open_today", lambda: True)
 
     def fake_run_strategy_core():
-        strategy_module.LAST_CYCLE_DETAILS = {
-            "execution_summary": {
+        return StrategyCycleResult(
+            result="OK - executed",
+            execution_summary={
                 "execution_status": "executed",
                 "orders_submitted": [{"symbol": "AAA"}],
                 "orders_skipped": [],
@@ -136,9 +140,8 @@ def test_handle_request_enriches_runtime_report_with_cycle_details(strategy_modu
                 "snapshot_price_fallback_count": 1,
                 "snapshot_price_fallback_symbols": ["AAA"],
             },
-            "reconciliation_record_path": "/tmp/reconciliation.json",
-        }
-        return "OK - executed"
+            reconciliation_record_path="/tmp/reconciliation.json",
+        )
 
     monkeypatch.setattr(strategy_module, "run_strategy_core", fake_run_strategy_core)
     monkeypatch.setattr(
@@ -233,8 +236,8 @@ def test_run_strategy_core_allows_multiple_runs_in_same_process(strategy_module,
     first = strategy_module.run_strategy_core()
     second = strategy_module.run_strategy_core()
 
-    assert first == "OK - heartbeat"
-    assert second == "OK - heartbeat"
+    assert first.result == "OK - heartbeat"
+    assert second.result == "OK - heartbeat"
     assert observed["connect_calls"] == 2
     assert observed["disconnect_calls"] == 2
 
