@@ -154,9 +154,6 @@ def test_platform_supported_profiles_are_filtered_by_registry():
             "tqqq_growth_income",
             "tech_communication_pullback_enhancement",
             "global_etf_rotation",
-            "dynamic_mega_leveraged_pullback",
-            "mega_cap_leader_rotation_aggressive",
-            "mega_cap_leader_rotation_dynamic_top20",
             "mega_cap_leader_rotation_top50_balanced",
             "russell_1000_multi_factor_defensive",
         }
@@ -192,38 +189,23 @@ def test_load_platform_runtime_settings_accepts_tech_communication_pullback_enha
     assert settings.strategy_target_mode == "weight"
 
 
-def test_load_platform_runtime_settings_accepts_mega_cap_leader_rotation_dynamic_top20(monkeypatch):
-    monkeypatch.setenv("STRATEGY_PROFILE", "mega_cap_leader_rotation_dynamic_top20")
+@pytest.mark.parametrize(
+    "archived_profile",
+    (
+        "mega_cap_leader_rotation_dynamic_top20",
+        "mega_cap_leader_rotation_aggressive",
+        "dynamic_mega_leveraged_pullback",
+    ),
+)
+def test_load_platform_runtime_settings_rejects_research_only_archived_profiles(monkeypatch, archived_profile):
+    monkeypatch.setenv("STRATEGY_PROFILE", archived_profile)
     monkeypatch.setenv("ACCOUNT_GROUP", "default")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
-    monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "/tmp/mega.csv")
-    monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH", "/tmp/mega.csv.manifest.json")
+    monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "/tmp/archive.csv")
+    monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH", "/tmp/archive.csv.manifest.json")
 
-    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
-
-    assert settings.strategy_profile == "mega_cap_leader_rotation_dynamic_top20"
-    assert settings.strategy_display_name == "Mega Cap Leader Rotation Dynamic Top20"
-    assert settings.strategy_target_mode == "weight"
-    assert settings.feature_snapshot_path == "/tmp/mega.csv"
-    assert settings.feature_snapshot_manifest_path == "/tmp/mega.csv.manifest.json"
-    assert settings.strategy_config_path is None
-
-
-def test_load_platform_runtime_settings_accepts_dynamic_mega_leveraged_pullback(monkeypatch):
-    monkeypatch.setenv("STRATEGY_PROFILE", "dynamic_mega_leveraged_pullback")
-    monkeypatch.setenv("ACCOUNT_GROUP", "default")
-    monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
-    monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "/tmp/dynamic-mega.csv")
-    monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH", "/tmp/dynamic-mega.csv.manifest.json")
-
-    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
-
-    assert settings.strategy_profile == "dynamic_mega_leveraged_pullback"
-    assert settings.strategy_display_name == "Dynamic Mega Leveraged Pullback"
-    assert settings.strategy_target_mode == "weight"
-    assert settings.feature_snapshot_path == "/tmp/dynamic-mega.csv"
-    assert settings.feature_snapshot_manifest_path == "/tmp/dynamic-mega.csv.manifest.json"
-    assert settings.strategy_config_path is None
+    with pytest.raises(ValueError, match="Unsupported STRATEGY_PROFILE"):
+        load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
 
 def test_load_platform_runtime_settings_accepts_tqqq_growth_income(monkeypatch):
@@ -319,21 +301,13 @@ def test_print_strategy_profile_status_json_matches_registry():
     assert by_profile["tech_communication_pullback_enhancement"]["input_mode"] == "feature_snapshot"
     assert by_profile["tech_communication_pullback_enhancement"]["requires_snapshot_artifacts"] is True
     assert by_profile["tech_communication_pullback_enhancement"]["requires_strategy_config_path"] is True
-    assert by_profile["mega_cap_leader_rotation_dynamic_top20"]["profile_group"] == "snapshot_backed"
-    assert by_profile["mega_cap_leader_rotation_dynamic_top20"]["input_mode"] == "feature_snapshot"
-    assert by_profile["mega_cap_leader_rotation_dynamic_top20"]["requires_snapshot_artifacts"] is True
-    assert by_profile["mega_cap_leader_rotation_dynamic_top20"]["requires_strategy_config_path"] is False
     assert by_profile["mega_cap_leader_rotation_top50_balanced"]["profile_group"] == "snapshot_backed"
     assert by_profile["mega_cap_leader_rotation_top50_balanced"]["input_mode"] == "feature_snapshot"
     assert by_profile["mega_cap_leader_rotation_top50_balanced"]["requires_snapshot_artifacts"] is True
     assert by_profile["mega_cap_leader_rotation_top50_balanced"]["requires_strategy_config_path"] is False
-    assert by_profile["dynamic_mega_leveraged_pullback"]["profile_group"] == "snapshot_backed"
-    assert (
-        by_profile["dynamic_mega_leveraged_pullback"]["input_mode"]
-        == "feature_snapshot+market_history+benchmark_history+portfolio_snapshot"
-    )
-    assert by_profile["dynamic_mega_leveraged_pullback"]["requires_snapshot_artifacts"] is True
-    assert by_profile["dynamic_mega_leveraged_pullback"]["requires_strategy_config_path"] is False
+    assert by_profile["mega_cap_leader_rotation_dynamic_top20"]["enabled"] is False
+    assert by_profile["mega_cap_leader_rotation_aggressive"]["enabled"] is False
+    assert by_profile["dynamic_mega_leveraged_pullback"]["enabled"] is False
     assert by_profile["russell_1000_multi_factor_defensive"]["requires_strategy_config_path"] is False
 
 
@@ -377,24 +351,15 @@ def test_print_strategy_switch_env_plan_for_tqqq_growth_income():
     assert "IBKR_FEATURE_SNAPSHOT_PATH" in plan["remove_if_present"]
 
 
-def test_print_strategy_switch_env_plan_for_mega_cap_feature_snapshot_profile():
+def test_print_strategy_switch_env_plan_rejects_research_only_archived_profile():
     result = subprocess.run(
         [sys.executable, str(SWITCH_PLAN_SCRIPT_PATH), "--profile", "mega_cap_leader_rotation_dynamic_top20", "--json"],
-        check=True,
         capture_output=True,
         text=True,
     )
 
-    plan = json.loads(result.stdout)
-    assert plan["canonical_profile"] == "mega_cap_leader_rotation_dynamic_top20"
-    assert plan["profile_group"] == "snapshot_backed"
-    assert plan["input_mode"] == "feature_snapshot"
-    assert plan["requires_snapshot_artifacts"] is True
-    assert plan["requires_strategy_config_path"] is False
-    assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_PATH"] == "<required>"
-    assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH"] == "<required>"
-    assert "IBKR_STRATEGY_CONFIG_PATH" in plan["remove_if_present"]
-    assert "IBKR_RECONCILIATION_OUTPUT_PATH" in plan["remove_if_present"]
+    assert result.returncode != 0
+    assert "Unsupported STRATEGY_PROFILE" in result.stderr
 
 
 def test_print_strategy_switch_env_plan_for_mega_cap_top50_balanced_profile():

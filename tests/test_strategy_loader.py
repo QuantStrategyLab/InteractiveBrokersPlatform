@@ -55,7 +55,7 @@ def test_load_strategy_entrypoint_for_profile_resolves_tqqq_growth_income(monkey
     assert entrypoint.manifest.default_config["attack_allocation_mode"] == "fixed_qqq_tqqq_pullback"
 
 
-def test_load_strategy_entrypoint_for_profile_resolves_mega_cap_dynamic_top20(monkeypatch):
+def test_load_strategy_entrypoint_for_profile_rejects_archived_mega_cap_dynamic_top20(monkeypatch):
     try:
         import pandas  # noqa: F401
     except ModuleNotFoundError:
@@ -65,11 +65,8 @@ def test_load_strategy_entrypoint_for_profile_resolves_mega_cap_dynamic_top20(mo
     market_calendars_module.get_calendar = lambda name: None
     monkeypatch.setitem(sys.modules, "pandas_market_calendars", market_calendars_module)
 
-    entrypoint = load_strategy_entrypoint_for_profile("mega_cap_leader_rotation_dynamic_top20")
-
-    assert entrypoint.manifest.profile == "mega_cap_leader_rotation_dynamic_top20"
-    assert entrypoint.manifest.required_inputs == frozenset({"feature_snapshot"})
-    assert entrypoint.manifest.default_config["holdings_count"] == 4
+    with pytest.raises(ValueError, match="Unsupported STRATEGY_PROFILE"):
+        load_strategy_entrypoint_for_profile("mega_cap_leader_rotation_dynamic_top20")
 
 
 def test_load_strategy_entrypoint_for_profile_rejects_legacy_cash_buffer_profile(monkeypatch):
@@ -104,7 +101,7 @@ def test_load_strategy_runtime_adapter_for_profile_resolves_tech_communication_p
     assert adapter.snapshot_contract_version == "tech_communication_pullback_enhancement.feature_snapshot.v1"
 
 
-def test_load_strategy_runtime_adapter_for_profile_resolves_mega_cap_dynamic_top20(monkeypatch):
+def test_load_strategy_runtime_adapter_for_profile_rejects_archived_mega_cap_dynamic_top20(monkeypatch):
     try:
         import pandas  # noqa: F401
     except ModuleNotFoundError:
@@ -114,12 +111,8 @@ def test_load_strategy_runtime_adapter_for_profile_resolves_mega_cap_dynamic_top
     market_calendars_module.get_calendar = lambda name: None
     monkeypatch.setitem(sys.modules, "pandas_market_calendars", market_calendars_module)
 
-    adapter = load_strategy_runtime_adapter_for_profile("mega_cap_leader_rotation_dynamic_top20")
-
-    assert adapter.status_icon == "👑"
-    assert adapter.available_inputs == frozenset({"feature_snapshot"})
-    assert adapter.require_snapshot_manifest is True
-    assert adapter.snapshot_contract_version == "mega_cap_leader_rotation_dynamic_top20.feature_snapshot.v1"
+    with pytest.raises(ValueError, match="Unsupported STRATEGY_PROFILE"):
+        load_strategy_runtime_adapter_for_profile("mega_cap_leader_rotation_dynamic_top20")
 
 
 def test_load_strategy_runtime_adapter_for_profile_resolves_global_etf_rotation_inputs(monkeypatch):
