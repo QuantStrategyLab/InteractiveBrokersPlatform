@@ -368,3 +368,54 @@ def test_run_strategy_core_writes_reconciliation_record_under_strategy_dir(tmp_p
     assert payload_path is not None
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
     assert payload["no_op_reason"] == "outside_execution_window"
+
+
+def test_run_strategy_core_prefers_structured_noop_status_in_zh():
+    observed = {"messages": []}
+
+    class FakeIB:
+        def isConnected(self):
+            return True
+
+        def disconnect(self):
+            return None
+
+    result = run_strategy_core(
+        connect_ib=lambda: FakeIB(),
+        get_current_portfolio=lambda _ib: ({}, {"equity": 1000.0, "buying_power": 500.0}),
+        compute_signals=lambda _ib, _holdings: (
+            None,
+            "monthly snapshot cadence | waiting inside execution window",
+            False,
+            "no-op | reason=outside_monthly_execution_window",
+            {
+                "strategy_profile": "mega_cap_leader_rotation_top50_balanced",
+                "trade_date": "2026-04-22",
+                "snapshot_as_of": "2026-04-16",
+                "snapshot_guard_decision": "proceed",
+                "no_op_reason": "outside_monthly_execution_window snapshot=2026-04-16 allowed=2026-04-17,2026-04-20,2026-04-21",
+                "managed_symbols": ("AAPL", "MSFT", "BOXX"),
+                "dry_run_only": True,
+                "notification_context": {
+                    "signal": {"code": "signal_monthly_snapshot_waiting", "params": {}},
+                    "status": {
+                        "code": "status_monthly_snapshot_waiting_window",
+                        "params": {
+                            "snapshot_as_of": "2026-04-16",
+                            "allowed_dates": "2026-04-17, 2026-04-20, 2026-04-21",
+                        },
+                    },
+                },
+            },
+        ),
+        execute_rebalance=lambda *_args, **_kwargs: [],
+        send_tg_message=lambda message: observed["messages"].append(message),
+        translator=build_translator("zh"),
+        separator="---",
+        strategy_display_name="Mega Cap Top50 平衡龙头轮动",
+    )
+
+    assert result.result == "OK - heartbeat"
+    assert observed["messages"]
+    assert "当前不在月度执行窗口" in observed["messages"][0]
+    assert "决策=proceed" not in observed["messages"][0]
