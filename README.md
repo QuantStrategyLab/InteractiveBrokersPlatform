@@ -52,9 +52,6 @@ The mainline runtime now follows one path only:
 | `soxl_soxx_trend_income` | SOXL/SOXX Semiconductor Trend Income | Yes | Yes | `us_equity` | current IBKR live line |
 | `tech_communication_pullback_enhancement` | Tech/Communication Pullback Enhancement | Yes | Yes | `us_equity` | enabled feature-snapshot alternative |
 | `mega_cap_leader_rotation_top50_balanced` | Mega Cap Leader Rotation Top50 Balanced | Yes | Yes | `us_equity` | enabled balanced Top50 leader rotation |
-| `mega_cap_leader_rotation_aggressive` | Mega Cap Leader Rotation Aggressive | Yes | No | `us_equity` | research-only archive |
-| `mega_cap_leader_rotation_dynamic_top20` | Mega Cap Leader Rotation Dynamic Top20 | Yes | No | `us_equity` | research-only archive |
-| `dynamic_mega_leveraged_pullback` | Dynamic Mega Leveraged Pullback | Yes | No | `us_equity` | research-only archive |
 
 Check the current matrix locally:
 
@@ -299,7 +296,7 @@ gcloud run services update ibkr-quant \
 
 IBKR runtime 负责把共享的 `us_equity` 策略档位部署到 GCP Cloud Run，并连接 GCE 上的 IB Gateway 执行。策略逻辑、策略频率、标的池、参数和研究/回测说明都放在 `UsEquityStrategies`；这个仓库只维护 IBKR 运行时、账号组、Gateway 连接、下单和通知。
 
-当前可运行的 `global_etf_rotation`、`russell_1000_multi_factor_defensive`、`tqqq_growth_income`、`soxl_soxx_trend_income`、`tech_communication_pullback_enhancement` 和 `mega_cap_leader_rotation_top50_balanced` 的策略实现都来自 `UsEquityStrategies`；`mega_cap_leader_rotation_aggressive`、`mega_cap_leader_rotation_dynamic_top20`、`dynamic_mega_leveraged_pullback` 保留为 research-only 存档，不进入 IBKR rollout。
+当前可运行的 `global_etf_rotation`、`russell_1000_multi_factor_defensive`、`tqqq_growth_income`、`soxl_soxx_trend_income`、`tech_communication_pullback_enhancement` 和 `mega_cap_leader_rotation_top50_balanced` 的策略实现都来自 `UsEquityStrategies`。
 
 完整策略说明现在放在 [`UsEquityStrategies`](https://github.com/QuantStrategyLab/UsEquityStrategies)。这个 README 只保留 IBKR 运行时、profile 启用状态、部署和凭据说明。
 

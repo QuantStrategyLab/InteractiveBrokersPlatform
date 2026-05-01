@@ -167,9 +167,6 @@ def test_platform_eligible_profiles_are_exposed_by_capability_matrix():
             "tqqq_growth_income",
             "tech_communication_pullback_enhancement",
             "global_etf_rotation",
-            "dynamic_mega_leveraged_pullback",
-            "mega_cap_leader_rotation_aggressive",
-            "mega_cap_leader_rotation_dynamic_top20",
             "mega_cap_leader_rotation_top50_balanced",
             "russell_1000_multi_factor_defensive",
         }
@@ -197,7 +194,7 @@ def test_load_platform_runtime_settings_accepts_tech_communication_pullback_enha
         "dynamic_mega_leveraged_pullback",
     ),
 )
-def test_load_platform_runtime_settings_rejects_research_only_archived_profiles(monkeypatch, archived_profile):
+def test_load_platform_runtime_settings_rejects_removed_research_profiles(monkeypatch, archived_profile):
     monkeypatch.setenv("STRATEGY_PROFILE", archived_profile)
     monkeypatch.setenv("ACCOUNT_GROUP", "default")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
@@ -244,13 +241,10 @@ def test_platform_profile_status_matrix_matches_current_ibkr_rollout():
 
     assert set(by_profile) == {
         "global_etf_rotation",
-        "dynamic_mega_leveraged_pullback",
         "russell_1000_multi_factor_defensive",
         "soxl_soxx_trend_income",
         "tqqq_growth_income",
         "tech_communication_pullback_enhancement",
-        "mega_cap_leader_rotation_aggressive",
-        "mega_cap_leader_rotation_dynamic_top20",
         "mega_cap_leader_rotation_top50_balanced",
     }
     assert by_profile["global_etf_rotation"] == {
@@ -305,9 +299,6 @@ def test_print_strategy_profile_status_json_matches_registry():
     assert by_profile["mega_cap_leader_rotation_top50_balanced"]["input_mode"] == "feature_snapshot"
     assert by_profile["mega_cap_leader_rotation_top50_balanced"]["requires_snapshot_artifacts"] is True
     assert by_profile["mega_cap_leader_rotation_top50_balanced"]["requires_strategy_config_path"] is False
-    assert by_profile["mega_cap_leader_rotation_dynamic_top20"]["enabled"] is False
-    assert by_profile["mega_cap_leader_rotation_aggressive"]["enabled"] is False
-    assert by_profile["dynamic_mega_leveraged_pullback"]["enabled"] is False
     assert by_profile["russell_1000_multi_factor_defensive"]["requires_strategy_config_path"] is False
 
 
@@ -351,7 +342,7 @@ def test_print_strategy_switch_env_plan_for_tqqq_growth_income():
     assert "IBKR_FEATURE_SNAPSHOT_PATH" in plan["remove_if_present"]
 
 
-def test_print_strategy_switch_env_plan_rejects_research_only_archived_profile():
+def test_print_strategy_switch_env_plan_rejects_removed_research_profile():
     result = subprocess.run(
         [sys.executable, str(SWITCH_PLAN_SCRIPT_PATH), "--profile", "mega_cap_leader_rotation_dynamic_top20", "--json"],
         capture_output=True,

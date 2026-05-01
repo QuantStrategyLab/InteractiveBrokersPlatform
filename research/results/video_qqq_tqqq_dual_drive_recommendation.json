@@ -1,9 +1,0 @@
-{
-  "findings": [
-    "Best implementable reconstruction is `video_like_pullback_next_close` at 33.96% CAGR / -31.48% MaxDD, below the video's reported 49.40% CAGR.",
-    "The simple 45/45/10 daily-rebalanced reference is 29.61% CAGR with -58.91% MaxDD.",
-    "The intentionally biased same-close version reaches 41.50% CAGR with -23.80% MaxDD, which shows how much close-to-close lookahead can inflate this family of tests.",
-    "Closest CAGR to the video in this local run is `video_like_same_close_lookahead` at 41.50%; it still misses the reported CAGR by 7.90%.",
-    "Raw TQQQ buy-and-hold produces 37.77% CAGR but -81.66% MaxDD."
-  ]
-}
