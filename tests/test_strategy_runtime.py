@@ -237,9 +237,9 @@ def test_feature_snapshot_runtime_can_add_daily_market_benchmark_and_portfolio_i
 
     class FakeEntrypoint:
         manifest = StrategyManifest(
-            profile="dynamic_mega_leveraged_pullback",
+            profile="hybrid_snapshot_history_profile",
             domain="us_equity",
-            display_name="Dynamic Mega Leveraged Pullback",
+            display_name="Hybrid Snapshot History Profile",
             description="test",
             required_inputs=frozenset({"feature_snapshot", "market_history", "benchmark_history", "portfolio_snapshot"}),
             default_config={"safe_haven": "BOXX", "benchmark_symbol": "QQQ"},
@@ -270,7 +270,7 @@ def test_feature_snapshot_runtime_can_add_daily_market_benchmark_and_portfolio_i
             managed_symbols_extractor=lambda *_args, **_kwargs: ("NVDL", "BOXX"),
             portfolio_input_name="portfolio_snapshot",
         ),
-        runtime_settings=_build_runtime_settings(profile="dynamic_mega_leveraged_pullback"),
+        runtime_settings=_build_runtime_settings(profile="hybrid_snapshot_history_profile"),
         runtime_config={},
         merged_runtime_config={"safe_haven": "BOXX", "benchmark_symbol": "QQQ"},
         status_icon="2x",

@@ -41,14 +41,8 @@ def test_strategy_display_name_translates_new_live_profiles():
     zh_name = build_strategy_display_name(build_translator("zh"))
     en_name = build_strategy_display_name(build_translator("en"))
 
-    assert zh_name("mega_cap_leader_rotation_aggressive") == "Mega Cap 激进龙头轮动"
-    assert zh_name("mega_cap_leader_rotation_dynamic_top20") == "Mega Cap 动态 Top20 龙头轮动"
     assert zh_name("mega_cap_leader_rotation_top50_balanced") == "Mega Cap Top50 平衡龙头轮动"
-    assert zh_name("dynamic_mega_leveraged_pullback") == "Mega Cap 2x 回调策略"
-    assert en_name("mega_cap_leader_rotation_aggressive") == "Mega Cap Leader Rotation Aggressive"
-    assert en_name("mega_cap_leader_rotation_dynamic_top20") == "Mega Cap Leader Rotation Dynamic Top20"
     assert en_name("mega_cap_leader_rotation_top50_balanced") == "Mega Cap Leader Rotation Top50 Balanced"
-    assert en_name("dynamic_mega_leveraged_pullback") == "Dynamic Mega Leveraged Pullback"
 
 
 def test_supported_strategy_profiles_have_translated_names():
