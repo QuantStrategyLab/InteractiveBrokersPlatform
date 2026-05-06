@@ -11,6 +11,11 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from quant_platform_kit.common.quantity import (
+    floor_to_quantity_step,
+    format_quantity,
+    normalize_order_quantity,
+)
 
 
 def get_market_prices(
@@ -36,7 +41,7 @@ def check_order_submitted(report, *, translator):
                 "order_filled",
                 symbol=report.symbol,
                 side=report.side,
-                qty=int(report.filled_quantity or report.quantity),
+                qty=format_quantity(report.filled_quantity or report.quantity),
                 price=f"{float(report.average_fill_price or 0.0):.2f}",
                 order_id=order_id,
             ),
@@ -48,8 +53,8 @@ def check_order_submitted(report, *, translator):
                 "order_partial",
                 symbol=report.symbol,
                 side=report.side,
-                executed=int(report.filled_quantity or 0),
-                qty=int(report.quantity or 0),
+                executed=format_quantity(report.filled_quantity or 0),
+                qty=format_quantity(report.quantity or 0),
                 price=f"{float(report.average_fill_price or 0.0):.2f}",
                 order_id=order_id,
             ),
@@ -348,6 +353,10 @@ def _build_target_diff_rows(
     return rows
 
 
+def _floor_order_quantity(quantity, *, quantity_step):
+    return normalize_order_quantity(floor_to_quantity_step(quantity, quantity_step))
+
+
 def _finalize_result(trade_logs, execution_summary, *, return_summary: bool):
     if return_summary:
         return trade_logs, execution_summary
@@ -375,6 +384,8 @@ def execute_rebalance(
     rebalance_threshold_ratio,
     limit_buy_premium,
     sell_settle_delay_sec,
+    quantity_step=1.0,
+    min_order_notional=50.0,
     execution_lock_dir=None,
     return_summary=False,
 ):
@@ -425,6 +436,8 @@ def execute_rebalance(
     reserved = equity * cash_reserve_ratio
     investable = equity - reserved
     threshold = equity * rebalance_threshold_ratio
+    order_quantity_step = float(quantity_step or 1.0)
+    minimum_order_notional = max(0.0, float(min_order_notional or 0.0))
     execution_summary["cash_reserve_dollars"] = float(reserved)
 
     all_symbols = set(target_weights.keys()) | set(positions.keys())
@@ -544,7 +557,11 @@ def execute_rebalance(
         if not price:
             missing_price_symbols.append(symbol)
             continue
-        if int((current - target) / price) > 0:
+        qty = _floor_order_quantity(
+            (current - target) / price,
+            quantity_step=order_quantity_step,
+        )
+        if qty > 0:
             has_sell_plan = True
             break
         quantity_zero_symbols.append(symbol)
@@ -566,11 +583,15 @@ def execute_rebalance(
         if buy_value <= 0:
             insufficient_buying_power_symbols.append(symbol)
             continue
-        if buy_value < 50:
+        if buy_value < minimum_order_notional:
             min_notional_symbols.append(symbol)
             continue
         limit_price = round(price * limit_buy_premium, 2)
-        qty = int(buy_value / limit_price) if limit_price > 0 else 0
+        qty = (
+            _floor_order_quantity(buy_value / limit_price, quantity_step=order_quantity_step)
+            if limit_price > 0
+            else 0
+        )
         if qty > 0:
             has_buy_plan = True
             break
@@ -687,7 +708,10 @@ def execute_rebalance(
                 execution_summary["orders_skipped"].append({"symbol": symbol, "side": "sell", "reason": "missing_price"})
                 execution_summary["skipped_reasons"].append(f"missing_price:{symbol}")
                 continue
-            qty = int(sell_value / price)
+            qty = _floor_order_quantity(
+                sell_value / price,
+                quantity_step=order_quantity_step,
+            )
             if qty <= 0:
                 execution_summary["orders_skipped"].append({"symbol": symbol, "side": "sell", "reason": "quantity_zero"})
                 continue
@@ -696,7 +720,7 @@ def execute_rebalance(
                 execution_summary["orders_submitted"].append(
                     {"symbol": symbol, "side": "sell", "quantity": qty, "status": "dry_run"}
                 )
-                trade_logs.append(f"DRY_RUN sell {symbol} {qty}")
+                trade_logs.append(f"DRY_RUN sell {symbol} {format_quantity(qty)}")
                 continue
             report = submit_order_intent(
                 ib,
@@ -720,7 +744,7 @@ def execute_rebalance(
             else:
                 execution_summary["orders_skipped"].append({**order_payload, "reason": status or "submit_failed"})
                 execution_summary["skipped_reasons"].append(f"submit_failed:{symbol}:{status or 'unknown'}")
-            trade_logs.append(translator("market_sell", symbol=symbol, qty=qty) + f" {status_msg}")
+            trade_logs.append(translator("market_sell", symbol=symbol, qty=format_quantity(qty)) + f" {status_msg}")
             if ok:
                 sell_executed = True
 
@@ -741,12 +765,15 @@ def execute_rebalance(
                 execution_summary["orders_skipped"].append({"symbol": symbol, "side": "buy", "reason": "missing_price"})
                 execution_summary["skipped_reasons"].append(f"missing_price:{symbol}")
                 continue
-            if buy_value < 50:
+            if buy_value < minimum_order_notional:
                 execution_summary["orders_skipped"].append({"symbol": symbol, "side": "buy", "reason": "min_notional"})
                 continue
 
             limit_price = round(price * limit_buy_premium, 2)
-            qty = int(buy_value / limit_price)
+            qty = _floor_order_quantity(
+                buy_value / limit_price,
+                quantity_step=order_quantity_step,
+            )
             if qty <= 0:
                 execution_summary["orders_skipped"].append({"symbol": symbol, "side": "buy", "reason": "quantity_zero"})
                 continue
@@ -761,7 +788,7 @@ def execute_rebalance(
                         "status": "dry_run",
                     }
                 )
-                trade_logs.append(f"DRY_RUN buy {symbol} {qty} @{limit_price:.2f}")
+                trade_logs.append(f"DRY_RUN buy {symbol} {format_quantity(qty)} @{limit_price:.2f}")
                 buying_power -= qty * limit_price
                 continue
             report = submit_order_intent(
@@ -795,7 +822,7 @@ def execute_rebalance(
                 execution_summary["orders_skipped"].append({**order_payload, "reason": status or "submit_failed"})
                 execution_summary["skipped_reasons"].append(f"submit_failed:{symbol}:{status or 'unknown'}")
             trade_logs.append(
-                translator("limit_buy", symbol=symbol, qty=qty, price=f"{limit_price:.2f}") + f" {status_msg}"
+                translator("limit_buy", symbol=symbol, qty=format_quantity(qty), price=f"{limit_price:.2f}") + f" {status_msg}"
             )
             if ok:
                 buying_power -= qty * limit_price

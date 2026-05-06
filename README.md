@@ -157,6 +157,9 @@ IBKR_FEATURE_SNAPSHOT_PATH=/var/data/tech_communication_pullback_enhancement_fea
 IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH=/var/manifests/tech_communication_pullback_enhancement_feature_snapshot_latest.csv.manifest.json
 # IBKR_STRATEGY_CONFIG_PATH is optional; the bundled canonical default is used when unset.
 IBKR_DRY_RUN_ONLY=true
+# Keep whole-share sizing unless fractional API support has been verified for this account/API path.
+# IBKR_FRACTIONAL_SHARES_ENABLED=true
+# IBKR_ORDER_QUANTITY_STEP=0.000001
 GLOBAL_TELEGRAM_CHAT_ID=<telegram-chat-id>
 NOTIFY_LANG=zh
 ```

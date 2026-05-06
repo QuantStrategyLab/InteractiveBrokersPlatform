@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import math
 
 from application.execution_service import check_order_submitted, execute_rebalance
 from quant_platform_kit.common.models import OrderIntent
@@ -127,6 +128,56 @@ def test_execute_rebalance_submits_limit_buy_for_underweight_position(monkeypatc
     assert submitted[0].symbol == "VOO"
     assert submitted[0].order_type == "limit"
     assert any(log.startswith("buy VOO") for log in trade_logs)
+
+
+def test_execute_rebalance_can_submit_fractional_buy_when_quantity_step_allows(monkeypatch, tmp_path):
+    class FakeIB:
+        def openTrades(self):
+            return []
+
+        def fills(self):
+            return []
+
+        def accountValues(self):
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1000")]
+
+    submitted = []
+
+    def fake_submit_order_intent(_ib, intent):
+        submitted.append(intent)
+        return SimpleNamespace(broker_order_id="1", status="Submitted")
+
+    def fake_fetch_quote_snapshots(_ib, symbols):
+        return {symbol: SimpleNamespace(last_price=500.0) for symbol in symbols}
+
+    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+
+    _trade_logs, summary = execute_rebalance(
+        FakeIB(),
+        {"VOO": 0.15},
+        {},
+        {"equity": 1000.0, "buying_power": 1000.0},
+        fetch_quote_snapshots=fake_fetch_quote_snapshots,
+        submit_order_intent=fake_submit_order_intent,
+        order_intent_cls=OrderIntent,
+        translator=translate,
+        strategy_symbols=["VOO"],
+        strategy_profile="global_etf_rotation",
+        signal_metadata=_signal_metadata({"VOO": 0.15}, risk_symbols=("VOO",), trade_date="2026-04-01"),
+        dry_run_only=False,
+        cash_reserve_ratio=0.0,
+        rebalance_threshold_ratio=0.02,
+        limit_buy_premium=1.005,
+        quantity_step=0.000001,
+        min_order_notional=50.0,
+        sell_settle_delay_sec=0,
+        execution_lock_dir=tmp_path,
+        return_summary=True,
+    )
+
+    assert summary["execution_status"] == "executed"
+    assert len(submitted) == 1
+    assert math.isclose(submitted[0].quantity, 0.298507, rel_tol=0.0, abs_tol=0.000001)
 
 
 def test_execute_rebalance_skips_when_pending_orders_exist():

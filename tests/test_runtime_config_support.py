@@ -92,6 +92,8 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.strategy_config_source is None
     assert settings.reconciliation_output_path is None
     assert settings.dry_run_only is False
+    assert settings.quantity_step == 1.0
+    assert settings.min_order_notional == 50.0
     assert settings.account_group == "default"
     assert settings.service_name is None
     assert settings.account_ids == ()
@@ -135,6 +137,19 @@ def test_load_platform_runtime_settings_supports_explicit_group_config_values(mo
     assert settings.tg_token == "token-1"
     assert settings.tg_chat_id == "chat-1"
     assert settings.notify_lang == "zh"
+
+
+def test_load_platform_runtime_settings_supports_fractional_quantity_step(monkeypatch):
+    monkeypatch.setenv("STRATEGY_PROFILE", SAMPLE_STRATEGY_PROFILE)
+    monkeypatch.setenv("ACCOUNT_GROUP", "default")
+    monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
+    monkeypatch.setenv("IBKR_FRACTIONAL_SHARES_ENABLED", "true")
+    monkeypatch.setenv("IBKR_MIN_ORDER_NOTIONAL_USD", "5")
+
+    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
+
+    assert settings.quantity_step == 0.000001
+    assert settings.min_order_notional == 5.0
 
 
 

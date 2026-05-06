@@ -52,12 +52,14 @@ class PlatformRuntimeSettings:
     strategy_config_source: str | None
     reconciliation_output_path: str | None
     dry_run_only: bool
-    account_group: str
-    service_name: str | None
-    account_ids: tuple[str, ...]
-    tg_token: str | None
-    tg_chat_id: str | None
-    notify_lang: str
+    quantity_step: float = 1.0
+    min_order_notional: float = 50.0
+    account_group: str = DEFAULT_ACCOUNT_GROUP
+    service_name: str | None = None
+    account_ids: tuple[str, ...] = ()
+    tg_token: str | None = None
+    tg_chat_id: str | None = None
+    notify_lang: str = "en"
 
 
 def load_platform_runtime_settings(
@@ -135,6 +137,12 @@ def load_platform_runtime_settings(
         strategy_config_source=runtime_paths.strategy_config_source,
         reconciliation_output_path=runtime_paths.reconciliation_output_path,
         dry_run_only=resolve_bool_value(os.getenv("IBKR_DRY_RUN_ONLY")),
+        quantity_step=_quantity_step_env(
+            step_env="IBKR_ORDER_QUANTITY_STEP",
+            fractional_env="IBKR_FRACTIONAL_SHARES_ENABLED",
+            fractional_default=False,
+        ),
+        min_order_notional=_float_env("IBKR_MIN_ORDER_NOTIONAL_USD", default=50.0),
         account_group=account_group,
         service_name=group_config.service_name,
         account_ids=group_config.account_ids,
@@ -149,6 +157,36 @@ def resolve_strategy_profile(raw_value: str | None) -> str:
         raw_value,
         platform_id=IBKR_PLATFORM,
     ).profile
+
+
+def _optional_float_env(name: str) -> float | None:
+    raw_value = os.getenv(name)
+    if raw_value is None or raw_value.strip() == "":
+        return None
+    return float(raw_value)
+
+
+def _float_env(name: str, *, default: float) -> float:
+    value = _optional_float_env(name)
+    return float(default) if value is None else value
+
+
+def _quantity_step_env(
+    *,
+    step_env: str,
+    fractional_env: str,
+    fractional_default: bool,
+) -> float:
+    explicit_step = _optional_float_env(step_env)
+    if explicit_step is not None:
+        return explicit_step
+    raw_enabled = os.getenv(fractional_env)
+    fractional_enabled = (
+        fractional_default
+        if raw_enabled is None
+        else resolve_bool_value(raw_enabled)
+    )
+    return 0.000001 if fractional_enabled else 1.0
 
 
 def resolve_account_group(raw_value: str | None) -> str:
