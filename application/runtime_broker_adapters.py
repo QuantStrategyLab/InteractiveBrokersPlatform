@@ -38,6 +38,8 @@ class IBKRRuntimeBrokerAdapters:
     cash_reserve_ratio: float
     rebalance_threshold_ratio: float
     limit_buy_premium: float
+    quantity_step: float
+    min_order_notional: float
     sell_settle_delay_sec: float
     separator: str
     strategy_display_name: str
@@ -84,7 +86,7 @@ class IBKRRuntimeBrokerAdapters:
         positions = {}
         for position in snapshot.positions:
             positions[position.symbol] = {
-                "quantity": int(position.quantity),
+                "quantity": float(position.quantity),
                 "avg_cost": float(position.average_cost or 0.0),
             }
         account_values = {
@@ -151,6 +153,8 @@ class IBKRRuntimeBrokerAdapters:
             cash_reserve_ratio=self.cash_reserve_ratio,
             rebalance_threshold_ratio=self.rebalance_threshold_ratio,
             limit_buy_premium=self.limit_buy_premium,
+            quantity_step=self.quantity_step,
+            min_order_notional=self.min_order_notional,
             sell_settle_delay_sec=self.sell_settle_delay_sec,
             return_summary=True,
         )
@@ -234,6 +238,8 @@ def build_runtime_broker_adapters(
     cash_reserve_ratio: float,
     rebalance_threshold_ratio: float,
     limit_buy_premium: float,
+    quantity_step: float,
+    min_order_notional: float,
     sell_settle_delay_sec: float,
     separator: str,
     strategy_display_name: str,
@@ -267,6 +273,8 @@ def build_runtime_broker_adapters(
         cash_reserve_ratio=float(cash_reserve_ratio),
         rebalance_threshold_ratio=float(rebalance_threshold_ratio),
         limit_buy_premium=float(limit_buy_premium),
+        quantity_step=float(quantity_step),
+        min_order_notional=float(min_order_notional),
         sell_settle_delay_sec=float(sell_settle_delay_sec),
         separator=str(separator or ""),
         strategy_display_name=str(strategy_display_name or ""),

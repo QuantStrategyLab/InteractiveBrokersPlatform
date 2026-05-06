@@ -315,6 +315,8 @@ def build_broker_adapters():
         cash_reserve_ratio=CASH_RESERVE_RATIO,
         rebalance_threshold_ratio=REBALANCE_THRESHOLD_RATIO,
         limit_buy_premium=LIMIT_BUY_PREMIUM,
+        quantity_step=RUNTIME_SETTINGS.quantity_step,
+        min_order_notional=RUNTIME_SETTINGS.min_order_notional,
         sell_settle_delay_sec=SELL_SETTLE_DELAY_SEC,
         separator=SEPARATOR,
         strategy_display_name=strategy_display_name,

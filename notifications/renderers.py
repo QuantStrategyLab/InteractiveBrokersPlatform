@@ -6,6 +6,7 @@ from collections.abc import Mapping
 import re
 
 from notifications.events import RenderedNotification
+from quant_platform_kit.common.quantity import format_quantity
 from quant_platform_kit.common.notification_localization import (
     localize_notification_text as _base_localize_notification_text,
     translator_uses_zh as _base_translator_uses_zh,
@@ -118,9 +119,9 @@ def _summarize_orders(orders, *, limit: int = 3) -> str:
     preview = []
     for order in orders[:limit]:
         symbol = str(order.get("symbol") or "").strip().upper()
-        quantity = int(order.get("quantity") or 0)
+        quantity = float(order.get("quantity") or 0.0)
         if symbol and quantity > 0:
-            preview.append(f"{symbol} {quantity}")
+            preview.append(f"{symbol} {format_quantity(quantity)}")
         elif symbol:
             preview.append(symbol)
     remaining = len(orders) - len(preview)
@@ -316,7 +317,7 @@ def build_dashboard(
         qty = positions[symbol]["quantity"]
         avg = positions[symbol]["avg_cost"]
         market_value = qty * avg
-        position_lines.append(f"  - {symbol}: {qty}股 | ${market_value:,.2f}")
+        position_lines.append(f"  - {symbol}: {format_quantity(qty)}股 | ${market_value:,.2f}")
     position_text = "\n".join(position_lines) if position_lines else translator("empty_positions")
     allocation = _resolve_weight_allocation(signal_metadata, required=False)
     target_lines = []
