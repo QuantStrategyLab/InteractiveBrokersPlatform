@@ -103,6 +103,9 @@ The selected `ACCOUNT_GROUP` is now the runtime identity. Keep broker-specific i
 | `STRATEGY_PROFILE` | Yes | Strategy profile selector. Supported `us_equity` values: `global_etf_rotation`, `russell_1000_multi_factor_defensive`, `tqqq_growth_income`, `soxl_soxx_trend_income`, `tech_communication_pullback_enhancement`, `mega_cap_leader_rotation_top50_balanced` |
 | `ACCOUNT_GROUP` | Yes | Account-group selector. Set explicitly for each deployment. |
 | `IBKR_FEATURE_SNAPSHOT_PATH` | Conditionally required | Required for snapshot-backed profiles such as `russell_1000_multi_factor_defensive`, `tech_communication_pullback_enhancement`, and `mega_cap_leader_rotation_top50_balanced`. Path to the latest feature snapshot file (`.csv`, `.json`, `.jsonl`, `.parquet`). |
+| `IBKR_FRACTIONAL_SHARES_ENABLED` | No | Defaults to `false`; set `true` only after verifying fractional order support for this account/API path. |
+| `IBKR_ORDER_QUANTITY_STEP` | No | Explicit order quantity step override; e.g. `1` for whole shares or `0.000001` for fractional sizing. Takes precedence over `IBKR_FRACTIONAL_SHARES_ENABLED`. |
+| `IBKR_MIN_ORDER_NOTIONAL_USD` | No | Minimum buy notional for fractional sizing; defaults to `50.0`. |
 | `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME` | Yes for Cloud Run | Secret Manager secret name for account-group config JSON. Recommended production source. |
 | `IB_ACCOUNT_GROUP_CONFIG_JSON` | No | Local/dev JSON fallback for account-group config. Not recommended for production Cloud Run. |
 | `TELEGRAM_TOKEN` | Yes | Telegram bot token. For Cloud Run, prefer a Secret Manager reference instead of a literal env var. |
@@ -346,6 +349,10 @@ IBKR 账户
 | `IBKR_CLIENT_ID_RETRY_OFFSET` | 否 | 每次重试时加到 `ib_client_id` 上的偏移量，用新的 client id 避开超时握手留下的卡住会话。默认 `100`。 |
 | `STRATEGY_PROFILE` | 是 | 策略档位选择。当前可用的 `us_equity` 值：`global_etf_rotation`、`russell_1000_multi_factor_defensive`、`tqqq_growth_income`、`soxl_soxx_trend_income`、`tech_communication_pullback_enhancement`、`mega_cap_leader_rotation_top50_balanced` |
 | `ACCOUNT_GROUP` | 是 | 账号组选择器，每个部署都要显式设置。 |
+| `IBKR_FEATURE_SNAPSHOT_PATH` | 条件必填 | `russell_1000_multi_factor_defensive`、`tech_communication_pullback_enhancement`、`mega_cap_leader_rotation_top50_balanced` 等快照策略需要。指向最新特征快照文件（`.csv`、`.json`、`.jsonl`、`.parquet`）。 |
+| `IBKR_FRACTIONAL_SHARES_ENABLED` | 否 | 默认 `false`；只有确认当前账户/API 路径支持碎股单后再设为 `true`。 |
+| `IBKR_ORDER_QUANTITY_STEP` | 否 | 显式覆盖下单数量步进；如 `1` 表示整数股，`0.000001` 表示碎股数量步进。优先级高于 `IBKR_FRACTIONAL_SHARES_ENABLED`。 |
+| `IBKR_MIN_ORDER_NOTIONAL_USD` | 否 | 碎股买入的最小名义金额；默认 `50.0`。 |
 | `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME` | Cloud Run 建议必填 | 账号组配置 JSON 在 Secret Manager 里的密钥名。生产环境推荐使用。 |
 | `IB_ACCOUNT_GROUP_CONFIG_JSON` | 否 | 本地开发用的账号组配置 JSON fallback。不建议在生产 Cloud Run 直接使用。 |
 | `TELEGRAM_TOKEN` | 是 | Telegram 机器人 Token。Cloud Run 上更推荐走 Secret Manager 引用，不要直接写成明文 env。 |
