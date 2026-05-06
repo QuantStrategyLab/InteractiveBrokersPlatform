@@ -357,6 +357,31 @@ def _floor_order_quantity(quantity, *, quantity_step):
     return normalize_order_quantity(floor_to_quantity_step(quantity, quantity_step))
 
 
+def _sell_order_quantity(
+    *,
+    current_value,
+    target_value,
+    price,
+    position_quantity,
+    quantity_step,
+):
+    held_quantity = max(0.0, float(position_quantity or 0.0))
+    if held_quantity <= 0.0:
+        return 0
+
+    target = max(0.0, float(target_value or 0.0))
+    if target <= 0.0:
+        return _floor_order_quantity(held_quantity, quantity_step=quantity_step)
+
+    sell_value = max(0.0, float(current_value or 0.0) - target)
+    if sell_value <= 0.0 or float(price or 0.0) <= 0.0:
+        return 0
+    return _floor_order_quantity(
+        min(sell_value / float(price), held_quantity),
+        quantity_step=quantity_step,
+    )
+
+
 def _finalize_result(trade_logs, execution_summary, *, return_summary: bool):
     if return_summary:
         return trade_logs, execution_summary
@@ -557,8 +582,11 @@ def execute_rebalance(
         if not price:
             missing_price_symbols.append(symbol)
             continue
-        qty = _floor_order_quantity(
-            (current - target) / price,
+        qty = _sell_order_quantity(
+            current_value=current,
+            target_value=target,
+            price=price,
+            position_quantity=positions.get(symbol, {}).get("quantity", 0),
             quantity_step=order_quantity_step,
         )
         if qty > 0:
@@ -702,14 +730,16 @@ def execute_rebalance(
         current = current_mv.get(symbol, 0)
         target = target_mv.get(symbol, 0)
         if current > target + threshold:
-            sell_value = current - target
             price = prices.get(symbol)
             if not price:
                 execution_summary["orders_skipped"].append({"symbol": symbol, "side": "sell", "reason": "missing_price"})
                 execution_summary["skipped_reasons"].append(f"missing_price:{symbol}")
                 continue
-            qty = _floor_order_quantity(
-                sell_value / price,
+            qty = _sell_order_quantity(
+                current_value=current,
+                target_value=target,
+                price=price,
+                position_quantity=positions.get(symbol, {}).get("quantity", 0),
                 quantity_step=order_quantity_step,
             )
             if qty <= 0:

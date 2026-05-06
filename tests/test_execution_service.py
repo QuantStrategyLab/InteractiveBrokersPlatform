@@ -180,6 +180,53 @@ def test_execute_rebalance_can_submit_fractional_buy_when_quantity_step_allows(m
     assert math.isclose(submitted[0].quantity, 0.298507, rel_tol=0.0, abs_tol=0.000001)
 
 
+def test_execute_rebalance_zero_target_sell_uses_position_quantity(monkeypatch, tmp_path):
+    class FakeIB:
+        def openTrades(self):
+            return []
+
+        def fills(self):
+            return []
+
+        def accountValues(self):
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1000")]
+
+    submitted = []
+
+    def fake_submit_order_intent(_ib, intent):
+        submitted.append(intent)
+        return SimpleNamespace(broker_order_id="1", status="Submitted")
+
+    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+
+    _trade_logs, summary = execute_rebalance(
+        FakeIB(),
+        {"VOO": 0.0},
+        {"VOO": {"quantity": 2}},
+        {"equity": 327.88, "buying_power": 1000.0},
+        fetch_quote_snapshots=lambda *_args, **_kwargs: {"VOO": SimpleNamespace(last_price=165.85)},
+        submit_order_intent=fake_submit_order_intent,
+        order_intent_cls=OrderIntent,
+        translator=translate,
+        strategy_symbols=["VOO"],
+        strategy_profile="global_etf_rotation",
+        signal_metadata=_signal_metadata({"VOO": 0.0}, risk_symbols=("VOO",), trade_date="2026-04-01"),
+        dry_run_only=False,
+        cash_reserve_ratio=0.0,
+        rebalance_threshold_ratio=0.02,
+        limit_buy_premium=1.005,
+        quantity_step=1.0,
+        sell_settle_delay_sec=0,
+        execution_lock_dir=tmp_path,
+        return_summary=True,
+    )
+
+    assert summary["execution_status"] == "executed"
+    assert len(submitted) == 1
+    assert submitted[0].side == "sell"
+    assert submitted[0].quantity == 2
+
+
 def test_execute_rebalance_skips_when_pending_orders_exist():
     class FakeIB:
         def openTrades(self):
