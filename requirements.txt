@@ -1,7 +1,7 @@
 flask
 gunicorn
-quant-platform-kit @ git+https://github.com/QuantStrategyLab/QuantPlatformKit.git@268171a74a1b522f03940af399f71c37e9a32c70
-us-equity-strategies @ git+https://github.com/QuantStrategyLab/UsEquityStrategies.git@47685bce6187b5e7d3f93bab72b72a7fc0d119d7
+quant-platform-kit @ git+https://github.com/QuantStrategyLab/QuantPlatformKit.git@3368b261b6ab2210ecbfa79d0f93c5d0cd85c37d
+us-equity-strategies @ git+https://github.com/QuantStrategyLab/UsEquityStrategies.git@2b034808e97401a63e9756c86692d28d718390e6
 pandas
 numpy
 requests
