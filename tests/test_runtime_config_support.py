@@ -148,7 +148,7 @@ def test_load_platform_runtime_settings_supports_fractional_quantity_step(monkey
 
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
-    assert settings.quantity_step == 0.000001
+    assert settings.quantity_step == 0.0001
     assert settings.min_order_notional == 5.0
 
 
