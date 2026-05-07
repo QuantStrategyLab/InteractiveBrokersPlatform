@@ -168,7 +168,7 @@ def test_execute_rebalance_can_submit_fractional_buy_when_quantity_step_allows(m
         cash_reserve_ratio=0.0,
         rebalance_threshold_ratio=0.02,
         limit_buy_premium=1.005,
-        quantity_step=0.000001,
+        quantity_step=0.0001,
         min_order_notional=50.0,
         sell_settle_delay_sec=0,
         execution_lock_dir=tmp_path,
@@ -177,7 +177,7 @@ def test_execute_rebalance_can_submit_fractional_buy_when_quantity_step_allows(m
 
     assert summary["execution_status"] == "executed"
     assert len(submitted) == 1
-    assert math.isclose(submitted[0].quantity, 0.298507, rel_tol=0.0, abs_tol=0.000001)
+    assert math.isclose(submitted[0].quantity, 0.2985, rel_tol=0.0, abs_tol=1e-9)
 
 
 def test_execute_rebalance_zero_target_sell_uses_position_quantity(monkeypatch, tmp_path):
