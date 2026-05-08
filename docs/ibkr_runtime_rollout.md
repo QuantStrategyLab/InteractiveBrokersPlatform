@@ -22,6 +22,7 @@
 - `NOTIFY_LANG`
 - `TELEGRAM_TOKEN_SECRET_NAME`（推荐）
 - `TELEGRAM_TOKEN`（fallback）
+- `RUNTIME_TARGET_JSON`（由同步 workflow 自动生成，表示结构化运行目标）
 
 可选过渡变量：
 
@@ -205,6 +206,7 @@ gcloud storage buckets add-iam-policy-binding "gs://run-sources-${PROJECT_ID}-${
 - `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=ibkr-account-groups`
 - `GLOBAL_TELEGRAM_CHAT_ID`
 - `NOTIFY_LANG`
+- `RUNTIME_TARGET_JSON` 不需要手工填，workflow 会自动算出并同步
 
 可选过渡项：
 
@@ -276,6 +278,7 @@ gcloud run services logs read interactive-brokers-quant-service \
 - 缺 `STRATEGY_PROFILE`
 - 缺 `ACCOUNT_GROUP`
 - 缺 `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME`
+- 缺 `RUNTIME_TARGET_JSON`（通常说明 workflow 没跑到或输出没接上）
 - secret 里没有 `default`
 - `default` 组缺 `ib_gateway_instance_name` / `ib_gateway_mode` / `ib_client_id`
 

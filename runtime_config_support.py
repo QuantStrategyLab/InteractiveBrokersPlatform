@@ -13,6 +13,10 @@ from quant_platform_kit.common.runtime_config import (
     resolve_quantity_step_env,
     resolve_strategy_runtime_path_settings,
 )
+from quant_platform_kit.common.runtime_target import (
+    RuntimeTarget,
+    resolve_runtime_identity_from_env,
+)
 from strategy_registry import (
     IBKR_PLATFORM,
     resolve_strategy_definition,
@@ -62,6 +66,7 @@ class PlatformRuntimeSettings:
     tg_token: str | None = None
     tg_chat_id: str | None = None
     notify_lang: str = "en"
+    runtime_target: RuntimeTarget | None = None
 
 
 def load_platform_runtime_settings(
@@ -71,8 +76,26 @@ def load_platform_runtime_settings(
     secret_client_factory: Callable[[], Any] | None = None,
 ) -> PlatformRuntimeSettings:
     project_id = project_id_resolver()
+    account_group = resolve_account_group(os.getenv("ACCOUNT_GROUP"))
+    group_config = load_account_group_config(
+        project_id=project_id,
+        account_group=account_group,
+        raw_json=os.getenv("IB_ACCOUNT_GROUP_CONFIG_JSON"),
+        secret_name=os.getenv("IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME"),
+        secret_client_factory=secret_client_factory,
+    )
+    resolved_identity = resolve_runtime_identity_from_env(
+        os.environ,
+        platform_id=IBKR_PLATFORM,
+        default_strategy_profile=os.getenv("STRATEGY_PROFILE"),
+        dry_run_only=resolve_bool_value(os.getenv("IBKR_DRY_RUN_ONLY")),
+        deployment_selector=account_group,
+        account_selector=group_config.account_ids,
+        account_scope=account_group,
+        service_name=group_config.service_name,
+    )
     strategy_definition = resolve_strategy_definition(
-        os.getenv("STRATEGY_PROFILE"),
+        resolved_identity.strategy_profile,
         platform_id=IBKR_PLATFORM,
     )
     strategy_metadata = resolve_strategy_metadata(
@@ -87,14 +110,6 @@ def load_platform_runtime_settings(
         env=os.environ,
         repo_root=Path(__file__).resolve().parent,
         include_reconciliation_output=True,
-    )
-    account_group = resolve_account_group(os.getenv("ACCOUNT_GROUP"))
-    group_config = load_account_group_config(
-        project_id=project_id,
-        account_group=account_group,
-        raw_json=os.getenv("IB_ACCOUNT_GROUP_CONFIG_JSON"),
-        secret_name=os.getenv("IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME"),
-        secret_client_factory=secret_client_factory,
     )
 
     instance_name = require_group_string(
@@ -157,6 +172,7 @@ def load_platform_runtime_settings(
         tg_token=os.getenv("TELEGRAM_TOKEN"),
         tg_chat_id=os.getenv("GLOBAL_TELEGRAM_CHAT_ID"),
         notify_lang=os.getenv("NOTIFY_LANG", "en"),
+        runtime_target=resolved_identity.runtime_target,
     )
 
 

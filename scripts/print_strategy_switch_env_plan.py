@@ -15,6 +15,7 @@ for candidate in (ROOT, QPK_SRC, UES_SRC):
     if candidate_str not in sys.path:
         sys.path.insert(0, candidate_str)
 
+from quant_platform_kit.common.runtime_target import build_runtime_target  # noqa: E402
 from quant_platform_kit.common.strategies import derive_strategy_artifact_paths  # noqa: E402
 from strategy_registry import (  # noqa: E402
     IBKR_PLATFORM,
@@ -49,6 +50,14 @@ def build_switch_plan(profile: str) -> dict[str, object]:
     config_source_policy = str(runtime_requirements.get("config_source_policy") or "none")
     reconciliation_output_policy = str(
         runtime_requirements.get("reconciliation_output_policy") or "none"
+    )
+    runtime_target = build_runtime_target(
+        platform_id=IBKR_PLATFORM,
+        strategy_profile=definition.profile,
+        dry_run_only=False,
+        deployment_selector=None,
+        account_scope=None,
+        service_name="interactive-brokers-quant-service",
     )
 
     set_env: dict[str, str] = {"STRATEGY_PROFILE": definition.profile}
@@ -113,6 +122,7 @@ def build_switch_plan(profile: str) -> dict[str, object]:
         **runtime_requirements,
         "required_inputs": sorted(definition.required_inputs),
         "target_mode": definition.target_mode,
+        "runtime_target": runtime_target.to_dict(),
         "set_env": set_env,
         "keep_env": keep_env,
         "optional_env": sorted(optional_env),
@@ -132,6 +142,7 @@ def _print_plan(plan: dict[str, object]) -> None:
     print(f"requires_snapshot_artifacts: {plan['requires_snapshot_artifacts']}")
     print(f"requires_strategy_config_path: {plan['requires_strategy_config_path']}")
     print(f"target_mode: {plan['target_mode']}")
+    print(f"runtime_target: {json.dumps(plan['runtime_target'], sort_keys=True)}")
     print("\nset_env:")
     for key, value in plan["set_env"].items():
         print(f"  {key}={value}")

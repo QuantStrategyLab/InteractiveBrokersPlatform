@@ -13,11 +13,13 @@
 ## English
 
 IBKR runtime for shared `us_equity` strategy profiles from `UsEquityStrategies`. It supports the `us_equity` profiles listed in the IBKR profile status table below. Strategy logic, cadence, asset universes, parameters, and research/backtest notes live in `UsEquityStrategies`.
+The runtime now carries a structured `RuntimeTarget` / `RUNTIME_TARGET_JSON` alongside the compatibility `STRATEGY_PROFILE` selector.
 
 Current strategy implementations are sourced from `UsEquityStrategies`.
 
 Full strategy documentation now lives in [`UsEquityStrategies`](https://github.com/QuantStrategyLab/UsEquityStrategies). This README focuses on IBKR runtime behavior, profile enablement, deployment, and credentials.
 This runtime matrix is the authoritative enablement source for IBKR. `UsEquityStrategies` carries strategy-layer logic, cadence, compatibility, and metadata.
+`STRATEGY_PROFILE` remains the compatibility selector for strategy routing, while `RuntimeTarget` describes the running service identity.
 
 ### Execution boundary
 
@@ -217,7 +219,7 @@ Current behavior is fail-fast:
 
 ### GitHub-managed Cloud Run env sync
 
-If code deployment still uses Google Cloud Trigger, but you want GitHub to be the single source of truth for runtime env vars, this repo now includes `.github/workflows/sync-cloud-run-env.yml`.
+If code deployment still uses Google Cloud Trigger, but you want GitHub to be the single source of truth for runtime env vars, this repo now includes `.github/workflows/sync-cloud-run-env.yml`. The workflow now also emits `RUNTIME_TARGET_JSON`, so the control plane carries a structured runtime target alongside the legacy `STRATEGY_PROFILE` selector.
 
 Recommended setup:
 
@@ -239,7 +241,7 @@ Recommended setup:
 
 On every push to `main`, the workflow updates the existing Cloud Run service with the values above and removes legacy env vars that should now live in the account-group config (`IB_CLIENT_ID`, `IB_GATEWAY_INSTANCE_NAME`, `IB_GATEWAY_MODE`) plus the older transport vars (`IB_GATEWAY_HOST`, `IB_GATEWAY_PORT`, `TELEGRAM_CHAT_ID`). If `IB_GATEWAY_ZONE` or `IB_GATEWAY_IP_MODE` are blank in GitHub, the workflow also removes them from Cloud Run to avoid drift.
 
-`STRATEGY_PROFILE` is now resolved from a platform capability matrix plus a rollout allowlist derived from `runtime_enabled` strategy metadata. The current strategy domain is `us_equity`, and the repo keeps the runtime registry thin: `eligible` means the platform can run the strategy in theory, while `enabled` means the current rollout really allows it. `ACCOUNT_GROUP` now selects one account-group config entry, and the service fails fast if that runtime identity is incomplete.
+`STRATEGY_PROFILE` is now resolved from a platform capability matrix plus a rollout allowlist derived from `runtime_enabled` strategy metadata. The current strategy domain is `us_equity`, and the repo keeps the runtime registry thin: `eligible` means the platform can run the strategy in theory, while `enabled` means the current rollout really allows it. `ACCOUNT_GROUP` now selects one account-group config entry, and the service fails fast if that runtime identity is incomplete. `RUNTIME_TARGET_JSON` carries the structured runtime identity; `STRATEGY_PROFILE` remains the compatibility selector for the strategy implementation.
 
 Important:
 
@@ -261,7 +263,7 @@ Important:
 
 1. **GCE**: Set up IB Gateway (paper or live) on a GCE instance. Ensure API access is enabled, remote clients are allowed when needed, and use `4001` for `live` or `4002` for `paper`.
 2. **VPC / Subnet**: Put Cloud Run and GCE in the same VPC. For cleaner firewall rules, reserve a dedicated subnet for Cloud Run Direct VPC egress.
-3. **Cloud Run**: Deploy or update this Flask app with Direct VPC egress. Set `STRATEGY_PROFILE`, `ACCOUNT_GROUP`, and `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME`. Keep `IB_GATEWAY_ZONE` / `IB_GATEWAY_IP_MODE` only as transition fallbacks if the selected account-group payload does not already contain them. The runtime service account needs `roles/secretmanager.secretAccessor` and, for instance-name resolution, `roles/compute.viewer`.
+3. **Cloud Run**: Deploy or update this Flask app with Direct VPC egress. Set `STRATEGY_PROFILE`, `ACCOUNT_GROUP`, and `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME`. Keep `IB_GATEWAY_ZONE` / `IB_GATEWAY_IP_MODE` only as transition fallbacks if the selected account-group payload does not already contain them. The workflow emits `RUNTIME_TARGET_JSON` to describe the structured deployment target. The runtime service account needs `roles/secretmanager.secretAccessor` and, for instance-name resolution, `roles/compute.viewer`.
    - For Cloud Run source deploy, also grant `roles/storage.objectViewer` on `gs://run-sources-${PROJECT_ID}-${REGION}` to the build service account, the deploy service account, and `${PROJECT_NUMBER}-compute@developer.gserviceaccount.com`.
 4. **Firewall**: Allow TCP `4001` (`live`) or `4002` (`paper`) from the Cloud Run egress subnet CIDR to the GCE instance.
 5. **Cloud Scheduler**: Create a job that POSTs to the Cloud Run URL. Choose the cron from the strategy-layer cadence in `UsEquityStrategies`; daily profiles can still use a near-close weekday schedule such as `45 15 * * 1-5` in `America/New_York`.

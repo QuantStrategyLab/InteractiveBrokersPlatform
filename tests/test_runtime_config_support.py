@@ -83,6 +83,8 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.strategy_profile == SAMPLE_STRATEGY_PROFILE
     assert settings.strategy_display_name == "Global ETF Rotation"
     assert settings.strategy_domain == US_EQUITY_DOMAIN
+    assert settings.runtime_target.platform_id == "ibkr"
+    assert settings.runtime_target.execution_mode == "live"
     assert settings.strategy_target_mode == "weight"
     assert settings.strategy_artifact_root is None
     assert settings.strategy_artifact_dir is None
@@ -100,6 +102,32 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.notify_lang == "en"
     assert settings.tg_token is None
     assert settings.tg_chat_id is None
+
+
+def test_load_platform_runtime_settings_prefers_runtime_target_json(monkeypatch):
+    monkeypatch.setenv("STRATEGY_PROFILE", SAMPLE_STRATEGY_PROFILE)
+    monkeypatch.setenv("ACCOUNT_GROUP", "default")
+    monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
+    monkeypatch.setenv(
+        "RUNTIME_TARGET_JSON",
+        (
+            '{"platform_id":"ibkr","strategy_profile":"tech_communication_pullback_enhancement",'
+            '"dry_run_only":true,"deployment_selector":"default","account_selector":["U999"],'
+            '"account_scope":"default","service_name":"interactive-brokers-quant-service",'
+            '"execution_mode":"paper"}'
+        ),
+    )
+
+    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
+
+    assert settings.strategy_profile == "tech_communication_pullback_enhancement"
+    assert settings.runtime_target.strategy_profile == "tech_communication_pullback_enhancement"
+    assert settings.runtime_target.platform_id == "ibkr"
+    assert settings.runtime_target.dry_run_only is True
+    assert settings.runtime_target.execution_mode == "paper"
+    assert settings.runtime_target.deployment_selector == "default"
+    assert settings.runtime_target.account_selector == ("U999",)
+    assert settings.runtime_target.account_scope == "default"
 
 
 
@@ -165,6 +193,7 @@ def test_load_platform_runtime_settings_rejects_unknown_strategy_profile(monkeyp
 def test_platform_supported_profiles_are_filtered_by_registry():
     assert get_supported_profiles_for_platform(IBKR_PLATFORM) == frozenset(
         {
+            "global_etf_confidence_vol_gate",
             "soxl_soxx_trend_income",
             "tqqq_growth_income",
             "tech_communication_pullback_enhancement",
@@ -178,6 +207,7 @@ def test_platform_supported_profiles_are_filtered_by_registry():
 def test_platform_eligible_profiles_are_exposed_by_capability_matrix():
     assert get_eligible_profiles_for_platform(IBKR_PLATFORM) == frozenset(
         {
+            "global_etf_confidence_vol_gate",
             "soxl_soxx_trend_income",
             "tqqq_growth_income",
             "tech_communication_pullback_enhancement",
@@ -255,6 +285,7 @@ def test_platform_profile_status_matrix_matches_current_ibkr_rollout():
     by_profile = {row["canonical_profile"]: row for row in rows}
 
     assert set(by_profile) == {
+        "global_etf_confidence_vol_gate",
         "global_etf_rotation",
         "russell_1000_multi_factor_defensive",
         "soxl_soxx_trend_income",
@@ -348,6 +379,10 @@ def test_print_strategy_switch_env_plan_for_tqqq_growth_income():
     assert plan["canonical_profile"] == "tqqq_growth_income"
     assert plan["eligible"] is True
     assert plan["enabled"] is True
+    assert plan["runtime_target"]["platform_id"] == "ibkr"
+    assert plan["runtime_target"]["strategy_profile"] == "tqqq_growth_income"
+    assert plan["runtime_target"]["service_name"] == "interactive-brokers-quant-service"
+    assert plan["runtime_target"]["execution_mode"] == "live"
     assert plan["profile_group"] == "direct_runtime_inputs"
     assert plan["input_mode"] == "benchmark_history+portfolio_snapshot"
     assert plan["requires_snapshot_artifacts"] is False

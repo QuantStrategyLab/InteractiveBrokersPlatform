@@ -25,6 +25,7 @@ from application.rebalance_service import run_strategy_core as run_rebalance_cyc
 from decision_mapper import map_strategy_decision
 from entrypoints.cloud_run import is_market_open_today
 from notifications.telegram import build_strategy_display_name, build_translator, send_telegram_message
+from quant_platform_kit.common import build_runtime_assembly
 from quant_platform_kit.common.runtime_reports import (
     append_runtime_report_error,
     build_runtime_report_base,
@@ -46,7 +47,7 @@ from application.execution_service import (
     get_market_prices as application_get_market_prices,
 )
 from application.paper_liquidation_service import execute_paper_liquidation
-from runtime_logging import RuntimeLogContext, build_run_id, emit_runtime_log, extract_cloud_trace
+from runtime_logging import build_run_id, emit_runtime_log, extract_cloud_trace
 from runtime_config_support import load_platform_runtime_settings, resolve_ib_gateway_ip_mode
 from strategy_runtime import load_strategy_runtime
 
@@ -244,16 +245,17 @@ strategy_display_name = build_strategy_display_name(t)(
     fallback_name=STRATEGY_DISPLAY_NAME,
 )
 
-RUNTIME_LOG_CONTEXT = RuntimeLogContext(
+RUNTIME_LOG_CONTEXT = build_runtime_assembly(
     platform="interactive_brokers",
     deploy_target="cloud_run",
     service_name=SERVICE_NAME or os.getenv("K_SERVICE", "interactive-brokers-platform"),
     strategy_profile=STRATEGY_PROFILE,
+    runtime_target=RUNTIME_SETTINGS.runtime_target,
     account_scope=ACCOUNT_GROUP,
     account_group=ACCOUNT_GROUP,
     project_id=PROJECT_ID,
     instance_name=RUNTIME_SETTINGS.ib_gateway_instance_name,
-    extra_fields={
+    extra_context_fields={
         "account_ids": list(ACCOUNT_IDS),
         "strategy_target_mode": RUNTIME_SETTINGS.strategy_target_mode,
         "strategy_artifact_dir": RUNTIME_SETTINGS.strategy_artifact_dir,
@@ -262,7 +264,7 @@ RUNTIME_LOG_CONTEXT = RuntimeLogContext(
         "ib_connect_attempts": IB_CONNECT_ATTEMPTS,
         "ib_client_id_retry_offset": IB_CLIENT_ID_RETRY_OFFSET,
     },
-)
+).build_log_context(run_id="")
 
 
 def resolve_reporting_managed_symbols() -> tuple[str, ...]:
@@ -369,6 +371,7 @@ def build_composer():
         trace_extractor=extract_cloud_trace,
         env_reader=os.getenv,
         printer=print,
+        runtime_target=RUNTIME_SETTINGS.runtime_target,
     )
 
 

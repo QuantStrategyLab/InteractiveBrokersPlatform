@@ -7,7 +7,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from quant_platform_kit.common import RuntimeAssembly
 from quant_platform_kit.strategy_contracts import build_execution_timing_metadata
+from quant_platform_kit.common.runtime_target import RuntimeTarget
 from runtime_logging import RuntimeLogContext
 
 
@@ -17,15 +19,9 @@ def _utcnow() -> datetime:
 
 @dataclass(frozen=True)
 class IBKRRuntimeReportingAdapters:
-    platform: str
-    deploy_target: str
-    service_name: str
-    strategy_profile: str
+    runtime_assembly: RuntimeAssembly
     strategy_domain: str | None
-    account_scope: str | None
-    account_group: str | None
-    project_id: str | None
-    instance_name: str | None
+    runtime_target: RuntimeTarget | None = None
     extra_context_fields: Mapping[str, Any] = field(default_factory=dict)
     managed_symbols: tuple[str, ...] = ()
     signal_source: str = ""
@@ -70,19 +66,12 @@ class IBKRRuntimeReportingAdapters:
             raise ValueError(f"Missing reporting adapter dependencies: {', '.join(missing)}")
 
     def build_log_context(self, *, trace_header: str | None = None) -> RuntimeLogContext:
-        return RuntimeLogContext(
-            platform=self.platform,
-            deploy_target=self.deploy_target,
-            service_name=self.service_name,
-            strategy_profile=self.strategy_profile,
-            account_scope=self.account_scope,
-            account_group=self.account_group,
-            project_id=self.project_id,
-            instance_name=self.instance_name,
-            extra_fields=dict(self.extra_context_fields),
-        ).with_run(
-            self.run_id_builder(),
-            trace=self.trace_extractor(self.project_id, trace_header),
+        return self.runtime_assembly.with_overrides(
+            runtime_target=self.runtime_target,
+            extra_context_fields=self.extra_context_fields,
+        ).build_log_context(
+            run_id=self.run_id_builder(),
+            trace=self.trace_extractor(self.runtime_assembly.project_id, trace_header),
         )
 
     def build_report(self, log_context: RuntimeLogContext) -> dict[str, Any]:
@@ -92,17 +81,15 @@ class IBKRRuntimeReportingAdapters:
             signal_effective_after_trading_days=self.signal_effective_after_trading_days,
         )
         return self.report_builder(
-            platform=log_context.platform,
-            deploy_target=log_context.deploy_target,
-            service_name=log_context.service_name,
-            strategy_profile=self.strategy_profile,
-            strategy_domain=self.strategy_domain,
-            account_scope=log_context.account_scope,
-            account_group=log_context.account_group,
-            run_id=log_context.run_id,
-            run_source="cloud_run",
-            dry_run=self.dry_run,
-            started_at=started_at,
+            **self.runtime_assembly.with_overrides(
+                runtime_target=self.runtime_target,
+                extra_context_fields=self.extra_context_fields,
+            ).build_report_base_kwargs(
+                run_id=log_context.run_id,
+                dry_run=self.dry_run,
+                started_at=started_at,
+                strategy_domain=self.strategy_domain,
+            ),
             summary={
                 "account_ids": list(self.extra_context_fields.get("account_ids") or ()),
                 "managed_symbols": list(self.managed_symbols),
@@ -147,7 +134,7 @@ class IBKRRuntimeReportingAdapters:
             report,
             base_dir=self.report_base_dir,
             gcs_prefix_uri=self.report_gcs_prefix_uri,
-            gcp_project_id=self.project_id,
+            gcp_project_id=self.runtime_assembly.project_id,
         )
         if isinstance(persisted, str):
             return persisted
@@ -156,15 +143,9 @@ class IBKRRuntimeReportingAdapters:
 
 def build_runtime_reporting_adapters(
     *,
-    platform: str,
-    deploy_target: str,
-    service_name: str,
-    strategy_profile: str,
+    runtime_assembly: RuntimeAssembly,
     strategy_domain: str | None,
-    account_scope: str | None,
-    account_group: str | None,
-    project_id: str | None,
-    instance_name: str | None,
+    runtime_target: RuntimeTarget | None = None,
     extra_context_fields: Mapping[str, Any] | None = None,
     managed_symbols: tuple[str, ...],
     signal_source: str,
@@ -196,15 +177,9 @@ def build_runtime_reporting_adapters(
     clock: Callable[[], datetime] = _utcnow,
 ) -> IBKRRuntimeReportingAdapters:
     return IBKRRuntimeReportingAdapters(
-        platform=platform,
-        deploy_target=deploy_target,
-        service_name=service_name,
-        strategy_profile=strategy_profile,
+        runtime_assembly=runtime_assembly,
         strategy_domain=strategy_domain,
-        account_scope=account_scope,
-        account_group=account_group,
-        project_id=project_id,
-        instance_name=instance_name,
+        runtime_target=runtime_target,
         extra_context_fields=dict(extra_context_fields or {}),
         managed_symbols=tuple(managed_symbols),
         signal_source=str(signal_source or ""),

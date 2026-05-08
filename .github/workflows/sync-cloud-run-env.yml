@@ -112,6 +112,19 @@ jobs:
               output.write(
                   f"reconciliation_output_policy={str(selected.get('reconciliation_output_policy') or 'none')}\n"
               )
+              account_group = os.environ.get("ACCOUNT_GROUP", "").strip() or None
+              dry_run_only = os.environ.get("IBKR_DRY_RUN_ONLY", "").strip().lower() == "true"
+              runtime_target = {
+                  "platform_id": "ibkr",
+                  "strategy_profile": canonical_profile,
+                  "dry_run_only": dry_run_only,
+                  "deployment_selector": account_group,
+                  "account_selector": [account_group] if account_group else [],
+                  "account_scope": account_group,
+                  "service_name": os.environ.get("CLOUD_RUN_SERVICE", "").strip() or None,
+                  "execution_mode": "paper" if dry_run_only else "live",
+              }
+              output.write(f"runtime_target_json={json.dumps(runtime_target, sort_keys=True)}\n")
           PY
 
       - name: Validate env sync inputs
@@ -122,6 +135,7 @@ jobs:
           REQUIRES_STRATEGY_CONFIG_PATH: ${{ steps.strategy_requirements.outputs.requires_strategy_config_path }}
           CONFIG_SOURCE_POLICY: ${{ steps.strategy_requirements.outputs.config_source_policy }}
           RECONCILIATION_OUTPUT_POLICY: ${{ steps.strategy_requirements.outputs.reconciliation_output_policy }}
+          RUNTIME_TARGET_JSON: ${{ steps.strategy_requirements.outputs.runtime_target_json }}
         run: |
           set -euo pipefail
 
@@ -149,6 +163,10 @@ jobs:
 
           if [ "${RECONCILIATION_OUTPUT_POLICY:-}" = "required" ]; then
             required_vars+=(IBKR_RECONCILIATION_OUTPUT_PATH)
+          fi
+
+          if [ -z "${RUNTIME_TARGET_JSON:-}" ]; then
+            required_vars+=(RUNTIME_TARGET_JSON)
           fi
 
           missing_vars=()
@@ -218,6 +236,7 @@ jobs:
             "STRATEGY_PROFILE=${STRATEGY_PROFILE}"
             "ACCOUNT_GROUP=${ACCOUNT_GROUP}"
             "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=${IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME}"
+            "RUNTIME_TARGET_JSON=${RUNTIME_TARGET_JSON}"
           )
           secret_pairs=()
 
