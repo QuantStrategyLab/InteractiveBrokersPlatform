@@ -25,7 +25,7 @@ from application.rebalance_service import run_strategy_core as run_rebalance_cyc
 from decision_mapper import map_strategy_decision
 from entrypoints.cloud_run import is_market_open_today
 from notifications.telegram import build_strategy_display_name, build_translator, send_telegram_message
-from quant_platform_kit.common import build_runtime_assembly
+from quant_platform_kit.common.runtime_assembly import build_runtime_assembly
 from quant_platform_kit.common.runtime_reports import (
     append_runtime_report_error,
     build_runtime_report_base,

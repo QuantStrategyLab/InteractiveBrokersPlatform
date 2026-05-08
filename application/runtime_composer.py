@@ -9,7 +9,8 @@ from typing import Any, Mapping
 from application.runtime_dependencies import IBKRRebalanceConfig, IBKRRebalanceRuntime
 from application.runtime_notification_adapters import build_runtime_notification_adapters
 from application.runtime_reporting_adapters import build_runtime_reporting_adapters
-from quant_platform_kit.common import build_runtime_assembly, build_runtime_context_fields
+from quant_platform_kit.common.runtime_assembly import build_runtime_assembly
+from quant_platform_kit.common.runtime_target import build_runtime_context_fields
 from quant_platform_kit.common.port_adapters import CallablePortfolioPort
 from quant_platform_kit.common.runtime_target import RuntimeTarget
 
