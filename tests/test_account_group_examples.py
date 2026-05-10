@@ -8,11 +8,11 @@ def test_default_account_group_example_is_valid():
         Path(__file__).resolve().parents[1]
         / "docs"
         / "examples"
-        / "ibkr-account-groups.default.json"
+        / "ibkr-account-groups.paper.json"
     )
 
     configs = parse_account_group_configs(example_path.read_text(encoding="utf-8"))
-    default_group = configs["default"]
+    default_group = configs["paper"]
 
     assert default_group.ib_gateway_instance_name == "interactive-brokers-quant-instance"
     assert default_group.ib_gateway_zone == "us-central1-c"
