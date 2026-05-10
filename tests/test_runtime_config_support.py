@@ -127,6 +127,7 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.notify_lang == "en"
     assert settings.tg_token is None
     assert settings.tg_chat_id is None
+    assert settings.strategy_plugin_mounts_json is None
 
 
 def test_load_platform_runtime_settings_prefers_runtime_target_json(monkeypatch):
@@ -203,6 +204,19 @@ def test_load_platform_runtime_settings_supports_fractional_quantity_step(monkey
 
     assert settings.quantity_step == 0.0001
     assert settings.min_order_notional == 5.0
+
+
+def test_load_platform_runtime_settings_reads_ibkr_strategy_plugin_mounts(monkeypatch):
+    mount_config = '{"strategy_plugins":[{"strategy":"soxl_soxx_trend_income","plugin":"crisis_response_shadow","signal_path":"gs://bucket/latest_signal.json"}]}'
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json("soxl_soxx_trend_income"))
+    monkeypatch.setenv("ACCOUNT_GROUP", "paper")
+    monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
+    monkeypatch.setenv("STRATEGY_PLUGIN_MOUNTS_JSON", '{"strategy_plugins":[{"plugin":"global"}]}')
+    monkeypatch.setenv("IBKR_STRATEGY_PLUGIN_MOUNTS_JSON", mount_config)
+
+    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
+
+    assert settings.strategy_plugin_mounts_json == mount_config
 
 
 
