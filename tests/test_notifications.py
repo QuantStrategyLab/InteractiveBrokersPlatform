@@ -41,6 +41,8 @@ def test_strategy_display_name_translates_new_live_profiles():
     zh_name = build_strategy_display_name(build_translator("zh"))
     en_name = build_strategy_display_name(build_translator("en"))
 
+    assert zh_name("global_etf_confidence_vol_gate") == "全球 ETF 置信波动门控"
+    assert en_name("global_etf_confidence_vol_gate") == "Global ETF Confidence Vol Gate"
     assert zh_name("mega_cap_leader_rotation_top50_balanced") == "Mega Cap Top50 平衡龙头轮动"
     assert en_name("mega_cap_leader_rotation_top50_balanced") == "Mega Cap Leader Rotation Top50 Balanced"
 

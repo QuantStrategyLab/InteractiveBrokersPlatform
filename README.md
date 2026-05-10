@@ -12,14 +12,10 @@
 <a id="english"></a>
 ## English
 
-IBKR runtime for shared `us_equity` strategy profiles from `UsEquityStrategies`. It supports the `us_equity` profiles listed in the IBKR profile status table below. Strategy logic, cadence, asset universes, parameters, and research/backtest notes live in `UsEquityStrategies`.
-The runtime now carries a structured `RuntimeTarget` / `RUNTIME_TARGET_JSON` alongside the compatibility `STRATEGY_PROFILE` selector.
+IBKR runtime for shared `us_equity` strategy profiles from `UsEquityStrategies`. Strategy logic, cadence, asset universes, parameters, and research/backtest notes live there.
+The runtime carries a structured `RuntimeTarget` / `RUNTIME_TARGET_JSON` for the running service identity. Strategy-owned defaults come from `UsEquityStrategies`; platform variables are only explicit overrides.
 
-Current strategy implementations are sourced from `UsEquityStrategies`.
-
-Full strategy documentation now lives in [`UsEquityStrategies`](https://github.com/QuantStrategyLab/UsEquityStrategies). This README focuses on IBKR runtime behavior, profile enablement, deployment, and credentials.
-This runtime matrix is the authoritative enablement source for IBKR. `UsEquityStrategies` carries strategy-layer logic, cadence, compatibility, and metadata.
-`STRATEGY_PROFILE` remains the compatibility selector for strategy routing, while `RuntimeTarget` describes the running service identity.
+Full strategy documentation now lives in [`UsEquityStrategies`](https://github.com/QuantStrategyLab/UsEquityStrategies). This README focuses on IBKR runtime behavior, profile enablement, deployment, and credentials, and this profile matrix remains the authoritative IBKR enablement source.
 
 ### Execution boundary
 
@@ -93,6 +89,7 @@ Telegram alerts support English/Chinese execution and heartbeat messages. Strate
 ### Runtime env vars
 
 The selected `ACCOUNT_GROUP` is now the runtime identity. Keep broker-specific identity in the account-group config payload, not in Cloud Run env vars.
+For IBKR, keep `paper` as a single account-group entry. If you later add live accounts, split them into separate live groups; do not mix paper and live in one account-group entry.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -133,7 +130,7 @@ For the current first rollout, keep GitHub / Cloud Run focused on service-level 
 
 ```bash
 STRATEGY_PROFILE=global_etf_rotation
-ACCOUNT_GROUP=default
+ACCOUNT_GROUP=paper
 IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=ibkr-account-groups
 GLOBAL_TELEGRAM_CHAT_ID=<telegram-chat-id>
 NOTIFY_LANG=zh
@@ -147,7 +144,7 @@ For the snapshot-based stock profiles:
 
 ```bash
 STRATEGY_PROFILE=russell_1000_multi_factor_defensive
-ACCOUNT_GROUP=default
+ACCOUNT_GROUP=paper
 IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=ibkr-account-groups
 IBKR_FEATURE_SNAPSHOT_PATH=/var/data/r1000_feature_snapshot.csv
 GLOBAL_TELEGRAM_CHAT_ID=<telegram-chat-id>
@@ -156,7 +153,7 @@ NOTIFY_LANG=zh
 
 ```bash
 STRATEGY_PROFILE=tech_communication_pullback_enhancement
-ACCOUNT_GROUP=default
+ACCOUNT_GROUP=paper
 IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=ibkr-account-groups
 IBKR_FEATURE_SNAPSHOT_PATH=/var/data/tech_communication_pullback_enhancement_feature_snapshot_latest.csv
 IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH=/var/manifests/tech_communication_pullback_enhancement_feature_snapshot_latest.csv.manifest.json
@@ -171,7 +168,7 @@ NOTIFY_LANG=zh
 
 ```bash
 STRATEGY_PROFILE=mega_cap_leader_rotation_top50_balanced
-ACCOUNT_GROUP=default
+ACCOUNT_GROUP=paper
 IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=ibkr-account-groups
 IBKR_FEATURE_SNAPSHOT_PATH=/var/data/mega_cap_leader_rotation_top50_balanced_feature_snapshot_latest.csv
 IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH=/var/manifests/mega_cap_leader_rotation_top50_balanced_feature_snapshot_latest.csv.manifest.json
@@ -186,7 +183,7 @@ Recommended account-group config payload:
 ```json
 {
   "groups": {
-    "default": {
+    "paper": {
       "ib_gateway_instance_name": "interactive-brokers-quant-instance",
       "ib_gateway_zone": "us-central1-c",
       "ib_gateway_mode": "paper",
@@ -194,21 +191,14 @@ Recommended account-group config payload:
       "ib_client_id": 1,
       "service_name": "interactive-brokers-quant-service",
       "account_ids": ["DU1234567"]
-    },
-    "ira": {
-      "ib_gateway_instance_name": "interactive-brokers-quant-instance",
-      "ib_gateway_zone": "us-central1-c",
-      "ib_gateway_mode": "paper",
-      "ib_gateway_ip_mode": "internal",
-      "ib_client_id": 7,
-      "service_name": "interactive-brokers-quant-ira-service",
-      "account_ids": ["U1234567"]
     }
   }
 }
 ```
 
-See [`docs/examples/ibkr-account-groups.default.json`](docs/examples/ibkr-account-groups.default.json) for a ready-to-edit starter example, and [`docs/ibkr_runtime_rollout.md`](docs/ibkr_runtime_rollout.md) for the exact rollout steps to get `ACCOUNT_GROUP=default` running.
+If you later add live, keep it as a separate live group such as `live-main` with `ib_gateway_mode=live` and its own `account_ids`.
+
+See [`docs/examples/ibkr-account-groups.paper.json`](docs/examples/ibkr-account-groups.paper.json) for a ready-to-edit starter example, and [`docs/ibkr_runtime_rollout.md`](docs/ibkr_runtime_rollout.md) for the exact rollout steps to get `ACCOUNT_GROUP=paper` running.
 
 Current behavior is fail-fast:
 
@@ -229,7 +219,7 @@ Recommended setup:
   - `CLOUD_RUN_SERVICE`
   - `TELEGRAM_TOKEN_SECRET_NAME` (recommended when Cloud Run already uses Secret Manager for `TELEGRAM_TOKEN`)
   - `STRATEGY_PROFILE` (set explicitly to one enabled profile, such as `soxl_soxx_trend_income`)
-  - `ACCOUNT_GROUP` (recommended: `default`)
+  - `ACCOUNT_GROUP` (recommended: `paper`)
   - `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME`
   - `GLOBAL_TELEGRAM_CHAT_ID`
   - `NOTIFY_LANG`
@@ -241,7 +231,7 @@ Recommended setup:
 
 On every push to `main`, the workflow updates the existing Cloud Run service with the values above and removes legacy env vars that should now live in the account-group config (`IB_CLIENT_ID`, `IB_GATEWAY_INSTANCE_NAME`, `IB_GATEWAY_MODE`) plus the older transport vars (`IB_GATEWAY_HOST`, `IB_GATEWAY_PORT`, `TELEGRAM_CHAT_ID`). If `IB_GATEWAY_ZONE` or `IB_GATEWAY_IP_MODE` are blank in GitHub, the workflow also removes them from Cloud Run to avoid drift.
 
-`STRATEGY_PROFILE` is now resolved from a platform capability matrix plus a rollout allowlist derived from `runtime_enabled` strategy metadata. The current strategy domain is `us_equity`, and the repo keeps the runtime registry thin: `eligible` means the platform can run the strategy in theory, while `enabled` means the current rollout really allows it. `ACCOUNT_GROUP` now selects one account-group config entry, and the service fails fast if that runtime identity is incomplete. `RUNTIME_TARGET_JSON` carries the structured runtime identity; `STRATEGY_PROFILE` remains the compatibility selector for the strategy implementation.
+`STRATEGY_PROFILE` is resolved from a platform capability matrix plus a rollout allowlist derived from `runtime_enabled` strategy metadata. The current strategy domain is `us_equity`: `eligible` means the platform can run the strategy in theory, while `enabled` means the current rollout really allows it. `ACCOUNT_GROUP` selects one account-group config entry, and the service fails fast if that runtime identity is incomplete. `RUNTIME_TARGET_JSON` carries the structured runtime identity; strategy defaults continue to come from `UsEquityStrategies`.
 
 Important:
 
@@ -281,7 +271,7 @@ gcloud run deploy interactive-brokers-quant-service \
   --network default \
   --subnet cloudrun-direct-egress \
   --vpc-egress private-ranges-only \
-  --set-env-vars STRATEGY_PROFILE=global_etf_rotation,ACCOUNT_GROUP=default,IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=ibkr-account-groups,GLOBAL_TELEGRAM_CHAT_ID=123456789,NOTIFY_LANG=zh
+  --set-env-vars STRATEGY_PROFILE=global_etf_rotation,ACCOUNT_GROUP=paper,IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=ibkr-account-groups,GLOBAL_TELEGRAM_CHAT_ID=123456789,NOTIFY_LANG=zh
 ```
 
 If the service already exists and your CI only updates source/image, you can patch networking separately:
@@ -304,9 +294,7 @@ gcloud run services update ibkr-quant \
 
 IBKR runtime 负责把共享的 `us_equity` 策略档位部署到 GCP Cloud Run，并连接 GCE 上的 IB Gateway 执行。策略逻辑、策略频率、标的池、参数和研究/回测说明都放在 `UsEquityStrategies`；这个仓库只维护 IBKR 运行时、账号组、Gateway 连接、下单和通知。
 
-当前可运行的 `global_etf_rotation`、`russell_1000_multi_factor_defensive`、`tqqq_growth_income`、`soxl_soxx_trend_income`、`tech_communication_pullback_enhancement` 和 `mega_cap_leader_rotation_top50_balanced` 的策略实现都来自 `UsEquityStrategies`。
-
-完整策略说明现在放在 [`UsEquityStrategies`](https://github.com/QuantStrategyLab/UsEquityStrategies)。这个 README 只保留 IBKR 运行时、profile 启用状态、部署和凭据说明。
+完整策略说明放在 [`UsEquityStrategies`](https://github.com/QuantStrategyLab/UsEquityStrategies)。这个 README 只保留 IBKR 运行时、profile 启用状态、部署和凭据说明。
 
 ### 执行边界
 
@@ -380,7 +368,7 @@ IBKR 账户
 
 ```bash
 STRATEGY_PROFILE=soxl_soxx_trend_income
-ACCOUNT_GROUP=default
+ACCOUNT_GROUP=paper
 IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=ibkr-account-groups
 GLOBAL_TELEGRAM_CHAT_ID=<telegram-chat-id>
 NOTIFY_LANG=zh
@@ -397,7 +385,7 @@ IB_GATEWAY_IP_MODE=internal
 ```json
 {
   "groups": {
-    "default": {
+    "paper": {
       "ib_gateway_instance_name": "interactive-brokers-quant-instance",
       "ib_gateway_zone": "us-central1-c",
       "ib_gateway_mode": "paper",
@@ -405,21 +393,12 @@ IB_GATEWAY_IP_MODE=internal
       "ib_client_id": 1,
       "service_name": "interactive-brokers-quant-service",
       "account_ids": ["DU1234567"]
-    },
-    "ira": {
-      "ib_gateway_instance_name": "interactive-brokers-quant-instance",
-      "ib_gateway_zone": "us-central1-c",
-      "ib_gateway_mode": "paper",
-      "ib_gateway_ip_mode": "internal",
-      "ib_client_id": 7,
-      "service_name": "interactive-brokers-quant-ira-service",
-      "account_ids": ["U1234567"]
     }
   }
 }
 ```
 
-仓库里也提供了一个可以直接改的默认样例：[`docs/examples/ibkr-account-groups.default.json`](docs/examples/ibkr-account-groups.default.json)。如果你要按 `ACCOUNT_GROUP=default` 先落地，直接看 [`docs/ibkr_runtime_rollout.md`](docs/ibkr_runtime_rollout.md)。
+仓库里也提供了一个可以直接改的起始样例：[`docs/examples/ibkr-account-groups.paper.json`](docs/examples/ibkr-account-groups.paper.json)。如果你要按 `ACCOUNT_GROUP=paper` 先落地，直接看 [`docs/ibkr_runtime_rollout.md`](docs/ibkr_runtime_rollout.md)。
 
 当前行为改成了 fail-fast：
 
@@ -440,7 +419,7 @@ IB_GATEWAY_IP_MODE=internal
   - `CLOUD_RUN_SERVICE`
   - `TELEGRAM_TOKEN_SECRET_NAME`（如果 Cloud Run 上的 `TELEGRAM_TOKEN` 已经改成 Secret Manager，建议配置）
   - `STRATEGY_PROFILE`（显式设置为任一已启用 profile，例如 `soxl_soxx_trend_income`）
-  - `ACCOUNT_GROUP`（建议设为 `default`）
+  - `ACCOUNT_GROUP`（建议设为 `paper`）
   - `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME`
   - `GLOBAL_TELEGRAM_CHAT_ID`
   - `NOTIFY_LANG`
@@ -452,7 +431,7 @@ IB_GATEWAY_IP_MODE=internal
 
 每次 push 到 `main` 时，这个 workflow 会把上面这些值同步到现有 Cloud Run 服务里，并清掉已经转移到账号组配置里的旧 env（`IB_CLIENT_ID`、`IB_GATEWAY_INSTANCE_NAME`、`IB_GATEWAY_MODE`）以及更早的传输层 env（`IB_GATEWAY_HOST`、`IB_GATEWAY_PORT`、`TELEGRAM_CHAT_ID`）。如果 GitHub 里没有配置 `IB_GATEWAY_ZONE` 或 `IB_GATEWAY_IP_MODE`，workflow 也会把 Cloud Run 上这两个旧值一起删除，避免双配置源漂移。
 
-`STRATEGY_PROFILE` 现在由平台能力矩阵和从 `runtime_enabled` 策略元数据派生的 rollout allowlist 一起决定。当前策略域仍是 `us_equity`：`eligible` 表示平台理论上能跑，`enabled` 表示当前 rollout 真正放开。`ACCOUNT_GROUP` 是严格必填项，并会选中一份账号组配置。运行身份不完整时，服务会直接失败，不再静默回退。
+`STRATEGY_PROFILE` 由平台能力矩阵和从 `runtime_enabled` 策略元数据派生的 rollout allowlist 一起决定。当前策略域仍是 `us_equity`：`eligible` 表示平台理论上能跑，`enabled` 表示当前 rollout 真正放开。`ACCOUNT_GROUP` 是严格必填项，并会选中一份账号组配置。运行身份不完整时，服务会直接失败，不再静默回退。
 
 注意：
 
@@ -492,7 +471,7 @@ gcloud run deploy interactive-brokers-quant-service \
   --network default \
   --subnet cloudrun-direct-egress \
   --vpc-egress private-ranges-only \
-  --set-env-vars STRATEGY_PROFILE=global_etf_rotation,ACCOUNT_GROUP=default,IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=ibkr-account-groups,GLOBAL_TELEGRAM_CHAT_ID=123456789,NOTIFY_LANG=zh
+  --set-env-vars STRATEGY_PROFILE=global_etf_rotation,ACCOUNT_GROUP=paper,IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=ibkr-account-groups,GLOBAL_TELEGRAM_CHAT_ID=123456789,NOTIFY_LANG=zh
 ```
 
 如果服务已经存在，而你们的 CI 只是更新代码/镜像，可以单独补一次网络配置：

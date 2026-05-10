@@ -15,7 +15,7 @@ from quant_platform_kit.common.runtime_config import (
 )
 from quant_platform_kit.common.runtime_target import (
     RuntimeTarget,
-    resolve_runtime_identity_from_env,
+    resolve_runtime_target_from_env,
 )
 from strategy_registry import (
     IBKR_PLATFORM,
@@ -84,18 +84,9 @@ def load_platform_runtime_settings(
         secret_name=os.getenv("IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME"),
         secret_client_factory=secret_client_factory,
     )
-    resolved_identity = resolve_runtime_identity_from_env(
-        os.environ,
-        platform_id=IBKR_PLATFORM,
-        default_strategy_profile=os.getenv("STRATEGY_PROFILE"),
-        dry_run_only=resolve_bool_value(os.getenv("IBKR_DRY_RUN_ONLY")),
-        deployment_selector=account_group,
-        account_selector=group_config.account_ids,
-        account_scope=account_group,
-        service_name=group_config.service_name,
-    )
+    runtime_target = resolve_runtime_target_from_env(env=os.environ, expected_platform_id=IBKR_PLATFORM)
     strategy_definition = resolve_strategy_definition(
-        resolved_identity.strategy_profile,
+        runtime_target.strategy_profile,
         platform_id=IBKR_PLATFORM,
     )
     strategy_metadata = resolve_strategy_metadata(
@@ -172,7 +163,7 @@ def load_platform_runtime_settings(
         tg_token=os.getenv("TELEGRAM_TOKEN"),
         tg_chat_id=os.getenv("GLOBAL_TELEGRAM_CHAT_ID"),
         notify_lang=os.getenv("NOTIFY_LANG", "en"),
-        runtime_target=resolved_identity.runtime_target,
+        runtime_target=runtime_target,
     )
 
 

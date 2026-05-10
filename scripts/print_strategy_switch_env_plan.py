@@ -60,7 +60,9 @@ def build_switch_plan(profile: str) -> dict[str, object]:
         service_name="interactive-brokers-quant-service",
     )
 
-    set_env: dict[str, str] = {"STRATEGY_PROFILE": definition.profile}
+    set_env: dict[str, str] = {
+        "RUNTIME_TARGET_JSON": json.dumps(runtime_target.to_dict(), separators=(",", ":"))
+    }
     keep_env = [
         "ACCOUNT_GROUP",
         "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME",

@@ -1,6 +1,7 @@
-# InteractiveBrokersPlatform 配置落地：先跑通 `ACCOUNT_GROUP=default`
+# InteractiveBrokersPlatform 配置落地：先跑通 `ACCOUNT_GROUP=paper`
 
-这份文档只管当前这一步：**先把 `interactive-brokers-quant-service` 这一个 Cloud Run 服务，用 `ACCOUNT_GROUP=default` 跑通。**
+这份文档只管当前这一步：**先把 `interactive-brokers-quant-service` 这一个 Cloud Run 服务，用 `ACCOUNT_GROUP=paper` 跑通。**
+策略默认值仍然来自 `UsEquityStrategies`，这里仅描述 IBKR 平台壳子、账号组、Secret 和运行目标的落地方式。
 
 不在这一步里做的事：
 
@@ -15,6 +16,8 @@
 
 ### Cloud Run / GitHub 管服务级变量
 
+这些变量只描述 IBKR 运行身份和平台覆盖项；策略默认值、策略参数和策略频率继续由 `UsEquityStrategies` 提供。
+
 - `STRATEGY_PROFILE`
 - `ACCOUNT_GROUP`
 - `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME`
@@ -22,7 +25,7 @@
 - `NOTIFY_LANG`
 - `TELEGRAM_TOKEN_SECRET_NAME`（推荐）
 - `TELEGRAM_TOKEN`（fallback）
-- `RUNTIME_TARGET_JSON`（由同步 workflow 自动生成，表示结构化运行目标）
+- `RUNTIME_TARGET_JSON`（由同步 workflow 自动生成，表示结构化运行目标；其中的 `strategy_profile` 只是策略选择器）
 
 可选过渡变量：
 
@@ -48,13 +51,13 @@
 
 仓库里已经放了一个可直接改的样例：
 
-- `docs/examples/ibkr-account-groups.default.json`
+- `docs/examples/ibkr-account-groups.paper.json`
 
 先复制一份出来改成你的真实值：
 
 ```bash
 cd /Users/lisiyi/Projects/InteractiveBrokersPlatform
-cp docs/examples/ibkr-account-groups.default.json /tmp/ibkr-account-groups.json
+cp docs/examples/ibkr-account-groups.paper.json /tmp/ibkr-account-groups.json
 ```
 
 最小推荐结构：
@@ -62,7 +65,7 @@ cp docs/examples/ibkr-account-groups.default.json /tmp/ibkr-account-groups.json
 ```json
 {
   "groups": {
-    "default": {
+    "paper": {
       "ib_gateway_instance_name": "interactive-brokers-quant-instance",
       "ib_gateway_zone": "us-central1-c",
       "ib_gateway_mode": "paper",
@@ -77,7 +80,7 @@ cp docs/examples/ibkr-account-groups.default.json /tmp/ibkr-account-groups.json
 
 说明：
 
-- `default`：就是这次先跑通的账号组名，要和 Cloud Run env 里的 `ACCOUNT_GROUP=default` 一致。
+- `paper`：就是这次先跑通的账号组名，要和 Cloud Run env 里的 `ACCOUNT_GROUP=paper` 一致。
 - `ib_gateway_instance_name`：GCE 上 IB Gateway 实例名。
 - `ib_gateway_zone`：建议现在就配上。当前推荐是按实例名解析内网 IP，这样 Cloud Run 不用手填固定私网 IP。
 - `ib_gateway_mode`：`paper` 或 `live`。
@@ -102,7 +105,7 @@ gcloud secrets versions add ibkr-account-groups \
   --data-file=/tmp/ibkr-account-groups.json
 ```
 
-上传后先看一眼 `default` 组：
+上传后先看一眼 `paper` 组：
 
 ```bash
 gcloud secrets versions access latest \
@@ -202,7 +205,7 @@ gcloud storage buckets add-iam-policy-binding "gs://run-sources-${PROJECT_ID}-${
 - `CLOUD_RUN_SERVICE`
 - `TELEGRAM_TOKEN_SECRET_NAME=interactive-brokers-telegram-token`
 - `STRATEGY_PROFILE=global_etf_rotation`
-- `ACCOUNT_GROUP=default`
+- `ACCOUNT_GROUP=paper`
 - `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=ibkr-account-groups`
 - `GLOBAL_TELEGRAM_CHAT_ID`
 - `NOTIFY_LANG`
@@ -215,7 +218,7 @@ gcloud storage buckets add-iam-policy-binding "gs://run-sources-${PROJECT_ID}-${
 
 说明：
 
-- 如果 `ibkr-account-groups` 里的 `default` 已经写了 `ib_gateway_zone` / `ib_gateway_ip_mode`，这两个 GitHub vars 可以留空。
+- 如果 `ibkr-account-groups` 里的 `paper` 已经写了 `ib_gateway_zone` / `ib_gateway_ip_mode`，这两个 GitHub vars 可以留空。
 - 现在 workflow 会在它们留空时，顺手把 Cloud Run 上旧的 `IB_GATEWAY_ZONE` / `IB_GATEWAY_IP_MODE` env 清掉，避免双配置源漂移。
 
 ### Repository Secrets
@@ -227,7 +230,7 @@ gcloud storage buckets add-iam-policy-binding "gs://run-sources-${PROJECT_ID}-${
 - GitHub 现在通过 OIDC + Workload Identity Federation 登录 Google Cloud，这个 workflow 不再需要 `GCP_SA_KEY`。
 - 如果你现在只用这个 workflow 做“同步已有 Cloud Run service 的 env”，那这个 GitHub Actions 账号只需要能更新目标 Cloud Run service，不需要现在就补 Cloud Build / Artifact Registry 那一套权限。
 
-## 5. 先把 `ACCOUNT_GROUP=default` 跑通的顺序
+## 5. 先把 `ACCOUNT_GROUP=paper` 跑通的顺序
 
 建议按这个顺序来：
 
@@ -240,7 +243,7 @@ gcloud storage buckets add-iam-policy-binding "gs://run-sources-${PROJECT_ID}-${
    - `ib_client_id`
 
 2. **更新 Secret Manager**
-   - 把 `docs/examples/ibkr-account-groups.default.json` 改成真实值
+   - 把 `docs/examples/ibkr-account-groups.paper.json` 改成真实值
    - 上传成 `ibkr-account-groups` 最新版本
 
 3. **给 runtime service account 授权**
@@ -248,7 +251,7 @@ gcloud storage buckets add-iam-policy-binding "gs://run-sources-${PROJECT_ID}-${
    - `roles/compute.viewer`
 
 4. **配 GitHub vars / secrets**
-   - `ACCOUNT_GROUP=default`
+   - `ACCOUNT_GROUP=paper`
    - `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=ibkr-account-groups`
    - 其他服务级变量按上面补齐
 
@@ -279,17 +282,17 @@ gcloud run services logs read interactive-brokers-quant-service \
 - 缺 `ACCOUNT_GROUP`
 - 缺 `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME`
 - 缺 `RUNTIME_TARGET_JSON`（通常说明 workflow 没跑到或输出没接上）
-- secret 里没有 `default`
-- `default` 组缺 `ib_gateway_instance_name` / `ib_gateway_mode` / `ib_client_id`
+- secret 里没有 `paper`
+- `paper` 组缺 `ib_gateway_instance_name` / `ib_gateway_mode` / `ib_client_id`
 
 ## 6. 哪些已经完成，哪些后续再做
 
 ### 当前已经完成
 
-- `ibkr-account-groups` secret 建好，并至少把 `default` 组跑通
+- `ibkr-account-groups` secret 建好，并至少把 `paper` 组跑通
 - Cloud Run runtime service account 权限补齐
 - GitHub env sync 改成只管服务级变量
-- 继续保持现有 Cloud Run service、现有 trigger、现有 `ACCOUNT_GROUP=default` 运行链路稳定
+- 继续保持现有 Cloud Run service、现有 trigger、现有 `ACCOUNT_GROUP=paper` 运行链路稳定
 
 ### 还可以后做
 
