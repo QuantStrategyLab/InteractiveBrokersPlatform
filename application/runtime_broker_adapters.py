@@ -46,6 +46,11 @@ class IBKRRuntimeBrokerAdapters:
     sleep_fn: Any
     printer: Any = print
 
+    def fetch_account_portfolio_snapshot(self, ib):
+        if self.account_ids:
+            return self.fetch_portfolio_snapshot_fn(ib, account_ids=self.account_ids)
+        return self.fetch_portfolio_snapshot_fn(ib)
+
     def connect_ib(self):
         self.ensure_event_loop_fn()
         host = self.host_resolver()
@@ -82,7 +87,7 @@ class IBKRRuntimeBrokerAdapters:
         raise last_error
 
     def get_current_portfolio(self, ib):
-        snapshot = self.fetch_portfolio_snapshot_fn(ib)
+        snapshot = self.fetch_account_portfolio_snapshot(ib)
         positions = {}
         for position in snapshot.positions:
             positions[position.symbol] = {
@@ -97,7 +102,7 @@ class IBKRRuntimeBrokerAdapters:
 
     def build_portfolio_snapshot(self, ib, *, get_current_portfolio_fallback=None):
         if hasattr(ib, "reqPositions"):
-            return self.fetch_portfolio_snapshot_fn(ib)
+            return self.fetch_account_portfolio_snapshot(ib)
         positions, account_values = get_current_portfolio_fallback(ib)
         return PortfolioSnapshot(
             as_of=datetime.now(timezone.utc),

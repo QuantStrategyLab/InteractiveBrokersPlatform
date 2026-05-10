@@ -64,9 +64,44 @@ def check_order_submitted(report, *, translator):
     return False, f"❌ {translator('failed', reason=status)}"
 
 
-def get_available_buying_power(ib, fallback_buying_power):
+def _normalize_account_ids(account_ids=None) -> tuple[str, ...]:
+    if account_ids is None:
+        return ()
+    if isinstance(account_ids, str):
+        candidates = [account_ids]
+    else:
+        candidates = list(account_ids)
+    normalized = []
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if text:
+            normalized.append(text)
+    return tuple(dict.fromkeys(normalized))
+
+
+def _matches_account(account_id: str | None, selected_account_ids: tuple[str, ...]) -> bool:
+    if not selected_account_ids:
+        return True
+    return str(account_id or "").strip() in selected_account_ids
+
+
+def _resolve_order_account_id(account_ids=None) -> str | None:
+    normalized = _normalize_account_ids(account_ids)
+    if len(normalized) > 1:
+        raise ValueError(
+            "IBKR live order routing requires a single account_id per runtime service; "
+            f"got {len(normalized)} account_ids."
+        )
+    return normalized[0] if normalized else None
+
+
+def get_available_buying_power(ib, fallback_buying_power, *, account_ids=None):
+    selected_account_ids = _normalize_account_ids(account_ids)
     buying_power = fallback_buying_power
     for account_value in ib.accountValues():
+        account_id = str(getattr(account_value, "account", "") or "").strip() or None
+        if not _matches_account(account_id, selected_account_ids):
+            continue
         if account_value.tag == "AvailableFunds" and account_value.currency == "USD":
             buying_power = float(account_value.value)
     return buying_power
@@ -101,9 +136,24 @@ def _extract_open_order_status(order_like: Any) -> str:
     return str(status or "").strip()
 
 
-def _collect_pending_symbols(ib, symbols: set[str]) -> tuple[str, ...]:
+def _extract_open_order_account(order_like: Any) -> str | None:
+    order = getattr(order_like, "order", None)
+    for candidate in (
+        getattr(order, "account", None),
+        getattr(order_like, "account", None),
+    ):
+        text = str(candidate or "").strip()
+        if text:
+            return text
+    return None
+
+
+def _collect_pending_symbols(ib, symbols: set[str], *, account_ids=None) -> tuple[str, ...]:
+    selected_account_ids = _normalize_account_ids(account_ids)
     pending = []
     for order_like in _iter_open_orders(ib):
+        if not _matches_account(_extract_open_order_account(order_like), selected_account_ids):
+            continue
         status = _extract_open_order_status(order_like)
         if status in {"Cancelled", "ApiCancelled", "Inactive", "Filled"}:
             continue
@@ -125,6 +175,19 @@ def _extract_fill_symbol(fill_like: Any) -> str | None:
     symbol = getattr(contract, "symbol", None)
     symbol_text = str(symbol or "").strip().upper()
     return symbol_text or None
+
+
+def _extract_fill_account(fill_like: Any) -> str | None:
+    execution = getattr(fill_like, "execution", None)
+    for candidate in (
+        getattr(execution, "acctNumber", None),
+        getattr(execution, "account", None),
+        getattr(fill_like, "account", None),
+    ):
+        text = str(candidate or "").strip()
+        if text:
+            return text
+    return None
 
 
 def _normalize_date_like(value: Any) -> str | None:
@@ -150,11 +213,20 @@ def _extract_fill_date(fill_like: Any) -> str | None:
     return None
 
 
-def _collect_same_day_filled_symbols(ib, symbols: set[str], trade_date: str | None) -> tuple[str, ...]:
+def _collect_same_day_filled_symbols(
+    ib,
+    symbols: set[str],
+    trade_date: str | None,
+    *,
+    account_ids=None,
+) -> tuple[str, ...]:
     if not trade_date:
         return ()
+    selected_account_ids = _normalize_account_ids(account_ids)
     matched = []
     for fill_like in _iter_fills(ib):
+        if not _matches_account(_extract_fill_account(fill_like), selected_account_ids):
+            continue
         symbol = _extract_fill_symbol(fill_like)
         if not symbol or symbol not in symbols:
             continue
@@ -425,9 +497,15 @@ def execute_rebalance(
     safe_haven_symbols = tuple(allocation["safe_haven_symbols"])
     safe_haven_symbol = safe_haven_symbols[0] if safe_haven_symbols else None
     equity = account_values.get("equity", 0)
+    normalized_account_ids = _normalize_account_ids(account_ids)
+    order_account_id = _resolve_order_account_id(normalized_account_ids)
     execution_summary = {
         "mode": "dry_run" if dry_run_only else "paper",
         "strategy_profile": strategy_profile,
+        "account_group": account_group,
+        "account_ids": list(normalized_account_ids),
+        "order_account_id": order_account_id,
+        "service_name": service_name,
         "trade_date": trade_date,
         "snapshot_as_of": snapshot_date,
         "safe_haven_symbol": safe_haven_symbol,
@@ -508,7 +586,7 @@ def execute_rebalance(
             (sum(current_mv.values()) - current_safe_haven_mv) / equity
         )
 
-    pending_symbols = _collect_pending_symbols(ib, set(all_symbols))
+    pending_symbols = _collect_pending_symbols(ib, set(all_symbols), account_ids=normalized_account_ids)
     if pending_symbols:
         reason = f"pending_orders_detected:{','.join(pending_symbols)}"
         execution_summary["execution_status"] = "blocked"
@@ -597,6 +675,7 @@ def execute_rebalance(
     anticipated_buying_power = get_available_buying_power(
         ib,
         account_values.get("buying_power", 0),
+        account_ids=normalized_account_ids,
     )
     has_buy_plan = False
     for symbol, target in target_mv.items():
@@ -655,7 +734,12 @@ def execute_rebalance(
                 trade_logs.append(translator("failed", reason=reason))
         return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
 
-    same_day_filled_symbols = _collect_same_day_filled_symbols(ib, set(all_symbols), trade_date)
+    same_day_filled_symbols = _collect_same_day_filled_symbols(
+        ib,
+        set(all_symbols),
+        trade_date,
+        account_ids=normalized_account_ids,
+    )
     if same_day_filled_symbols:
         reason = f"same_day_fills_detected:{','.join(same_day_filled_symbols)}"
         execution_summary["execution_status"] = "blocked"
@@ -685,7 +769,7 @@ def execute_rebalance(
         strategy_profile=strategy_profile,
         account_group=account_group,
         service_name=service_name,
-        account_ids=tuple(account_ids or ()),
+        account_ids=normalized_account_ids,
         trade_date=trade_date,
         snapshot_date=snapshot_date,
         target_hash=target_hash,
@@ -754,7 +838,12 @@ def execute_rebalance(
                 continue
             report = submit_order_intent(
                 ib,
-                order_intent_cls(symbol=symbol, side="sell", quantity=qty),
+                order_intent_cls(
+                    symbol=symbol,
+                    side="sell",
+                    quantity=qty,
+                    account_id=order_account_id,
+                ),
             )
             ok, status_msg = check_order_submitted(report, translator=translator)
             status = str(getattr(report, "status", "") or "")
@@ -784,6 +873,7 @@ def execute_rebalance(
     buying_power = anticipated_buying_power if not sell_executed else get_available_buying_power(
         ib,
         account_values.get("buying_power", 0),
+        account_ids=normalized_account_ids,
     )
 
     for symbol, target in target_mv.items():
@@ -830,6 +920,7 @@ def execute_rebalance(
                     order_type="limit",
                     limit_price=limit_price,
                     time_in_force="DAY",
+                    account_id=order_account_id,
                 ),
             )
             ok, status_msg = check_order_submitted(report, translator=translator)

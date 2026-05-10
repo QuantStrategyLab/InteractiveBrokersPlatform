@@ -59,3 +59,18 @@ def test_submit_order_intent_preserves_explicit_tif_on_market_orders():
     )
 
     assert ib.placed_order.tif == "GTC"
+
+
+def test_submit_order_intent_preserves_account_id():
+    ib = FakeIB()
+
+    report = submit_order_intent(
+        ib,
+        OrderIntent(symbol="AAPL", side="buy", quantity=3, account_id="U18308207"),
+        wait_seconds=0,
+        stock_factory=fake_stock,
+        market_order_factory=FakeMarketOrder,
+    )
+
+    assert ib.placed_order.account == "U18308207"
+    assert report.raw_payload["account_id"] == "U18308207"

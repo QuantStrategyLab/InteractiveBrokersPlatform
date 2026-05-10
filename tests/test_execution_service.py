@@ -130,6 +130,89 @@ def test_execute_rebalance_submits_limit_buy_for_underweight_position(monkeypatc
     assert any(log.startswith("buy VOO") for log in trade_logs)
 
 
+def test_execute_rebalance_routes_order_to_single_account_id(monkeypatch, tmp_path):
+    class FakeIB:
+        def openTrades(self):
+            return []
+
+        def fills(self):
+            return []
+
+        def accountValues(self):
+            return [
+                SimpleNamespace(account="U18308207", tag="AvailableFunds", currency="USD", value="5000"),
+                SimpleNamespace(account="U15998061", tag="AvailableFunds", currency="USD", value="100"),
+            ]
+
+    submitted = []
+
+    def fake_submit_order_intent(_ib, intent):
+        submitted.append(intent)
+        return SimpleNamespace(broker_order_id="1", status="Submitted")
+
+    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+
+    _trade_logs, summary = execute_rebalance(
+        FakeIB(),
+        {"TQQQ": 1.0},
+        {},
+        {"equity": 1000.0, "buying_power": 1000.0},
+        fetch_quote_snapshots=lambda _ib, symbols: {
+            symbol: SimpleNamespace(last_price=100.0) for symbol in symbols
+        },
+        submit_order_intent=fake_submit_order_intent,
+        order_intent_cls=OrderIntent,
+        translator=translate,
+        strategy_symbols=["TQQQ"],
+        strategy_profile="tqqq_growth_income",
+        account_group="live-tqqq",
+        service_name="ibkr-tqqq-live",
+        account_ids=("U18308207",),
+        signal_metadata=_signal_metadata({"TQQQ": 1.0}, risk_symbols=("TQQQ",), trade_date="2026-04-01"),
+        dry_run_only=False,
+        cash_reserve_ratio=0.0,
+        rebalance_threshold_ratio=0.02,
+        limit_buy_premium=1.005,
+        sell_settle_delay_sec=0,
+        execution_lock_dir=tmp_path,
+        return_summary=True,
+    )
+
+    assert len(submitted) == 1
+    assert submitted[0].account_id == "U18308207"
+    assert summary["order_account_id"] == "U18308207"
+
+
+def test_execute_rebalance_rejects_multiple_order_account_ids():
+    class FakeIB:
+        def accountValues(self):
+            return []
+
+    try:
+        execute_rebalance(
+            FakeIB(),
+            {"TQQQ": 1.0},
+            {},
+            {"equity": 1000.0, "buying_power": 1000.0},
+            fetch_quote_snapshots=lambda _ib, _symbols: {},
+            submit_order_intent=lambda *_args, **_kwargs: None,
+            order_intent_cls=OrderIntent,
+            translator=translate,
+            strategy_symbols=["TQQQ"],
+            signal_metadata=_signal_metadata({"TQQQ": 1.0}, risk_symbols=("TQQQ",)),
+            account_ids=("U18308207", "U15998061"),
+            dry_run_only=False,
+            cash_reserve_ratio=0.0,
+            rebalance_threshold_ratio=0.02,
+            limit_buy_premium=1.005,
+            sell_settle_delay_sec=0,
+        )
+    except ValueError as exc:
+        assert "single account_id" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
 def test_execute_rebalance_can_submit_fractional_buy_when_quantity_step_allows(monkeypatch, tmp_path):
     class FakeIB:
         def openTrades(self):
@@ -345,7 +428,7 @@ def test_execute_rebalance_skips_when_same_day_fills_detected():
             return [
                 SimpleNamespace(
                     contract=SimpleNamespace(symbol="VOO"),
-                    execution=SimpleNamespace(time="2026-04-01 10:30:00"),
+                    execution=SimpleNamespace(time="2026-04-01 10:30:00", acctNumber="DU123"),
                 )
             ]
 
