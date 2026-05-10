@@ -88,9 +88,14 @@ class LoadedStrategyRuntime:
     def _fetch_portfolio_snapshot_for_context(self, ib, *, required: bool) -> Any | None:
         if ib is None and not required:
             return None
+        account_ids = tuple(self.runtime_settings.account_ids or ())
         if required:
+            if account_ids:
+                return fetch_portfolio_snapshot(ib, account_ids=account_ids)
             return fetch_portfolio_snapshot(ib)
         try:
+            if account_ids:
+                return fetch_portfolio_snapshot(ib, account_ids=account_ids)
             return fetch_portfolio_snapshot(ib)
         except Exception as exc:
             self.logger(
@@ -245,7 +250,7 @@ class LoadedStrategyRuntime:
         runtime_config = dict(self.runtime_config)
         runtime_config.setdefault("translator", translator)
         apply_runtime_policy_to_runtime_config(runtime_config, self.runtime_adapter)
-        portfolio_snapshot = fetch_portfolio_snapshot(ib)
+        portfolio_snapshot = self._fetch_portfolio_snapshot_for_context(ib, required=True)
         market_inputs = self._build_value_target_market_inputs(
             ib=ib,
             historical_close_loader=historical_close_loader,

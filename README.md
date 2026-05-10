@@ -197,7 +197,7 @@ Recommended account-group config payload:
 }
 ```
 
-If you later add live, keep it as a separate live group such as `live-main` with `ib_gateway_mode=live` and its own `account_ids`.
+For live multi-account rollout, keep one Cloud Run service per live account group. Each live group should carry exactly one `account_ids` value so portfolio reads, pending/fill guards, and submitted IBKR orders are all routed to that account.
 
 See [`docs/examples/ibkr-account-groups.paper.json`](docs/examples/ibkr-account-groups.paper.json) for a ready-to-edit starter example, and [`docs/ibkr_runtime_rollout.md`](docs/ibkr_runtime_rollout.md) for the exact rollout steps to get `ACCOUNT_GROUP=paper` running.
 
@@ -402,6 +402,8 @@ IB_GATEWAY_IP_MODE=internal
 ```
 
 仓库里也提供了一个可以直接改的起始样例：[`docs/examples/ibkr-account-groups.paper.json`](docs/examples/ibkr-account-groups.paper.json)。如果你要按 `ACCOUNT_GROUP=paper` 先落地，直接看 [`docs/ibkr_runtime_rollout.md`](docs/ibkr_runtime_rollout.md)。
+
+实盘多账户建议一个 UID 对应一个 Cloud Run 服务和一个账号组。每个实盘账号组只放一个 `account_ids` 值；运行时会用它过滤持仓、pending/fill 检查，并把同一个 UID 写进 IBKR 订单的 `order.account`。
 
 当前行为改成了 fail-fast：
 

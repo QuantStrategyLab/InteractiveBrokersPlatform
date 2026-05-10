@@ -87,7 +87,7 @@ cp docs/examples/ibkr-account-groups.paper.json /tmp/ibkr-account-groups.json
 - `ib_gateway_ip_mode`：推荐 `internal`。
 - `ib_client_id`：这个账号组对应的 client id。
 - `service_name`：当前只是预留元数据，建议先填成现有 Cloud Run 服务名，后面多账号拆服务时更顺。
-- `account_ids`：当前主要是留档和后续扩展，不是启动必填。
+- `account_ids`：实盘账号组建议只放一个 UID。运行时会用它过滤持仓、pending/fill 检查，并写入 IBKR 订单的 `order.account`；如果一个服务配置多个 UID，实盘下单会因为账户路由不明确而失败。
 
 把 secret 建起来：
 

@@ -39,6 +39,7 @@ def submit_order_intent(
     ib: Any,
     order_intent: OrderIntent,
     *,
+    account_id: str | None = None,
     wait_seconds: float = 1.0,
     stock_factory: Callable[..., Any] | None = None,
     market_order_factory: Callable[..., Any] | None = None,
@@ -50,6 +51,7 @@ def submit_order_intent(
     return _submit_order_intent(
         ib,
         intent,
+        account_id=account_id,
         wait_seconds=wait_seconds,
         stock_factory=stock_factory,
         market_order_factory=_market_order_factory_with_time_in_force(
