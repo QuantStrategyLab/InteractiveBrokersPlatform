@@ -20,7 +20,7 @@ from strategy_registry import (
 
 
 MINIMAL_GROUP_JSON = (
-    '{"groups":{"default":{"ib_gateway_instance_name":"ib-gateway",'
+    '{"groups":{"paper":{"ib_gateway_instance_name":"ib-gateway",'
     '"ib_gateway_mode":"paper","ib_client_id":1}}}'
 )
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "print_strategy_profile_status.py"
@@ -28,18 +28,43 @@ SWITCH_PLAN_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "pri
 SAMPLE_STRATEGY_PROFILE = "global_etf_rotation"
 
 
-def test_load_platform_runtime_settings_requires_strategy_profile(monkeypatch):
-    monkeypatch.setenv("ACCOUNT_GROUP", "default")
-    monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
-    monkeypatch.delenv("STRATEGY_PROFILE", raising=False)
+def runtime_target_json(
+    strategy_profile: str,
+    *,
+    dry_run_only: bool = False,
+    platform_id: str = "ibkr",
+    deployment_selector: str = "default",
+    account_selector: list[str] | tuple[str, ...] | None = None,
+    account_scope: str = "default",
+    service_name: str | None = None,
+) -> str:
+    payload: dict[str, object] = {
+        "platform_id": platform_id,
+        "strategy_profile": strategy_profile,
+        "dry_run_only": dry_run_only,
+        "deployment_selector": deployment_selector,
+        "account_scope": account_scope,
+    }
+    if account_selector is not None:
+        payload["account_selector"] = list(account_selector)
+    if service_name is not None:
+        payload["service_name"] = service_name
+    payload["execution_mode"] = "paper" if dry_run_only else "live"
+    return json.dumps(payload, separators=(",", ":"))
 
-    with pytest.raises(EnvironmentError, match="STRATEGY_PROFILE is required"):
+
+def test_load_platform_runtime_settings_requires_strategy_profile(monkeypatch):
+    monkeypatch.setenv("ACCOUNT_GROUP", "paper")
+    monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
+    monkeypatch.delenv("RUNTIME_TARGET_JSON", raising=False)
+
+    with pytest.raises(EnvironmentError, match="RUNTIME_TARGET_JSON is required"):
         load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
 
 
 def test_load_platform_runtime_settings_requires_account_group(monkeypatch):
-    monkeypatch.setenv("STRATEGY_PROFILE", SAMPLE_STRATEGY_PROFILE)
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(SAMPLE_STRATEGY_PROFILE))
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
     monkeypatch.delenv("ACCOUNT_GROUP", raising=False)
 
@@ -49,8 +74,8 @@ def test_load_platform_runtime_settings_requires_account_group(monkeypatch):
 
 
 def test_load_platform_runtime_settings_requires_account_group_config_source(monkeypatch):
-    monkeypatch.setenv("STRATEGY_PROFILE", SAMPLE_STRATEGY_PROFILE)
-    monkeypatch.setenv("ACCOUNT_GROUP", "default")
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(SAMPLE_STRATEGY_PROFILE))
+    monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.delenv("IB_ACCOUNT_GROUP_CONFIG_JSON", raising=False)
     monkeypatch.delenv("IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME", raising=False)
 
@@ -63,8 +88,8 @@ def test_load_platform_runtime_settings_requires_account_group_config_source(mon
 
 
 def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
-    monkeypatch.setenv("STRATEGY_PROFILE", SAMPLE_STRATEGY_PROFILE)
-    monkeypatch.setenv("ACCOUNT_GROUP", "default")
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(SAMPLE_STRATEGY_PROFILE))
+    monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
     monkeypatch.delenv("IB_GATEWAY_ZONE", raising=False)
     monkeypatch.delenv("IB_GATEWAY_IP_MODE", raising=False)
@@ -83,6 +108,8 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.strategy_profile == SAMPLE_STRATEGY_PROFILE
     assert settings.strategy_display_name == "Global ETF Rotation"
     assert settings.strategy_domain == US_EQUITY_DOMAIN
+    assert settings.runtime_target.platform_id == "ibkr"
+    assert settings.runtime_target.execution_mode == "live"
     assert settings.strategy_target_mode == "weight"
     assert settings.strategy_artifact_root is None
     assert settings.strategy_artifact_dir is None
@@ -94,7 +121,7 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.dry_run_only is False
     assert settings.quantity_step == 1.0
     assert settings.min_order_notional == 50.0
-    assert settings.account_group == "default"
+    assert settings.account_group == "paper"
     assert settings.service_name is None
     assert settings.account_ids == ()
     assert settings.notify_lang == "en"
@@ -102,9 +129,35 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.tg_chat_id is None
 
 
+def test_load_platform_runtime_settings_prefers_runtime_target_json(monkeypatch):
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(SAMPLE_STRATEGY_PROFILE))
+    monkeypatch.setenv("ACCOUNT_GROUP", "paper")
+    monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
+    monkeypatch.setenv(
+        "RUNTIME_TARGET_JSON",
+        runtime_target_json(
+            "tech_communication_pullback_enhancement",
+            dry_run_only=True,
+            account_selector=["U999"],
+            service_name="interactive-brokers-paper-service",
+        ),
+    )
+
+    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
+
+    assert settings.strategy_profile == "tech_communication_pullback_enhancement"
+    assert settings.runtime_target.strategy_profile == "tech_communication_pullback_enhancement"
+    assert settings.runtime_target.platform_id == "ibkr"
+    assert settings.runtime_target.dry_run_only is True
+    assert settings.runtime_target.execution_mode == "paper"
+    assert settings.runtime_target.deployment_selector == "default"
+    assert settings.runtime_target.account_selector == ("U999",)
+    assert settings.runtime_target.account_scope == "default"
+
+
 
 def test_load_platform_runtime_settings_supports_explicit_group_config_values(monkeypatch):
-    monkeypatch.setenv("STRATEGY_PROFILE", SAMPLE_STRATEGY_PROFILE)
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(SAMPLE_STRATEGY_PROFILE))
     monkeypatch.setenv("ACCOUNT_GROUP", "taxable_main")
     monkeypatch.setenv(
         "IB_ACCOUNT_GROUP_CONFIG_JSON",
@@ -140,8 +193,8 @@ def test_load_platform_runtime_settings_supports_explicit_group_config_values(mo
 
 
 def test_load_platform_runtime_settings_supports_fractional_quantity_step(monkeypatch):
-    monkeypatch.setenv("STRATEGY_PROFILE", SAMPLE_STRATEGY_PROFILE)
-    monkeypatch.setenv("ACCOUNT_GROUP", "default")
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(SAMPLE_STRATEGY_PROFILE))
+    monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
     monkeypatch.setenv("IBKR_FRACTIONAL_SHARES_ENABLED", "true")
     monkeypatch.setenv("IBKR_MIN_ORDER_NOTIONAL_USD", "5")
@@ -154,8 +207,8 @@ def test_load_platform_runtime_settings_supports_fractional_quantity_step(monkey
 
 
 def test_load_platform_runtime_settings_rejects_unknown_strategy_profile(monkeypatch):
-    monkeypatch.setenv("STRATEGY_PROFILE", "balanced_income")
-    monkeypatch.setenv("ACCOUNT_GROUP", "default")
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json("balanced_income"))
+    monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
 
     with pytest.raises(ValueError, match="Unsupported STRATEGY_PROFILE"):
@@ -189,8 +242,11 @@ def test_platform_eligible_profiles_are_exposed_by_capability_matrix():
 
 
 def test_load_platform_runtime_settings_accepts_tech_communication_pullback_enhancement(monkeypatch):
-    monkeypatch.setenv("STRATEGY_PROFILE", "tech_communication_pullback_enhancement")
-    monkeypatch.setenv("ACCOUNT_GROUP", "default")
+    monkeypatch.setenv(
+        "RUNTIME_TARGET_JSON",
+        runtime_target_json("tech_communication_pullback_enhancement"),
+    )
+    monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
     monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "/tmp/cash-buffer.csv")
 
@@ -210,8 +266,8 @@ def test_load_platform_runtime_settings_accepts_tech_communication_pullback_enha
     ),
 )
 def test_load_platform_runtime_settings_rejects_removed_research_profiles(monkeypatch, archived_profile):
-    monkeypatch.setenv("STRATEGY_PROFILE", archived_profile)
-    monkeypatch.setenv("ACCOUNT_GROUP", "default")
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(archived_profile))
+    monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
     monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "/tmp/archive.csv")
     monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH", "/tmp/archive.csv.manifest.json")
@@ -221,8 +277,8 @@ def test_load_platform_runtime_settings_rejects_removed_research_profiles(monkey
 
 
 def test_load_platform_runtime_settings_accepts_tqqq_growth_income(monkeypatch):
-    monkeypatch.setenv("STRATEGY_PROFILE", "tqqq_growth_income")
-    monkeypatch.setenv("ACCOUNT_GROUP", "default")
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json("tqqq_growth_income"))
+    monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
 
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
@@ -233,8 +289,8 @@ def test_load_platform_runtime_settings_accepts_tqqq_growth_income(monkeypatch):
 
 
 def test_load_platform_runtime_settings_rejects_legacy_qqq_tech_alias(monkeypatch):
-    monkeypatch.setenv("STRATEGY_PROFILE", "tech_pullback_cash_buffer")
-    monkeypatch.setenv("ACCOUNT_GROUP", "default")
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json("tech_pullback_cash_buffer"))
+    monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
     monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "/tmp/cash-buffer.csv")
 
@@ -348,11 +404,15 @@ def test_print_strategy_switch_env_plan_for_tqqq_growth_income():
     assert plan["canonical_profile"] == "tqqq_growth_income"
     assert plan["eligible"] is True
     assert plan["enabled"] is True
+    assert plan["runtime_target"]["platform_id"] == "ibkr"
+    assert plan["runtime_target"]["strategy_profile"] == "tqqq_growth_income"
+    assert plan["runtime_target"]["service_name"] == "interactive-brokers-quant-service"
+    assert plan["runtime_target"]["execution_mode"] == "live"
     assert plan["profile_group"] == "direct_runtime_inputs"
     assert plan["input_mode"] == "benchmark_history+portfolio_snapshot"
     assert plan["requires_snapshot_artifacts"] is False
     assert plan["requires_strategy_config_path"] is False
-    assert plan["set_env"]["STRATEGY_PROFILE"] == "tqqq_growth_income"
+    assert json.loads(plan["set_env"]["RUNTIME_TARGET_JSON"])["strategy_profile"] == "tqqq_growth_income"
     assert "ACCOUNT_GROUP" in plan["keep_env"]
     assert "IBKR_FEATURE_SNAPSHOT_PATH" in plan["remove_if_present"]
 
@@ -434,8 +494,11 @@ def test_print_strategy_switch_env_plan_uses_manifest_contract_policy():
 
 
 def test_load_platform_runtime_settings_reads_feature_snapshot_path(monkeypatch):
-    monkeypatch.setenv("STRATEGY_PROFILE", "russell_1000_multi_factor_defensive")
-    monkeypatch.setenv("ACCOUNT_GROUP", "default")
+    monkeypatch.setenv(
+        "RUNTIME_TARGET_JSON",
+        runtime_target_json("russell_1000_multi_factor_defensive"),
+    )
+    monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
     monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "/tmp/r1000-latest.csv")
 
@@ -445,8 +508,11 @@ def test_load_platform_runtime_settings_reads_feature_snapshot_path(monkeypatch)
 
 
 def test_load_platform_runtime_settings_reads_tech_pullback_runtime_config(monkeypatch):
-    monkeypatch.setenv("STRATEGY_PROFILE", "tech_communication_pullback_enhancement")
-    monkeypatch.setenv("ACCOUNT_GROUP", "default")
+    monkeypatch.setenv(
+        "RUNTIME_TARGET_JSON",
+        runtime_target_json("tech_communication_pullback_enhancement"),
+    )
+    monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
     monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "/tmp/cash-buffer.csv")
     monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH", "/tmp/cash-buffer.csv.manifest.json")
@@ -465,8 +531,11 @@ def test_load_platform_runtime_settings_reads_tech_pullback_runtime_config(monke
 
 
 def test_load_platform_runtime_settings_uses_bundled_tech_pullback_config_when_env_missing(monkeypatch):
-    monkeypatch.setenv("STRATEGY_PROFILE", "tech_communication_pullback_enhancement")
-    monkeypatch.setenv("ACCOUNT_GROUP", "default")
+    monkeypatch.setenv(
+        "RUNTIME_TARGET_JSON",
+        runtime_target_json("tech_communication_pullback_enhancement"),
+    )
+    monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
     monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "/tmp/cash-buffer.csv")
     monkeypatch.delenv("IBKR_STRATEGY_CONFIG_PATH", raising=False)
@@ -480,8 +549,11 @@ def test_load_platform_runtime_settings_uses_bundled_tech_pullback_config_when_e
 
 
 def test_load_platform_runtime_settings_derives_artifact_paths_from_root(monkeypatch, tmp_path):
-    monkeypatch.setenv("STRATEGY_PROFILE", "tech_communication_pullback_enhancement")
-    monkeypatch.setenv("ACCOUNT_GROUP", "default")
+    monkeypatch.setenv(
+        "RUNTIME_TARGET_JSON",
+        runtime_target_json("tech_communication_pullback_enhancement"),
+    )
+    monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
     monkeypatch.setenv("IBKR_STRATEGY_ARTIFACT_ROOT", str(tmp_path))
     monkeypatch.delenv("IBKR_FEATURE_SNAPSHOT_PATH", raising=False)
@@ -512,20 +584,20 @@ def test_load_platform_runtime_settings_derives_artifact_paths_from_root(monkeyp
 
 
 def test_load_platform_runtime_settings_uses_account_group_secret(monkeypatch):
-    monkeypatch.setenv("STRATEGY_PROFILE", SAMPLE_STRATEGY_PROFILE)
-    monkeypatch.setenv("ACCOUNT_GROUP", "ira")
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(SAMPLE_STRATEGY_PROFILE))
+    monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME", "ibkr-account-groups")
 
     payload = """
     {
       "groups": {
-        "ira": {
-          "ib_gateway_instance_name": "ib-gateway-ira",
+        "paper": {
+          "ib_gateway_instance_name": "ib-gateway-paper",
           "ib_gateway_zone": "us-central1-a",
           "ib_gateway_mode": "live",
           "ib_gateway_ip_mode": "external",
           "ib_client_id": 9,
-          "service_name": "interactive-brokers-quant-ira-service",
+          "service_name": "interactive-brokers-paper-service",
           "account_ids": ["U1234567", "U7654321"]
         }
       }
@@ -546,20 +618,20 @@ def test_load_platform_runtime_settings_uses_account_group_secret(monkeypatch):
         secret_client_factory=FakeSecretClient,
     )
 
-    assert settings.ib_gateway_instance_name == "ib-gateway-ira"
+    assert settings.ib_gateway_instance_name == "ib-gateway-paper"
     assert settings.ib_gateway_zone == "us-central1-a"
     assert settings.ib_gateway_mode == "live"
     assert settings.ib_gateway_ip_mode == "external"
     assert settings.ib_client_id == 9
-    assert settings.account_group == "ira"
-    assert settings.service_name == "interactive-brokers-quant-ira-service"
+    assert settings.account_group == "paper"
+    assert settings.service_name == "interactive-brokers-paper-service"
     assert settings.account_ids == ("U1234567", "U7654321")
 
 
 
 def test_load_platform_runtime_settings_requires_project_for_secret_source(monkeypatch):
-    monkeypatch.setenv("STRATEGY_PROFILE", SAMPLE_STRATEGY_PROFILE)
-    monkeypatch.setenv("ACCOUNT_GROUP", "default")
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(SAMPLE_STRATEGY_PROFILE))
+    monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME", "ibkr-account-groups")
 
     with pytest.raises(
@@ -571,7 +643,7 @@ def test_load_platform_runtime_settings_requires_project_for_secret_source(monke
 
 
 def test_load_platform_runtime_settings_rejects_unknown_account_group(monkeypatch):
-    monkeypatch.setenv("STRATEGY_PROFILE", SAMPLE_STRATEGY_PROFILE)
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(SAMPLE_STRATEGY_PROFILE))
     monkeypatch.setenv("ACCOUNT_GROUP", "missing")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
 
@@ -581,11 +653,11 @@ def test_load_platform_runtime_settings_rejects_unknown_account_group(monkeypatc
 
 
 def test_load_platform_runtime_settings_requires_key_group_fields(monkeypatch):
-    monkeypatch.setenv("STRATEGY_PROFILE", SAMPLE_STRATEGY_PROFILE)
-    monkeypatch.setenv("ACCOUNT_GROUP", "default")
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(SAMPLE_STRATEGY_PROFILE))
+    monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv(
         "IB_ACCOUNT_GROUP_CONFIG_JSON",
-        '{"groups":{"default":{"ib_gateway_mode":"paper","ib_client_id":1}}}',
+        '{"groups":{"paper":{"ib_gateway_mode":"paper","ib_client_id":1}}}',
     )
 
     with pytest.raises(EnvironmentError, match="requires ib_gateway_instance_name"):
@@ -595,18 +667,18 @@ def test_load_platform_runtime_settings_requires_key_group_fields(monkeypatch):
 
 def test_parse_account_group_configs_supports_top_level_mapping():
     configs = parse_account_group_configs(
-        '{"default": {"ib_gateway_instance_name":"ib-gateway","ib_gateway_mode":"paper",'
+        '{"paper": {"ib_gateway_instance_name":"ib-gateway","ib_gateway_mode":"paper",'
         '"ib_client_id":"4","account_ids":["U1"],"service_name":"svc"}}'
     )
 
-    assert configs["default"].ib_client_id == 4
-    assert configs["default"].account_ids == ("U1",)
-    assert configs["default"].service_name == "svc"
+    assert configs["paper"].ib_client_id == 4
+    assert configs["paper"].account_ids == ("U1",)
+    assert configs["paper"].service_name == "svc"
 
 
 def test_load_platform_runtime_settings_rejects_legacy_cash_buffer_profile(monkeypatch):
-    monkeypatch.setenv("STRATEGY_PROFILE", "cash_buffer_branch_default")
-    monkeypatch.setenv("ACCOUNT_GROUP", "default")
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json("cash_buffer_branch_default"))
+    monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
 
     with pytest.raises(ValueError, match="Unsupported STRATEGY_PROFILE"):

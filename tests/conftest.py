@@ -1,4 +1,5 @@
 import importlib
+import json
 import sys
 import types
 from pathlib import Path
@@ -31,6 +32,23 @@ def strategy_module_factory(monkeypatch):
             "GLOBAL_TELEGRAM_CHAT_ID": None,
         }
         defaults.update(env_overrides)
+        if "RUNTIME_TARGET_JSON" not in defaults:
+            dry_run_only = str(defaults.get("IBKR_DRY_RUN_ONLY") or "").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "y",
+                "on",
+            }
+            defaults["RUNTIME_TARGET_JSON"] = json.dumps(
+                {
+                    "platform_id": "ibkr",
+                    "strategy_profile": str(defaults.get("STRATEGY_PROFILE") or "global_etf_rotation"),
+                    "dry_run_only": dry_run_only,
+                    "execution_mode": "paper" if dry_run_only else "live",
+                },
+                separators=(",", ":"),
+            )
 
         for key, value in defaults.items():
             if value is None:

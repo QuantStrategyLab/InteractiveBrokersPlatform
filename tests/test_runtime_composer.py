@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from quant_platform_kit.common import build_runtime_target  # noqa: E402
 from application.runtime_composer import IBKRRuntimeComposer  # noqa: E402
 
 
@@ -39,6 +40,13 @@ def test_runtime_composer_builds_runtime_and_config_from_local_builders():
         status_icon="🐤",
         safe_haven="BIL",
         dry_run_only=True,
+        runtime_target=build_runtime_target(
+            platform_id="interactive_brokers",
+            strategy_profile="global_etf_rotation",
+            dry_run_only=True,
+            account_scope="default",
+            service_name="interactive-brokers-platform",
+        ),
         strategy_config_source="env",
         ib_gateway_host_resolver=lambda: "127.0.0.1",
         ib_gateway_port=4001,
@@ -78,9 +86,12 @@ def test_runtime_composer_builds_runtime_and_config_from_local_builders():
 
     assert notification_adapters.notification_port == "notification-port"
     assert observed["notification_builder"]["send_message"]
-    assert observed["reporting_builder"]["account_scope"] == "default"
+    assert observed["reporting_builder"]["runtime_assembly"].account_scope == "default"
     assert observed["reporting_builder"]["managed_symbols"] == ("AAA", "BIL")
     assert observed["reporting_builder"]["signal_effective_after_trading_days"] == 1
+    assert observed["reporting_builder"]["runtime_assembly"].runtime_target.platform_id == "interactive_brokers"
+    assert observed["reporting_builder"]["runtime_assembly"].runtime_target.strategy_profile == "global_etf_rotation"
+    assert observed["reporting_builder"]["runtime_assembly"].runtime_target.execution_mode == "paper"
     assert runtime.connect_ib() == "ib-connection"
     assert runtime.portfolio_port_factory("ib").get_portfolio_snapshot() == ("portfolio-snapshot", "ib")
     assert runtime.compute_signals == "compute-signals"

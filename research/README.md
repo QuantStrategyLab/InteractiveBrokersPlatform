@@ -11,9 +11,5 @@ this repository so they are not reused as current IBKR performance references.
 
 Current retained IBKR-local research: none.
 
-Brokerless signal research for COIN/CONL/CONI and MAGS7 grouped tool choice now
-lives in `../PaperSignalPlatform/research/`, beside the paper-signal notifier
-runtime that consumes it.
-
 Use `UsEquitySnapshotPipelines` outputs when reviewing snapshot-backed live
 strategy performance.

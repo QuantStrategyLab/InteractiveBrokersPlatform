@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Mapping
 
 from application.runtime_dependencies import IBKRRebalanceConfig, IBKRRebalanceRuntime
 from application.runtime_notification_adapters import build_runtime_notification_adapters
 from application.runtime_reporting_adapters import build_runtime_reporting_adapters
+from quant_platform_kit.common.runtime_assembly import build_runtime_assembly
+from quant_platform_kit.common.runtime_target import build_runtime_context_fields
 from quant_platform_kit.common.port_adapters import CallablePortfolioPort
+from quant_platform_kit.common.runtime_target import RuntimeTarget
 
 
 @dataclass(frozen=True)
@@ -58,6 +61,8 @@ class IBKRRuntimeComposer:
     printer: Callable[..., Any] = print
     notification_builder: Callable[..., Any] = build_runtime_notification_adapters
     reporting_builder: Callable[..., Any] = build_runtime_reporting_adapters
+    runtime_target: RuntimeTarget | None = None
+    extra_reporting_fields: Mapping[str, Any] = field(default_factory=dict)
 
     def build_notification_adapters(self):
         return self.notification_builder(
@@ -66,23 +71,30 @@ class IBKRRuntimeComposer:
         )
 
     def build_reporting_adapters(self):
-        return self.reporting_builder(
+        runtime_assembly = build_runtime_assembly(
             platform="interactive_brokers",
             deploy_target="cloud_run",
             service_name=self.service_name,
             strategy_profile=self.strategy_profile,
-            strategy_domain=self.strategy_domain,
+            runtime_target=self.runtime_target,
             account_scope=self.account_group,
             account_group=self.account_group,
             project_id=self.project_id,
             instance_name=self.instance_name,
-            extra_context_fields={
-                "account_ids": list(self.account_ids),
-                "strategy_target_mode": self.strategy_target_mode,
-                "strategy_artifact_dir": self.strategy_artifact_dir,
-                "strategy_display_name": self.strategy_display_name,
-                "strategy_display_name_localized": self.strategy_display_name_localized,
-            },
+            extra_context_fields=build_runtime_context_fields(
+                {
+                    "account_ids": list(self.account_ids),
+                    "strategy_target_mode": self.strategy_target_mode,
+                    "strategy_artifact_dir": self.strategy_artifact_dir,
+                    "strategy_display_name": self.strategy_display_name,
+                    "strategy_display_name_localized": self.strategy_display_name_localized,
+                    **dict(self.extra_reporting_fields or {}),
+                },
+            ),
+        )
+        return self.reporting_builder(
+            runtime_assembly=runtime_assembly,
+            strategy_domain=self.strategy_domain,
             managed_symbols=self.managed_symbols,
             signal_source=self.signal_source,
             status_icon=self.status_icon,
@@ -177,6 +189,8 @@ def build_runtime_composer(
     trace_extractor: Callable[..., str | None],
     env_reader: Callable[[str, str], str | None],
     printer: Callable[..., Any] = print,
+    extra_reporting_fields: Mapping[str, Any] | None = None,
+    runtime_target: RuntimeTarget | None = None,
 ) -> IBKRRuntimeComposer:
     return IBKRRuntimeComposer(
         service_name=str(service_name or ""),
@@ -221,4 +235,6 @@ def build_runtime_composer(
         trace_extractor=trace_extractor,
         env_reader=env_reader,
         printer=printer,
+        runtime_target=runtime_target,
+        extra_reporting_fields=dict(extra_reporting_fields or {}),
     )
