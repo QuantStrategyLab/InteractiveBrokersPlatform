@@ -643,6 +643,7 @@ def run_strategy_core(
                     translator=config.translator,
                     separator=config.separator,
                     strategy_display_name=config.strategy_display_name,
+                    extra_notification_lines=config.extra_notification_lines,
                 )
             )
             return StrategyCycleResult(
@@ -703,6 +704,7 @@ def run_strategy_core(
                 translator=config.translator,
                 separator=config.separator,
                 strategy_display_name=config.strategy_display_name,
+                extra_notification_lines=config.extra_notification_lines,
             )
         )
         return StrategyCycleResult(

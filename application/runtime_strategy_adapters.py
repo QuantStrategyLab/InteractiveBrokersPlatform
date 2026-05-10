@@ -18,6 +18,54 @@ class IBKRRuntimeStrategyAdapters:
     fetch_historical_price_series_fn: Any
     fetch_historical_price_candles_fn: Any
     map_strategy_decision_fn: Any
+    build_strategy_plugin_report_payload_fn: Any = None
+    load_configured_strategy_plugin_signals_fn: Any = None
+    parse_strategy_plugin_mounts_fn: Any = None
+
+    def load_strategy_plugin_signals(self, raw_mounts):
+        if not raw_mounts or self.parse_strategy_plugin_mounts_fn is None or self.load_configured_strategy_plugin_signals_fn is None:
+            return (), None
+        try:
+            mounts = self.parse_strategy_plugin_mounts_fn(raw_mounts)
+            if not mounts:
+                return (), None
+            return (
+                self.load_configured_strategy_plugin_signals_fn(
+                    mounts,
+                    strategy_profile=self.strategy_profile,
+                ),
+                None,
+            )
+        except Exception as exc:
+            return (), f"{type(exc).__name__}: {exc}"
+
+    def attach_strategy_plugin_report(self, report, *, signals, error: str | None = None):
+        if signals and self.build_strategy_plugin_report_payload_fn is not None:
+            report.setdefault("summary", {}).update(self.build_strategy_plugin_report_payload_fn(signals))
+        if error:
+            report.setdefault("diagnostics", {})["strategy_plugin_error"] = error
+
+    def translate_strategy_plugin_value(self, category: str, raw_value: str | None) -> str:
+        value = str(raw_value or "").strip() or "unknown"
+        key = f"strategy_plugin_{category}_{value}"
+        translated = self.translator(key)
+        return translated if translated != key else value
+
+    def build_strategy_plugin_notification_lines(self, signals) -> tuple[str, ...]:
+        lines = []
+        for signal in signals:
+            route = signal.canonical_route or "unknown_route"
+            action = signal.suggested_action or "unknown_action"
+            lines.append(
+                self.translator(
+                    "strategy_plugin_line",
+                    plugin=self.translate_strategy_plugin_value("name", signal.plugin),
+                    mode=self.translate_strategy_plugin_value("mode", signal.effective_mode),
+                    route=self.translate_strategy_plugin_value("route", route),
+                    action=self.translate_strategy_plugin_value("action", action),
+                )
+            )
+        return tuple(lines)
 
     def get_historical_close(self, ib, symbol, duration="2 Y", bar_size="1 day"):
         series = self.fetch_historical_price_series_fn(
@@ -68,6 +116,9 @@ def build_runtime_strategy_adapters(
     fetch_historical_price_series_fn,
     fetch_historical_price_candles_fn,
     map_strategy_decision_fn,
+    build_strategy_plugin_report_payload_fn=None,
+    load_configured_strategy_plugin_signals_fn=None,
+    parse_strategy_plugin_mounts_fn=None,
 ) -> IBKRRuntimeStrategyAdapters:
     return IBKRRuntimeStrategyAdapters(
         strategy_runtime=strategy_runtime,
@@ -78,4 +129,7 @@ def build_runtime_strategy_adapters(
         fetch_historical_price_series_fn=fetch_historical_price_series_fn,
         fetch_historical_price_candles_fn=fetch_historical_price_candles_fn,
         map_strategy_decision_fn=map_strategy_decision_fn,
+        build_strategy_plugin_report_payload_fn=build_strategy_plugin_report_payload_fn,
+        load_configured_strategy_plugin_signals_fn=load_configured_strategy_plugin_signals_fn,
+        parse_strategy_plugin_mounts_fn=parse_strategy_plugin_mounts_fn,
     )

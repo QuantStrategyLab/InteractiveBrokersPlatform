@@ -136,12 +136,13 @@ class IBKRRuntimeComposer:
             notifications=notification_adapters.notification_port,
         )
 
-    def build_rebalance_config(self):
+    def build_rebalance_config(self, *, extra_notification_lines=()):
         return IBKRRebalanceConfig(
             translator=self.translator,
             separator=self.separator,
             strategy_display_name=self.strategy_display_name_localized,
             reconciliation_output_path=self.reconciliation_output_path,
+            extra_notification_lines=tuple(extra_notification_lines or ()),
         )
 
 

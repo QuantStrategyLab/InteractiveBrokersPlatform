@@ -32,6 +32,11 @@ from quant_platform_kit.common.runtime_reports import (
     finalize_runtime_report,
     persist_runtime_report,
 )
+from quant_platform_kit.common.strategy_plugins import (
+    build_strategy_plugin_report_payload,
+    load_configured_strategy_plugin_signals,
+    parse_strategy_plugin_mounts,
+)
 from quant_platform_kit.ibkr import (
     connect_ib as ibkr_connect_ib,
     ensure_event_loop as ibkr_ensure_event_loop,
@@ -287,6 +292,9 @@ def build_strategy_adapters():
         fetch_historical_price_series_fn=fetch_historical_price_series,
         fetch_historical_price_candles_fn=fetch_historical_price_candles,
         map_strategy_decision_fn=map_strategy_decision,
+        build_strategy_plugin_report_payload_fn=build_strategy_plugin_report_payload,
+        load_configured_strategy_plugin_signals_fn=load_configured_strategy_plugin_signals,
+        parse_strategy_plugin_mounts_fn=parse_strategy_plugin_mounts,
     )
 
 
@@ -442,6 +450,20 @@ def compute_signals(ib, current_holdings):
     return build_strategy_adapters().compute_signals(ib, current_holdings)
 
 
+def load_strategy_plugin_signals():
+    return build_strategy_adapters().load_strategy_plugin_signals(
+        getattr(RUNTIME_SETTINGS, "strategy_plugin_mounts_json", None)
+    )
+
+
+def attach_strategy_plugin_report(report, *, signals, error: str | None = None):
+    build_strategy_adapters().attach_strategy_plugin_report(report, signals=signals, error=error)
+
+
+def build_strategy_plugin_notification_lines(signals) -> tuple[str, ...]:
+    return build_strategy_adapters().build_strategy_plugin_notification_lines(signals)
+
+
 def get_current_portfolio(ib):
     return build_broker_adapters().get_current_portfolio(ib)
 
@@ -494,13 +516,15 @@ def run_paper_liquidation_cycle():
     )
 
 
-def run_strategy_core():
+def run_strategy_core(*, strategy_plugin_signals=()):
     if PAPER_LIQUIDATE_ONLY:
         return run_paper_liquidation_cycle()
     composer = build_composer()
     return run_rebalance_cycle(
         runtime=composer.build_rebalance_runtime(),
-        config=composer.build_rebalance_config(),
+        config=composer.build_rebalance_config(
+            extra_notification_lines=build_strategy_plugin_notification_lines(strategy_plugin_signals)
+        ),
     )
 
 
@@ -511,6 +535,12 @@ def handle_request():
 
     log_context = build_request_log_context()
     report = build_execution_report(log_context)
+    strategy_plugin_signals, strategy_plugin_error = load_strategy_plugin_signals()
+    attach_strategy_plugin_report(
+        report,
+        signals=strategy_plugin_signals,
+        error=strategy_plugin_error,
+    )
     lock_acquired = STRATEGY_RUN_LOCK.acquire(blocking=False)
     try:
         log_runtime_event(
@@ -549,7 +579,9 @@ def handle_request():
             "strategy_cycle_started",
             message="Starting strategy execution",
         )
-        cycle_result = coerce_strategy_cycle_result(run_strategy_core())
+        cycle_result = coerce_strategy_cycle_result(
+            run_strategy_core(strategy_plugin_signals=strategy_plugin_signals)
+        )
         execution_summary = dict(cycle_result.execution_summary or {})
         reconciliation_record = dict(cycle_result.reconciliation_record or {})
         finalize_runtime_report(

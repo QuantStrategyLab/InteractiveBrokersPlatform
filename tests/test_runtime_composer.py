@@ -82,7 +82,7 @@ def test_runtime_composer_builds_runtime_and_config_from_local_builders():
     notification_adapters = composer.build_notification_adapters()
     reporting_adapters = composer.build_reporting_adapters()
     runtime = composer.build_rebalance_runtime()
-    config = composer.build_rebalance_config()
+    config = composer.build_rebalance_config(extra_notification_lines=("plugin-line",))
 
     assert notification_adapters.notification_port == "notification-port"
     assert observed["notification_builder"]["send_message"]
@@ -100,4 +100,5 @@ def test_runtime_composer_builds_runtime_and_config_from_local_builders():
     assert config.separator == "━━━━━━━━━━━━━━━━━━"
     assert config.strategy_display_name == "全球 ETF 轮动"
     assert config.reconciliation_output_path == "/tmp/reconciliation.json"
+    assert config.extra_notification_lines == ("plugin-line",)
     assert reporting_adapters == "reporting-adapters"

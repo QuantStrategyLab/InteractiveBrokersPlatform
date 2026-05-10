@@ -16,6 +16,7 @@ class IBKRRebalanceConfig:
     separator: str
     strategy_display_name: str | None = None
     reconciliation_output_path: str | Path | None = None
+    extra_notification_lines: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

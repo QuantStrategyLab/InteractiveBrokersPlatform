@@ -27,6 +27,7 @@ jobs:
       IBKR_FEATURE_SNAPSHOT_PATH: ${{ vars.IBKR_FEATURE_SNAPSHOT_PATH }}
       IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH: ${{ vars.IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH }}
       IBKR_STRATEGY_CONFIG_PATH: ${{ vars.IBKR_STRATEGY_CONFIG_PATH }}
+      IBKR_STRATEGY_PLUGIN_MOUNTS_JSON: ${{ vars.IBKR_STRATEGY_PLUGIN_MOUNTS_JSON }}
       IBKR_RECONCILIATION_OUTPUT_PATH: ${{ vars.IBKR_RECONCILIATION_OUTPUT_PATH }}
       IBKR_DRY_RUN_ONLY: ${{ vars.IBKR_DRY_RUN_ONLY }}
       # Strategy-owned defaults continue to come from UsEquityStrategies; this workflow only syncs platform/runtime inputs.
@@ -293,6 +294,12 @@ jobs:
             env_pairs+=("IBKR_STRATEGY_CONFIG_PATH=${IBKR_STRATEGY_CONFIG_PATH}")
           else
             remove_env_vars+=("IBKR_STRATEGY_CONFIG_PATH")
+          fi
+
+          if [ -n "${IBKR_STRATEGY_PLUGIN_MOUNTS_JSON:-}" ]; then
+            env_pairs+=("IBKR_STRATEGY_PLUGIN_MOUNTS_JSON=${IBKR_STRATEGY_PLUGIN_MOUNTS_JSON}")
+          else
+            remove_env_vars+=("IBKR_STRATEGY_PLUGIN_MOUNTS_JSON")
           fi
 
           if [ -n "${IBKR_RECONCILIATION_OUTPUT_PATH:-}" ]; then

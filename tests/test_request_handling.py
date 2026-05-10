@@ -17,7 +17,7 @@ def test_handle_request_get_returns_safe_message(strategy_module, monkeypatch):
 def test_handle_request_post_executes_on_market_day(strategy_module, monkeypatch):
     observed = {"called": False}
 
-    def fake_run_strategy_core():
+    def fake_run_strategy_core(**_kwargs):
         observed["called"] = True
         return "OK - executed"
 
@@ -68,7 +68,7 @@ def test_handle_request_emits_structured_runtime_events(strategy_module, monkeyp
         lambda context, event, **fields: observed.append((context.run_id, event, fields)),
     )
     monkeypatch.setattr(strategy_module, "is_market_open_today", lambda: True)
-    monkeypatch.setattr(strategy_module, "run_strategy_core", lambda: "OK - executed")
+    monkeypatch.setattr(strategy_module, "run_strategy_core", lambda **_kwargs: "OK - executed")
 
     with strategy_module.app.test_request_context(
         "/",
@@ -93,7 +93,7 @@ def test_handle_request_persists_machine_readable_report(strategy_module, monkey
 
     monkeypatch.setattr(strategy_module, "build_run_id", lambda: "run-001")
     monkeypatch.setattr(strategy_module, "is_market_open_today", lambda: True)
-    monkeypatch.setattr(strategy_module, "run_strategy_core", lambda: "OK - executed")
+    monkeypatch.setattr(strategy_module, "run_strategy_core", lambda **_kwargs: "OK - executed")
     monkeypatch.setattr(
         strategy_module,
         "persist_execution_report",
@@ -132,7 +132,7 @@ def test_handle_request_enriches_runtime_report_with_cycle_details(strategy_modu
     monkeypatch.setattr(strategy_module, "build_run_id", lambda: "run-001")
     monkeypatch.setattr(strategy_module, "is_market_open_today", lambda: True)
 
-    def fake_run_strategy_core():
+    def fake_run_strategy_core(**_kwargs):
         return StrategyCycleResult(
             result="OK - executed",
             execution_summary={
@@ -198,7 +198,7 @@ def test_handle_request_error_persists_machine_readable_report(strategy_module, 
     monkeypatch.setattr(
         strategy_module,
         "run_strategy_core",
-        lambda: (_ for _ in ()).throw(RuntimeError("boom")),
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     monkeypatch.setattr(
         strategy_module,

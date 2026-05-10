@@ -66,6 +66,7 @@ class PlatformRuntimeSettings:
     tg_token: str | None = None
     tg_chat_id: str | None = None
     notify_lang: str = "en"
+    strategy_plugin_mounts_json: str | None = None
     runtime_target: RuntimeTarget | None = None
 
 
@@ -163,6 +164,10 @@ def load_platform_runtime_settings(
         tg_token=os.getenv("TELEGRAM_TOKEN"),
         tg_chat_id=os.getenv("GLOBAL_TELEGRAM_CHAT_ID"),
         notify_lang=os.getenv("NOTIFY_LANG", "en"),
+        strategy_plugin_mounts_json=(
+            os.getenv("IBKR_STRATEGY_PLUGIN_MOUNTS_JSON")
+            or os.getenv("STRATEGY_PLUGIN_MOUNTS_JSON")
+        ),
         runtime_target=runtime_target,
     )
 

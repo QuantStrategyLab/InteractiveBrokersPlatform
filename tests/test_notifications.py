@@ -14,6 +14,7 @@ def test_build_translator_supports_chinese():
     assert translate("paper_liquidation_only") == "IBKR 模拟账户清仓模式"
     assert translate("paper_liquidation_positions_seen", count=4) == "识别持仓=4"
     assert translate("market_status_blend_gate_risk_on", asset="SOXX+SOXL") == "🚀 风险开启（SOXX+SOXL）"
+    assert translate("market_status_blend_gate_overlay_capped", asset="SOXX") == "🧯 过热降档（SOXX）"
     assert (
         translate(
             "signal_blend_gate_risk_on",
@@ -23,6 +24,27 @@ def test_build_translator_supports_chinese():
             soxx_ratio="20.0%",
         )
         == "SOXX 站上 140 日门槛线，持有 SOXL 70.0% + SOXX 20.0%"
+    )
+    assert (
+        translate(
+            "blend_gate_reason_volatility_delever",
+            symbol="SOXX",
+            window=20,
+            volatility="55.0%",
+            threshold="50.0%",
+            redirect_symbol="SOXX",
+        )
+        == "SOXX 20 日年化波动率 55.0% 高于 50.0%，SOXL 转向 SOXX"
+    )
+    assert (
+        translate(
+            "strategy_plugin_line",
+            plugin=translate("strategy_plugin_name_crisis_response_shadow"),
+            mode=translate("strategy_plugin_mode_shadow"),
+            route=translate("strategy_plugin_route_no_action"),
+            action=translate("strategy_plugin_action_watch_only"),
+        )
+        == "🧩 插件：危机响应观察 | 模式：影子观察 | 路由：不操作 | 建议：仅观察"
     )
     assert (
         translate(

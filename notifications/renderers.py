@@ -42,6 +42,10 @@ def _translator_uses_zh(translator) -> bool:
     return _base_translator_uses_zh(translator)
 
 
+def _extra_notification_lines(extra_notification_lines) -> list[str]:
+    return [str(line).strip() for line in extra_notification_lines or () if str(line).strip()]
+
+
 def _localize_notification_text(text: str, *, translator) -> str:
     return _base_localize_notification_text(
         text,
@@ -395,10 +399,12 @@ def _build_compact_message(
     separator: str,
     body_lines,
     dashboard_text: str = "",
+    extra_notification_lines=(),
 ) -> str:
     lines = [title]
     strategy_name = _format_text(strategy_display_name, fallback="<unknown>")
     lines.append(translator("strategy_label", name=strategy_name))
+    lines.extend(_extra_notification_lines(extra_notification_lines))
     dashboard = _format_dashboard_text(dashboard_text)
     if dashboard:
         lines.append(separator)
@@ -427,8 +433,11 @@ def render_heartbeat_notification(
     translator,
     separator,
     strategy_display_name,
+    extra_notification_lines=(),
 ) -> RenderedNotification:
-    detailed_text = f"{translator('heartbeat_title')}\n{dashboard}\n{separator}\n{no_op_text}"
+    extra_lines = _extra_notification_lines(extra_notification_lines)
+    detailed_parts = [translator("heartbeat_title"), *extra_lines, dashboard, separator, no_op_text]
+    detailed_text = "\n".join(str(part) for part in detailed_parts if str(part).strip())
     compact_text = _build_compact_message(
         title=translator("heartbeat_title"),
         strategy_display_name=strategy_display_name,
@@ -439,6 +448,7 @@ def render_heartbeat_notification(
         separator=separator,
         body_lines=[no_op_text],
         dashboard_text=strategy_dashboard,
+        extra_notification_lines=extra_lines,
     )
     return RenderedNotification(detailed_text=detailed_text, compact_text=compact_text)
 
@@ -455,7 +465,9 @@ def render_trade_notification(
     translator,
     separator,
     strategy_display_name,
+    extra_notification_lines=(),
 ) -> RenderedNotification:
+    extra_lines = _extra_notification_lines(extra_notification_lines)
     if trade_logs:
         notification_trade_lines = _build_notification_trade_lines(
             trade_logs,
@@ -464,6 +476,7 @@ def render_trade_notification(
         )
         detailed_text = (
             f"{translator('rebalance_title')}\n"
+            f"{chr(10).join(extra_lines) + chr(10) if extra_lines else ''}"
             f"{dashboard}\n"
             f"{separator}\n"
             f"{chr(10).join(notification_trade_lines)}"
@@ -478,10 +491,12 @@ def render_trade_notification(
             separator=separator,
             body_lines=notification_trade_lines,
             dashboard_text=strategy_dashboard,
+            extra_notification_lines=extra_lines,
         )
         return RenderedNotification(detailed_text=detailed_text, compact_text=compact_text)
 
-    detailed_text = f"{translator('heartbeat_title')}\n{dashboard}\n{separator}\n{translator('no_trades')}"
+    detailed_parts = [translator("heartbeat_title"), *extra_lines, dashboard, separator, translator("no_trades")]
+    detailed_text = "\n".join(str(part) for part in detailed_parts if str(part).strip())
     compact_text = _build_compact_message(
         title=translator("heartbeat_title"),
         strategy_display_name=strategy_display_name,
@@ -492,5 +507,6 @@ def render_trade_notification(
         separator=separator,
         body_lines=[translator("no_trades")],
         dashboard_text=strategy_dashboard,
+        extra_notification_lines=extra_lines,
     )
     return RenderedNotification(detailed_text=detailed_text, compact_text=compact_text)
