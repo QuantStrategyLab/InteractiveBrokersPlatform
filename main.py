@@ -464,6 +464,20 @@ def build_strategy_plugin_notification_lines(signals) -> tuple[str, ...]:
     return build_strategy_adapters().build_strategy_plugin_notification_lines(signals)
 
 
+def build_account_notification_lines() -> tuple[str, ...]:
+    account_ids = tuple(str(account_id).strip() for account_id in ACCOUNT_IDS if str(account_id).strip())
+    if not account_ids:
+        return ()
+    return (t("account_ids_detail", account_ids=", ".join(account_ids)),)
+
+
+def build_extra_notification_lines(strategy_plugin_signals=()) -> tuple[str, ...]:
+    return (
+        *build_account_notification_lines(),
+        *build_strategy_plugin_notification_lines(strategy_plugin_signals),
+    )
+
+
 def get_current_portfolio(ib):
     return build_broker_adapters().get_current_portfolio(ib)
 
@@ -522,9 +536,7 @@ def run_strategy_core(*, strategy_plugin_signals=()):
     composer = build_composer()
     return run_rebalance_cycle(
         runtime=composer.build_rebalance_runtime(),
-        config=composer.build_rebalance_config(
-            extra_notification_lines=build_strategy_plugin_notification_lines(strategy_plugin_signals)
-        ),
+        config=composer.build_rebalance_config(extra_notification_lines=build_extra_notification_lines(strategy_plugin_signals)),
     )
 
 

@@ -26,7 +26,7 @@ def strategy_module_factory(monkeypatch):
             "IBKR_RECONCILIATION_OUTPUT_PATH": None,
             "IB_ACCOUNT_GROUP_CONFIG_JSON": (
                 '{"groups":{"default":{"ib_gateway_instance_name":"127.0.0.1",'
-                '"ib_gateway_mode":"live","ib_client_id":1}}}'
+                '"ib_gateway_mode":"live","ib_client_id":1,"account_ids":["U18308207"]}}}'
             ),
             "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME": None,
             "GLOBAL_TELEGRAM_CHAT_ID": None,
