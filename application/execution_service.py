@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import hashlib
 import json
 import tempfile
@@ -649,6 +650,37 @@ def execute_rebalance(
     insufficient_buying_power_symbols: list[str] = []
     min_notional_symbols: list[str] = []
     quantity_zero_symbols: list[str] = []
+    anticipated_buying_power = get_available_buying_power(
+        ib,
+        account_values.get("buying_power", 0),
+        account_ids=normalized_account_ids,
+    )
+    cash_sweep_quantity = 0
+    cash_sweep_price = float(prices.get(safe_haven_symbol, 0.0) or 0.0) if safe_haven_symbol else 0.0
+    dry_run_sale_proceeds = 0.0
+
+    def cash_sweep_sale_quantity_to_fund_buy(max_quantity: int, candidate_symbols: tuple[str, ...]) -> int:
+        if max_quantity <= 0 or not safe_haven_symbol or cash_sweep_price <= 0.0:
+            return 0
+        base_buying_power = max(0.0, float(anticipated_buying_power))
+        for symbol in candidate_symbols:
+            underweight_value = target_mv[symbol] - current_mv.get(symbol, 0.0)
+            if underweight_value <= threshold:
+                continue
+            ask = prices.get(symbol)
+            if not ask or ask <= 0.0:
+                continue
+            max_buy_quantity = int(underweight_value // ask)
+            if max_buy_quantity <= 0:
+                continue
+            required_buying_power = max_buy_quantity * ask * 1.0
+            if base_buying_power >= required_buying_power:
+                return 0
+            return min(
+                max_quantity,
+                max(1, math.ceil((required_buying_power - base_buying_power) / cash_sweep_price)),
+            )
+        return 0
 
     has_sell_plan = False
     for symbol in all_symbols:
@@ -672,11 +704,27 @@ def execute_rebalance(
             break
         quantity_zero_symbols.append(symbol)
 
-    anticipated_buying_power = get_available_buying_power(
-        ib,
-        account_values.get("buying_power", 0),
-        account_ids=normalized_account_ids,
-    )
+    funding_buy_candidates = [
+        symbol
+        for symbol in target_mv
+        if symbol != safe_haven_symbol
+        and (target_mv[symbol] - current_mv.get(symbol, 0.0)) > threshold
+        and abs(target_mv[symbol] - current_mv.get(symbol, 0.0)) > current_min_trade
+    ]
+    if (
+        not has_sell_plan
+        and funding_buy_candidates
+        and safe_haven_symbol
+        and cash_sweep_price > 0.0
+        and float(positions.get(safe_haven_symbol, {}).get("quantity", 0.0) or 0.0) > 0.0
+    ):
+        cash_sweep_quantity = cash_sweep_sale_quantity_to_fund_buy(
+            int(float(positions.get(safe_haven_symbol, {}).get("quantity", 0.0) or 0.0)),
+            tuple(funding_buy_candidates),
+        )
+        if cash_sweep_quantity > 0:
+            has_sell_plan = True
+
     has_buy_plan = False
     for symbol, target in target_mv.items():
         current = current_mv.get(symbol, 0.0)
@@ -813,8 +861,24 @@ def execute_rebalance(
     for symbol in all_symbols:
         current = current_mv.get(symbol, 0)
         target = target_mv.get(symbol, 0)
-        if current > target + threshold:
-            price = prices.get(symbol)
+        price = prices.get(symbol)
+        if symbol == safe_haven_symbol and cash_sweep_quantity > 0:
+            if not price:
+                execution_summary["orders_skipped"].append({"symbol": symbol, "side": "sell", "reason": "missing_price"})
+                execution_summary["skipped_reasons"].append(f"missing_price:{symbol}")
+                continue
+            regular_qty = _sell_order_quantity(
+                current_value=current,
+                target_value=target,
+                price=price,
+                position_quantity=positions.get(symbol, {}).get("quantity", 0),
+                quantity_step=order_quantity_step,
+            )
+            qty = max(int(cash_sweep_quantity), int(regular_qty))
+            if qty <= 0:
+                execution_summary["orders_skipped"].append({"symbol": symbol, "side": "sell", "reason": "quantity_zero"})
+                continue
+        elif current > target + threshold:
             if not price:
                 execution_summary["orders_skipped"].append({"symbol": symbol, "side": "sell", "reason": "missing_price"})
                 execution_summary["skipped_reasons"].append(f"missing_price:{symbol}")
@@ -829,52 +893,59 @@ def execute_rebalance(
             if qty <= 0:
                 execution_summary["orders_skipped"].append({"symbol": symbol, "side": "sell", "reason": "quantity_zero"})
                 continue
+        else:
+            continue
 
-            if dry_run_only:
-                execution_summary["orders_submitted"].append(
-                    {"symbol": symbol, "side": "sell", "quantity": qty, "status": "dry_run"}
-                )
-                trade_logs.append(f"DRY_RUN sell {symbol} {format_quantity(qty)}")
-                continue
-            report = submit_order_intent(
-                ib,
-                order_intent_cls(
-                    symbol=symbol,
-                    side="sell",
-                    quantity=qty,
-                    account_id=order_account_id,
-                ),
+        if dry_run_only:
+            execution_summary["orders_submitted"].append(
+                {"symbol": symbol, "side": "sell", "quantity": qty, "status": "dry_run"}
             )
-            ok, status_msg = check_order_submitted(report, translator=translator)
-            status = str(getattr(report, "status", "") or "")
-            order_payload = {
-                "symbol": symbol,
-                "side": "sell",
-                "quantity": qty,
-                "status": status,
-                "broker_order_id": getattr(report, "broker_order_id", None),
-            }
-            if status == "Filled":
-                execution_summary["orders_filled"].append(order_payload)
-            elif status in {"PartiallyFilled", "Partial"}:
-                execution_summary["orders_partially_filled"].append(order_payload)
-            elif ok:
-                execution_summary["orders_submitted"].append(order_payload)
-            else:
-                execution_summary["orders_skipped"].append({**order_payload, "reason": status or "submit_failed"})
-                execution_summary["skipped_reasons"].append(f"submit_failed:{symbol}:{status or 'unknown'}")
-            trade_logs.append(translator("market_sell", symbol=symbol, qty=format_quantity(qty)) + f" {status_msg}")
-            if ok:
-                sell_executed = True
+            trade_logs.append(f"DRY_RUN sell {symbol} {format_quantity(qty)}")
+            dry_run_sale_proceeds += float(qty) * float(price)
+            continue
+        report = submit_order_intent(
+            ib,
+            order_intent_cls(
+                symbol=symbol,
+                side="sell",
+                quantity=qty,
+                account_id=order_account_id,
+            ),
+        )
+        ok, status_msg = check_order_submitted(report, translator=translator)
+        status = str(getattr(report, "status", "") or "")
+        order_payload = {
+            "symbol": symbol,
+            "side": "sell",
+            "quantity": qty,
+            "status": status,
+            "broker_order_id": getattr(report, "broker_order_id", None),
+        }
+        if status == "Filled":
+            execution_summary["orders_filled"].append(order_payload)
+        elif status in {"PartiallyFilled", "Partial"}:
+            execution_summary["orders_partially_filled"].append(order_payload)
+        elif ok:
+            execution_summary["orders_submitted"].append(order_payload)
+        else:
+            execution_summary["orders_skipped"].append({**order_payload, "reason": status or "submit_failed"})
+            execution_summary["skipped_reasons"].append(f"submit_failed:{symbol}:{status or 'unknown'}")
+        trade_logs.append(translator("market_sell", symbol=symbol, qty=format_quantity(qty)) + f" {status_msg}")
+        if ok:
+            sell_executed = True
 
-    if sell_executed:
-        time.sleep(sell_settle_delay_sec)
-
-    buying_power = anticipated_buying_power if not sell_executed else get_available_buying_power(
-        ib,
-        account_values.get("buying_power", 0),
-        account_ids=normalized_account_ids,
-    )
+    if dry_run_only:
+        buying_power = max(0.0, anticipated_buying_power + dry_run_sale_proceeds)
+    else:
+        if sell_executed:
+            time.sleep(sell_settle_delay_sec)
+            buying_power = get_available_buying_power(
+                ib,
+                account_values.get("buying_power", 0),
+                account_ids=normalized_account_ids,
+            )
+        else:
+            buying_power = anticipated_buying_power
 
     for symbol, target in target_mv.items():
         current = current_mv.get(symbol, 0)

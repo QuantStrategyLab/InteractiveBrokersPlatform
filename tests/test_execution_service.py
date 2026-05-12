@@ -394,7 +394,7 @@ def test_execute_rebalance_blocks_same_day_repeat_via_execution_lock(tmp_path, m
         {"VOO": 0.8, "BOXX": 0.2},
         {},
         {"equity": 1000.0, "buying_power": 1000.0},
-        dry_run_only=True,
+        dry_run_only=False,
         **kwargs,
     )
     second_logs = execute_rebalance(
@@ -402,7 +402,7 @@ def test_execute_rebalance_blocks_same_day_repeat_via_execution_lock(tmp_path, m
         {"VOO": 0.8, "BOXX": 0.2},
         {},
         {"equity": 1000.0, "buying_power": 1000.0},
-        dry_run_only=True,
+        dry_run_only=False,
         **kwargs,
     )
     paper_logs = execute_rebalance(
@@ -503,7 +503,7 @@ def test_execute_rebalance_returns_structured_summary_when_requested(monkeypatch
             trade_date="2026-04-01",
             snapshot_as_of="2026-03-31",
         ),
-        dry_run_only=True,
+        dry_run_only=False,
         cash_reserve_ratio=0.0,
         rebalance_threshold_ratio=0.02,
         limit_buy_premium=1.005,
@@ -518,6 +518,75 @@ def test_execute_rebalance_returns_structured_summary_when_requested(monkeypatch
     assert summary["safe_haven_symbol"] == "BOXX"
     assert summary["orders_submitted"]
     assert summary["target_vs_current"]
+
+
+def test_execute_rebalance_sells_cash_sweep_symbol_when_buying_power_is_short(monkeypatch, tmp_path):
+    class FakeIB:
+        def __init__(self):
+            self._account_values_calls = 0
+
+        def openTrades(self):
+            return []
+
+        def fills(self):
+            return []
+
+        def accountValues(self):
+            self._account_values_calls += 1
+            buying_power = "124" if self._account_values_calls == 1 else "324"
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value=buying_power)]
+
+    submitted = []
+
+    def fake_submit_order_intent(_ib, intent):
+        submitted.append(intent)
+        return SimpleNamespace(broker_order_id=f"order-{len(submitted)}", status="Submitted")
+
+    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+
+    trade_logs, summary = execute_rebalance(
+        FakeIB(),
+        {"VOO": 0.8, "BOXX": 0.2},
+        {"VOO": {"quantity": 0}, "BOXX": {"quantity": 2}},
+        {"equity": 1000.0, "buying_power": 124.0},
+        fetch_quote_snapshots=lambda *_args, **_kwargs: {
+            "VOO": SimpleNamespace(last_price=100.0),
+            "BOXX": SimpleNamespace(last_price=100.0),
+        },
+        submit_order_intent=fake_submit_order_intent,
+        order_intent_cls=OrderIntent,
+        translator=translate,
+        strategy_symbols=["VOO", "BOXX"],
+        strategy_profile="tech_communication_pullback_enhancement",
+        account_group="default",
+        service_name="ibkr-paper",
+        account_ids=("DU123",),
+        signal_metadata=_signal_metadata(
+            {"VOO": 0.8, "BOXX": 0.2},
+            risk_symbols=("VOO",),
+            safe_haven_symbols=("BOXX",),
+            regime="risk_on",
+            breadth_ratio=0.6,
+            target_stock_weight=0.8,
+            realized_stock_weight=0.8,
+            safe_haven_weight=0.2,
+            safe_haven_symbol="BOXX",
+            trade_date="2026-04-01",
+            snapshot_as_of="2026-03-31",
+        ),
+        dry_run_only=False,
+        cash_reserve_ratio=0.0,
+        rebalance_threshold_ratio=0.02,
+        limit_buy_premium=1.005,
+        sell_settle_delay_sec=0,
+        execution_lock_dir=tmp_path,
+        return_summary=True,
+    )
+
+    assert any(intent.side == "sell" and intent.symbol == "BOXX" for intent in submitted)
+    assert any(intent.side == "buy" and intent.symbol == "VOO" for intent in submitted)
+    assert summary["execution_status"] == "executed"
+    assert any(log.startswith("sell BOXX") for log in trade_logs)
 
 
 def test_execute_rebalance_blocks_when_material_target_has_missing_prices():
