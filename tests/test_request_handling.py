@@ -32,6 +32,11 @@ def test_handle_request_post_executes_on_market_day(strategy_module, monkeypatch
     assert observed["called"] is True
 
 
+def test_build_extra_notification_lines_includes_account_id(strategy_module):
+    lines = strategy_module.build_extra_notification_lines(())
+    assert any("U18308207" in line for line in lines)
+
+
 def test_handle_request_skips_overlapping_post(strategy_module, monkeypatch):
     observed = {}
 

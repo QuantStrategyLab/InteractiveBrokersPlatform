@@ -46,6 +46,7 @@ def test_build_translator_supports_chinese():
         )
         == "🧩 插件：危机观察通知 | 状态：未触发危机 | 提醒：仅通知"
     )
+    assert translate("account_ids_detail", account_ids="U18308207") == "🆔 账户: U18308207"
     assert (
         translate(
             "small_account_warning_note",
