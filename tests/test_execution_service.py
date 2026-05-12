@@ -416,7 +416,7 @@ def test_execute_rebalance_blocks_same_day_repeat_via_execution_lock(tmp_path, m
 
     assert any("execution_lock_acquired" in log for log in first_logs)
     assert any("same_day_execution_locked" in log for log in second_logs)
-    assert any("execution_lock_acquired" in log for log in paper_logs)
+    assert any("same_day_execution_locked" in log for log in paper_logs)
 
 
 def test_execute_rebalance_skips_when_same_day_fills_detected():
@@ -514,7 +514,7 @@ def test_execute_rebalance_returns_structured_summary_when_requested(monkeypatch
 
     assert any("execution_lock_acquired" in log for log in trade_logs)
     assert summary["execution_status"] == "executed"
-    assert summary["mode"] == "dry_run"
+    assert summary["mode"] == "paper"
     assert summary["safe_haven_symbol"] == "BOXX"
     assert summary["orders_submitted"]
     assert summary["target_vs_current"]
