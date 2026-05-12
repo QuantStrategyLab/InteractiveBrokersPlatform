@@ -1,12 +1,10 @@
 import importlib
-import os
 import sys
 import types
 import unittest
 from datetime import timezone as datetime_timezone
 from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]

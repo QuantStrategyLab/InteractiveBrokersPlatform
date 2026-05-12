@@ -709,7 +709,7 @@ def execute_rebalance(
         for symbol in target_mv
         if symbol != safe_haven_symbol
         and (target_mv[symbol] - current_mv.get(symbol, 0.0)) > threshold
-        and abs(target_mv[symbol] - current_mv.get(symbol, 0.0)) > current_min_trade
+        and abs(target_mv[symbol] - current_mv.get(symbol, 0.0)) > minimum_order_notional
     ]
     if (
         not has_sell_plan
