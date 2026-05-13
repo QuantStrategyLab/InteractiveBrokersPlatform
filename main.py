@@ -335,7 +335,8 @@ def build_broker_adapters():
     )
 
 
-def build_composer():
+def build_composer(*, dry_run_only_override: bool | None = None):
+    effective_dry_run_only = RUNTIME_SETTINGS.dry_run_only if dry_run_only_override is None else bool(dry_run_only_override)
     return build_runtime_composer(
         service_name=SERVICE_NAME or os.getenv("K_SERVICE", "interactive-brokers-platform"),
         strategy_profile=STRATEGY_PROFILE,
@@ -353,7 +354,7 @@ def build_composer():
         signal_source=STRATEGY_SIGNAL_SOURCE,
         status_icon=STRATEGY_STATUS_ICON,
         safe_haven=SAFE_HAVEN,
-        dry_run_only=RUNTIME_SETTINGS.dry_run_only,
+        dry_run_only=effective_dry_run_only,
         strategy_config_source=FEATURE_RUNTIME_CONFIG_SOURCE,
         ib_gateway_host_resolver=get_ib_host,
         ib_gateway_port=IB_PORT,
@@ -407,12 +408,12 @@ def log_runtime_event(log_context, event, **fields):
     return build_composer().build_reporting_adapters().log_event(log_context, event, **fields)
 
 
-def build_execution_report(log_context):
-    return build_composer().build_reporting_adapters().build_report(log_context)
+def build_execution_report(log_context, *, dry_run_only_override: bool | None = None):
+    return build_composer(dry_run_only_override=dry_run_only_override).build_reporting_adapters().build_report(log_context)
 
 
-def persist_execution_report(report):
-    return build_composer().build_reporting_adapters().persist_execution_report(report)
+def persist_execution_report(report, *, dry_run_only_override: bool | None = None):
+    return build_composer(dry_run_only_override=dry_run_only_override).build_reporting_adapters().persist_execution_report(report)
 
 
 def build_request_log_context():
@@ -530,23 +531,24 @@ def run_paper_liquidation_cycle():
     )
 
 
-def run_strategy_core(*, strategy_plugin_signals=()):
-    if PAPER_LIQUIDATE_ONLY:
+def run_strategy_core(*, strategy_plugin_signals=(), dry_run_only_override: bool | None = None):
+    if PAPER_LIQUIDATE_ONLY and dry_run_only_override is None:
         return run_paper_liquidation_cycle()
-    composer = build_composer()
+    composer = build_composer(dry_run_only_override=dry_run_only_override)
     return run_rebalance_cycle(
         runtime=composer.build_rebalance_runtime(),
         config=composer.build_rebalance_config(extra_notification_lines=build_extra_notification_lines(strategy_plugin_signals)),
     )
 
 
-@app.route("/", methods=["POST", "GET"])
-def handle_request():
+def _handle_request(*, dry_run_only_override: bool | None = None, response_body: str = "OK"):
     if request.method == "GET":
-        return "OK - use POST to execute strategy", 200
+        if dry_run_only_override is None:
+            return "OK - use POST to execute strategy", 200
+        return f"{response_body} - use POST to run precheck", 200
 
     log_context = build_request_log_context()
-    report = build_execution_report(log_context)
+    report = build_execution_report(log_context, dry_run_only_override=dry_run_only_override)
     strategy_plugin_signals, strategy_plugin_error = load_strategy_plugin_signals()
     attach_strategy_plugin_report(
         report,
@@ -558,8 +560,9 @@ def handle_request():
         log_runtime_event(
             log_context,
             "strategy_cycle_received",
-            message="Received strategy execution request",
+            message="Received strategy precheck request" if dry_run_only_override else "Received strategy execution request",
             http_method=request.method,
+            execution_window="precheck" if dry_run_only_override else "execution",
         )
         if not lock_acquired:
             log_runtime_event(
@@ -579,6 +582,7 @@ def handle_request():
                 log_context,
                 "market_closed",
                 message="Market closed; skip strategy execution",
+                execution_window="precheck" if dry_run_only_override else "execution",
             )
             finalize_runtime_report(
                 report,
@@ -589,10 +593,14 @@ def handle_request():
         log_runtime_event(
             log_context,
             "strategy_cycle_started",
-            message="Starting strategy execution",
+            message="Starting strategy precheck" if dry_run_only_override else "Starting strategy execution",
+            execution_window="precheck" if dry_run_only_override else "execution",
         )
         cycle_result = coerce_strategy_cycle_result(
-            run_strategy_core(strategy_plugin_signals=strategy_plugin_signals)
+            run_strategy_core(
+                strategy_plugin_signals=strategy_plugin_signals,
+                dry_run_only_override=dry_run_only_override,
+            )
         )
         execution_summary = dict(cycle_result.execution_summary or {})
         reconciliation_record = dict(cycle_result.reconciliation_record or {})
@@ -637,10 +645,11 @@ def handle_request():
         log_runtime_event(
             log_context,
             "strategy_cycle_completed",
-            message="Strategy execution completed",
+            message="Strategy precheck completed" if dry_run_only_override else "Strategy execution completed",
+            execution_window="precheck" if dry_run_only_override else "execution",
             result=cycle_result.result,
         )
-        return cycle_result.result, 200
+        return (response_body if dry_run_only_override else cycle_result.result), 200
     except TimeoutError as exc:
         append_runtime_report_error(
             report,
@@ -683,10 +692,23 @@ def handle_request():
         if lock_acquired:
             STRATEGY_RUN_LOCK.release()
         try:
-            report_path = persist_execution_report(report)
+            if dry_run_only_override is None:
+                report_path = persist_execution_report(report)
+            else:
+                report_path = persist_execution_report(report, dry_run_only_override=dry_run_only_override)
             print(f"execution_report {report_path}", flush=True)
         except Exception as persist_exc:
             print(f"failed to persist execution report: {persist_exc}", flush=True)
+
+
+@app.route("/", methods=["POST", "GET"])
+def handle_request():
+    return _handle_request()
+
+
+@app.route("/precheck", methods=["POST", "GET"])
+def handle_precheck():
+    return _handle_request(dry_run_only_override=True, response_body="Precheck OK")
 
 
 @app.route("/health", methods=["GET"])
