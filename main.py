@@ -641,6 +641,25 @@ def handle_request():
             result=cycle_result.result,
         )
         return cycle_result.result, 200
+    except TimeoutError as exc:
+        append_runtime_report_error(
+            report,
+            stage="ibkr_connect",
+            message=str(exc),
+            error_type=type(exc).__name__,
+        )
+        finalize_runtime_report(report, status="error")
+        log_runtime_event(
+            log_context,
+            "ibkr_gateway_connect_timeout",
+            message="IBKR gateway handshake timed out",
+            severity="ERROR",
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+        )
+        error_msg = f"🚨 【IBKR 连接异常】\n{str(exc)}"
+        publish_notification(detailed_text=error_msg, compact_text=error_msg)
+        return "Error", 500
     except Exception as exc:
         append_runtime_report_error(
             report,
