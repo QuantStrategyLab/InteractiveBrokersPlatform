@@ -1,3 +1,5 @@
+import types
+
 from application.cycle_result import StrategyCycleResult
 
 
@@ -30,6 +32,75 @@ def test_handle_request_post_executes_on_market_day(strategy_module, monkeypatch
     assert status == 200
     assert body == "OK - executed"
     assert observed["called"] is True
+
+
+def test_handle_precheck_post_uses_dry_run_override(strategy_module, monkeypatch):
+    observed = {"called": False, "dry_run_only_override": None, "events": []}
+
+    monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace(run_id="run-001"))
+    monkeypatch.setattr(strategy_module, "build_execution_report", lambda log_context, **_kwargs: {"status": "pending"})
+    monkeypatch.setattr(strategy_module, "persist_execution_report", lambda report, **_kwargs: observed.setdefault("report", dict(report)) or "/tmp/runtime-report.json")
+    monkeypatch.setattr(strategy_module, "emit_runtime_log", lambda context, event, **fields: observed["events"].append((event, fields)))
+    monkeypatch.setattr(strategy_module, "is_market_open_today", lambda: True)
+    monkeypatch.setattr(strategy_module, "load_strategy_plugin_signals", lambda: ((), None))
+    monkeypatch.setattr(strategy_module, "attach_strategy_plugin_report", lambda *args, **kwargs: None)
+
+    def fake_run_strategy_core(**kwargs):
+        observed["called"] = True
+        observed["dry_run_only_override"] = kwargs.get("dry_run_only_override")
+        return "OK - precheck"
+
+    monkeypatch.setattr(strategy_module, "run_strategy_core", fake_run_strategy_core)
+
+    with strategy_module.app.test_request_context("/precheck", method="POST"):
+        body, status = strategy_module.handle_precheck()
+
+    assert status == 200
+    assert body == "Precheck OK"
+    assert observed["called"] is True
+    assert observed["dry_run_only_override"] is True
+    assert observed["events"][0][0] == "strategy_cycle_received"
+    assert observed["events"][0][1]["execution_window"] == "precheck"
+
+
+def test_handle_precheck_ignores_paper_liquidate_only(strategy_module, monkeypatch):
+    observed = {"called": False}
+
+    monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace(run_id="run-001"))
+    monkeypatch.setattr(strategy_module, "build_execution_report", lambda log_context, **_kwargs: {"status": "pending"})
+    monkeypatch.setattr(strategy_module, "persist_execution_report", lambda report, **_kwargs: "/tmp/runtime-report.json")
+    monkeypatch.setattr(strategy_module, "emit_runtime_log", lambda *args, **kwargs: None)
+    monkeypatch.setattr(strategy_module, "is_market_open_today", lambda: True)
+    monkeypatch.setattr(strategy_module, "load_strategy_plugin_signals", lambda: ((), None))
+    monkeypatch.setattr(strategy_module, "attach_strategy_plugin_report", lambda *args, **kwargs: None)
+    monkeypatch.setattr(strategy_module, "PAPER_LIQUIDATE_ONLY", True)
+
+    def fake_run_strategy_core(**kwargs):
+        observed["called"] = True
+        assert kwargs.get("dry_run_only_override") is True
+        return "OK - precheck"
+
+    monkeypatch.setattr(strategy_module, "run_strategy_core", fake_run_strategy_core)
+
+    with strategy_module.app.test_request_context("/precheck", method="POST"):
+        body, status = strategy_module.handle_precheck()
+
+    assert status == 200
+    assert body == "Precheck OK"
+    assert observed["called"] is True
+
+
+def test_handle_precheck_get_does_not_execute(strategy_module, monkeypatch):
+    observed = {"called": False}
+
+    monkeypatch.setattr(strategy_module, "run_strategy_core", lambda **_kwargs: observed.__setitem__("called", True))
+
+    with strategy_module.app.test_request_context("/precheck", method="GET"):
+        body, status = strategy_module.handle_precheck()
+
+    assert status == 200
+    assert body == "Precheck OK - use POST to run precheck"
+    assert observed["called"] is False
 
 
 def test_build_extra_notification_lines_includes_account_id(strategy_module):

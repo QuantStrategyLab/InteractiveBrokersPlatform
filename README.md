@@ -258,7 +258,7 @@ Important:
 3. **Cloud Run**: Deploy or update this Flask app with Direct VPC egress. Set `STRATEGY_PROFILE`, `ACCOUNT_GROUP`, and `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME`. Keep `IB_GATEWAY_ZONE` / `IB_GATEWAY_IP_MODE` only as transition fallbacks if the selected account-group payload does not already contain them. The workflow emits `RUNTIME_TARGET_JSON` to describe the structured deployment target. The runtime service account needs `roles/secretmanager.secretAccessor` and, for instance-name resolution, `roles/compute.viewer`.
    - For Cloud Run source deploy, also grant `roles/storage.objectViewer` on `gs://run-sources-${PROJECT_ID}-${REGION}` to the build service account, the deploy service account, and `${PROJECT_NUMBER}-compute@developer.gserviceaccount.com`.
 4. **Firewall**: Allow TCP `4001` (`live`) or `4002` (`paper`) from the Cloud Run egress subnet CIDR to the GCE instance.
-5. **Cloud Scheduler**: Create a job that POSTs to the Cloud Run URL. Choose the cron from the strategy-layer cadence in `UsEquityStrategies`; daily profiles can still use a near-close weekday schedule such as `45 15 * * 1-5` in `America/New_York`.
+5. **Cloud Scheduler**: Create two jobs that POST to the Cloud Run URL. Use `"/precheck"` after the open window and `"/"` near the close window. Choose both crons from the strategy-layer cadence in `UsEquityStrategies`; daily profiles can still use a near-close weekday schedule such as `45 15 * * 1-5` in `America/New_York`.
 6. **Optional public-IP mode**: Only if you cannot use VPC, set `IB_GATEWAY_IP_MODE=external`, expose the GCE public IP deliberately, and restrict source ranges tightly. This is not the default path.
 
 Example deploy/update command:
