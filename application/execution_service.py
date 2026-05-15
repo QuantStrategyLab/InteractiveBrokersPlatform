@@ -19,6 +19,9 @@ from quant_platform_kit.common.quantity import (
 )
 
 
+MIN_FRACTIONAL_ORDER_QUANTITY = 0.01
+
+
 def get_market_prices(
     ib,
     symbols,
@@ -430,6 +433,10 @@ def _floor_order_quantity(quantity, *, quantity_step):
     return normalize_order_quantity(floor_to_quantity_step(quantity, quantity_step))
 
 
+def _minimum_supported_order_quantity(quantity_step: float) -> float:
+    return 1.0 if float(quantity_step or 1.0) >= 1.0 else MIN_FRACTIONAL_ORDER_QUANTITY
+
+
 def _sell_order_quantity(
     *,
     current_value,
@@ -542,6 +549,7 @@ def execute_rebalance(
     threshold = equity * rebalance_threshold_ratio
     order_quantity_step = float(quantity_step or 1.0)
     minimum_order_notional = max(0.0, float(min_order_notional or 0.0))
+    minimum_supported_quantity = _minimum_supported_order_quantity(order_quantity_step)
     execution_summary["cash_reserve_dollars"] = float(reserved)
 
     all_symbols = set(target_weights.keys()) | set(positions.keys())
@@ -650,6 +658,7 @@ def execute_rebalance(
     insufficient_buying_power_symbols: list[str] = []
     min_notional_symbols: list[str] = []
     quantity_zero_symbols: list[str] = []
+    fractional_quantity_too_small_symbols: list[str] = []
     anticipated_buying_power = get_available_buying_power(
         ib,
         account_values.get("buying_power", 0),
@@ -700,6 +709,18 @@ def execute_rebalance(
             quantity_step=order_quantity_step,
         )
         if qty > 0:
+            if qty < minimum_supported_quantity:
+                fractional_quantity_too_small_symbols.append(symbol)
+                execution_summary["orders_skipped"].append(
+                    {
+                        "symbol": symbol,
+                        "side": "sell",
+                        "reason": "fractional_quantity_too_small",
+                        "quantity": qty,
+                        "minimum_quantity": minimum_supported_quantity,
+                    }
+                )
+                continue
             has_sell_plan = True
             break
         quantity_zero_symbols.append(symbol)
@@ -748,6 +769,18 @@ def execute_rebalance(
             else 0
         )
         if qty > 0:
+            if qty < minimum_supported_quantity:
+                fractional_quantity_too_small_symbols.append(symbol)
+                execution_summary["orders_skipped"].append(
+                    {
+                        "symbol": symbol,
+                        "side": "buy",
+                        "reason": "fractional_quantity_too_small",
+                        "quantity": qty,
+                        "minimum_quantity": minimum_supported_quantity,
+                    }
+                )
+                continue
             has_buy_plan = True
             break
         quantity_zero_symbols.append(symbol)
@@ -770,6 +803,9 @@ def execute_rebalance(
         elif min_notional_symbols:
             symbols = ",".join(sorted(dict.fromkeys(min_notional_symbols)))
             reason = f"min_notional:{symbols}"
+        elif fractional_quantity_too_small_symbols:
+            symbols = ",".join(sorted(dict.fromkeys(fractional_quantity_too_small_symbols)))
+            reason = f"fractional_quantity_too_small:{symbols}"
         elif quantity_zero_symbols:
             symbols = ",".join(sorted(dict.fromkeys(quantity_zero_symbols)))
             reason = f"quantity_zero:{symbols}"
@@ -878,6 +914,18 @@ def execute_rebalance(
             if qty <= 0:
                 execution_summary["orders_skipped"].append({"symbol": symbol, "side": "sell", "reason": "quantity_zero"})
                 continue
+            if qty < minimum_supported_quantity:
+                execution_summary["orders_skipped"].append(
+                    {
+                        "symbol": symbol,
+                        "side": "sell",
+                        "reason": "fractional_quantity_too_small",
+                        "quantity": qty,
+                        "minimum_quantity": minimum_supported_quantity,
+                    }
+                )
+                execution_summary["skipped_reasons"].append(f"fractional_quantity_too_small:{symbol}")
+                continue
         elif current > target + threshold:
             if not price:
                 execution_summary["orders_skipped"].append({"symbol": symbol, "side": "sell", "reason": "missing_price"})
@@ -892,6 +940,18 @@ def execute_rebalance(
             )
             if qty <= 0:
                 execution_summary["orders_skipped"].append({"symbol": symbol, "side": "sell", "reason": "quantity_zero"})
+                continue
+            if qty < minimum_supported_quantity:
+                execution_summary["orders_skipped"].append(
+                    {
+                        "symbol": symbol,
+                        "side": "sell",
+                        "reason": "fractional_quantity_too_small",
+                        "quantity": qty,
+                        "minimum_quantity": minimum_supported_quantity,
+                    }
+                )
+                execution_summary["skipped_reasons"].append(f"fractional_quantity_too_small:{symbol}")
                 continue
         else:
             continue
@@ -967,6 +1027,18 @@ def execute_rebalance(
             )
             if qty <= 0:
                 execution_summary["orders_skipped"].append({"symbol": symbol, "side": "buy", "reason": "quantity_zero"})
+                continue
+            if qty < minimum_supported_quantity:
+                execution_summary["orders_skipped"].append(
+                    {
+                        "symbol": symbol,
+                        "side": "buy",
+                        "reason": "fractional_quantity_too_small",
+                        "quantity": qty,
+                        "minimum_quantity": minimum_supported_quantity,
+                    }
+                )
+                execution_summary["skipped_reasons"].append(f"fractional_quantity_too_small:{symbol}")
                 continue
 
             if dry_run_only:
