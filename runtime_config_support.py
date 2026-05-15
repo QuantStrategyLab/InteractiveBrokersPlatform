@@ -10,7 +10,6 @@ from quant_platform_kit.common.runtime_config import (
     first_non_empty,
     resolve_bool_value,
     resolve_float_env,
-    resolve_quantity_step_env,
     resolve_strategy_runtime_path_settings,
 )
 from quant_platform_kit.common.runtime_target import (
@@ -146,13 +145,7 @@ def load_platform_runtime_settings(
         strategy_config_source=runtime_paths.strategy_config_source,
         reconciliation_output_path=runtime_paths.reconciliation_output_path,
         dry_run_only=resolve_bool_value(os.getenv("IBKR_DRY_RUN_ONLY")),
-        quantity_step=resolve_quantity_step_env(
-            os.environ,
-            step_env="IBKR_ORDER_QUANTITY_STEP",
-            fractional_env="IBKR_FRACTIONAL_SHARES_ENABLED",
-            fractional_default=False,
-            fractional_step=0.0001,
-        ),
+        quantity_step=1.0,
         min_order_notional=resolve_float_env(
             os.environ,
             "IBKR_MIN_ORDER_NOTIONAL_USD",

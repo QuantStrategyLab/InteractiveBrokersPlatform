@@ -193,16 +193,15 @@ def test_load_platform_runtime_settings_supports_explicit_group_config_values(mo
     assert settings.notify_lang == "zh"
 
 
-def test_load_platform_runtime_settings_supports_fractional_quantity_step(monkeypatch):
+def test_load_platform_runtime_settings_uses_whole_share_quantity_step(monkeypatch):
     monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(SAMPLE_STRATEGY_PROFILE))
     monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
-    monkeypatch.setenv("IBKR_FRACTIONAL_SHARES_ENABLED", "true")
     monkeypatch.setenv("IBKR_MIN_ORDER_NOTIONAL_USD", "5")
 
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
-    assert settings.quantity_step == 0.0001
+    assert settings.quantity_step == 1.0
     assert settings.min_order_notional == 5.0
 
 
