@@ -483,7 +483,14 @@ def test_execute_rebalance_sells_cash_sweep_symbol_when_buying_power_is_short(mo
         def accountValues(self):
             self._account_values_calls += 1
             buying_power = "24" if self._account_values_calls == 1 else "224"
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value=buying_power)]
+            return [
+                SimpleNamespace(
+                    account="DU123",
+                    tag="AvailableFunds",
+                    currency="USD",
+                    value=buying_power,
+                )
+            ]
 
     submitted = []
 
