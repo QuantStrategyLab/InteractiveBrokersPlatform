@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import hashlib
 import json
 import tempfile
@@ -12,6 +11,35 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+try:
+    from quant_platform_kit.common.cash_sweep import should_sell_cash_sweep_to_fund_whole_share_buy
+except ImportError:  # pragma: no cover - compatibility with older pinned shared wheels
+    def should_sell_cash_sweep_to_fund_whole_share_buy(
+        max_quantity,
+        cash_sweep_price,
+        base_buying_power,
+        funding_needs,
+    ):
+        if max_quantity <= 0:
+            return False
+        sweep_price = float(cash_sweep_price or 0.0)
+        if sweep_price <= 0.0:
+            return False
+        current_buying_power = max(0.0, float(base_buying_power or 0.0))
+        sweep_capacity = float(max_quantity) * sweep_price
+        if sweep_capacity <= 0.0:
+            return False
+
+        for underweight_value, ask_price in funding_needs:
+            _ = underweight_value
+            quote_price = float(ask_price or 0.0)
+            if quote_price <= 0.0:
+                continue
+            if current_buying_power >= quote_price:
+                return False
+            if current_buying_power + sweep_capacity >= quote_price:
+                return True
+        return False
 from quant_platform_kit.common.quantity import (
     floor_to_quantity_step,
     format_quantity,
@@ -663,6 +691,7 @@ def execute_rebalance(
         if max_quantity <= 0 or not safe_haven_symbol or cash_sweep_price <= 0.0:
             return 0
         base_buying_power = max(0.0, float(anticipated_buying_power))
+        funding_needs = []
         for symbol in candidate_symbols:
             underweight_value = target_mv[symbol] - current_mv.get(symbol, 0.0)
             if underweight_value <= threshold:
@@ -670,16 +699,19 @@ def execute_rebalance(
             ask = prices.get(symbol)
             if not ask or ask <= 0.0:
                 continue
-            max_buy_quantity = int(underweight_value // ask)
-            if max_buy_quantity <= 0:
-                continue
-            required_buying_power = max_buy_quantity * ask * 1.0
-            if base_buying_power >= required_buying_power:
-                return 0
-            return min(
-                max_quantity,
-                max(1, math.ceil((required_buying_power - base_buying_power) / cash_sweep_price)),
+            funding_needs.append(
+                (
+                    underweight_value,
+                    round(ask * limit_buy_premium, 2),
+                )
             )
+        if should_sell_cash_sweep_to_fund_whole_share_buy(
+            float(max_quantity),
+            cash_sweep_price,
+            base_buying_power,
+            funding_needs,
+        ):
+            return int(max_quantity)
         return 0
 
     has_sell_plan = False

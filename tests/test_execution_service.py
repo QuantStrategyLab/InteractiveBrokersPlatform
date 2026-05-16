@@ -482,8 +482,15 @@ def test_execute_rebalance_sells_cash_sweep_symbol_when_buying_power_is_short(mo
 
         def accountValues(self):
             self._account_values_calls += 1
-            buying_power = "124" if self._account_values_calls == 1 else "324"
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value=buying_power)]
+            buying_power = "24" if self._account_values_calls == 1 else "224"
+            return [
+                SimpleNamespace(
+                    account="DU123",
+                    tag="AvailableFunds",
+                    currency="USD",
+                    value=buying_power,
+                )
+            ]
 
     submitted = []
 
@@ -497,7 +504,7 @@ def test_execute_rebalance_sells_cash_sweep_symbol_when_buying_power_is_short(mo
         FakeIB(),
         {"VOO": 0.8, "BOXX": 0.2},
         {"VOO": {"quantity": 0}, "BOXX": {"quantity": 2}},
-        {"equity": 1000.0, "buying_power": 124.0},
+        {"equity": 1000.0, "buying_power": 24.0},
         fetch_quote_snapshots=lambda *_args, **_kwargs: {
             "VOO": SimpleNamespace(last_price=100.0),
             "BOXX": SimpleNamespace(last_price=100.0),
