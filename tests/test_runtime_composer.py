@@ -82,6 +82,7 @@ def test_runtime_composer_builds_runtime_and_config_from_local_builders():
     notification_adapters = composer.build_notification_adapters()
     reporting_adapters = composer.build_reporting_adapters()
     runtime = composer.build_rebalance_runtime()
+    silent_runtime = composer.build_rebalance_runtime(silent_cycle_notifications=True)
     config = composer.build_rebalance_config(extra_notification_lines=("plugin-line",))
 
     assert notification_adapters.notification_port == "notification-port"
@@ -97,6 +98,8 @@ def test_runtime_composer_builds_runtime_and_config_from_local_builders():
     assert runtime.compute_signals == "compute-signals"
     assert runtime.execute_rebalance == "execute-rebalance"
     assert runtime.notifications == "notification-port"
+    silent_runtime.notifications.send_text("precheck heartbeat")
+    assert "sent_message" not in observed
     assert config.separator == "━━━━━━━━━━━━━━━━━━"
     assert config.strategy_display_name == "全球 ETF 轮动"
     assert config.reconciliation_output_path == "/tmp/reconciliation.json"

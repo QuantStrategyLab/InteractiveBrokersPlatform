@@ -11,7 +11,7 @@ from application.runtime_notification_adapters import build_runtime_notification
 from application.runtime_reporting_adapters import build_runtime_reporting_adapters
 from quant_platform_kit.common.runtime_assembly import build_runtime_assembly
 from quant_platform_kit.common.runtime_target import build_runtime_context_fields
-from quant_platform_kit.common.port_adapters import CallablePortfolioPort
+from quant_platform_kit.common.port_adapters import CallableNotificationPort, CallablePortfolioPort
 from quant_platform_kit.common.runtime_target import RuntimeTarget
 
 
@@ -124,8 +124,13 @@ class IBKRRuntimeComposer:
             printer=lambda line: self.printer(line, flush=True),
         )
 
-    def build_rebalance_runtime(self):
+    def build_rebalance_runtime(self, *, silent_cycle_notifications: bool = False):
         notification_adapters = self.build_notification_adapters()
+        notifications = (
+            CallableNotificationPort(lambda _message: None)
+            if silent_cycle_notifications
+            else notification_adapters.notification_port
+        )
         return IBKRRebalanceRuntime(
             connect_ib=self.connect_ib_fn,
             portfolio_port_factory=lambda ib: CallablePortfolioPort(
@@ -133,7 +138,7 @@ class IBKRRuntimeComposer:
             ),
             compute_signals=self.compute_signals_fn,
             execute_rebalance=self.execute_rebalance_fn,
-            notifications=notification_adapters.notification_port,
+            notifications=notifications,
         )
 
     def build_rebalance_config(self, *, extra_notification_lines=()):
