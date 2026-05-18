@@ -103,6 +103,97 @@ def test_handle_precheck_get_does_not_execute(strategy_module, monkeypatch):
     assert observed["called"] is False
 
 
+def test_handle_probe_checks_account_snapshot_without_success_notification(strategy_module, monkeypatch):
+    observed = {"events": [], "disconnects": 0, "notifications": []}
+
+    class FakeIB:
+        def disconnect(self):
+            observed["disconnects"] += 1
+
+    snapshot = types.SimpleNamespace(
+        buying_power=123.0,
+        total_equity=456.0,
+        positions=(types.SimpleNamespace(symbol="SOXL"),),
+    )
+
+    monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace(run_id="run-001"))
+    monkeypatch.setattr(strategy_module, "build_execution_report", lambda log_context, **_kwargs: {"status": "pending"})
+    monkeypatch.setattr(
+        strategy_module,
+        "persist_execution_report",
+        lambda report, **_kwargs: observed.setdefault("report", dict(report)) or "/tmp/runtime-report.json",
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "log_runtime_event",
+        lambda context, event, **fields: observed["events"].append((event, fields)),
+    )
+    monkeypatch.setattr(strategy_module, "load_strategy_plugin_signals", lambda: ((), None))
+    monkeypatch.setattr(strategy_module, "attach_strategy_plugin_report", lambda *args, **kwargs: None)
+    monkeypatch.setattr(strategy_module, "connect_ib", lambda: FakeIB())
+    monkeypatch.setattr(strategy_module, "build_portfolio_snapshot", lambda ib: snapshot)
+    monkeypatch.setattr(
+        strategy_module,
+        "publish_notification",
+        lambda **_kwargs: observed["notifications"].append(_kwargs),
+    )
+
+    with strategy_module.app.test_request_context("/probe", method="POST"):
+        body, status = strategy_module.handle_probe()
+
+    assert status == 200
+    assert body == "Probe OK"
+    assert [event for event, _fields in observed["events"]] == [
+        "health_probe_received",
+        "health_probe_completed",
+    ]
+    assert observed["report"]["status"] == "ok"
+    assert observed["report"]["summary"]["buying_power"] == 123.0
+    assert observed["report"]["summary"]["total_equity"] == 456.0
+    assert observed["report"]["summary"]["positions_count"] == 1
+    assert observed["disconnects"] == 1
+    assert observed["notifications"] == []
+
+
+def test_handle_probe_failure_sends_notification(strategy_module, monkeypatch):
+    observed = {"events": [], "notifications": []}
+
+    monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace(run_id="run-001"))
+    monkeypatch.setattr(strategy_module, "build_execution_report", lambda log_context, **_kwargs: {"status": "pending"})
+    monkeypatch.setattr(strategy_module, "persist_execution_report", lambda report, **_kwargs: observed.setdefault("report", dict(report)) or "/tmp/runtime-report.json")
+    monkeypatch.setattr(
+        strategy_module,
+        "log_runtime_event",
+        lambda context, event, **fields: observed["events"].append((event, fields)),
+    )
+    monkeypatch.setattr(strategy_module, "load_strategy_plugin_signals", lambda: ((), None))
+    monkeypatch.setattr(strategy_module, "attach_strategy_plugin_report", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        strategy_module,
+        "connect_ib",
+        lambda: (_ for _ in ()).throw(RuntimeError("probe failed")),
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "publish_notification",
+        lambda **kwargs: observed["notifications"].append(kwargs),
+    )
+
+    with strategy_module.app.test_request_context("/probe", method="POST"):
+        body, status = strategy_module.handle_probe()
+
+    assert status == 500
+    assert body == "Error"
+    assert observed["report"]["status"] == "error"
+    assert observed["report"]["errors"][0]["stage"] == "health_probe"
+    assert [event for event, _fields in observed["events"]] == [
+        "health_probe_received",
+        "health_probe_failed",
+    ]
+    assert len(observed["notifications"]) == 1
+    assert "probe failed" in observed["notifications"][0]["detailed_text"]
+
+
 def test_build_extra_notification_lines_includes_account_id(strategy_module):
     lines = strategy_module.build_extra_notification_lines(())
     assert any("U18308207" in line for line in lines)

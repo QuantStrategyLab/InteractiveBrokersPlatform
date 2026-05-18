@@ -703,6 +703,86 @@ def _handle_request(*, dry_run_only_override: bool | None = None, response_body:
             print(f"failed to persist execution report: {persist_exc}", flush=True)
 
 
+def _handle_probe(*, response_body: str = "Probe OK"):
+    ib = None
+    log_context = None
+    report = None
+    try:
+        log_context = build_request_log_context()
+        report = build_execution_report(log_context, dry_run_only_override=True)
+        strategy_plugin_signals, strategy_plugin_error = load_strategy_plugin_signals()
+        attach_strategy_plugin_report(
+            report,
+            signals=strategy_plugin_signals,
+            error=strategy_plugin_error,
+        )
+        log_runtime_event(
+            log_context,
+            "health_probe_received",
+            message="Received health probe request",
+            http_method=request.method,
+            execution_window="probe",
+        )
+        ib = connect_ib()
+        snapshot = build_portfolio_snapshot(ib)
+        positions = tuple(getattr(snapshot, "positions", ()) or ())
+        buying_power = float(getattr(snapshot, "buying_power", 0.0) or 0.0)
+        total_equity = float(getattr(snapshot, "total_equity", 0.0) or 0.0)
+        finalize_runtime_report(
+            report,
+            status="ok",
+            summary={
+                "buying_power": buying_power,
+                "total_equity": total_equity,
+                "positions_count": len(positions),
+            },
+        )
+        log_runtime_event(
+            log_context,
+            "health_probe_completed",
+            message="Health probe completed",
+            execution_window="probe",
+            buying_power=buying_power,
+            total_equity=total_equity,
+            positions_count=len(positions),
+        )
+        return response_body, 200
+    except Exception as exc:
+        if report is not None:
+            append_runtime_report_error(
+                report,
+                stage="health_probe",
+                message=str(exc),
+                error_type=type(exc).__name__,
+            )
+            finalize_runtime_report(report, status="error")
+        if log_context is not None:
+            log_runtime_event(
+                log_context,
+                "health_probe_failed",
+                message="Health probe failed",
+                severity="ERROR",
+                execution_window="probe",
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+        error_msg = f"{t('health_probe_title')}\n{t('health_probe_error_prefix')}{traceback.format_exc()}"
+        publish_notification(detailed_text=error_msg, compact_text=error_msg)
+        return "Error", 500
+    finally:
+        if ib is not None and hasattr(ib, "disconnect"):
+            try:
+                ib.disconnect()
+            except Exception as disconnect_exc:
+                print(f"failed to disconnect IBKR probe client: {disconnect_exc}", flush=True)
+        try:
+            if report is not None:
+                report_path = persist_execution_report(report, dry_run_only_override=True)
+                print(f"execution_report {report_path}", flush=True)
+        except Exception as persist_exc:
+            print(f"failed to persist execution report: {persist_exc}", flush=True)
+
+
 @app.route("/", methods=["POST", "GET"])
 def handle_request():
     return _handle_request()
@@ -711,6 +791,11 @@ def handle_request():
 @app.route("/precheck", methods=["POST", "GET"])
 def handle_precheck():
     return _handle_request(dry_run_only_override=True, response_body="Precheck OK")
+
+
+@app.route("/probe", methods=["POST", "GET"])
+def handle_probe():
+    return _handle_probe()
 
 
 @app.route("/health", methods=["GET"])
