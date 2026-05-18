@@ -536,7 +536,9 @@ def run_strategy_core(*, strategy_plugin_signals=(), dry_run_only_override: bool
         return run_paper_liquidation_cycle()
     composer = build_composer(dry_run_only_override=dry_run_only_override)
     return run_rebalance_cycle(
-        runtime=composer.build_rebalance_runtime(),
+        runtime=composer.build_rebalance_runtime(
+            silent_cycle_notifications=bool(dry_run_only_override),
+        ),
         config=composer.build_rebalance_config(extra_notification_lines=build_extra_notification_lines(strategy_plugin_signals)),
     )
 
