@@ -53,6 +53,7 @@ def translate(key, **kwargs):
         "same_day_execution_locked": "same_day_execution_locked profile={profile} mode={mode} trade_date={trade_date} snapshot_date={snapshot_date} target_hash={target_hash} lock_path={lock_path}",
         "execution_lock_acquired": "execution_lock_acquired mode={mode} trade_date={trade_date} snapshot_date={snapshot_date} lock_path={lock_path}",
         "dry_run_snapshot_prices": "dry_run_snapshot_prices count={count} symbols={symbols}",
+        "price_fallback_prices": "price_fallback_prices count={count} symbols={symbols}",
         "no_equity": "❌ No equity",
     }
     template = templates[key]
@@ -677,3 +678,58 @@ def test_execute_rebalance_uses_snapshot_prices_for_dry_run_when_quotes_missing(
     assert any(log.startswith("dry_run_snapshot_prices count=2") for log in trade_logs)
     assert any(log.startswith("DRY_RUN buy VOO") for log in trade_logs)
     assert any(log.startswith("DRY_RUN buy BOXX") for log in trade_logs)
+
+
+def test_execute_rebalance_uses_price_fallbacks_for_live_when_quotes_missing(monkeypatch, tmp_path):
+    class FakeIB:
+        def openTrades(self):
+            return []
+
+        def fills(self):
+            return []
+
+        def accountValues(self):
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="5000")]
+
+    submitted = []
+
+    def fake_submit_order_intent(_ib, intent):
+        submitted.append(intent)
+        return SimpleNamespace(broker_order_id="1", status="Submitted")
+
+    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+
+    trade_logs, summary = execute_rebalance(
+        FakeIB(),
+        {"VOO": 1.0},
+        {},
+        {"equity": 1000.0, "buying_power": 1000.0},
+        fetch_quote_snapshots=lambda *_args, **_kwargs: {},
+        submit_order_intent=fake_submit_order_intent,
+        order_intent_cls=OrderIntent,
+        translator=translate,
+        strategy_symbols=["VOO"],
+        strategy_profile="tech_communication_pullback_enhancement",
+        signal_metadata=_signal_metadata(
+            {"VOO": 1.0},
+            risk_symbols=("VOO",),
+            trade_date="2026-04-01",
+            price_fallbacks={"VOO": 100.0},
+            price_fallback_source="historical_close",
+        ),
+        dry_run_only=False,
+        cash_reserve_ratio=0.0,
+        rebalance_threshold_ratio=0.02,
+        limit_buy_premium=1.005,
+        sell_settle_delay_sec=0,
+        execution_lock_dir=tmp_path,
+        return_summary=True,
+    )
+
+    assert summary["execution_status"] == "executed"
+    assert len(submitted) == 1
+    assert submitted[0].symbol == "VOO"
+    assert summary["snapshot_price_fallback_used"] is True
+    assert summary["price_fallback_source"] == "historical_close"
+    assert summary["price_source_mode"] == "mixed_market_quote_historical_close"
+    assert any(log.startswith("price_fallback_prices count=1") for log in trade_logs)
