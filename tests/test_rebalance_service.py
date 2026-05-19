@@ -360,7 +360,7 @@ def test_run_strategy_core_writes_reconciliation_record_under_strategy_dir(tmp_p
         reconciliation_output_path=output_root,
     )
 
-    assert result.result == "OK - heartbeat"
+    assert result.result == "OK - no-op"
     candidate_paths = [
         output_root,
         output_root / "2026-04-01" / "reconciliation.json",
@@ -416,7 +416,5 @@ def test_run_strategy_core_prefers_structured_noop_status_in_zh():
         strategy_display_name="Mega Cap Top50 平衡龙头轮动",
     )
 
-    assert result.result == "OK - heartbeat"
-    assert observed["messages"]
-    assert "当前不在月度执行窗口" in observed["messages"][0]
-    assert "决策=proceed" not in observed["messages"][0]
+    assert result.result == "OK - no-op"
+    assert observed["messages"] == []

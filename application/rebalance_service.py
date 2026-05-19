@@ -78,6 +78,23 @@ def _render_notification_context_text(
     return fallback if rendered == key else str(rendered)
 
 
+def _should_suppress_noop_notification(signal_metadata: Mapping[str, object] | None) -> bool:
+    metadata = signal_metadata if isinstance(signal_metadata, Mapping) else {}
+    no_op_reason = str(metadata.get("no_op_reason") or "").strip()
+    if no_op_reason.startswith(("outside_execution_window", "outside_monthly_execution_window")):
+        return True
+    notification_context = metadata.get("notification_context")
+    if not isinstance(notification_context, Mapping):
+        return False
+    status_context = notification_context.get("status")
+    if not isinstance(status_context, Mapping):
+        return False
+    return str(status_context.get("code") or "").strip() in {
+        "status_monthly_snapshot_waiting_window",
+        "status_no_execution_window_after_snapshot",
+    }
+
+
 def _translate_snapshot_guard_decision(decision: object, *, translator) -> str:
     value = str(decision or "").strip()
     if not value:
@@ -632,22 +649,36 @@ def run_strategy_core(
                 + json.dumps({"path": str(record_path), "status": record.get("execution_status"), "no_op_reason": record.get("no_op_reason")}, ensure_ascii=False),
                 flush=True,
             )
-            notification_publisher.publish(
-                notification_renderers.render_heartbeat_notification(
-                    dashboard=dashboard,
-                    strategy_dashboard=strategy_dashboard,
-                    no_op_text=no_op_text,
-                    signal_desc=signal_desc,
-                    status_desc=status_desc,
-                    status_icon=signal_metadata.get("status_icon", "🐤"),
-                    translator=config.translator,
-                    separator=config.separator,
-                    strategy_display_name=config.strategy_display_name,
-                    extra_notification_lines=config.extra_notification_lines,
+            notification_suppressed = _should_suppress_noop_notification(signal_metadata)
+            if notification_suppressed:
+                print(
+                    "notification_suppressed "
+                    + json.dumps(
+                        {
+                            "reason": no_op_reason or fail_reason or decision,
+                            "strategy_profile": signal_metadata.get("strategy_profile"),
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
                 )
-            )
+            else:
+                notification_publisher.publish(
+                    notification_renderers.render_heartbeat_notification(
+                        dashboard=dashboard,
+                        strategy_dashboard=strategy_dashboard,
+                        no_op_text=no_op_text,
+                        signal_desc=signal_desc,
+                        status_desc=status_desc,
+                        status_icon=signal_metadata.get("status_icon", "🐤"),
+                        translator=config.translator,
+                        separator=config.separator,
+                        strategy_display_name=config.strategy_display_name,
+                        extra_notification_lines=config.extra_notification_lines,
+                    )
+                )
             return StrategyCycleResult(
-                result="OK - heartbeat",
+                result="OK - no-op" if notification_suppressed else "OK - heartbeat",
                 signal_metadata=dict(signal_metadata or {}),
                 target_weights=None,
                 execution_summary={},
