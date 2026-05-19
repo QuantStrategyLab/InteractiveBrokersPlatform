@@ -104,6 +104,97 @@ class LoadedStrategyRuntime:
             )
             return None
 
+    @staticmethod
+    def _normalize_symbols(symbols) -> tuple[str, ...]:
+        normalized = []
+        for symbol in symbols or ():
+            text = str(symbol or "").strip().upper()
+            if text:
+                normalized.append(text)
+        return tuple(dict.fromkeys(normalized))
+
+    def _build_price_fallback_symbol_list(
+        self,
+        decision: StrategyDecision,
+        *,
+        managed_symbols: tuple[str, ...],
+        current_holdings,
+    ) -> tuple[str, ...]:
+        decision_symbols = [getattr(position, "symbol", "") for position in decision.positions]
+        candidates = [
+            *decision_symbols,
+            *(current_holdings or ()),
+        ]
+        if not candidates:
+            candidates.extend(managed_symbols)
+        return self._normalize_symbols(candidates)
+
+    @staticmethod
+    def _extract_latest_positive_close(price_history) -> float | None:
+        if price_history is None:
+            return None
+        if isinstance(price_history, pd.DataFrame):
+            if price_history.empty:
+                return None
+            if "close" in price_history.columns:
+                series = price_history["close"]
+            else:
+                series = price_history.iloc[:, 0]
+            values = pd.to_numeric(series, errors="coerce").dropna()
+            values = values[values > 0]
+            if values.empty:
+                return None
+            return float(values.iloc[-1])
+        if isinstance(price_history, pd.Series):
+            values = pd.to_numeric(price_history, errors="coerce").dropna()
+            values = values[values > 0]
+            if values.empty:
+                return None
+            return float(values.iloc[-1])
+        values = []
+        try:
+            iterator = iter(price_history)
+        except TypeError:
+            iterator = iter((price_history,))
+        for item in iterator:
+            if isinstance(item, Mapping):
+                candidate = item.get("close")
+            else:
+                candidate = getattr(item, "close", item)
+            try:
+                numeric = float(candidate)
+            except (TypeError, ValueError):
+                continue
+            if numeric > 0.0:
+                values.append(numeric)
+        return float(values[-1]) if values else None
+
+    def _build_historical_close_map(
+        self,
+        ib,
+        historical_close_loader: Callable[..., Any],
+        symbols: tuple[str, ...],
+    ) -> dict[str, float]:
+        close_map: dict[str, float] = {}
+        for symbol in self._normalize_symbols(symbols):
+            try:
+                price_history = historical_close_loader(
+                    ib,
+                    symbol,
+                    duration="10 D",
+                    bar_size="1 day",
+                )
+            except Exception as exc:
+                self.logger(
+                    "historical_price_fallback_failed | "
+                    f"profile={self.profile} symbol={symbol} error_type={type(exc).__name__} error={exc}"
+                )
+                continue
+            latest_close = self._extract_latest_positive_close(price_history)
+            if latest_close is not None:
+                close_map[symbol] = latest_close
+        return close_map
+
     def _build_strategy_context(
         self,
         *,
@@ -218,6 +309,15 @@ class LoadedStrategyRuntime:
         if safe_haven_symbol:
             managed_candidates.append(safe_haven_symbol)
         managed_symbols = tuple(dict.fromkeys(managed_candidates))
+        price_fallbacks = self._build_historical_close_map(
+            ib,
+            historical_close_loader,
+            self._build_price_fallback_symbol_list(
+                decision,
+                managed_symbols=managed_symbols,
+                current_holdings=current_holdings,
+            ),
+        )
         metadata = {
             "strategy_profile": self.profile,
             "managed_symbols": managed_symbols,
@@ -234,6 +334,10 @@ class LoadedStrategyRuntime:
             metadata["portfolio_total_equity"] = float(getattr(portfolio_snapshot, "total_equity", 0.0) or 0.0)
         if safe_haven_symbol:
             metadata["safe_haven_symbol"] = safe_haven_symbol
+        if price_fallbacks:
+            metadata["price_fallbacks"] = price_fallbacks
+            metadata["dry_run_price_fallbacks"] = price_fallbacks
+            metadata["price_fallback_source"] = "historical_close"
         return StrategyEvaluationResult(decision=decision, metadata=metadata)
 
     def _evaluate_value_target_strategy(
@@ -274,6 +378,15 @@ class LoadedStrategyRuntime:
             (position.symbol for position in decision.positions if position.role == "safe_haven"),
             None,
         )
+        price_fallbacks = self._build_historical_close_map(
+            ib,
+            historical_close_loader,
+            self._build_price_fallback_symbol_list(
+                decision,
+                managed_symbols=managed_symbols,
+                current_holdings=current_holdings,
+            ),
+        )
         metadata = {
             "strategy_profile": self.profile,
             "managed_symbols": managed_symbols,
@@ -292,6 +405,10 @@ class LoadedStrategyRuntime:
         benchmark_symbol = market_inputs.get("benchmark_symbol")
         if benchmark_symbol:
             metadata["benchmark_symbol"] = str(benchmark_symbol)
+        if price_fallbacks:
+            metadata["price_fallbacks"] = price_fallbacks
+            metadata["dry_run_price_fallbacks"] = price_fallbacks
+            metadata["price_fallback_source"] = "historical_close"
         return StrategyEvaluationResult(decision=decision, metadata=metadata)
 
     def _build_value_target_market_inputs(
@@ -413,12 +530,15 @@ class LoadedStrategyRuntime:
             managed_symbols: tuple[str, ...],
             _decision: StrategyDecision,
         ) -> Mapping[str, Any]:
+            price_fallbacks = self._build_snapshot_close_map(
+                feature_snapshot,
+                managed_symbols=managed_symbols,
+            )
             return {
                 "trade_date": run_as_of.date().isoformat(),
-                "dry_run_price_fallbacks": self._build_snapshot_close_map(
-                    feature_snapshot,
-                    managed_symbols=managed_symbols,
-                ),
+                "price_fallbacks": price_fallbacks,
+                "dry_run_price_fallbacks": price_fallbacks,
+                "price_fallback_source": "snapshot_close",
             }
 
         result = evaluate_feature_snapshot_strategy(

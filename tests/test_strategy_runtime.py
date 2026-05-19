@@ -565,10 +565,20 @@ def test_value_target_runtime_builds_tqqq_inputs(monkeypatch):
             for _ in range(220)
         ]
 
+    close_loader_symbols = []
+
+    def fake_close_loader(_ib, symbol, duration="2 Y", bar_size="1 day"):
+        close_loader_symbols.append((symbol, duration, bar_size))
+        prices = {"TQQQ": 70.0, "BOXX": 105.0}
+        value = prices.get(symbol)
+        if value is None:
+            return strategy_runtime_module.pd.Series(dtype=float)
+        return strategy_runtime_module.pd.Series([value - 1.0, value])
+
     result = runtime.evaluate(
         ib="fake-ib",
         current_holdings={"TQQQ"},
-        historical_close_loader=lambda *_args, **_kwargs: None,
+        historical_close_loader=fake_close_loader,
         historical_candle_loader=fake_candle_loader,
         run_as_of=strategy_runtime_module.pd.Timestamp("2026-04-01"),
         translator=lambda key, **_kwargs: key,
@@ -586,3 +596,6 @@ def test_value_target_runtime_builds_tqqq_inputs(monkeypatch):
     assert result.metadata["signal_date"] == "2026-04-01"
     assert result.metadata["effective_date"] == "2026-04-02"
     assert result.metadata["execution_timing_contract"] == "next_trading_day"
+    assert close_loader_symbols == [("TQQQ", "10 D", "1 day"), ("BOXX", "10 D", "1 day")]
+    assert result.metadata["price_fallback_source"] == "historical_close"
+    assert result.metadata["price_fallbacks"] == {"TQQQ": 70.0, "BOXX": 105.0}

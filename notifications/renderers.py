@@ -191,7 +191,9 @@ def _build_notification_trade_lines(
     if execution_summary.get("snapshot_price_fallback_used") and fallback_symbols:
         lines.append(
             translator(
-                "dry_run_snapshot_prices",
+                "dry_run_snapshot_prices"
+                if execution_summary.get("mode") == "dry_run"
+                else "price_fallback_prices",
                 count=len(fallback_symbols),
                 symbols=_format_symbol_preview(fallback_symbols),
             )

@@ -45,6 +45,7 @@ def _build_test_translator():
         "target_diff_summary": "target_changes {details}",
         "same_day_execution_locked_notice": "same_day_execution_locked_notice {mode} {trade_date} {snapshot_date}",
         "dry_run_snapshot_prices": "dry_run_snapshot_prices count={count} symbols={symbols}",
+        "price_fallback_prices": "price_fallback_prices count={count} symbols={symbols}",
         "dry_run_buy_batch": "dry_run_buy_batch count={count} details={details}",
         "dry_run_sell_batch": "dry_run_sell_batch count={count} details={details}",
         "submitted_buy_batch": "submitted_buy_batch count={count} details={details}",
