@@ -327,6 +327,7 @@ def build_broker_adapters():
         limit_buy_premium=LIMIT_BUY_PREMIUM,
         quantity_step=RUNTIME_SETTINGS.quantity_step,
         min_order_notional=RUNTIME_SETTINGS.min_order_notional,
+        safe_haven_cash_substitute_threshold_usd=RUNTIME_SETTINGS.safe_haven_cash_substitute_threshold_usd,
         sell_settle_delay_sec=SELL_SETTLE_DELAY_SEC,
         separator=SEPARATOR,
         strategy_display_name=strategy_display_name,

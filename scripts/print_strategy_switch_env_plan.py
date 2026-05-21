@@ -67,7 +67,10 @@ def build_switch_plan(profile: str) -> dict[str, object]:
         "ACCOUNT_GROUP",
         "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME",
     ]
-    optional_env = ["IBKR_DRY_RUN_ONLY"]
+    optional_env = [
+        "IBKR_DRY_RUN_ONLY",
+        "IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD",
+    ]
     remove_if_present: list[str] = []
     notes = [
         "Keep ACCOUNT_GROUP and IB account-group config aligned with the current service identity.",

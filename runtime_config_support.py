@@ -24,6 +24,7 @@ from strategy_registry import (
 from us_equity_strategies import get_strategy_catalog
 
 DEFAULT_ACCOUNT_GROUP = "default"
+DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD = 1000.0
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,7 @@ class PlatformRuntimeSettings:
     dry_run_only: bool
     quantity_step: float = 1.0
     min_order_notional: float = 50.0
+    safe_haven_cash_substitute_threshold_usd: float = DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD
     account_group: str = DEFAULT_ACCOUNT_GROUP
     service_name: str | None = None
     account_ids: tuple[str, ...] = ()
@@ -150,6 +152,14 @@ def load_platform_runtime_settings(
             os.environ,
             "IBKR_MIN_ORDER_NOTIONAL_USD",
             default=50.0,
+        ),
+        safe_haven_cash_substitute_threshold_usd=max(
+            0.0,
+            resolve_float_env(
+                os.environ,
+                "IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD",
+                default=DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD,
+            ),
         ),
         account_group=account_group,
         service_name=group_config.service_name,

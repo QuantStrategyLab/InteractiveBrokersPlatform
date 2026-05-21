@@ -470,6 +470,57 @@ def test_execute_rebalance_returns_structured_summary_when_requested(monkeypatch
     assert summary["target_vs_current"]
 
 
+def test_execute_rebalance_keeps_small_safe_haven_target_as_cash(monkeypatch, tmp_path):
+    class FakeIB:
+        def openTrades(self):
+            return []
+
+        def fills(self):
+            return []
+
+        def accountValues(self):
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1500")]
+
+    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+
+    trade_logs, summary = execute_rebalance(
+        FakeIB(),
+        {"VOO": 0.5, "BOXX": 0.5},
+        {},
+        {"equity": 1500.0, "buying_power": 1500.0},
+        fetch_quote_snapshots=lambda _ib, symbols: {
+            symbol: SimpleNamespace(last_price=100.0) for symbol in symbols
+        },
+        submit_order_intent=lambda *_args, **_kwargs: SimpleNamespace(broker_order_id="1", status="Submitted"),
+        order_intent_cls=OrderIntent,
+        translator=translate,
+        strategy_symbols=["VOO", "BOXX"],
+        strategy_profile="tech_communication_pullback_enhancement",
+        signal_metadata=_signal_metadata(
+            {"VOO": 0.5, "BOXX": 0.5},
+            risk_symbols=("VOO",),
+            safe_haven_symbols=("BOXX",),
+            trade_date="2026-04-01",
+            snapshot_as_of="2026-03-31",
+        ),
+        dry_run_only=True,
+        cash_reserve_ratio=0.0,
+        rebalance_threshold_ratio=0.01,
+        limit_buy_premium=1.0,
+        sell_settle_delay_sec=0,
+        execution_lock_dir=tmp_path,
+        return_summary=True,
+        safe_haven_cash_substitute_threshold_usd=1000.0,
+    )
+
+    assert any("DRY_RUN buy VOO" in log for log in trade_logs)
+    assert not any(order["symbol"] == "BOXX" for order in summary["orders_submitted"])
+    assert summary["safe_haven_cash_substituted_symbols"] == ["BOXX"]
+    assert summary["realized_safe_haven_weight"] == 0.0
+    boxx_row = next(row for row in summary["target_vs_current"] if row["symbol"] == "BOXX")
+    assert boxx_row["target_weight"] == 0.0
+
+
 def test_execute_rebalance_sells_cash_sweep_symbol_when_buying_power_is_short(monkeypatch, tmp_path):
     class FakeIB:
         def __init__(self):
@@ -645,7 +696,7 @@ def test_execute_rebalance_uses_snapshot_prices_for_dry_run_when_quotes_missing(
         FakeIB(),
         {"VOO": 0.6, "BOXX": 0.4},
         {},
-        {"equity": 1000.0, "buying_power": 1000.0},
+        {"equity": 3000.0, "buying_power": 3000.0},
         fetch_quote_snapshots=lambda *_args, **_kwargs: {},
         submit_order_intent=lambda *_args, **_kwargs: None,
         order_intent_cls=OrderIntent,
