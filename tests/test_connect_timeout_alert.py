@@ -124,6 +124,7 @@ def install_stub_modules():
         dry_run_only=False,
         quantity_step=1,
         min_order_notional=0.0,
+        safe_haven_cash_substitute_threshold_usd=1000.0,
         runtime_target={},
         notify_lang="en",
         tg_token=None,

@@ -510,6 +510,36 @@ def _sell_order_quantity(
     )
 
 
+DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD = 1000.0
+
+
+def _apply_safe_haven_cash_substitution_to_weights(
+    target_weights: dict[str, float],
+    *,
+    safe_haven_symbols: tuple[str, ...],
+    investable: float,
+    threshold_usd: float,
+) -> tuple[dict[str, float], tuple[str, ...]]:
+    threshold = max(0.0, float(threshold_usd or 0.0))
+    adjusted = {
+        str(symbol).strip().upper(): float(weight or 0.0)
+        for symbol, weight in dict(target_weights or {}).items()
+    }
+    if threshold <= 0.0:
+        return adjusted, ()
+
+    substituted: list[str] = []
+    for symbol in safe_haven_symbols:
+        normalized = str(symbol or "").strip().upper()
+        if not normalized:
+            continue
+        target_notional = max(0.0, float(investable or 0.0) * float(adjusted.get(normalized, 0.0) or 0.0))
+        if 0.0 < target_notional < threshold:
+            adjusted[normalized] = 0.0
+            substituted.append(normalized)
+    return adjusted, tuple(dict.fromkeys(substituted))
+
+
 def _finalize_result(trade_logs, execution_summary, *, return_summary: bool):
     if return_summary:
         return trade_logs, execution_summary
@@ -539,6 +569,7 @@ def execute_rebalance(
     sell_settle_delay_sec,
     quantity_step=1.0,
     min_order_notional=50.0,
+    safe_haven_cash_substitute_threshold_usd=DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD,
     execution_lock_dir=None,
     return_summary=False,
 ):
@@ -578,6 +609,10 @@ def execute_rebalance(
         "execution_status": "not_started",
         "no_op_reason": None,
         "cash_reserve_dollars": 0.0,
+        "safe_haven_cash_substitute_threshold_usd": float(
+            max(0.0, float(safe_haven_cash_substitute_threshold_usd or 0.0))
+        ),
+        "safe_haven_cash_substituted_symbols": [],
         "residual_cash_estimate": float(account_values.get("buying_power", 0.0) or 0.0),
         "current_stock_weight": 0.0,
         "current_safe_haven_weight": 0.0,
@@ -594,6 +629,20 @@ def execute_rebalance(
 
     reserved = equity * cash_reserve_ratio
     investable = equity - reserved
+    target_weights, substituted_safe_haven_symbols = _apply_safe_haven_cash_substitution_to_weights(
+        target_weights,
+        safe_haven_symbols=safe_haven_symbols,
+        investable=investable,
+        threshold_usd=safe_haven_cash_substitute_threshold_usd,
+    )
+    execution_summary["safe_haven_cash_substituted_symbols"] = list(substituted_safe_haven_symbols)
+    if safe_haven_symbols:
+        execution_summary["realized_safe_haven_weight"] = float(
+            sum(
+                float(target_weights.get(str(symbol or "").strip().upper(), 0.0) or 0.0)
+                for symbol in safe_haven_symbols
+            )
+        )
     threshold = equity * rebalance_threshold_ratio
     order_quantity_step = float(quantity_step or 1.0)
     minimum_order_notional = max(0.0, float(min_order_notional or 0.0))

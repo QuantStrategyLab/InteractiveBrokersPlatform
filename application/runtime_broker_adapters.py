@@ -40,6 +40,7 @@ class IBKRRuntimeBrokerAdapters:
     limit_buy_premium: float
     quantity_step: float
     min_order_notional: float
+    safe_haven_cash_substitute_threshold_usd: float
     sell_settle_delay_sec: float
     separator: str
     strategy_display_name: str
@@ -160,6 +161,7 @@ class IBKRRuntimeBrokerAdapters:
             limit_buy_premium=self.limit_buy_premium,
             quantity_step=self.quantity_step,
             min_order_notional=self.min_order_notional,
+            safe_haven_cash_substitute_threshold_usd=self.safe_haven_cash_substitute_threshold_usd,
             sell_settle_delay_sec=self.sell_settle_delay_sec,
             return_summary=True,
         )
@@ -245,6 +247,7 @@ def build_runtime_broker_adapters(
     limit_buy_premium: float,
     quantity_step: float,
     min_order_notional: float,
+    safe_haven_cash_substitute_threshold_usd: float,
     sell_settle_delay_sec: float,
     separator: str,
     strategy_display_name: str,
@@ -280,6 +283,7 @@ def build_runtime_broker_adapters(
         limit_buy_premium=float(limit_buy_premium),
         quantity_step=float(quantity_step),
         min_order_notional=float(min_order_notional),
+        safe_haven_cash_substitute_threshold_usd=float(safe_haven_cash_substitute_threshold_usd),
         sell_settle_delay_sec=float(sell_settle_delay_sec),
         separator=str(separator or ""),
         strategy_display_name=str(strategy_display_name or ""),

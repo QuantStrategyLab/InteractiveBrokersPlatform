@@ -31,6 +31,7 @@ jobs:
       IBKR_RECONCILIATION_OUTPUT_PATH: ${{ vars.IBKR_RECONCILIATION_OUTPUT_PATH }}
       IBKR_DRY_RUN_ONLY: ${{ vars.IBKR_DRY_RUN_ONLY }}
       IBKR_PAPER_LIQUIDATE_ONLY: ${{ vars.IBKR_PAPER_LIQUIDATE_ONLY }}
+      IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD: ${{ vars.IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD }}
       # Strategy-owned defaults continue to come from UsEquityStrategies; this workflow only syncs platform/runtime inputs.
       EXECUTION_REPORT_GCS_URI: ${{ vars.EXECUTION_REPORT_GCS_URI }}
       IB_GATEWAY_ZONE: ${{ vars.IB_GATEWAY_ZONE }}
@@ -322,6 +323,12 @@ jobs:
             env_pairs+=("IBKR_PAPER_LIQUIDATE_ONLY=${IBKR_PAPER_LIQUIDATE_ONLY}")
           else
             remove_env_vars+=("IBKR_PAPER_LIQUIDATE_ONLY")
+          fi
+
+          if [ -n "${IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD:-}" ]; then
+            env_pairs+=("IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD=${IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD}")
+          else
+            remove_env_vars+=("IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD")
           fi
 
           if [ -n "${EXECUTION_REPORT_GCS_URI:-}" ]; then

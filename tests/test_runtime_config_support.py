@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from runtime_config_support import (
+    DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD,
     load_platform_runtime_settings,
     parse_account_group_configs,
 )
@@ -121,6 +122,7 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.dry_run_only is False
     assert settings.quantity_step == 1.0
     assert settings.min_order_notional == 50.0
+    assert settings.safe_haven_cash_substitute_threshold_usd == DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD
     assert settings.account_group == "paper"
     assert settings.service_name is None
     assert settings.account_ids == ()
@@ -198,11 +200,13 @@ def test_load_platform_runtime_settings_uses_whole_share_quantity_step(monkeypat
     monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
     monkeypatch.setenv("IBKR_MIN_ORDER_NOTIONAL_USD", "5")
+    monkeypatch.setenv("IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD", "750")
 
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
     assert settings.quantity_step == 1.0
     assert settings.min_order_notional == 5.0
+    assert settings.safe_haven_cash_substitute_threshold_usd == 750.0
 
 
 def test_load_platform_runtime_settings_reads_ibkr_strategy_plugin_mounts(monkeypatch):
@@ -427,6 +431,7 @@ def test_print_strategy_switch_env_plan_for_tqqq_growth_income():
     assert plan["requires_strategy_config_path"] is False
     assert json.loads(plan["set_env"]["RUNTIME_TARGET_JSON"])["strategy_profile"] == "tqqq_growth_income"
     assert "ACCOUNT_GROUP" in plan["keep_env"]
+    assert "IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD" in plan["optional_env"]
     assert "IBKR_FEATURE_SNAPSHOT_PATH" in plan["remove_if_present"]
 
 
