@@ -16,6 +16,9 @@ _EXTRA_ZH_REASON_REPLACEMENTS = (
     ("pending_orders_detected", "检测到未完成订单"),
     ("same_day_execution_locked", "当日执行锁已存在"),
     ("same_day_fills_detected", "检测到当日成交"),
+    ("target_diff_below_threshold", "调仓差异低于阈值"),
+    ("min_notional", "低于最小订单金额"),
+    ("quantity_zero", "整数股数量为0"),
     ("fail_reason=", "失败原因="),
     ("decision=", "决策="),
 )
@@ -186,6 +189,13 @@ def _build_notification_trade_lines(
                 snapshot_date=_format_text(execution_summary.get("snapshot_as_of"), fallback="<none>"),
             )
         )
+    elif no_op_reason:
+        lines.append(
+            translator(
+                "no_order_plan_reason",
+                reason=_localize_notification_text(f"reason={no_op_reason}", translator=translator),
+            )
+        )
 
     fallback_symbols = tuple(execution_summary.get("snapshot_price_fallback_symbols") or ())
     if execution_summary.get("snapshot_price_fallback_used") and fallback_symbols:
@@ -215,13 +225,23 @@ def _build_notification_trade_lines(
             continue
         if "execution_lock_acquired" in text or "已获取执行锁" in text:
             continue
-        if text.startswith(("profile=", "strategy_profile=", "策略=")):
+        if text.startswith(("profile=", "strategy_profile=", "execution_profile=", "策略=", "执行配置=")):
             continue
         if "same_day_execution_locked" in text or "当日执行锁已存在" in text:
             continue
         if text not in lines:
             lines.extend(_split_labeled_text(text))
 
+    return lines
+
+
+def _build_detailed_trade_lines(trade_logs, *, translator) -> list[str]:
+    lines: list[str] = []
+    for raw_line in trade_logs or ():
+        text = _localize_notification_text(str(raw_line).strip(), translator=translator)
+        if not text:
+            continue
+        lines.extend(_split_labeled_text(text))
     return lines
 
 
@@ -384,10 +404,27 @@ def build_dashboard(
     )
 
 
-def _first_prefixed_line(prefix: str, text: str, *, translator) -> str | None:
+def _first_summary_text(text: str, *, translator) -> str:
     localized = _localize_notification_text(text, translator=translator)
-    lines = _format_prefixed_text(prefix, localized)
-    return lines[0] if lines else None
+    lines = _split_labeled_text(localized)
+    return lines[0] if lines else ""
+
+
+def _localize_signal_state(text: str, *, translator) -> str:
+    value = str(text or "").strip()
+    if value.lower() not in {"hold", "entry", "reduce", "exit", "idle"}:
+        return value
+    key = f"signal_state_{value.lower()}"
+    translated = translator(key)
+    return value if translated == key else str(translated)
+
+
+def _extract_timing_lines(text: str) -> list[str]:
+    return [
+        line.strip()
+        for line in _format_dashboard_text(text).splitlines()
+        if line.strip().startswith("⏱")
+    ]
 
 
 def _build_compact_message(
@@ -402,19 +439,26 @@ def _build_compact_message(
     body_lines,
     dashboard_text: str = "",
     extra_notification_lines=(),
+    include_dashboard: bool = False,
 ) -> str:
     lines = [title]
     strategy_name = _format_text(strategy_display_name, fallback="<unknown>")
     lines.append(translator("strategy_label", name=strategy_name))
     lines.extend(_extra_notification_lines(extra_notification_lines))
     dashboard = _format_dashboard_text(dashboard_text)
-    if dashboard:
+    if include_dashboard and dashboard:
         lines.append(separator)
         lines.extend(dashboard.splitlines())
-    status_line = _first_prefixed_line(status_icon, status_desc, translator=translator)
-    if status_line:
+    elif dashboard:
+        lines.extend(_extract_timing_lines(dashboard))
+    status_summary = _first_summary_text(status_desc, translator=translator)
+    signal_summary = _first_summary_text(signal_desc, translator=translator)
+    status_summary = _localize_signal_state(status_summary, translator=translator)
+    signal_summary = _localize_signal_state(signal_summary, translator=translator)
+    status_line = f"{status_icon} {status_summary}".strip() if status_summary else None
+    if status_line and status_summary != signal_summary:
         lines.append(status_line)
-    signal_line = _first_prefixed_line("🎯", signal_desc, translator=translator)
+    signal_line = f"🎯 {signal_summary}".strip() if signal_summary else None
     if signal_line:
         lines.append(signal_line)
     compact_body = [str(line).strip() for line in body_lines or () if str(line).strip()]
@@ -451,6 +495,7 @@ def render_heartbeat_notification(
         body_lines=[no_op_text],
         dashboard_text=strategy_dashboard,
         extra_notification_lines=extra_lines,
+        include_dashboard=True,
     )
     return RenderedNotification(detailed_text=detailed_text, compact_text=compact_text)
 
@@ -476,12 +521,16 @@ def render_trade_notification(
             execution_summary=execution_summary,
             translator=translator,
         )
+        detailed_trade_lines = _build_detailed_trade_lines(
+            trade_logs,
+            translator=translator,
+        )
         detailed_text = (
             f"{translator('rebalance_title')}\n"
             f"{chr(10).join(extra_lines) + chr(10) if extra_lines else ''}"
             f"{dashboard}\n"
             f"{separator}\n"
-            f"{chr(10).join(notification_trade_lines)}"
+            f"{chr(10).join(detailed_trade_lines)}"
         )
         compact_text = _build_compact_message(
             title=translator("rebalance_title"),
@@ -494,6 +543,7 @@ def render_trade_notification(
             body_lines=notification_trade_lines,
             dashboard_text=strategy_dashboard,
             extra_notification_lines=extra_lines,
+            include_dashboard=True,
         )
         return RenderedNotification(detailed_text=detailed_text, compact_text=compact_text)
 
@@ -510,5 +560,6 @@ def render_trade_notification(
         body_lines=[translator("no_trades")],
         dashboard_text=strategy_dashboard,
         extra_notification_lines=extra_lines,
+        include_dashboard=True,
     )
     return RenderedNotification(detailed_text=detailed_text, compact_text=compact_text)

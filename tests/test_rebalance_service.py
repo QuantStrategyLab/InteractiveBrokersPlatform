@@ -1,7 +1,11 @@
 import json
 
 from application.rebalance_service import run_strategy_core
-from notifications.renderers import _build_notification_trade_lines, build_dashboard
+from notifications.renderers import (
+    _build_notification_trade_lines,
+    build_dashboard,
+    render_trade_notification,
+)
 from notifications.telegram import build_translator
 
 
@@ -46,6 +50,7 @@ def _build_test_translator():
         "same_day_execution_locked_notice": "same_day_execution_locked_notice {mode} {trade_date} {snapshot_date}",
         "dry_run_snapshot_prices": "dry_run_snapshot_prices count={count} symbols={symbols}",
         "price_fallback_prices": "price_fallback_prices count={count} symbols={symbols}",
+        "no_order_plan_reason": "no_order_plan_reason {reason}",
         "dry_run_buy_batch": "dry_run_buy_batch count={count} details={details}",
         "dry_run_sell_batch": "dry_run_sell_batch count={count} details={details}",
         "submitted_buy_batch": "submitted_buy_batch count={count} details={details}",
@@ -146,7 +151,7 @@ def test_build_dashboard_localizes_qqq_tech_diagnostics_for_zh():
     assert "入选标的数=8 前排标的=CIEN(0.92)" in dashboard
 
 
-def test_notification_trade_lines_localize_runtime_diagnostic_tail_for_zh():
+def test_notification_trade_lines_suppress_runtime_diagnostic_tail_for_zh():
     lines = _build_notification_trade_lines(
         [
             (
@@ -158,15 +163,54 @@ def test_notification_trade_lines_localize_runtime_diagnostic_tail_for_zh():
         translator=build_translator("zh"),
     )
 
-    assert lines == [
-        "执行配置=SOXL/SOXX 半导体趋势收益",
-        "市场阶段=无",
-        "宽度=0.0%",
-        "目标股票仓位=0.0%",
-        "实际股票仓位=0.0%",
-        "快照日期=无",
-        "交易日=无",
-    ]
+    assert lines == []
+
+
+def test_notification_trade_lines_include_no_order_reason_for_small_account_zh():
+    lines = _build_notification_trade_lines(
+        [],
+        execution_summary={"no_op_reason": "min_notional:BOXX,QQQ,TQQQ"},
+        translator=build_translator("zh"),
+    )
+
+    assert lines == ["未下单: 原因=低于最小订单金额:BOXX,QQQ,TQQQ"]
+
+
+def test_notification_trade_lines_include_no_order_reason_for_small_account_en():
+    lines = _build_notification_trade_lines(
+        [],
+        execution_summary={"no_op_reason": "min_notional:BOXX,QQQ,TQQQ"},
+        translator=build_translator("en"),
+    )
+
+    assert lines == ["No order submitted: reason=min_notional:BOXX,QQQ,TQQQ"]
+
+
+def test_trade_notification_localizes_compact_signal_state_for_zh_and_en():
+    common_kwargs = dict(
+        dashboard="",
+        strategy_dashboard="",
+        trade_logs=[],
+        execution_summary={},
+        signal_desc="entry",
+        status_desc="entry",
+        status_icon="🐤",
+        separator="---",
+        strategy_display_name="TQQQ Growth Income",
+        extra_notification_lines=(),
+    )
+
+    zh_notification = render_trade_notification(
+        **common_kwargs,
+        translator=build_translator("zh"),
+    )
+    en_notification = render_trade_notification(
+        **common_kwargs,
+        translator=build_translator("en"),
+    )
+
+    assert "🎯 入场信号" in zh_notification.compact_text
+    assert "🎯 Entry Signal" in en_notification.compact_text
 
 
 def test_run_strategy_core_passes_signal_metadata_to_execution():
@@ -323,6 +367,41 @@ def test_run_strategy_core_writes_reconciliation_record(tmp_path):
     assert "target_changes AAA +60.0%" in observed["messages"][0]
     assert "DRY_RUN buy AAA 1 @100.00" not in observed["messages"][0]
     assert "目标差异" not in observed["messages"][0]
+
+
+def test_trade_notification_keeps_detailed_logs_out_of_compact_message():
+    notification = render_trade_notification(
+        dashboard="📌 Strategy portfolio\n  - Total assets: $1,000.00",
+        strategy_dashboard=(
+            "📌 Strategy portfolio\n"
+            "  - Total assets: $1,000.00\n"
+            "⏱ Timing: 2026-04-01 -> 2026-04-02 (next trading day)"
+        ),
+        trade_logs=[
+            (
+                "execution_profile=tqqq_growth_income | regime=<none> | breadth=0.0% | "
+                "target_stock=0.0% | realized_stock=0.0% | snapshot_as_of=<none> | trade_date=2026-04-02"
+            )
+        ],
+        execution_summary={"no_op_reason": "min_notional:QQQ,TQQQ"},
+        signal_desc="entry | small account warning",
+        status_desc="entry",
+        status_icon="🐤",
+        translator=_build_test_translator(),
+        separator="---",
+        strategy_display_name="TQQQ Growth Income",
+        extra_notification_lines=(
+            "🆔 Account: U18308207",
+            "🧩 Plugin: Crisis Watch Notice | status: no crisis detected | notice: no action",
+        ),
+    )
+
+    assert "execution_profile=tqqq_growth_income" in notification.detailed_text
+    assert "execution_profile=tqqq_growth_income" not in notification.compact_text
+    assert "📌 Strategy portfolio" in notification.compact_text
+    assert "⏱ Timing: 2026-04-01 -> 2026-04-02 (next trading day)" in notification.compact_text
+    assert "no_order_plan_reason reason=min_notional:QQQ,TQQQ" in notification.compact_text
+    assert notification.compact_text.index("🆔 Account: U18308207") < notification.compact_text.index("🧩 Plugin:")
 
 
 def test_run_strategy_core_writes_reconciliation_record_under_strategy_dir(tmp_path):
