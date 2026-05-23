@@ -40,6 +40,42 @@ except ImportError:  # pragma: no cover - compatibility with older pinned shared
             if current_buying_power + sweep_capacity >= quote_price:
                 return True
         return False
+try:
+    from quant_platform_kit.common.small_account_compatibility import (
+        project_unbuyable_value_targets_to_cash,
+    )
+except ImportError:  # pragma: no cover - compatibility with older pinned shared wheels
+    def project_unbuyable_value_targets_to_cash(
+        target_values,
+        prices,
+        *,
+        symbols=None,
+        quantity_step=1.0,
+    ):
+        adjusted = {
+            str(symbol or "").strip().upper(): float(value or 0.0)
+            for symbol, value in dict(target_values or {}).items()
+        }
+        step = max(0.0, float(quantity_step or 0.0))
+        if step <= 0.0:
+            return adjusted, ()
+        candidate_symbols = (
+            tuple(adjusted)
+            if symbols is None
+            else tuple(dict.fromkeys(str(symbol or "").strip().upper() for symbol in symbols))
+        )
+        normalized_prices = {
+            str(symbol or "").strip().upper(): float(price or 0.0)
+            for symbol, price in dict(prices or {}).items()
+        }
+        substituted = []
+        for symbol in candidate_symbols:
+            target_value = max(0.0, float(adjusted.get(symbol, 0.0) or 0.0))
+            price = max(0.0, float(normalized_prices.get(symbol, 0.0) or 0.0))
+            if price > 0.0 and 0.0 < target_value < (price * step):
+                adjusted[symbol] = 0.0
+                substituted.append(symbol)
+        return adjusted, tuple(dict.fromkeys(substituted))
 from quant_platform_kit.common.quantity import (
     floor_to_quantity_step,
     format_quantity,
@@ -613,6 +649,7 @@ def execute_rebalance(
             max(0.0, float(safe_haven_cash_substitute_threshold_usd or 0.0))
         ),
         "safe_haven_cash_substituted_symbols": [],
+        "small_account_whole_share_substituted_symbols": [],
         "residual_cash_estimate": float(account_values.get("buying_power", 0.0) or 0.0),
         "current_stock_weight": 0.0,
         "current_safe_haven_weight": 0.0,
@@ -684,6 +721,24 @@ def execute_rebalance(
         current_mv[symbol] = qty * price
 
     target_mv = {symbol: investable * weight for symbol, weight in target_weights.items()}
+    small_account_candidate_symbols = tuple(
+        dict.fromkeys(tuple(allocation["risk_symbols"]) + tuple(allocation["income_symbols"]))
+    )
+    if not small_account_candidate_symbols:
+        small_account_candidate_symbols = tuple(
+            symbol for symbol in target_mv if symbol not in safe_haven_symbols
+        )
+    target_mv, small_account_substituted_symbols = project_unbuyable_value_targets_to_cash(
+        target_mv,
+        prices,
+        symbols=small_account_candidate_symbols,
+        quantity_step=order_quantity_step,
+    )
+    for symbol in small_account_substituted_symbols:
+        target_weights[symbol] = 0.0
+    execution_summary["small_account_whole_share_substituted_symbols"] = list(
+        small_account_substituted_symbols
+    )
     trade_logs = []
     target_hash = _build_target_hash(target_weights)
     execution_summary["target_vs_current"] = _build_target_diff_rows(target_weights, current_mv, equity)
