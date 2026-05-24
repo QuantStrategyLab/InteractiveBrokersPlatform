@@ -48,11 +48,21 @@ def test_handle_request_sends_escalated_strategy_plugin_alert(strategy_module, m
     monkeypatch.setattr(strategy_module, "is_market_open_today", lambda: True)
     monkeypatch.setattr(strategy_module, "load_strategy_plugin_signals", lambda: ((signal,), None))
     monkeypatch.setattr(strategy_module, "attach_strategy_plugin_report", lambda *args, **kwargs: None)
-    monkeypatch.setattr(
-        strategy_module,
-        "send_crisis_alert_email",
-        lambda alert_message: observed["alerts"].append(alert_message) or True,
-    )
+
+    def fake_publish(signals, **kwargs):
+        observed["alerts"].append((tuple(signals), kwargs))
+        return types.SimpleNamespace(
+            sent_count=1,
+            to_report_fields=lambda: {
+                "strategy_plugin_alert_email_attempted_count": 1,
+                "strategy_plugin_alert_email_sent_count": 1,
+                "strategy_plugin_alert_email_skipped_count": 0,
+                "strategy_plugin_alert_email_failed_count": 0,
+                "strategy_plugin_alert_email_deliveries": [],
+            },
+        )
+
+    monkeypatch.setattr(strategy_module, "publish_strategy_plugin_email_alerts", fake_publish)
     monkeypatch.setattr(strategy_module, "run_strategy_core", lambda **_kwargs: "OK - executed")
 
     with strategy_module.app.test_request_context("/", method="POST"):
@@ -61,7 +71,8 @@ def test_handle_request_sends_escalated_strategy_plugin_alert(strategy_module, m
     assert status == 200
     assert body == "OK - executed"
     assert len(observed["alerts"]) == 1
-    assert "Crisis" in observed["alerts"][0].subject
+    assert observed["alerts"][0][0] == (signal,)
+    assert "ibkr" in observed["alerts"][0][1]["context_label"]
 
 
 def test_handle_precheck_post_uses_dry_run_override(strategy_module, monkeypatch):
