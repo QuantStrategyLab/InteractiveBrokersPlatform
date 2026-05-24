@@ -25,10 +25,10 @@ from application.rebalance_service import run_strategy_core as run_rebalance_cyc
 from decision_mapper import map_strategy_decision
 from entrypoints.cloud_run import is_market_open_today
 from notifications.telegram import build_strategy_display_name, build_translator, send_telegram_message
-from quant_platform_kit.notifications.strategy_plugin_email import (
-    StrategyPluginEmailAlertMarkerStore,
-    build_strategy_plugin_alert_context_label as build_email_alert_context_label,
-    publish_strategy_plugin_email_alerts,
+from quant_platform_kit.notifications.strategy_plugin_google_voice import (
+    StrategyPluginGoogleVoiceAlertMarkerStore,
+    build_strategy_plugin_alert_context_label as build_google_voice_alert_context_label,
+    publish_strategy_plugin_google_voice_alerts,
 )
 from quant_platform_kit.common.runtime_assembly import build_runtime_assembly
 from quant_platform_kit.common.runtime_reports import (
@@ -478,7 +478,7 @@ def build_strategy_plugin_alert_messages(signals):
 
 
 def build_strategy_plugin_alert_store():
-    return StrategyPluginEmailAlertMarkerStore(
+    return StrategyPluginGoogleVoiceAlertMarkerStore(
         local_dir=os.getenv("STRATEGY_PLUGIN_ALERT_STATE_DIR") or "/tmp/quant_strategy_plugin_alerts",
         gcs_prefix_uri=os.getenv("STRATEGY_PLUGIN_ALERT_STATE_GCS_URI") or os.getenv("EXECUTION_REPORT_GCS_URI"),
         gcp_project_id=PROJECT_ID,
@@ -486,7 +486,7 @@ def build_strategy_plugin_alert_store():
 
 
 def build_strategy_plugin_alert_context_label() -> str:
-    return build_email_alert_context_label(
+    return build_google_voice_alert_context_label(
         platform_id="ibkr",
         strategy_profile=STRATEGY_PROFILE,
         account_scope=ACCOUNT_GROUP,
@@ -495,15 +495,15 @@ def build_strategy_plugin_alert_context_label() -> str:
     )
 
 
-def attach_strategy_plugin_alert_email_result(report, result) -> None:
-    report.setdefault("summary", {})["strategy_plugin_alert_email_sent_count"] = result.sent_count
+def attach_strategy_plugin_alert_google_voice_result(report, result) -> None:
+    report.setdefault("summary", {})["strategy_plugin_alert_google_voice_sent_count"] = result.sent_count
     report.setdefault("diagnostics", {}).update(result.to_report_fields())
 
 
 def publish_strategy_plugin_alerts(signals, *, report=None):
-    result = publish_strategy_plugin_email_alerts(
+    result = publish_strategy_plugin_google_voice_alerts(
         signals,
-        email_settings=RUNTIME_SETTINGS,
+        google_voice_settings=RUNTIME_SETTINGS,
         translator=t,
         strategy_label=STRATEGY_PROFILE,
         context_label=build_strategy_plugin_alert_context_label(),
@@ -511,7 +511,7 @@ def publish_strategy_plugin_alerts(signals, *, report=None):
         log_message=print,
     )
     if report is not None:
-        attach_strategy_plugin_alert_email_result(report, result)
+        attach_strategy_plugin_alert_google_voice_result(report, result)
     return result
 
 

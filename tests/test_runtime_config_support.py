@@ -135,6 +135,8 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.tg_token is None
     assert settings.tg_chat_id is None
     assert settings.strategy_plugin_mounts_json is None
+    assert settings.crisis_alert_google_voice_to == ()
+    assert settings.crisis_alert_smtp_from is None
     assert settings.crisis_alert_email_to == ()
     assert settings.crisis_alert_email_from is None
     assert settings.crisis_alert_smtp_host is None
@@ -208,11 +210,13 @@ def test_load_platform_runtime_settings_supports_explicit_group_config_values(mo
     assert settings.notify_lang == "zh"
 
 
-def test_load_platform_runtime_settings_reads_crisis_alert_email_config(monkeypatch):
+def test_load_platform_runtime_settings_reads_crisis_alert_google_voice_config(monkeypatch):
     monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(SAMPLE_STRATEGY_PROFILE))
     monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
+    monkeypatch.setenv("CRISIS_ALERT_GOOGLE_VOICE_TO", "gateway@txt.voice.google.com")
     monkeypatch.setenv("CRISIS_ALERT_EMAIL_TO", "risk@example.com;ops@example.com,risk@example.com")
+    monkeypatch.setenv("CRISIS_ALERT_SMTP_FROM", "smtp-from@example.com")
     monkeypatch.setenv("CRISIS_ALERT_EMAIL_FROM", "bot@example.com")
     monkeypatch.setenv("CRISIS_ALERT_SMTP_HOST", "smtp.example.com")
     monkeypatch.setenv("CRISIS_ALERT_SMTP_PORT", "465")
@@ -223,6 +227,8 @@ def test_load_platform_runtime_settings_reads_crisis_alert_email_config(monkeypa
 
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
+    assert settings.crisis_alert_google_voice_to == ("gateway@txt.voice.google.com",)
+    assert settings.crisis_alert_smtp_from == "smtp-from@example.com"
     assert settings.crisis_alert_email_to == ("risk@example.com", "ops@example.com")
     assert settings.crisis_alert_email_from == "bot@example.com"
     assert settings.crisis_alert_smtp_host == "smtp.example.com"
