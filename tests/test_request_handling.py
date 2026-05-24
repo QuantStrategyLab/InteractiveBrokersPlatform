@@ -34,6 +34,36 @@ def test_handle_request_post_executes_on_market_day(strategy_module, monkeypatch
     assert observed["called"] is True
 
 
+def test_handle_request_sends_escalated_strategy_plugin_alert(strategy_module, monkeypatch):
+    signal = types.SimpleNamespace(
+        plugin="crisis_response_shadow",
+        effective_mode="shadow",
+        canonical_route="true_crisis",
+        suggested_action="defend",
+        would_trade_if_enabled=True,
+        as_of="2026-05-24",
+    )
+    observed = {"alerts": []}
+
+    monkeypatch.setattr(strategy_module, "is_market_open_today", lambda: True)
+    monkeypatch.setattr(strategy_module, "load_strategy_plugin_signals", lambda: ((signal,), None))
+    monkeypatch.setattr(strategy_module, "attach_strategy_plugin_report", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        strategy_module,
+        "send_crisis_alert_email",
+        lambda alert_message: observed["alerts"].append(alert_message) or True,
+    )
+    monkeypatch.setattr(strategy_module, "run_strategy_core", lambda **_kwargs: "OK - executed")
+
+    with strategy_module.app.test_request_context("/", method="POST"):
+        body, status = strategy_module.handle_request()
+
+    assert status == 200
+    assert body == "OK - executed"
+    assert len(observed["alerts"]) == 1
+    assert "Crisis" in observed["alerts"][0].subject
+
+
 def test_handle_precheck_post_uses_dry_run_override(strategy_module, monkeypatch):
     observed = {"called": False, "dry_run_only_override": None, "events": []}
 

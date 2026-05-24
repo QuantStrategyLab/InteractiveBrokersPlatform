@@ -30,6 +30,14 @@ def strategy_module_factory(monkeypatch):
             ),
             "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME": None,
             "GLOBAL_TELEGRAM_CHAT_ID": None,
+            "CRISIS_ALERT_EMAIL_TO": None,
+            "CRISIS_ALERT_EMAIL_FROM": None,
+            "CRISIS_ALERT_SMTP_HOST": None,
+            "CRISIS_ALERT_SMTP_PORT": None,
+            "CRISIS_ALERT_SMTP_USERNAME": None,
+            "CRISIS_ALERT_SMTP_PASSWORD": None,
+            "CRISIS_ALERT_SMTP_STARTTLS": None,
+            "CRISIS_ALERT_SMTP_SSL": None,
         }
         defaults.update(env_overrides)
         if "RUNTIME_TARGET_JSON" not in defaults:

@@ -112,6 +112,14 @@ For IBKR, keep `paper` as a single account-group entry. If you later add live ac
 | `TELEGRAM_TOKEN` | Yes | Telegram bot token. For Cloud Run, prefer a Secret Manager reference instead of a literal env var. |
 | `GLOBAL_TELEGRAM_CHAT_ID` | Yes | Telegram chat ID used by this service. |
 | `NOTIFY_LANG` | No | `en` (default) or `zh` |
+| `CRISIS_ALERT_EMAIL_TO` | No | Comma/semicolon/newline-separated recipients for escalated crisis-plugin email alerts. Email is skipped when unset. |
+| `CRISIS_ALERT_EMAIL_FROM` | No | Sender address for crisis-plugin email alerts. |
+| `CRISIS_ALERT_SMTP_HOST` | No | SMTP host for crisis-plugin email alerts. |
+| `CRISIS_ALERT_SMTP_PORT` | No | SMTP port; defaults to `587`. |
+| `CRISIS_ALERT_SMTP_USERNAME` | No | Optional SMTP username. |
+| `CRISIS_ALERT_SMTP_PASSWORD` | No | Optional SMTP password. For Cloud Run, prefer `CRISIS_ALERT_SMTP_PASSWORD_SECRET_NAME` in env sync. |
+| `CRISIS_ALERT_SMTP_STARTTLS` | No | Whether to use STARTTLS; defaults to `true`. |
+| `CRISIS_ALERT_SMTP_SSL` | No | Whether to use implicit SMTP SSL; defaults to `false`. |
 
 The selected account-group entry must provide at least:
 
@@ -207,6 +215,8 @@ Current behavior is fail-fast:
 - missing account-group config source → startup error
 - missing key fields in the selected group (`ib_gateway_instance_name`, `ib_gateway_mode`, `ib_client_id`) → startup error
 
+When `IBKR_STRATEGY_PLUGIN_MOUNTS_JSON` includes the `crisis_response_shadow` plugin, the normal strategy-cycle Telegram message still includes the compact plugin line. If the plugin signal escalates beyond `no_action` (for example `canonical_route=true_crisis`, `suggested_action=defend`/`blocked`, or `would_trade_if_enabled=true`), the service also sends an independent crisis email when the `CRISIS_ALERT_*` SMTP settings are complete.
+
 ### GitHub-managed Cloud Run env sync
 
 If code deployment still uses Google Cloud Trigger, but you want GitHub to be the single source of truth for runtime env vars, this repo now includes `.github/workflows/sync-cloud-run-env.yml`. The workflow now also emits `RUNTIME_TARGET_JSON`, so the control plane carries a structured runtime target alongside the legacy `STRATEGY_PROFILE` selector.
@@ -222,10 +232,12 @@ Recommended setup:
   - `ACCOUNT_GROUP` (recommended: `paper`)
   - `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME`
   - Optional: `IBKR_STRATEGY_PLUGIN_MOUNTS_JSON`, `IBKR_MIN_RESERVED_CASH_USD`, `IBKR_RESERVED_CASH_RATIO`, `IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD`
+  - Optional crisis email alerts: `CRISIS_ALERT_EMAIL_TO`, `CRISIS_ALERT_EMAIL_FROM`, `CRISIS_ALERT_SMTP_HOST`, `CRISIS_ALERT_SMTP_PORT`, `CRISIS_ALERT_SMTP_USERNAME`, `CRISIS_ALERT_SMTP_PASSWORD_SECRET_NAME`, `CRISIS_ALERT_SMTP_STARTTLS`, `CRISIS_ALERT_SMTP_SSL`
   - `GLOBAL_TELEGRAM_CHAT_ID`
   - `NOTIFY_LANG`
 - **Repository Secrets**
   - `TELEGRAM_TOKEN` (fallback only when `TELEGRAM_TOKEN_SECRET_NAME` is not set)
+  - `CRISIS_ALERT_SMTP_PASSWORD` (fallback only when `CRISIS_ALERT_SMTP_PASSWORD_SECRET_NAME` is not set)
 - **Optional transition Variables**
   - `IB_GATEWAY_ZONE`
   - `IB_GATEWAY_IP_MODE`
@@ -351,6 +363,14 @@ IBKR 账户
 | `TELEGRAM_TOKEN` | 是 | Telegram 机器人 Token。Cloud Run 上更推荐走 Secret Manager 引用，不要直接写成明文 env。 |
 | `GLOBAL_TELEGRAM_CHAT_ID` | 是 | 这个服务使用的 Telegram Chat ID。 |
 | `NOTIFY_LANG` | 否 | `en`（默认）或 `zh` |
+| `CRISIS_ALERT_EMAIL_TO` | 否 | 危机插件升级邮件收件人，支持逗号、分号或换行分隔。不配置则跳过邮件。 |
+| `CRISIS_ALERT_EMAIL_FROM` | 否 | 危机插件升级邮件发件人。 |
+| `CRISIS_ALERT_SMTP_HOST` | 否 | 危机插件升级邮件的 SMTP host。 |
+| `CRISIS_ALERT_SMTP_PORT` | 否 | SMTP 端口，默认 `587`。 |
+| `CRISIS_ALERT_SMTP_USERNAME` | 否 | 可选 SMTP 用户名。 |
+| `CRISIS_ALERT_SMTP_PASSWORD` | 否 | 可选 SMTP 密码。Cloud Run env sync 建议配置 `CRISIS_ALERT_SMTP_PASSWORD_SECRET_NAME`。 |
+| `CRISIS_ALERT_SMTP_STARTTLS` | 否 | 是否使用 STARTTLS，默认 `true`。 |
+| `CRISIS_ALERT_SMTP_SSL` | 否 | 是否使用隐式 SMTP SSL，默认 `false`。 |
 
 选中的账号组配置里，至少要有：
 
@@ -412,6 +432,8 @@ IB_GATEWAY_IP_MODE=internal
 - 没有账号组配置来源 → 启动直接报错
 - 选中的账号组缺少关键字段（`ib_gateway_instance_name`、`ib_gateway_mode`、`ib_client_id`）→ 启动直接报错
 
+如果 `IBKR_STRATEGY_PLUGIN_MOUNTS_JSON` 挂载了 `crisis_response_shadow` 插件，常规策略周期 Telegram 仍会包含插件摘要行。当插件信号升级到非 `no_action`（例如 `canonical_route=true_crisis`、`suggested_action=defend`/`blocked`，或 `would_trade_if_enabled=true`）时，只要 `CRISIS_ALERT_*` SMTP 配置完整，服务还会额外发一封独立危机邮件。
+
 ### GitHub 统一管理 Cloud Run 环境变量
 
 如果代码部署继续走 Google Cloud Trigger，但你想把运行时环境变量统一放在 GitHub 管理，这个仓库现在提供了 `.github/workflows/sync-cloud-run-env.yml`。
@@ -427,10 +449,12 @@ IB_GATEWAY_IP_MODE=internal
   - `ACCOUNT_GROUP`（建议设为 `paper`）
   - `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME`
   - 可选：`IBKR_STRATEGY_PLUGIN_MOUNTS_JSON`、`IBKR_MIN_RESERVED_CASH_USD`、`IBKR_RESERVED_CASH_RATIO`、`IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD`
+  - 可选危机插件邮件告警：`CRISIS_ALERT_EMAIL_TO`、`CRISIS_ALERT_EMAIL_FROM`、`CRISIS_ALERT_SMTP_HOST`、`CRISIS_ALERT_SMTP_PORT`、`CRISIS_ALERT_SMTP_USERNAME`、`CRISIS_ALERT_SMTP_PASSWORD_SECRET_NAME`、`CRISIS_ALERT_SMTP_STARTTLS`、`CRISIS_ALERT_SMTP_SSL`
   - `GLOBAL_TELEGRAM_CHAT_ID`
   - `NOTIFY_LANG`
 - **仓库级 Secrets**
   - `TELEGRAM_TOKEN`（仅在没设置 `TELEGRAM_TOKEN_SECRET_NAME` 时作为 fallback）
+  - `CRISIS_ALERT_SMTP_PASSWORD`（仅在没设置 `CRISIS_ALERT_SMTP_PASSWORD_SECRET_NAME` 时作为 fallback）
 - **可选过渡 Variables**
   - `IB_GATEWAY_ZONE`
   - `IB_GATEWAY_IP_MODE`

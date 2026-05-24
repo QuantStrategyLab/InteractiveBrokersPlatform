@@ -6,6 +6,12 @@ from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
+from quant_platform_kit.common.strategy_plugins import (
+    build_strategy_plugin_alert_messages,
+    build_strategy_plugin_notification_lines,
+    should_alert_strategy_plugin_signal,
+    translate_strategy_plugin_value,
+)
 
 
 @dataclass(frozen=True)
@@ -46,26 +52,20 @@ class IBKRRuntimeStrategyAdapters:
             report.setdefault("diagnostics", {})["strategy_plugin_error"] = error
 
     def translate_strategy_plugin_value(self, category: str, raw_value: str | None) -> str:
-        value = str(raw_value or "").strip() or "unknown"
-        key = f"strategy_plugin_{category}_{value}"
-        translated = self.translator(key)
-        return translated if translated != key else value
+        return translate_strategy_plugin_value(category, raw_value, translator=self.translator)
 
     def build_strategy_plugin_notification_lines(self, signals) -> tuple[str, ...]:
-        lines = []
-        for signal in signals:
-            route = signal.canonical_route or "unknown_route"
-            action = signal.suggested_action or "unknown_action"
-            lines.append(
-                self.translator(
-                    "strategy_plugin_line",
-                    plugin=self.translate_strategy_plugin_value("name", signal.plugin),
-                    mode=self.translate_strategy_plugin_value("mode", signal.effective_mode),
-                    route=self.translate_strategy_plugin_value("route", route),
-                    action=self.translate_strategy_plugin_value("action", action),
-                )
-            )
-        return tuple(lines)
+        return build_strategy_plugin_notification_lines(signals, translator=self.translator)
+
+    def should_alert_strategy_plugin_signal(self, signal) -> bool:
+        return should_alert_strategy_plugin_signal(signal)
+
+    def build_strategy_plugin_alert_messages(self, signals):
+        return build_strategy_plugin_alert_messages(
+            signals,
+            translator=self.translator,
+            strategy_label=self.strategy_profile,
+        )
 
     def get_historical_close(self, ib, symbol, duration="2 Y", bar_size="1 day"):
         series = self.fetch_historical_price_series_fn(
