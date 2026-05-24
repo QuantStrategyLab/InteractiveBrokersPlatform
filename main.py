@@ -234,6 +234,7 @@ TG_CHAT_ID = RUNTIME_SETTINGS.tg_chat_id
 NOTIFY_LANG = RUNTIME_SETTINGS.notify_lang
 
 CASH_RESERVE_RATIO = STRATEGY_RUNTIME.cash_reserve_ratio
+CASH_RESERVE_FLOOR_USD = STRATEGY_RUNTIME.cash_reserve_floor_usd
 REBALANCE_THRESHOLD_RATIO = 0.02
 LIMIT_BUY_PREMIUM = 1.005
 SELL_SETTLE_DELAY_SEC = 3
@@ -323,6 +324,7 @@ def build_broker_adapters():
         account_ids=tuple(ACCOUNT_IDS),
         dry_run_only=RUNTIME_SETTINGS.dry_run_only,
         cash_reserve_ratio=CASH_RESERVE_RATIO,
+        cash_reserve_floor_usd=CASH_RESERVE_FLOOR_USD,
         rebalance_threshold_ratio=REBALANCE_THRESHOLD_RATIO,
         limit_buy_premium=LIMIT_BUY_PREMIUM,
         quantity_step=RUNTIME_SETTINGS.quantity_step,

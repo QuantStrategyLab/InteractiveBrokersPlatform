@@ -603,6 +603,7 @@ def execute_rebalance(
     rebalance_threshold_ratio,
     limit_buy_premium,
     sell_settle_delay_sec,
+    cash_reserve_floor_usd=0.0,
     quantity_step=1.0,
     min_order_notional=50.0,
     safe_haven_cash_substitute_threshold_usd=DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD,
@@ -664,7 +665,10 @@ def execute_rebalance(
         execution_summary["no_op_reason"] = "no_equity"
         return _finalize_result([translator("no_equity")], execution_summary, return_summary=return_summary)
 
-    reserved = equity * cash_reserve_ratio
+    reserved = max(
+        float(equity) * float(cash_reserve_ratio or 0.0),
+        max(0.0, float(cash_reserve_floor_usd or 0.0)),
+    )
     investable = equity - reserved
     target_weights, substituted_safe_haven_symbols = _apply_safe_haven_cash_substitution_to_weights(
         target_weights,

@@ -255,6 +255,17 @@ def test_global_etf_rotation_keeps_default_cash_reserve(strategy_module_factory)
     assert module.CASH_RESERVE_RATIO == pytest.approx(0.03)
 
 
+def test_platform_reserved_cash_policy_can_raise_strategy_cash_reserve(strategy_module_factory):
+    module = strategy_module_factory(
+        STRATEGY_PROFILE="global_etf_rotation",
+        IBKR_MIN_RESERVED_CASH_USD="250",
+        IBKR_RESERVED_CASH_RATIO="0.05",
+    )
+
+    assert module.CASH_RESERVE_RATIO == pytest.approx(0.05)
+    assert module.CASH_RESERVE_FLOOR_USD == pytest.approx(250.0)
+
+
 def test_compute_signals_exposes_dry_run_price_fallbacks(strategy_module_factory, tmp_path):
     pytest.importorskip("pandas")
 

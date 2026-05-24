@@ -104,6 +104,8 @@ For IBKR, keep `paper` as a single account-group entry. If you later add live ac
 | `IBKR_FEATURE_SNAPSHOT_PATH` | Conditionally required | Required for snapshot-backed profiles such as `russell_1000_multi_factor_defensive`, `tech_communication_pullback_enhancement`, and `mega_cap_leader_rotation_top50_balanced`. Path to the latest feature snapshot file (`.csv`, `.json`, `.jsonl`, `.parquet`). |
 | `IBKR_STRATEGY_PLUGIN_MOUNTS_JSON` | No | Optional IBKR-side strategy plugin mount JSON. The plugin artifact controls mode; platform config must not set `mode`. |
 | `IBKR_MIN_ORDER_NOTIONAL_USD` | No | Minimum buy notional for limit buys; defaults to `50.0`. |
+| `IBKR_MIN_RESERVED_CASH_USD` | No | Platform-level minimum cash reserve in USD. Defaults to `0`; the effective reserve is the max of this floor and the effective cash reserve ratio. |
+| `IBKR_RESERVED_CASH_RATIO` | No | Platform-level minimum cash reserve ratio in `[0,1]`. When unset, IBKR keeps the strategy/runtime `execution_cash_reserve_ratio`; when set, it can raise but not lower that strategy ratio. |
 | `IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD` | No | Safe-haven target values below this USD amount are kept as cash instead of buying BOXX/BIL. Defaults to `1000.0`. |
 | `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME` | Yes for Cloud Run | Secret Manager secret name for account-group config JSON. Recommended production source. |
 | `IB_ACCOUNT_GROUP_CONFIG_JSON` | No | Local/dev JSON fallback for account-group config. Not recommended for production Cloud Run. |
@@ -219,7 +221,7 @@ Recommended setup:
   - `STRATEGY_PROFILE` (set explicitly to one enabled profile, such as `soxl_soxx_trend_income`)
   - `ACCOUNT_GROUP` (recommended: `paper`)
   - `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME`
-  - Optional: `IBKR_STRATEGY_PLUGIN_MOUNTS_JSON`, `IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD`
+  - Optional: `IBKR_STRATEGY_PLUGIN_MOUNTS_JSON`, `IBKR_MIN_RESERVED_CASH_USD`, `IBKR_RESERVED_CASH_RATIO`, `IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD`
   - `GLOBAL_TELEGRAM_CHAT_ID`
   - `NOTIFY_LANG`
 - **Repository Secrets**
@@ -341,6 +343,8 @@ IBKR 账户
 | `IBKR_FEATURE_SNAPSHOT_PATH` | 条件必填 | `russell_1000_multi_factor_defensive`、`tech_communication_pullback_enhancement`、`mega_cap_leader_rotation_top50_balanced` 等快照策略需要。指向最新特征快照文件（`.csv`、`.json`、`.jsonl`、`.parquet`）。 |
 | `IBKR_STRATEGY_PLUGIN_MOUNTS_JSON` | 否 | 可选的 IBKR 侧策略插件挂载 JSON。插件 artifact 自带模式；平台配置不要设置 `mode`。 |
 | `IBKR_MIN_ORDER_NOTIONAL_USD` | 否 | 限价买入的最小名义金额；默认 `50.0`。 |
+| `IBKR_MIN_RESERVED_CASH_USD` | 否 | 平台级最低预留现金 USD。默认 `0`；实际预留取该下限和有效预留现金比例中的最大值。 |
+| `IBKR_RESERVED_CASH_RATIO` | 否 | 平台级最低预留现金比例，取值 `[0,1]`。不设置时沿用策略/运行配置里的 `execution_cash_reserve_ratio`；设置后只会抬高，不会降低策略比例。 |
 | `IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD` | 否 | `BOXX`/`BIL` 等避险标的目标金额低于该 USD 门槛时保留现金，不买入。默认 `1000.0`。 |
 | `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME` | Cloud Run 建议必填 | 账号组配置 JSON 在 Secret Manager 里的密钥名。生产环境推荐使用。 |
 | `IB_ACCOUNT_GROUP_CONFIG_JSON` | 否 | 本地开发用的账号组配置 JSON fallback。不建议在生产 Cloud Run 直接使用。 |
@@ -422,7 +426,7 @@ IB_GATEWAY_IP_MODE=internal
   - `STRATEGY_PROFILE`（显式设置为任一已启用 profile，例如 `soxl_soxx_trend_income`）
   - `ACCOUNT_GROUP`（建议设为 `paper`）
   - `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME`
-  - 可选：`IBKR_STRATEGY_PLUGIN_MOUNTS_JSON`、`IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD`
+  - 可选：`IBKR_STRATEGY_PLUGIN_MOUNTS_JSON`、`IBKR_MIN_RESERVED_CASH_USD`、`IBKR_RESERVED_CASH_RATIO`、`IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD`
   - `GLOBAL_TELEGRAM_CHAT_ID`
   - `NOTIFY_LANG`
 - **仓库级 Secrets**
