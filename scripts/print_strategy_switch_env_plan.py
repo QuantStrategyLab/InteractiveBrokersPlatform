@@ -69,6 +69,8 @@ def build_switch_plan(profile: str) -> dict[str, object]:
     ]
     optional_env = [
         "IBKR_DRY_RUN_ONLY",
+        "IBKR_MIN_RESERVED_CASH_USD",
+        "IBKR_RESERVED_CASH_RATIO",
         "IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD",
     ]
     remove_if_present: list[str] = []

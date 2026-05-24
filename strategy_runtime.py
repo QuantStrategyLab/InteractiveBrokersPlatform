@@ -59,6 +59,7 @@ class LoadedStrategyRuntime:
     merged_runtime_config: Mapping[str, Any] = field(default_factory=dict)
     status_icon: str = "🐤"
     cash_reserve_ratio: float = DEFAULT_CASH_RESERVE_RATIO
+    cash_reserve_floor_usd: float = 0.0
     logger: Callable[[str], None] = print
 
     @property
@@ -631,6 +632,18 @@ def load_strategy_runtime(
 
     merged_runtime_config = dict(entrypoint.manifest.default_config)
     merged_runtime_config.update(runtime_config)
+    strategy_cash_reserve_ratio = float(
+        merged_runtime_config.get(
+            "execution_cash_reserve_ratio",
+            DEFAULT_CASH_RESERVE_RATIO,
+        )
+    )
+    platform_cash_reserve_ratio = runtime_settings.reserved_cash_ratio
+    if platform_cash_reserve_ratio is not None:
+        strategy_cash_reserve_ratio = max(
+            strategy_cash_reserve_ratio,
+            float(platform_cash_reserve_ratio),
+        )
     return LoadedStrategyRuntime(
         entrypoint=entrypoint,
         runtime_adapter=runtime_adapter,
@@ -638,11 +651,7 @@ def load_strategy_runtime(
         runtime_config=runtime_config,
         merged_runtime_config=merged_runtime_config,
         status_icon=runtime_adapter.status_icon,
-        cash_reserve_ratio=float(
-            merged_runtime_config.get(
-                "execution_cash_reserve_ratio",
-                DEFAULT_CASH_RESERVE_RATIO,
-            )
-        ),
+        cash_reserve_ratio=strategy_cash_reserve_ratio,
+        cash_reserve_floor_usd=float(runtime_settings.reserved_cash_floor_usd or 0.0),
         logger=logger,
     )

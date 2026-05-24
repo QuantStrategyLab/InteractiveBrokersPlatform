@@ -36,6 +36,7 @@ class IBKRRuntimeBrokerAdapters:
     account_ids: tuple[str, ...]
     dry_run_only: bool
     cash_reserve_ratio: float
+    cash_reserve_floor_usd: float
     rebalance_threshold_ratio: float
     limit_buy_premium: float
     quantity_step: float
@@ -157,6 +158,7 @@ class IBKRRuntimeBrokerAdapters:
             account_ids=self.account_ids,
             dry_run_only=self.dry_run_only,
             cash_reserve_ratio=self.cash_reserve_ratio,
+            cash_reserve_floor_usd=self.cash_reserve_floor_usd,
             rebalance_threshold_ratio=self.rebalance_threshold_ratio,
             limit_buy_premium=self.limit_buy_premium,
             quantity_step=self.quantity_step,
@@ -243,6 +245,7 @@ def build_runtime_broker_adapters(
     account_ids: tuple[str, ...],
     dry_run_only: bool,
     cash_reserve_ratio: float,
+    cash_reserve_floor_usd: float,
     rebalance_threshold_ratio: float,
     limit_buy_premium: float,
     quantity_step: float,
@@ -279,6 +282,7 @@ def build_runtime_broker_adapters(
         account_ids=tuple(account_ids),
         dry_run_only=bool(dry_run_only),
         cash_reserve_ratio=float(cash_reserve_ratio),
+        cash_reserve_floor_usd=float(cash_reserve_floor_usd),
         rebalance_threshold_ratio=float(rebalance_threshold_ratio),
         limit_buy_premium=float(limit_buy_premium),
         quantity_step=float(quantity_step),

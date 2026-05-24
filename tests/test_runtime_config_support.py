@@ -6,9 +6,12 @@ from pathlib import Path
 import pytest
 
 from runtime_config_support import (
+    DEFAULT_RESERVED_CASH_FLOOR_USD,
     DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD,
     load_platform_runtime_settings,
     parse_account_group_configs,
+    resolve_non_negative_float_env,
+    resolve_optional_ratio_env,
 )
 from strategy_registry import (
     IBKR_PLATFORM,
@@ -122,6 +125,8 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.dry_run_only is False
     assert settings.quantity_step == 1.0
     assert settings.min_order_notional == 50.0
+    assert settings.reserved_cash_floor_usd == DEFAULT_RESERVED_CASH_FLOOR_USD
+    assert settings.reserved_cash_ratio is None
     assert settings.safe_haven_cash_substitute_threshold_usd == DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD
     assert settings.account_group == "paper"
     assert settings.service_name is None
@@ -207,6 +212,48 @@ def test_load_platform_runtime_settings_uses_whole_share_quantity_step(monkeypat
     assert settings.quantity_step == 1.0
     assert settings.min_order_notional == 5.0
     assert settings.safe_haven_cash_substitute_threshold_usd == 750.0
+
+
+def test_load_platform_runtime_settings_reads_reserved_cash_policy(monkeypatch):
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(SAMPLE_STRATEGY_PROFILE))
+    monkeypatch.setenv("ACCOUNT_GROUP", "paper")
+    monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
+    monkeypatch.setenv("IBKR_MIN_RESERVED_CASH_USD", "250")
+    monkeypatch.setenv("IBKR_RESERVED_CASH_RATIO", "0.025")
+
+    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
+
+    assert settings.reserved_cash_floor_usd == 250.0
+    assert settings.reserved_cash_ratio == 0.025
+
+
+def test_load_platform_runtime_settings_rejects_invalid_reserved_cash_ratio(monkeypatch):
+    monkeypatch.setenv("IBKR_RESERVED_CASH_RATIO", "1.25")
+
+    with pytest.raises(ValueError, match="IBKR_RESERVED_CASH_RATIO"):
+        resolve_optional_ratio_env("IBKR_RESERVED_CASH_RATIO")
+
+
+@pytest.mark.parametrize("raw_value", ["nan", "inf", "-inf"])
+def test_load_platform_runtime_settings_rejects_non_finite_reserved_cash_floor(
+    monkeypatch,
+    raw_value,
+):
+    monkeypatch.setenv("IBKR_MIN_RESERVED_CASH_USD", raw_value)
+
+    with pytest.raises(ValueError, match="IBKR_MIN_RESERVED_CASH_USD must be finite"):
+        resolve_non_negative_float_env("IBKR_MIN_RESERVED_CASH_USD", default=0.0)
+
+
+@pytest.mark.parametrize("raw_value", ["nan", "inf", "-inf"])
+def test_load_platform_runtime_settings_rejects_non_finite_reserved_cash_ratio(
+    monkeypatch,
+    raw_value,
+):
+    monkeypatch.setenv("IBKR_RESERVED_CASH_RATIO", raw_value)
+
+    with pytest.raises(ValueError, match="IBKR_RESERVED_CASH_RATIO must be finite"):
+        resolve_optional_ratio_env("IBKR_RESERVED_CASH_RATIO")
 
 
 def test_load_platform_runtime_settings_reads_ibkr_strategy_plugin_mounts(monkeypatch):
@@ -431,6 +478,8 @@ def test_print_strategy_switch_env_plan_for_tqqq_growth_income():
     assert plan["requires_strategy_config_path"] is False
     assert json.loads(plan["set_env"]["RUNTIME_TARGET_JSON"])["strategy_profile"] == "tqqq_growth_income"
     assert "ACCOUNT_GROUP" in plan["keep_env"]
+    assert "IBKR_MIN_RESERVED_CASH_USD" in plan["optional_env"]
+    assert "IBKR_RESERVED_CASH_RATIO" in plan["optional_env"]
     assert "IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD" in plan["optional_env"]
     assert "IBKR_FEATURE_SNAPSHOT_PATH" in plan["remove_if_present"]
 

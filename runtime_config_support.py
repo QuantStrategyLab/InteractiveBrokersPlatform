@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +25,7 @@ from strategy_registry import (
 from us_equity_strategies import get_strategy_catalog
 
 DEFAULT_ACCOUNT_GROUP = "default"
+DEFAULT_RESERVED_CASH_FLOOR_USD = 0.0
 DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD = 1000.0
 
 
@@ -60,6 +62,8 @@ class PlatformRuntimeSettings:
     dry_run_only: bool
     quantity_step: float = 1.0
     min_order_notional: float = 50.0
+    reserved_cash_floor_usd: float = DEFAULT_RESERVED_CASH_FLOOR_USD
+    reserved_cash_ratio: float | None = None
     safe_haven_cash_substitute_threshold_usd: float = DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD
     account_group: str = DEFAULT_ACCOUNT_GROUP
     service_name: str | None = None
@@ -153,6 +157,11 @@ def load_platform_runtime_settings(
             "IBKR_MIN_ORDER_NOTIONAL_USD",
             default=50.0,
         ),
+        reserved_cash_floor_usd=resolve_non_negative_float_env(
+            "IBKR_MIN_RESERVED_CASH_USD",
+            default=DEFAULT_RESERVED_CASH_FLOOR_USD,
+        ),
+        reserved_cash_ratio=resolve_optional_ratio_env("IBKR_RESERVED_CASH_RATIO"),
         safe_haven_cash_substitute_threshold_usd=max(
             0.0,
             resolve_float_env(
@@ -180,6 +189,25 @@ def resolve_strategy_profile(raw_value: str | None) -> str:
         raw_value,
         platform_id=IBKR_PLATFORM,
     ).profile
+
+
+def resolve_non_negative_float_env(name: str, *, default: float) -> float:
+    value = resolve_float_env(os.environ, name, default=default)
+    if not math.isfinite(value):
+        raise ValueError(f"{name} must be finite, got {value}")
+    if value < 0.0:
+        raise ValueError(f"{name} must be non-negative, got {value}")
+    return float(value)
+
+
+def resolve_optional_ratio_env(name: str) -> float | None:
+    raw_value = os.getenv(name)
+    if raw_value is None or str(raw_value).strip() == "":
+        return None
+    value = resolve_non_negative_float_env(name, default=0.0)
+    if value > 1.0:
+        raise ValueError(f"{name} must be in [0,1], got {value}")
+    return value
 
 
 def resolve_account_group(raw_value: str | None) -> str:

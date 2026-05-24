@@ -130,6 +130,41 @@ def test_execute_rebalance_submits_limit_buy_for_underweight_position(monkeypatc
     assert any(log.startswith("buy VOO") for log in trade_logs)
 
 
+def test_execute_rebalance_uses_reserved_cash_floor_when_higher(tmp_path):
+    class FakeIB:
+        def openTrades(self):
+            return []
+
+        def fills(self):
+            return []
+
+        def accountValues(self):
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1000")]
+
+    _trade_logs, summary = execute_rebalance(
+        FakeIB(),
+        {},
+        {},
+        {"equity": 1000.0, "buying_power": 1000.0},
+        fetch_quote_snapshots=lambda _ib, _symbols: {},
+        submit_order_intent=lambda _ib, _intent: None,
+        order_intent_cls=OrderIntent,
+        translator=translate,
+        strategy_symbols=[],
+        signal_metadata=_signal_metadata({}),
+        dry_run_only=True,
+        cash_reserve_ratio=0.03,
+        cash_reserve_floor_usd=250.0,
+        rebalance_threshold_ratio=0.02,
+        limit_buy_premium=1.005,
+        sell_settle_delay_sec=0,
+        execution_lock_dir=tmp_path,
+        return_summary=True,
+    )
+
+    assert summary["cash_reserve_dollars"] == 250.0
+
+
 def test_execute_rebalance_projects_unbuyable_weight_target_to_zero(tmp_path, monkeypatch):
     class FakeIB:
         def openTrades(self):
