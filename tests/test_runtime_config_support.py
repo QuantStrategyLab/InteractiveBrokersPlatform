@@ -10,6 +10,7 @@ from runtime_config_support import (
     DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD,
     load_platform_runtime_settings,
     parse_account_group_configs,
+    resolve_non_negative_float_env,
     resolve_optional_ratio_env,
 )
 from strategy_registry import (
@@ -230,6 +231,28 @@ def test_load_platform_runtime_settings_rejects_invalid_reserved_cash_ratio(monk
     monkeypatch.setenv("IBKR_RESERVED_CASH_RATIO", "1.25")
 
     with pytest.raises(ValueError, match="IBKR_RESERVED_CASH_RATIO"):
+        resolve_optional_ratio_env("IBKR_RESERVED_CASH_RATIO")
+
+
+@pytest.mark.parametrize("raw_value", ["nan", "inf", "-inf"])
+def test_load_platform_runtime_settings_rejects_non_finite_reserved_cash_floor(
+    monkeypatch,
+    raw_value,
+):
+    monkeypatch.setenv("IBKR_MIN_RESERVED_CASH_USD", raw_value)
+
+    with pytest.raises(ValueError, match="IBKR_MIN_RESERVED_CASH_USD must be finite"):
+        resolve_non_negative_float_env("IBKR_MIN_RESERVED_CASH_USD", default=0.0)
+
+
+@pytest.mark.parametrize("raw_value", ["nan", "inf", "-inf"])
+def test_load_platform_runtime_settings_rejects_non_finite_reserved_cash_ratio(
+    monkeypatch,
+    raw_value,
+):
+    monkeypatch.setenv("IBKR_RESERVED_CASH_RATIO", raw_value)
+
+    with pytest.raises(ValueError, match="IBKR_RESERVED_CASH_RATIO must be finite"):
         resolve_optional_ratio_env("IBKR_RESERVED_CASH_RATIO")
 
 
