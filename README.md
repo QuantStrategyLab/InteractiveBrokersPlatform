@@ -112,9 +112,11 @@ For IBKR, keep `paper` as a single account-group entry. If you later add live ac
 | `TELEGRAM_TOKEN` | Yes | Telegram bot token. For Cloud Run, prefer a Secret Manager reference instead of a literal env var. |
 | `GLOBAL_TELEGRAM_CHAT_ID` | Yes | Telegram chat ID used by this service. |
 | `NOTIFY_LANG` | No | `en` (default) or `zh` |
-| `CRISIS_ALERT_EMAIL_TO` | No | Comma/semicolon/newline-separated recipients for escalated crisis-plugin email alerts. Email is skipped when unset. |
-| `CRISIS_ALERT_EMAIL_FROM` | No | Sender address for crisis-plugin email alerts. |
-| `CRISIS_ALERT_SMTP_HOST` | No | SMTP host for crisis-plugin email alerts. |
+| `CRISIS_ALERT_GOOGLE_VOICE_TO` | No | Comma/semicolon/newline-separated Google Voice SMS gateway recipients, usually ending in `@txt.voice.google.com`. |
+| `CRISIS_ALERT_EMAIL_TO` | No | Optional ordinary email recipients that receive the same escalated alert; also accepted as a legacy recipient list. |
+| `CRISIS_ALERT_SMTP_FROM` | No | SMTP sender address for Google Voice alerts. Falls back to `CRISIS_ALERT_EMAIL_FROM`. |
+| `CRISIS_ALERT_EMAIL_FROM` | No | Legacy SMTP sender alias; prefer `CRISIS_ALERT_SMTP_FROM`. |
+| `CRISIS_ALERT_SMTP_HOST` | No | SMTP host for Google Voice alerts. |
 | `CRISIS_ALERT_SMTP_PORT` | No | SMTP port; defaults to `587`. |
 | `CRISIS_ALERT_SMTP_USERNAME` | No | Optional SMTP username. |
 | `CRISIS_ALERT_SMTP_PASSWORD` | No | Optional SMTP password. For Cloud Run, prefer `CRISIS_ALERT_SMTP_PASSWORD_SECRET_NAME` in env sync. |
@@ -215,8 +217,8 @@ Current behavior is fail-fast:
 - missing account-group config source → startup error
 - missing key fields in the selected group (`ib_gateway_instance_name`, `ib_gateway_mode`, `ib_client_id`) → startup error
 
-When `IBKR_STRATEGY_PLUGIN_MOUNTS_JSON` includes the `crisis_response_shadow` plugin, the normal strategy-cycle Telegram message still includes the compact plugin line. If the plugin signal escalates beyond `no_action` (for example `canonical_route=true_crisis`, `suggested_action=defend`/`blocked`, or `would_trade_if_enabled=true`), the service also sends an independent crisis email when the `CRISIS_ALERT_*` SMTP settings are complete.
-Email alert results are written into the runtime report. Duplicate suppression uses stable plugin alert keys and stores markers under `STRATEGY_PLUGIN_ALERT_STATE_GCS_URI` when set, otherwise `EXECUTION_REPORT_GCS_URI`, with a local `/tmp` marker fallback.
+When `IBKR_STRATEGY_PLUGIN_MOUNTS_JSON` includes the `crisis_response_shadow` plugin, the normal strategy-cycle Telegram message still includes the compact plugin line. If the plugin signal escalates beyond `no_action` (for example `canonical_route=true_crisis`, `suggested_action=defend`/`blocked`, or `would_trade_if_enabled=true`), the service also sends an independent crisis Google Voice notification when the `CRISIS_ALERT_*` SMTP settings are complete.
+Google Voice alert results are written into the runtime report. Duplicate suppression uses stable plugin alert keys and stores markers under `STRATEGY_PLUGIN_ALERT_STATE_GCS_URI` when set, otherwise `EXECUTION_REPORT_GCS_URI`, with a local `/tmp` marker fallback.
 
 ### GitHub-managed Cloud Run env sync
 
@@ -233,7 +235,7 @@ Recommended setup:
   - `ACCOUNT_GROUP` (recommended: `paper`)
   - `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME`
   - Optional: `IBKR_STRATEGY_PLUGIN_MOUNTS_JSON`, `IBKR_MIN_RESERVED_CASH_USD`, `IBKR_RESERVED_CASH_RATIO`, `IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD`
-  - Optional crisis email alerts: `CRISIS_ALERT_EMAIL_TO`, `CRISIS_ALERT_EMAIL_FROM`, `CRISIS_ALERT_SMTP_HOST`, `CRISIS_ALERT_SMTP_PORT`, `CRISIS_ALERT_SMTP_USERNAME`, `CRISIS_ALERT_SMTP_PASSWORD_SECRET_NAME`, `CRISIS_ALERT_SMTP_STARTTLS`, `CRISIS_ALERT_SMTP_SSL`
+  - Optional crisis Google Voice alerts: `CRISIS_ALERT_GOOGLE_VOICE_TO`, `CRISIS_ALERT_EMAIL_TO`, `CRISIS_ALERT_SMTP_FROM`, `CRISIS_ALERT_EMAIL_FROM`, `CRISIS_ALERT_SMTP_HOST`, `CRISIS_ALERT_SMTP_PORT`, `CRISIS_ALERT_SMTP_USERNAME`, `CRISIS_ALERT_SMTP_PASSWORD_SECRET_NAME`, `CRISIS_ALERT_SMTP_STARTTLS`, `CRISIS_ALERT_SMTP_SSL`
   - `GLOBAL_TELEGRAM_CHAT_ID`
   - `NOTIFY_LANG`
 - **Repository Secrets**
@@ -364,9 +366,11 @@ IBKR 账户
 | `TELEGRAM_TOKEN` | 是 | Telegram 机器人 Token。Cloud Run 上更推荐走 Secret Manager 引用，不要直接写成明文 env。 |
 | `GLOBAL_TELEGRAM_CHAT_ID` | 是 | 这个服务使用的 Telegram Chat ID。 |
 | `NOTIFY_LANG` | 否 | `en`（默认）或 `zh` |
-| `CRISIS_ALERT_EMAIL_TO` | 否 | 危机插件升级邮件收件人，支持逗号、分号或换行分隔。不配置则跳过邮件。 |
-| `CRISIS_ALERT_EMAIL_FROM` | 否 | 危机插件升级邮件发件人。 |
-| `CRISIS_ALERT_SMTP_HOST` | 否 | 危机插件升级邮件的 SMTP host。 |
+| `CRISIS_ALERT_GOOGLE_VOICE_TO` | 否 | Google Voice 短信网关收件人，通常以 `@txt.voice.google.com` 结尾，支持逗号、分号或换行分隔。 |
+| `CRISIS_ALERT_EMAIL_TO` | 否 | 可选普通邮件收件人，会收到同一份升级告警；也作为旧版收件人配置兼容。 |
+| `CRISIS_ALERT_SMTP_FROM` | 否 | Google Voice 告警的 SMTP 发件人；未设置时回退到 `CRISIS_ALERT_EMAIL_FROM`。 |
+| `CRISIS_ALERT_EMAIL_FROM` | 否 | 旧版 SMTP 发件人别名；优先使用 `CRISIS_ALERT_SMTP_FROM`。 |
+| `CRISIS_ALERT_SMTP_HOST` | 否 | Google Voice 告警的 SMTP host。 |
 | `CRISIS_ALERT_SMTP_PORT` | 否 | SMTP 端口，默认 `587`。 |
 | `CRISIS_ALERT_SMTP_USERNAME` | 否 | 可选 SMTP 用户名。 |
 | `CRISIS_ALERT_SMTP_PASSWORD` | 否 | 可选 SMTP 密码。Cloud Run env sync 建议配置 `CRISIS_ALERT_SMTP_PASSWORD_SECRET_NAME`。 |
@@ -433,8 +437,8 @@ IB_GATEWAY_IP_MODE=internal
 - 没有账号组配置来源 → 启动直接报错
 - 选中的账号组缺少关键字段（`ib_gateway_instance_name`、`ib_gateway_mode`、`ib_client_id`）→ 启动直接报错
 
-如果 `IBKR_STRATEGY_PLUGIN_MOUNTS_JSON` 挂载了 `crisis_response_shadow` 插件，常规策略周期 Telegram 仍会包含插件摘要行。当插件信号升级到非 `no_action`（例如 `canonical_route=true_crisis`、`suggested_action=defend`/`blocked`，或 `would_trade_if_enabled=true`）时，只要 `CRISIS_ALERT_*` SMTP 配置完整，服务还会额外发一封独立危机邮件。
-邮件告警结果会写入 runtime report。重复发送抑制使用稳定的插件告警 key；如配置了 `STRATEGY_PLUGIN_ALERT_STATE_GCS_URI` 则写入该前缀，否则复用 `EXECUTION_REPORT_GCS_URI`，并有本地 `/tmp` marker fallback。
+如果 `IBKR_STRATEGY_PLUGIN_MOUNTS_JSON` 挂载了 `crisis_response_shadow` 插件，常规策略周期 Telegram 仍会包含插件摘要行。当插件信号升级到非 `no_action`（例如 `canonical_route=true_crisis`、`suggested_action=defend`/`blocked`，或 `would_trade_if_enabled=true`）时，只要 `CRISIS_ALERT_*` SMTP 配置完整，服务还会额外发一封独立 Google Voice 危机通知。
+Google Voice 告警结果会写入 runtime report。重复发送抑制使用稳定的插件告警 key；如配置了 `STRATEGY_PLUGIN_ALERT_STATE_GCS_URI` 则写入该前缀，否则复用 `EXECUTION_REPORT_GCS_URI`，并有本地 `/tmp` marker fallback。
 
 ### GitHub 统一管理 Cloud Run 环境变量
 
@@ -451,7 +455,7 @@ IB_GATEWAY_IP_MODE=internal
   - `ACCOUNT_GROUP`（建议设为 `paper`）
   - `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME`
   - 可选：`IBKR_STRATEGY_PLUGIN_MOUNTS_JSON`、`IBKR_MIN_RESERVED_CASH_USD`、`IBKR_RESERVED_CASH_RATIO`、`IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD`
-  - 可选危机插件邮件告警：`CRISIS_ALERT_EMAIL_TO`、`CRISIS_ALERT_EMAIL_FROM`、`CRISIS_ALERT_SMTP_HOST`、`CRISIS_ALERT_SMTP_PORT`、`CRISIS_ALERT_SMTP_USERNAME`、`CRISIS_ALERT_SMTP_PASSWORD_SECRET_NAME`、`CRISIS_ALERT_SMTP_STARTTLS`、`CRISIS_ALERT_SMTP_SSL`
+  - 可选危机插件 Google Voice 告警：`CRISIS_ALERT_GOOGLE_VOICE_TO`、`CRISIS_ALERT_EMAIL_TO`、`CRISIS_ALERT_SMTP_FROM`、`CRISIS_ALERT_EMAIL_FROM`、`CRISIS_ALERT_SMTP_HOST`、`CRISIS_ALERT_SMTP_PORT`、`CRISIS_ALERT_SMTP_USERNAME`、`CRISIS_ALERT_SMTP_PASSWORD_SECRET_NAME`、`CRISIS_ALERT_SMTP_STARTTLS`、`CRISIS_ALERT_SMTP_SSL`
   - `GLOBAL_TELEGRAM_CHAT_ID`
   - `NOTIFY_LANG`
 - **仓库级 Secrets**
