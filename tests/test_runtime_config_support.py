@@ -137,8 +137,6 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.strategy_plugin_mounts_json is None
     assert settings.crisis_alert_google_voice_to == ()
     assert settings.crisis_alert_smtp_from is None
-    assert settings.crisis_alert_email_to == ()
-    assert settings.crisis_alert_email_from is None
     assert settings.crisis_alert_smtp_host is None
     assert settings.crisis_alert_smtp_port == 587
     assert settings.crisis_alert_smtp_username is None
@@ -215,9 +213,7 @@ def test_load_platform_runtime_settings_reads_crisis_alert_google_voice_config(m
     monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
     monkeypatch.setenv("CRISIS_ALERT_GOOGLE_VOICE_TO", "gateway@txt.voice.google.com")
-    monkeypatch.setenv("CRISIS_ALERT_EMAIL_TO", "risk@example.com;ops@example.com,risk@example.com")
     monkeypatch.setenv("CRISIS_ALERT_SMTP_FROM", "smtp-from@example.com")
-    monkeypatch.setenv("CRISIS_ALERT_EMAIL_FROM", "bot@example.com")
     monkeypatch.setenv("CRISIS_ALERT_SMTP_HOST", "smtp.example.com")
     monkeypatch.setenv("CRISIS_ALERT_SMTP_PORT", "465")
     monkeypatch.setenv("CRISIS_ALERT_SMTP_USERNAME", "bot")
@@ -229,8 +225,6 @@ def test_load_platform_runtime_settings_reads_crisis_alert_google_voice_config(m
 
     assert settings.crisis_alert_google_voice_to == ("gateway@txt.voice.google.com",)
     assert settings.crisis_alert_smtp_from == "smtp-from@example.com"
-    assert settings.crisis_alert_email_to == ("risk@example.com", "ops@example.com")
-    assert settings.crisis_alert_email_from == "bot@example.com"
     assert settings.crisis_alert_smtp_host == "smtp.example.com"
     assert settings.crisis_alert_smtp_port == 465
     assert settings.crisis_alert_smtp_username == "bot"
