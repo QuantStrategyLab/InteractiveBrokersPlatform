@@ -25,7 +25,11 @@ from application.rebalance_service import run_strategy_core as run_rebalance_cyc
 from decision_mapper import map_strategy_decision
 from entrypoints.cloud_run import is_market_open_today
 from notifications.telegram import build_strategy_display_name, build_translator, send_telegram_message
-from quant_platform_kit.notifications.email import send_smtp_email
+from quant_platform_kit.notifications.strategy_plugin_email import (
+    StrategyPluginEmailAlertMarkerStore,
+    build_strategy_plugin_alert_context_label as build_email_alert_context_label,
+    publish_strategy_plugin_email_alerts,
+)
 from quant_platform_kit.common.runtime_assembly import build_runtime_assembly
 from quant_platform_kit.common.runtime_reports import (
     append_runtime_report_error,
@@ -233,14 +237,6 @@ PAPER_LIQUIDATE_ONLY = _env_flag("IBKR_PAPER_LIQUIDATE_ONLY")
 TG_TOKEN = RUNTIME_SETTINGS.tg_token
 TG_CHAT_ID = RUNTIME_SETTINGS.tg_chat_id
 NOTIFY_LANG = RUNTIME_SETTINGS.notify_lang
-CRISIS_ALERT_EMAIL_TO = getattr(RUNTIME_SETTINGS, "crisis_alert_email_to", ())
-CRISIS_ALERT_EMAIL_FROM = getattr(RUNTIME_SETTINGS, "crisis_alert_email_from", None)
-CRISIS_ALERT_SMTP_HOST = getattr(RUNTIME_SETTINGS, "crisis_alert_smtp_host", None)
-CRISIS_ALERT_SMTP_PORT = getattr(RUNTIME_SETTINGS, "crisis_alert_smtp_port", 587)
-CRISIS_ALERT_SMTP_USERNAME = getattr(RUNTIME_SETTINGS, "crisis_alert_smtp_username", None)
-CRISIS_ALERT_SMTP_PASSWORD = getattr(RUNTIME_SETTINGS, "crisis_alert_smtp_password", None)
-CRISIS_ALERT_SMTP_STARTTLS = getattr(RUNTIME_SETTINGS, "crisis_alert_smtp_starttls", True)
-CRISIS_ALERT_SMTP_SSL = getattr(RUNTIME_SETTINGS, "crisis_alert_smtp_ssl", False)
 
 CASH_RESERVE_RATIO = STRATEGY_RUNTIME.cash_reserve_ratio
 CASH_RESERVE_FLOOR_USD = getattr(STRATEGY_RUNTIME, "cash_reserve_floor_usd", 0.0)
@@ -481,29 +477,42 @@ def build_strategy_plugin_alert_messages(signals):
     return build_strategy_adapters().build_strategy_plugin_alert_messages(signals)
 
 
-def send_crisis_alert_email(alert_message) -> bool:
-    return send_smtp_email(
-        subject=alert_message.subject,
-        body=alert_message.body,
-        smtp_host=CRISIS_ALERT_SMTP_HOST,
-        smtp_port=CRISIS_ALERT_SMTP_PORT,
-        sender=CRISIS_ALERT_EMAIL_FROM,
-        recipients=CRISIS_ALERT_EMAIL_TO,
-        username=CRISIS_ALERT_SMTP_USERNAME,
-        password=CRISIS_ALERT_SMTP_PASSWORD,
-        use_starttls=CRISIS_ALERT_SMTP_STARTTLS,
-        use_ssl=CRISIS_ALERT_SMTP_SSL,
+def build_strategy_plugin_alert_store():
+    return StrategyPluginEmailAlertMarkerStore(
+        local_dir=os.getenv("STRATEGY_PLUGIN_ALERT_STATE_DIR") or "/tmp/quant_strategy_plugin_alerts",
+        gcs_prefix_uri=os.getenv("STRATEGY_PLUGIN_ALERT_STATE_GCS_URI") or os.getenv("EXECUTION_REPORT_GCS_URI"),
+        gcp_project_id=PROJECT_ID,
     )
 
 
-def publish_strategy_plugin_alerts(signals) -> int:
-    sent_count = 0
-    for alert_message in build_strategy_plugin_alert_messages(signals):
-        if send_crisis_alert_email(alert_message):
-            sent_count += 1
-    if sent_count:
-        print(f"strategy_plugin_alert_email_sent count={sent_count}", flush=True)
-    return sent_count
+def build_strategy_plugin_alert_context_label() -> str:
+    return build_email_alert_context_label(
+        platform_id="ibkr",
+        strategy_profile=STRATEGY_PROFILE,
+        account_scope=ACCOUNT_GROUP,
+        service_name=SERVICE_NAME,
+        runtime_target=RUNTIME_SETTINGS.runtime_target,
+    )
+
+
+def attach_strategy_plugin_alert_email_result(report, result) -> None:
+    report.setdefault("summary", {})["strategy_plugin_alert_email_sent_count"] = result.sent_count
+    report.setdefault("diagnostics", {}).update(result.to_report_fields())
+
+
+def publish_strategy_plugin_alerts(signals, *, report=None):
+    result = publish_strategy_plugin_email_alerts(
+        signals,
+        email_settings=RUNTIME_SETTINGS,
+        translator=t,
+        strategy_label=STRATEGY_PROFILE,
+        context_label=build_strategy_plugin_alert_context_label(),
+        alert_store=build_strategy_plugin_alert_store(),
+        log_message=print,
+    )
+    if report is not None:
+        attach_strategy_plugin_alert_email_result(report, result)
+    return result
 
 
 def build_account_notification_lines() -> tuple[str, ...]:
@@ -640,7 +649,7 @@ def _handle_request(*, dry_run_only_override: bool | None = None, response_body:
             execution_window="precheck" if dry_run_only_override else "execution",
         )
         if dry_run_only_override is None:
-            publish_strategy_plugin_alerts(strategy_plugin_signals)
+            publish_strategy_plugin_alerts(strategy_plugin_signals, report=report)
         cycle_result = coerce_strategy_cycle_result(
             run_strategy_core(
                 strategy_plugin_signals=strategy_plugin_signals,
