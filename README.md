@@ -112,6 +112,7 @@ For IBKR, keep `paper` as a single account-group entry. If you later add live ac
 | `TELEGRAM_TOKEN` | Yes | Telegram bot token. For Cloud Run, prefer a Secret Manager reference instead of a literal env var. |
 | `GLOBAL_TELEGRAM_CHAT_ID` | Yes | Telegram chat ID used by this service. |
 | `NOTIFY_LANG` | No | `en` (default) or `zh` |
+| `CRISIS_ALERT_CHANNELS` | No | Optional crisis alert channel list: `email`, `sms`, and/or `push`. |
 | `CRISIS_ALERT_EMAIL_RECIPIENTS` | No | Comma/semicolon/newline-separated email-form recipients. Use a normal mailbox for email-only delivery, or a Google Voice-associated mailbox/address to also trigger Google Voice prompts. |
 | `CRISIS_ALERT_EMAIL_SENDER_EMAIL` | No | Sender email address used for crisis alert email. Gmail is the default transport, but the sender naming is provider-neutral. |
 | `CRISIS_ALERT_EMAIL_SENDER_PASSWORD` | No | Sender SMTP password or app password. For Cloud Run, prefer `CRISIS_ALERT_EMAIL_SENDER_PASSWORD_SECRET_NAME` in env sync. |
@@ -182,7 +183,7 @@ GLOBAL_TELEGRAM_CHAT_ID=<telegram-chat-id>
 NOTIFY_LANG=zh
 ```
 
-This shared-config mode is only for the **IBKR pair** (`InteractiveBrokersPlatform` + `IBKRGatewayManager`). It is not meant to become a global secret bundle for unrelated quant repos. Across multiple quant projects, broadly reusable runtime settings are usually limited to `GLOBAL_TELEGRAM_CHAT_ID`, `NOTIFY_LANG`, and the generic `CRISIS_ALERT_EMAIL_*` crisis mail contract when the same alert policy applies.
+This shared-config mode is only for the **IBKR pair** (`InteractiveBrokersPlatform` + `IBKRGatewayManager`). It is not meant to become a global secret bundle for unrelated quant repos. Across multiple quant projects, broadly reusable runtime settings are usually limited to `GLOBAL_TELEGRAM_CHAT_ID`, `NOTIFY_LANG`, `CRISIS_ALERT_CHANNELS`, and generic `CRISIS_ALERT_EMAIL_*`/`CRISIS_ALERT_PUSH_*` alert policy when the same alert policy applies.
 
 Recommended account-group config payload:
 
@@ -213,8 +214,8 @@ Current behavior is fail-fast:
 - missing account-group config source → startup error
 - missing key fields in the selected group (`ib_gateway_instance_name`, `ib_gateway_mode`, `ib_client_id`) → startup error
 
-When `IBKR_STRATEGY_PLUGIN_MOUNTS_JSON` includes the `crisis_response_shadow` plugin, the normal strategy-cycle Telegram message still includes the compact plugin line. If the plugin signal escalates beyond `no_action` (for example `canonical_route=true_crisis`, `suggested_action=defend`/`blocked`, or `would_trade_if_enabled=true`), the service also sends an independent crisis email notification when the `CRISIS_ALERT_EMAIL_*` settings are complete.
-Email alert results are written into the runtime report. Duplicate suppression uses stable plugin alert keys and stores markers under `STRATEGY_PLUGIN_ALERT_STATE_GCS_URI` when set, otherwise `EXECUTION_REPORT_GCS_URI`, with a local `/tmp` marker fallback.
+When `IBKR_STRATEGY_PLUGIN_MOUNTS_JSON` includes the `crisis_response_shadow` plugin, the normal strategy-cycle Telegram message still includes the compact plugin line. If the plugin signal escalates beyond `no_action` (for example `canonical_route=true_crisis`, `suggested_action=defend`/`blocked`, or `would_trade_if_enabled=true`), the service also sends independent crisis alerts through configured `CRISIS_ALERT_CHANNELS` channels.
+Alert results are written into the runtime report. Duplicate suppression uses stable plugin alert keys and stores markers under `STRATEGY_PLUGIN_ALERT_STATE_GCS_URI` when set, otherwise `EXECUTION_REPORT_GCS_URI`, with a local `/tmp` marker fallback.
 
 ### GitHub-managed Cloud Run env sync
 
@@ -249,7 +250,7 @@ On every push to `main`, the workflow updates the existing Cloud Run service wit
 Important:
 
 - The workflow only becomes strict when `ENABLE_GITHUB_ENV_SYNC=true`. If this variable is unset, the sync job is skipped. When enabled, it resolves the selected profile's snapshot/config requirements from `scripts/print_strategy_profile_status.py --json` instead of a hard-coded strategy-name list.
-- Here "shared config" still only means the **IBKR pair** (`InteractiveBrokersPlatform` + `IBKRGatewayManager`). `TELEGRAM_TOKEN` and `TELEGRAM_TOKEN_SECRET_NAME` remain repository-specific. If crisis mail recipients and sender policy are shared across platforms, manage `CRISIS_ALERT_EMAIL_*` with GitHub Organization Variables/Secrets or GCP Secret Manager.
+- Here "shared config" still only means the **IBKR pair** (`InteractiveBrokersPlatform` + `IBKRGatewayManager`). `TELEGRAM_TOKEN` and `TELEGRAM_TOKEN_SECRET_NAME` remain repository-specific. If crisis alert recipients and sender policy are shared across platforms, manage `CRISIS_ALERT_CHANNELS`, `CRISIS_ALERT_EMAIL_*`, and `CRISIS_ALERT_PUSH_*` with GitHub Organization Variables/Secrets or GCP Secret Manager.
 - If `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME` is set, the Cloud Run runtime needs Secret Manager access to that secret.
 - GitHub now authenticates to Google Cloud with OIDC + Workload Identity Federation, so `GCP_SA_KEY` is no longer required for this workflow.
 - If you deploy with `gcloud run deploy --source` or a Cloud Run source trigger, the staging bucket `gs://run-sources-<project>-<region>` also needs `roles/storage.objectViewer` for the build service account, the deploy service account, and the default compute service account. Missing this binding fails the deploy before Cloud Build starts with `storage.objects.get` denied.
@@ -363,6 +364,7 @@ IBKR 账户
 | `TELEGRAM_TOKEN` | 是 | Telegram 机器人 Token。Cloud Run 上更推荐走 Secret Manager 引用，不要直接写成明文 env。 |
 | `GLOBAL_TELEGRAM_CHAT_ID` | 是 | 这个服务使用的 Telegram Chat ID。 |
 | `NOTIFY_LANG` | 否 | `en`（默认）或 `zh` |
+| `CRISIS_ALERT_CHANNELS` | 否 | 可选危机告警通道列表：`email`、`sms` 和/或 `push`。 |
 | `CRISIS_ALERT_EMAIL_RECIPIENTS` | 否 | 通知收件邮箱。普通邮箱只收邮件；关联 Google Voice 的邮箱/地址会额外触发 Google Voice 提醒。支持逗号、分号或换行分隔。 |
 | `CRISIS_ALERT_EMAIL_SENDER_EMAIL` | 否 | 邮件通知的发送方邮箱。默认传输走 Gmail SMTP，但命名不绑定 Gmail。 |
 | `CRISIS_ALERT_EMAIL_SENDER_PASSWORD` | 否 | 发送方 SMTP 密码或 app password。Cloud Run env sync 建议配置 `CRISIS_ALERT_EMAIL_SENDER_PASSWORD_SECRET_NAME`。 |
@@ -399,7 +401,7 @@ IB_GATEWAY_ZONE=us-central1-c
 IB_GATEWAY_IP_MODE=internal
 ```
 
-这里说的“共享配置”只针对 **IBKR 这一组系统**，也就是 `InteractiveBrokersPlatform` 和 `IBKRGatewayManager` 之间共享。它不是让所有 quant 仓库都共用一套 secrets。对多个量化仓库来说，`GLOBAL_TELEGRAM_CHAT_ID`、`NOTIFY_LANG`，以及同一套危机邮件策略下的 `CRISIS_ALERT_EMAIL_*` 适合提升到组织级配置；发送方密码仍应放在 GitHub Secret 或 GCP Secret Manager。
+这里说的“共享配置”只针对 **IBKR 这一组系统**，也就是 `InteractiveBrokersPlatform` 和 `IBKRGatewayManager` 之间共享。它不是让所有 quant 仓库都共用一套 secrets。对多个量化仓库来说，`GLOBAL_TELEGRAM_CHAT_ID`、`NOTIFY_LANG`、`CRISIS_ALERT_CHANNELS`，以及同一套危机告警策略下的 `CRISIS_ALERT_EMAIL_*`/`CRISIS_ALERT_PUSH_*` 适合提升到组织级配置；告警 token 和密码仍应放在 GitHub Secret 或 GCP Secret Manager。
 
 推荐的账号组配置 JSON：
 
@@ -430,8 +432,8 @@ IB_GATEWAY_IP_MODE=internal
 - 没有账号组配置来源 → 启动直接报错
 - 选中的账号组缺少关键字段（`ib_gateway_instance_name`、`ib_gateway_mode`、`ib_client_id`）→ 启动直接报错
 
-如果 `IBKR_STRATEGY_PLUGIN_MOUNTS_JSON` 挂载了 `crisis_response_shadow` 插件，常规策略周期 Telegram 仍会包含插件摘要行。当插件信号升级到非 `no_action`（例如 `canonical_route=true_crisis`、`suggested_action=defend`/`blocked`，或 `would_trade_if_enabled=true`）时，只要 `CRISIS_ALERT_EMAIL_*` 配置完整，服务还会额外发送一条独立邮件危机通知。
-邮件告警结果会写入 runtime report。重复发送抑制使用稳定的插件告警 key；如配置了 `STRATEGY_PLUGIN_ALERT_STATE_GCS_URI` 则写入该前缀，否则复用 `EXECUTION_REPORT_GCS_URI`，并有本地 `/tmp` marker fallback。
+如果 `IBKR_STRATEGY_PLUGIN_MOUNTS_JSON` 挂载了 `crisis_response_shadow` 插件，常规策略周期 Telegram 仍会包含插件摘要行。当插件信号升级到非 `no_action`（例如 `canonical_route=true_crisis`、`suggested_action=defend`/`blocked`，或 `would_trade_if_enabled=true`）时，服务还会按 `CRISIS_ALERT_CHANNELS` 配置额外发送独立危机通知。
+告警结果会写入 runtime report。重复发送抑制使用稳定的插件告警 key；如配置了 `STRATEGY_PLUGIN_ALERT_STATE_GCS_URI` 则写入该前缀，否则复用 `EXECUTION_REPORT_GCS_URI`，并有本地 `/tmp` marker fallback。
 
 ### GitHub 统一管理 Cloud Run 环境变量
 
@@ -466,7 +468,7 @@ IB_GATEWAY_IP_MODE=internal
 注意：
 
 - 只有在 `ENABLE_GITHUB_ENV_SYNC=true` 时，这个 workflow 才会严格校验并执行同步。没打开时会直接跳过。打开后，它会通过 `scripts/print_strategy_profile_status.py --json` 动态解析目标策略需要的 snapshot/config 输入，不再维护硬编码策略名列表。
-- 这里说的“共享配置”仍然只针对 **IBKR 这一组系统**。`TELEGRAM_TOKEN` 和 `TELEGRAM_TOKEN_SECRET_NAME` 都还是这个仓库自己的配置，不建议提升成所有 quant 共用的全局配置。危机邮件通知如果确实跨平台共用同一套收件人和发送方，可以用 GitHub Organization Variables/Secrets 管理 `CRISIS_ALERT_EMAIL_*`。
+- 这里说的“共享配置”仍然只针对 **IBKR 这一组系统**。`TELEGRAM_TOKEN` 和 `TELEGRAM_TOKEN_SECRET_NAME` 都还是这个仓库自己的配置，不建议提升成所有 quant 共用的全局配置。危机告警如果确实跨平台共用同一套收件人和发送方，可以用 GitHub Organization Variables/Secrets 管理 `CRISIS_ALERT_CHANNELS`、`CRISIS_ALERT_EMAIL_*` 和 `CRISIS_ALERT_PUSH_*`。
 - 如果设置了 `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME`，Cloud Run 运行时还需要有对应 Secret 的访问权限。
 - GitHub 现在通过 OIDC + Workload Identity Federation 登录 Google Cloud，这个 workflow 不再需要 `GCP_SA_KEY`。
 - 如果你用 `gcloud run deploy --source` 或 Cloud Run source trigger 部署，还要给 staging bucket `gs://run-sources-<project>-<region>` 补 `roles/storage.objectViewer`，对象包括 build service account、deploy service account、默认 compute service account。少了这层权限，会在 Cloud Build 启动前直接报 `storage.objects.get denied`。
