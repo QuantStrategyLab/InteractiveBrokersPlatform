@@ -135,6 +135,7 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.tg_token is None
     assert settings.tg_chat_id is None
     assert settings.strategy_plugin_mounts_json is None
+    assert settings.crisis_alert_channels == ()
     assert settings.crisis_alert_email_recipients == ()
     assert settings.crisis_alert_email_sender_email is None
     assert settings.crisis_alert_email_sender_password is None
@@ -149,6 +150,15 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.crisis_alert_sms_messaging_service_id is None
     assert settings.crisis_alert_sms_api_base_url is None
     assert settings.crisis_alert_sms_body_max_chars is None
+    assert settings.crisis_alert_push_recipients == ()
+    assert settings.crisis_alert_push_provider is None
+    assert settings.crisis_alert_push_app_token is None
+    assert settings.crisis_alert_push_access_token is None
+    assert settings.crisis_alert_push_api_base_url is None
+    assert settings.crisis_alert_push_device is None
+    assert settings.crisis_alert_push_priority is None
+    assert settings.crisis_alert_push_tags is None
+    assert settings.crisis_alert_push_body_max_chars is None
 
 
 def test_load_platform_runtime_settings_prefers_runtime_target_json(monkeypatch):
@@ -258,6 +268,35 @@ def test_load_platform_runtime_settings_reads_crisis_alert_sms_config(monkeypatc
     assert settings.crisis_alert_sms_messaging_service_id == "MG123"
     assert settings.crisis_alert_sms_api_base_url == "https://twilio.example.test"
     assert settings.crisis_alert_sms_body_max_chars == "160"
+
+
+def test_load_platform_runtime_settings_reads_crisis_alert_channels_and_push_config(monkeypatch):
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(SAMPLE_STRATEGY_PROFILE))
+    monkeypatch.setenv("ACCOUNT_GROUP", "paper")
+    monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
+    monkeypatch.setenv("CRISIS_ALERT_CHANNELS", "email;push")
+    monkeypatch.setenv("CRISIS_ALERT_PUSH_RECIPIENTS", "risk-topic; backup-topic")
+    monkeypatch.setenv("CRISIS_ALERT_PUSH_PROVIDER", "ntfy")
+    monkeypatch.setenv("CRISIS_ALERT_PUSH_APP_TOKEN", "app-token")
+    monkeypatch.setenv("CRISIS_ALERT_PUSH_ACCESS_TOKEN", "access-token")
+    monkeypatch.setenv("CRISIS_ALERT_PUSH_API_BASE_URL", "https://ntfy.example.test")
+    monkeypatch.setenv("CRISIS_ALERT_PUSH_DEVICE", "iphone")
+    monkeypatch.setenv("CRISIS_ALERT_PUSH_PRIORITY", "5")
+    monkeypatch.setenv("CRISIS_ALERT_PUSH_TAGS", "warning")
+    monkeypatch.setenv("CRISIS_ALERT_PUSH_BODY_MAX_CHARS", "300")
+
+    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
+
+    assert settings.crisis_alert_channels == ("email", "push")
+    assert settings.crisis_alert_push_recipients == ("risk-topic", "backup-topic")
+    assert settings.crisis_alert_push_provider == "ntfy"
+    assert settings.crisis_alert_push_app_token == "app-token"
+    assert settings.crisis_alert_push_access_token == "access-token"
+    assert settings.crisis_alert_push_api_base_url == "https://ntfy.example.test"
+    assert settings.crisis_alert_push_device == "iphone"
+    assert settings.crisis_alert_push_priority == "5"
+    assert settings.crisis_alert_push_tags == "warning"
+    assert settings.crisis_alert_push_body_max_chars == "300"
 
 
 def test_load_platform_runtime_settings_uses_whole_share_quantity_step(monkeypatch):
