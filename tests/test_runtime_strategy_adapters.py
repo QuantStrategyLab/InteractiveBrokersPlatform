@@ -68,9 +68,6 @@ def test_strategy_plugin_true_crisis_builds_escalated_alert_message():
         "strategy_plugin_alert_action": "action={action}",
         "strategy_plugin_alert_mode": "mode={mode}",
         "strategy_plugin_alert_as_of": "as_of={as_of}",
-        "strategy_plugin_alert_would_trade": "would_trade={value}",
-        "strategy_plugin_alert_source": "source={source}",
-        "strategy_plugin_alert_yes": "yes",
         "strategy_plugin_name_crisis_response_shadow": "Crisis",
         "strategy_plugin_mode_shadow": "shadow",
         "strategy_plugin_route_true_crisis": "true crisis",
@@ -104,8 +101,8 @@ def test_strategy_plugin_true_crisis_builds_escalated_alert_message():
     assert "route=true crisis" in alerts[0].body
     assert "action=defend" in alerts[0].body
     assert "mode=shadow" in alerts[0].body
-    assert "would_trade=yes" in alerts[0].body
-    assert "source=gs://bucket/latest_signal.json" in alerts[0].body
+    assert "would_trade=" not in alerts[0].body
+    assert "source=" not in alerts[0].body
 
 
 def test_strategy_plugin_load_error_is_non_blocking():
