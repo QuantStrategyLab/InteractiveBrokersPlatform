@@ -495,6 +495,7 @@ def test_value_target_runtime_builds_semiconductor_inputs(monkeypatch):
     assert captured["market_data"]["derived_indicators"]["soxl"]["price"] == 100.0
     assert captured["market_data"]["derived_indicators"]["soxl"]["ma_trend"] == 100.0
     assert captured["market_data"]["derived_indicators"]["soxx"]["price"] == 200.0
+    assert "realized_volatility_10" in captured["market_data"]["derived_indicators"]["soxx"]
     assert captured["portfolio"] is portfolio_snapshot
     assert "pacing_sec" not in captured["runtime_config"]
     assert captured["runtime_config"]["signal_effective_after_trading_days"] == 1
