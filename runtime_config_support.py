@@ -72,12 +72,12 @@ class PlatformRuntimeSettings:
     tg_chat_id: str | None = None
     notify_lang: str = "en"
     strategy_plugin_mounts_json: str | None = None
-    crisis_alert_google_voice_recipients: tuple[str, ...] = ()
-    crisis_alert_google_voice_sender_email: str | None = None
-    crisis_alert_google_voice_sender_password: str | None = None
-    crisis_alert_google_voice_smtp_host: str | None = None
-    crisis_alert_google_voice_smtp_port: str | None = None
-    crisis_alert_google_voice_smtp_security: str | None = None
+    crisis_alert_email_recipients: tuple[str, ...] = ()
+    crisis_alert_email_sender_email: str | None = None
+    crisis_alert_email_sender_password: str | None = None
+    crisis_alert_email_smtp_host: str | None = None
+    crisis_alert_email_smtp_port: str | None = None
+    crisis_alert_email_smtp_security: str | None = None
     runtime_target: RuntimeTarget | None = None
 
 
@@ -186,23 +186,23 @@ def load_platform_runtime_settings(
             os.getenv("IBKR_STRATEGY_PLUGIN_MOUNTS_JSON")
             or os.getenv("STRATEGY_PLUGIN_MOUNTS_JSON")
         ),
-        crisis_alert_google_voice_recipients=split_env_list(
-            os.getenv("CRISIS_ALERT_GOOGLE_VOICE_RECIPIENTS")
+        crisis_alert_email_recipients=split_env_list(
+            os.getenv("CRISIS_ALERT_EMAIL_RECIPIENTS")
         ),
-        crisis_alert_google_voice_sender_email=first_non_empty(
-            os.getenv("CRISIS_ALERT_GOOGLE_VOICE_SENDER_EMAIL")
+        crisis_alert_email_sender_email=first_non_empty(
+            os.getenv("CRISIS_ALERT_EMAIL_SENDER_EMAIL")
         ),
-        crisis_alert_google_voice_sender_password=first_non_empty(
-            os.getenv("CRISIS_ALERT_GOOGLE_VOICE_SENDER_PASSWORD")
+        crisis_alert_email_sender_password=first_non_empty(
+            os.getenv("CRISIS_ALERT_EMAIL_SENDER_PASSWORD")
         ),
-        crisis_alert_google_voice_smtp_host=first_non_empty(
-            os.getenv("CRISIS_ALERT_GOOGLE_VOICE_SMTP_HOST")
+        crisis_alert_email_smtp_host=first_non_empty(
+            os.getenv("CRISIS_ALERT_EMAIL_SMTP_HOST")
         ),
-        crisis_alert_google_voice_smtp_port=first_non_empty(
-            os.getenv("CRISIS_ALERT_GOOGLE_VOICE_SMTP_PORT")
+        crisis_alert_email_smtp_port=first_non_empty(
+            os.getenv("CRISIS_ALERT_EMAIL_SMTP_PORT")
         ),
-        crisis_alert_google_voice_smtp_security=first_non_empty(
-            os.getenv("CRISIS_ALERT_GOOGLE_VOICE_SMTP_SECURITY")
+        crisis_alert_email_smtp_security=first_non_empty(
+            os.getenv("CRISIS_ALERT_EMAIL_SMTP_SECURITY")
         ),
         runtime_target=runtime_target,
     )

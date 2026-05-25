@@ -135,12 +135,12 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.tg_token is None
     assert settings.tg_chat_id is None
     assert settings.strategy_plugin_mounts_json is None
-    assert settings.crisis_alert_google_voice_recipients == ()
-    assert settings.crisis_alert_google_voice_sender_email is None
-    assert settings.crisis_alert_google_voice_sender_password is None
-    assert settings.crisis_alert_google_voice_smtp_host is None
-    assert settings.crisis_alert_google_voice_smtp_port is None
-    assert settings.crisis_alert_google_voice_smtp_security is None
+    assert settings.crisis_alert_email_recipients == ()
+    assert settings.crisis_alert_email_sender_email is None
+    assert settings.crisis_alert_email_sender_password is None
+    assert settings.crisis_alert_email_smtp_host is None
+    assert settings.crisis_alert_email_smtp_port is None
+    assert settings.crisis_alert_email_smtp_security is None
 
 
 def test_load_platform_runtime_settings_prefers_runtime_target_json(monkeypatch):
@@ -206,25 +206,25 @@ def test_load_platform_runtime_settings_supports_explicit_group_config_values(mo
     assert settings.notify_lang == "zh"
 
 
-def test_load_platform_runtime_settings_reads_crisis_alert_google_voice_config(monkeypatch):
+def test_load_platform_runtime_settings_reads_crisis_alert_email_config(monkeypatch):
     monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(SAMPLE_STRATEGY_PROFILE))
     monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
-    monkeypatch.setenv("CRISIS_ALERT_GOOGLE_VOICE_RECIPIENTS", "alerts@example.com; voice@example.com")
-    monkeypatch.setenv("CRISIS_ALERT_GOOGLE_VOICE_SENDER_EMAIL", "sender@example.com")
-    monkeypatch.setenv("CRISIS_ALERT_GOOGLE_VOICE_SENDER_PASSWORD", "secret")
-    monkeypatch.setenv("CRISIS_ALERT_GOOGLE_VOICE_SMTP_HOST", "smtp.example.com")
-    monkeypatch.setenv("CRISIS_ALERT_GOOGLE_VOICE_SMTP_PORT", "587")
-    monkeypatch.setenv("CRISIS_ALERT_GOOGLE_VOICE_SMTP_SECURITY", "starttls")
+    monkeypatch.setenv("CRISIS_ALERT_EMAIL_RECIPIENTS", "alerts@example.com; voice@example.com")
+    monkeypatch.setenv("CRISIS_ALERT_EMAIL_SENDER_EMAIL", "sender@example.com")
+    monkeypatch.setenv("CRISIS_ALERT_EMAIL_SENDER_PASSWORD", "secret")
+    monkeypatch.setenv("CRISIS_ALERT_EMAIL_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("CRISIS_ALERT_EMAIL_SMTP_PORT", "587")
+    monkeypatch.setenv("CRISIS_ALERT_EMAIL_SMTP_SECURITY", "starttls")
 
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
-    assert settings.crisis_alert_google_voice_recipients == ("alerts@example.com", "voice@example.com")
-    assert settings.crisis_alert_google_voice_sender_email == "sender@example.com"
-    assert settings.crisis_alert_google_voice_sender_password == "secret"
-    assert settings.crisis_alert_google_voice_smtp_host == "smtp.example.com"
-    assert settings.crisis_alert_google_voice_smtp_port == "587"
-    assert settings.crisis_alert_google_voice_smtp_security == "starttls"
+    assert settings.crisis_alert_email_recipients == ("alerts@example.com", "voice@example.com")
+    assert settings.crisis_alert_email_sender_email == "sender@example.com"
+    assert settings.crisis_alert_email_sender_password == "secret"
+    assert settings.crisis_alert_email_smtp_host == "smtp.example.com"
+    assert settings.crisis_alert_email_smtp_port == "587"
+    assert settings.crisis_alert_email_smtp_security == "starttls"
 
 
 def test_load_platform_runtime_settings_uses_whole_share_quantity_step(monkeypatch):

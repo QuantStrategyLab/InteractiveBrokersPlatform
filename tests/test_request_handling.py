@@ -54,15 +54,15 @@ def test_handle_request_sends_escalated_strategy_plugin_alert(strategy_module, m
         return types.SimpleNamespace(
             sent_count=1,
             to_report_fields=lambda: {
-                "strategy_plugin_alert_google_voice_attempted_count": 1,
-                "strategy_plugin_alert_google_voice_sent_count": 1,
-                "strategy_plugin_alert_google_voice_skipped_count": 0,
-                "strategy_plugin_alert_google_voice_failed_count": 0,
-                "strategy_plugin_alert_google_voice_deliveries": [],
+                "strategy_plugin_alert_email_attempted_count": 1,
+                "strategy_plugin_alert_email_sent_count": 1,
+                "strategy_plugin_alert_email_skipped_count": 0,
+                "strategy_plugin_alert_email_failed_count": 0,
+                "strategy_plugin_alert_email_deliveries": [],
             },
         )
 
-    monkeypatch.setattr(strategy_module, "publish_strategy_plugin_google_voice_alerts", fake_publish)
+    monkeypatch.setattr(strategy_module, "publish_strategy_plugin_email_alerts", fake_publish)
     monkeypatch.setattr(strategy_module, "run_strategy_core", lambda **_kwargs: "OK - executed")
 
     with strategy_module.app.test_request_context("/", method="POST"):
