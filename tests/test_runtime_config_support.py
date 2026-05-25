@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -29,6 +30,7 @@ MINIMAL_GROUP_JSON = (
 )
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "print_strategy_profile_status.py"
 SWITCH_PLAN_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "print_strategy_switch_env_plan.py"
+SYNC_PLAN_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "build_cloud_run_env_sync_plan.py"
 SAMPLE_STRATEGY_PROFILE = "global_etf_rotation"
 
 
@@ -581,6 +583,137 @@ def test_print_strategy_switch_env_plan_for_tqqq_growth_income():
     assert "IBKR_RESERVED_CASH_RATIO" in plan["optional_env"]
     assert "IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD" in plan["optional_env"]
     assert "IBKR_FEATURE_SNAPSHOT_PATH" in plan["remove_if_present"]
+
+
+def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
+    payload = {
+        "defaults": {
+            "GLOBAL_TELEGRAM_CHAT_ID": "5992562050",
+            "NOTIFY_LANG": "zh",
+            "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME": "ibkr-account-groups",
+            "IB_GATEWAY_ZONE": "us-central1-c",
+            "IB_GATEWAY_IP_MODE": "internal",
+            "EXECUTION_REPORT_GCS_URI": "gs://runtime/execution-reports",
+        },
+        "targets": [
+            {
+                "service": "interactive-brokers-live-slot-a-service",
+                "account_group": "live-slot-a",
+                "runtime_target": json.loads(
+                    runtime_target_json(
+                        "tqqq_growth_income",
+                        deployment_selector="live-slot-a",
+                        account_selector=["U18308207"],
+                        account_scope="live-slot-a",
+                        service_name="interactive-brokers-live-slot-a-service",
+                    )
+                ),
+                "ibkr_strategy_plugin_mounts_json": {
+                    "strategy_plugins": [
+                        {
+                            "strategy": "tqqq_growth_income",
+                            "plugin": "crisis_response_shadow",
+                            "signal_path": "gs://runtime/tqqq/latest_signal.json",
+                            "enabled": True,
+                            "expected_mode": "shadow",
+                        }
+                    ]
+                },
+            },
+            {
+                "service": "interactive-brokers-live-slot-b-service",
+                "account_group": "live-slot-b",
+                "runtime_target": json.loads(
+                    runtime_target_json(
+                        "mega_cap_leader_rotation_top50_balanced",
+                        deployment_selector="live-slot-b",
+                        account_selector=["U15998061"],
+                        account_scope="live-slot-b",
+                        service_name="interactive-brokers-live-slot-b-service",
+                    )
+                ),
+                "ibkr_feature_snapshot_path": "gs://runtime/mega/snapshot.csv",
+                "ibkr_feature_snapshot_manifest_path": "gs://runtime/mega/snapshot.csv.manifest.json",
+            },
+        ],
+    }
+    env = {
+        **os.environ,
+        "CLOUD_RUN_SERVICE_TARGETS_JSON": json.dumps(payload),
+        "IBKR_FEATURE_SNAPSHOT_PATH": "gs://stale-paper/snapshot.csv",
+    }
+
+    result = subprocess.run(
+        [sys.executable, str(SYNC_PLAN_SCRIPT_PATH), "--json"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    plan = json.loads(result.stdout)
+    assert plan["mode"] == "per_service"
+    by_service = {target["service_name"]: target for target in plan["targets"]}
+    slot_a = by_service["interactive-brokers-live-slot-a-service"]
+    slot_b = by_service["interactive-brokers-live-slot-b-service"]
+
+    assert slot_a["env"]["ACCOUNT_GROUP"] == "live-slot-a"
+    assert slot_a["env"]["STRATEGY_PROFILE"] == "tqqq_growth_income"
+    assert "IBKR_FEATURE_SNAPSHOT_PATH" not in slot_a["env"]
+    assert "IBKR_FEATURE_SNAPSHOT_PATH" in slot_a["remove_env_vars"]
+    assert "gs://stale-paper/snapshot.csv" not in json.dumps(slot_a)
+    assert json.loads(slot_a["env"]["IBKR_STRATEGY_PLUGIN_MOUNTS_JSON"])["strategy_plugins"][0][
+        "strategy"
+    ] == "tqqq_growth_income"
+
+    assert slot_b["env"]["ACCOUNT_GROUP"] == "live-slot-b"
+    assert slot_b["env"]["STRATEGY_PROFILE"] == "mega_cap_leader_rotation_top50_balanced"
+    assert slot_b["env"]["IBKR_FEATURE_SNAPSHOT_PATH"] == "gs://runtime/mega/snapshot.csv"
+    assert (
+        slot_b["env"]["IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH"]
+        == "gs://runtime/mega/snapshot.csv.manifest.json"
+    )
+
+
+def test_build_cloud_run_env_sync_plan_requires_target_snapshot_in_per_service_mode():
+    payload = {
+        "defaults": {
+            "GLOBAL_TELEGRAM_CHAT_ID": "5992562050",
+            "NOTIFY_LANG": "zh",
+            "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME": "ibkr-account-groups",
+        },
+        "targets": [
+            {
+                "service": "interactive-brokers-live-slot-b-service",
+                "account_group": "live-slot-b",
+                "runtime_target": json.loads(
+                    runtime_target_json(
+                        "mega_cap_leader_rotation_top50_balanced",
+                        deployment_selector="live-slot-b",
+                        account_selector=["U15998061"],
+                        account_scope="live-slot-b",
+                        service_name="interactive-brokers-live-slot-b-service",
+                    )
+                ),
+            }
+        ],
+    }
+    env = {
+        **os.environ,
+        "CLOUD_RUN_SERVICE_TARGETS_JSON": json.dumps(payload),
+        "IBKR_FEATURE_SNAPSHOT_PATH": "gs://stale-paper/snapshot.csv",
+    }
+
+    result = subprocess.run(
+        [sys.executable, str(SYNC_PLAN_SCRIPT_PATH), "--json"],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert result.returncode != 0
+    assert "interactive-brokers-live-slot-b-service:IBKR_FEATURE_SNAPSHOT_PATH" in result.stderr
+    assert "gs://stale-paper/snapshot.csv" not in result.stderr
 
 
 def test_print_strategy_switch_env_plan_rejects_removed_research_profile():
