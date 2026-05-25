@@ -43,40 +43,17 @@ def test_handle_request_sends_escalated_strategy_plugin_alert(strategy_module, m
         would_trade_if_enabled=True,
         as_of="2026-05-24",
     )
-    observed = {"email_alerts": [], "sms_alerts": []}
+    observed = {"alerts": []}
 
     monkeypatch.setattr(strategy_module, "is_market_open_today", lambda: True)
     monkeypatch.setattr(strategy_module, "load_strategy_plugin_signals", lambda: ((signal,), None))
     monkeypatch.setattr(strategy_module, "attach_strategy_plugin_report", lambda *args, **kwargs: None)
 
-    def fake_email_publish(signals, **kwargs):
-        observed["email_alerts"].append((tuple(signals), kwargs))
-        return types.SimpleNamespace(
-            sent_count=1,
-            to_report_fields=lambda: {
-                "strategy_plugin_alert_email_attempted_count": 1,
-                "strategy_plugin_alert_email_sent_count": 1,
-                "strategy_plugin_alert_email_skipped_count": 0,
-                "strategy_plugin_alert_email_failed_count": 0,
-                "strategy_plugin_alert_email_deliveries": [],
-            },
-        )
+    def fake_dispatch(signals, **kwargs):
+        observed["alerts"].append((tuple(signals), kwargs))
+        return types.SimpleNamespace(attach_to_report=lambda _report: None)
 
-    def fake_sms_publish(signals, **kwargs):
-        observed["sms_alerts"].append((tuple(signals), kwargs))
-        return types.SimpleNamespace(
-            sent_count=1,
-            to_report_fields=lambda: {
-                "strategy_plugin_alert_sms_attempted_count": 1,
-                "strategy_plugin_alert_sms_sent_count": 1,
-                "strategy_plugin_alert_sms_skipped_count": 0,
-                "strategy_plugin_alert_sms_failed_count": 0,
-                "strategy_plugin_alert_sms_deliveries": [],
-            },
-        )
-
-    monkeypatch.setattr(strategy_module, "publish_strategy_plugin_email_alerts", fake_email_publish)
-    monkeypatch.setattr(strategy_module, "publish_strategy_plugin_sms_alerts", fake_sms_publish)
+    monkeypatch.setattr(strategy_module, "dispatch_strategy_plugin_alerts", fake_dispatch)
     monkeypatch.setattr(strategy_module, "run_strategy_core", lambda **_kwargs: "OK - executed")
 
     with strategy_module.app.test_request_context("/", method="POST"):
@@ -84,12 +61,11 @@ def test_handle_request_sends_escalated_strategy_plugin_alert(strategy_module, m
 
     assert status == 200
     assert body == "OK - executed"
-    assert len(observed["email_alerts"]) == 1
-    assert len(observed["sms_alerts"]) == 1
-    assert observed["email_alerts"][0][0] == (signal,)
-    assert observed["sms_alerts"][0][0] == (signal,)
-    assert "ibkr" in observed["email_alerts"][0][1]["context_label"]
-    assert "ibkr" in observed["sms_alerts"][0][1]["context_label"]
+    assert len(observed["alerts"]) == 1
+    assert observed["alerts"][0][0] == (signal,)
+    assert "ibkr" in observed["alerts"][0][1]["context_label"]
+    assert observed["alerts"][0][1]["notification_settings"] is strategy_module.RUNTIME_SETTINGS
+    assert observed["alerts"][0][1]["state_settings"] is not None
 
 
 def test_handle_precheck_post_uses_dry_run_override(strategy_module, monkeypatch):
