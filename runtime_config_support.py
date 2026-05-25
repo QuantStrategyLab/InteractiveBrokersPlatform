@@ -72,14 +72,9 @@ class PlatformRuntimeSettings:
     tg_chat_id: str | None = None
     notify_lang: str = "en"
     strategy_plugin_mounts_json: str | None = None
-    crisis_alert_google_voice_to: tuple[str, ...] = ()
-    crisis_alert_smtp_from: str | None = None
-    crisis_alert_smtp_host: str | None = None
-    crisis_alert_smtp_port: int = 587
-    crisis_alert_smtp_username: str | None = None
-    crisis_alert_smtp_password: str | None = None
-    crisis_alert_smtp_starttls: bool = True
-    crisis_alert_smtp_ssl: bool = False
+    crisis_alert_google_voice_gateway: tuple[str, ...] = ()
+    crisis_alert_google_voice_gmail_user: str | None = None
+    crisis_alert_google_voice_gmail_app_password: str | None = None
     runtime_target: RuntimeTarget | None = None
 
 
@@ -188,14 +183,15 @@ def load_platform_runtime_settings(
             os.getenv("IBKR_STRATEGY_PLUGIN_MOUNTS_JSON")
             or os.getenv("STRATEGY_PLUGIN_MOUNTS_JSON")
         ),
-        crisis_alert_google_voice_to=split_env_list(os.getenv("CRISIS_ALERT_GOOGLE_VOICE_TO")),
-        crisis_alert_smtp_from=first_non_empty(os.getenv("CRISIS_ALERT_SMTP_FROM")),
-        crisis_alert_smtp_host=first_non_empty(os.getenv("CRISIS_ALERT_SMTP_HOST")),
-        crisis_alert_smtp_port=resolve_positive_int_env("CRISIS_ALERT_SMTP_PORT", default=587),
-        crisis_alert_smtp_username=first_non_empty(os.getenv("CRISIS_ALERT_SMTP_USERNAME")),
-        crisis_alert_smtp_password=first_non_empty(os.getenv("CRISIS_ALERT_SMTP_PASSWORD")),
-        crisis_alert_smtp_starttls=resolve_bool_env("CRISIS_ALERT_SMTP_STARTTLS", default=True),
-        crisis_alert_smtp_ssl=resolve_bool_value(os.getenv("CRISIS_ALERT_SMTP_SSL")),
+        crisis_alert_google_voice_gateway=split_env_list(
+            os.getenv("CRISIS_ALERT_GOOGLE_VOICE_GATEWAY")
+        ),
+        crisis_alert_google_voice_gmail_user=first_non_empty(
+            os.getenv("CRISIS_ALERT_GOOGLE_VOICE_GMAIL_USER")
+        ),
+        crisis_alert_google_voice_gmail_app_password=first_non_empty(
+            os.getenv("CRISIS_ALERT_GOOGLE_VOICE_GMAIL_APP_PASSWORD")
+        ),
         runtime_target=runtime_target,
     )
 
@@ -223,26 +219,6 @@ def resolve_optional_ratio_env(name: str) -> float | None:
     value = resolve_non_negative_float_env(name, default=0.0)
     if value > 1.0:
         raise ValueError(f"{name} must be in [0,1], got {value}")
-    return value
-
-
-def resolve_bool_env(name: str, *, default: bool) -> bool:
-    raw_value = os.getenv(name)
-    if raw_value is None or str(raw_value).strip() == "":
-        return bool(default)
-    return resolve_bool_value(raw_value)
-
-
-def resolve_positive_int_env(name: str, *, default: int) -> int:
-    raw_value = os.getenv(name)
-    if raw_value is None or str(raw_value).strip() == "":
-        return int(default)
-    try:
-        value = int(raw_value)
-    except (TypeError, ValueError):
-        raise ValueError(f"{name} must be a positive integer, got {raw_value!r}") from None
-    if value <= 0:
-        raise ValueError(f"{name} must be a positive integer, got {raw_value!r}")
     return value
 
 
