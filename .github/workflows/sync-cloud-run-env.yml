@@ -20,6 +20,8 @@ jobs:
       ENABLE_GITHUB_ENV_SYNC: ${{ vars.ENABLE_GITHUB_ENV_SYNC }}
       CLOUD_RUN_REGION: ${{ vars.CLOUD_RUN_REGION }}
       CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+      CLOUD_RUN_SERVICES: ${{ vars.CLOUD_RUN_SERVICES }}
+      CLOUD_RUN_ENV_SYNC_WAIT_FOR_COMMIT: ${{ vars.CLOUD_RUN_ENV_SYNC_WAIT_FOR_COMMIT }}
       TELEGRAM_TOKEN_SECRET_NAME: ${{ vars.TELEGRAM_TOKEN_SECRET_NAME }}
       RUNTIME_TARGET_JSON: ${{ vars.RUNTIME_TARGET_JSON }}
       ACCOUNT_GROUP: ${{ vars.ACCOUNT_GROUP }}
@@ -168,12 +170,27 @@ jobs:
 
           required_vars=(
             CLOUD_RUN_REGION
-            CLOUD_RUN_SERVICE
             ACCOUNT_GROUP
             IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME
             GLOBAL_TELEGRAM_CHAT_ID
             NOTIFY_LANG
           )
+
+          resolve_cloud_run_services() {
+            local raw_services="${CLOUD_RUN_SERVICES:-}"
+            if [ -z "$(printf '%s' "${raw_services}" | tr -d '[:space:],;')" ]; then
+              raw_services="${CLOUD_RUN_SERVICE:-}"
+            fi
+            printf '%s\n' "${raw_services}" \
+              | tr ',;' '\n' \
+              | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+              | sed '/^$/d'
+          }
+
+          mapfile -t target_services < <(resolve_cloud_run_services)
+          if [ "${#target_services[@]}" -eq 0 ]; then
+            required_vars+=("CLOUD_RUN_SERVICES or CLOUD_RUN_SERVICE")
+          fi
 
           if [ "${REQUIRES_SNAPSHOT_ARTIFACTS:-}" = "true" ]; then
             required_vars+=(IBKR_FEATURE_SNAPSHOT_PATH)
@@ -232,23 +249,50 @@ jobs:
         run: |
           set -euo pipefail
 
+          resolve_cloud_run_services() {
+            local raw_services="${CLOUD_RUN_SERVICES:-}"
+            if [ -z "$(printf '%s' "${raw_services}" | tr -d '[:space:],;')" ]; then
+              raw_services="${CLOUD_RUN_SERVICE:-}"
+            fi
+            printf '%s\n' "${raw_services}" \
+              | tr ',;' '\n' \
+              | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+              | sed '/^$/d'
+          }
+
+          mapfile -t target_services < <(resolve_cloud_run_services)
+          if [ "${#target_services[@]}" -eq 0 ]; then
+            echo "CLOUD_RUN_SERVICES or CLOUD_RUN_SERVICE is required." >&2
+            exit 1
+          fi
+
+          case "${CLOUD_RUN_ENV_SYNC_WAIT_FOR_COMMIT:-true}" in
+            false|False|FALSE|0|no|No|NO|off|Off|OFF)
+              echo "Skipping Cloud Run commit wait because CLOUD_RUN_ENV_SYNC_WAIT_FOR_COMMIT is disabled."
+              exit 0
+              ;;
+          esac
+
           target_sha="${GITHUB_SHA}"
-          deadline=$((SECONDS + 1800))
 
-          while true; do
-            deployed_sha="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" --region "${CLOUD_RUN_REGION}" --format='value(spec.template.metadata.labels.commit-sha)' 2>/dev/null || true)"
-            if [ -n "${deployed_sha}" ] && [ "${deployed_sha}" = "${target_sha}" ]; then
-              echo "Cloud Run service ${CLOUD_RUN_SERVICE} is on commit ${deployed_sha}."
-              break
-            fi
+          for cloud_run_service in "${target_services[@]}"; do
+            deadline=$((SECONDS + 1800))
 
-            if [ "${SECONDS}" -ge "${deadline}" ]; then
-              echo "Timed out waiting for Cloud Run service ${CLOUD_RUN_SERVICE} to deploy commit ${target_sha}. Last seen commit: ${deployed_sha:-<none>}" >&2
-              exit 1
-            fi
+            while true; do
+              deployed_sha="$(gcloud run services describe "${cloud_run_service}" --region "${CLOUD_RUN_REGION}" --format='value(spec.template.metadata.labels.commit-sha)' 2>/dev/null || true)"
+              if [ -n "${deployed_sha}" ] && [ "${deployed_sha}" = "${target_sha}" ]; then
+                echo "Cloud Run service ${cloud_run_service} is on commit ${deployed_sha}."
+                break
+              fi
 
-            echo "Waiting for Cloud Run service ${CLOUD_RUN_SERVICE} to deploy commit ${target_sha}. Last seen commit: ${deployed_sha:-<none>}" >&2
-            sleep 10
+              if [ "${SECONDS}" -ge "${deadline}" ]; then
+                echo "Timed out waiting for Cloud Run service ${cloud_run_service} to deploy commit ${target_sha}. Last seen commit: ${deployed_sha:-<none>}" >&2
+                exit 1
+              fi
+
+              echo "Waiting for Cloud Run service ${cloud_run_service} to deploy commit ${target_sha}. Last seen commit: ${deployed_sha:-<none>}" >&2
+              sleep 10
+            done
           done
 
       - name: Sync Cloud Run environment
@@ -258,6 +302,23 @@ jobs:
           STRATEGY_PROFILE: ${{ steps.strategy_requirements.outputs.strategy_profile }}
         run: |
           set -euo pipefail
+
+          resolve_cloud_run_services() {
+            local raw_services="${CLOUD_RUN_SERVICES:-}"
+            if [ -z "$(printf '%s' "${raw_services}" | tr -d '[:space:],;')" ]; then
+              raw_services="${CLOUD_RUN_SERVICE:-}"
+            fi
+            printf '%s\n' "${raw_services}" \
+              | tr ',;' '\n' \
+              | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+              | sed '/^$/d'
+          }
+
+          mapfile -t target_services < <(resolve_cloud_run_services)
+          if [ "${#target_services[@]}" -eq 0 ]; then
+            echo "CLOUD_RUN_SERVICES or CLOUD_RUN_SERVICE is required." >&2
+            exit 1
+          fi
 
           join_by_delimiter() {
             local delimiter="$1"
@@ -564,21 +625,23 @@ jobs:
             remove_env_vars+=("EXECUTION_REPORT_GCS_URI")
           fi
 
-          gcloud_args=(
-            run services update "${CLOUD_RUN_SERVICE}"
-            --region "${CLOUD_RUN_REGION}"
-            --concurrency 1
-            --max-instances 1
-            --remove-env-vars "$(IFS=,; echo "${remove_env_vars[*]}")"
-            --update-env-vars "^|^$(join_by_delimiter "|" "${env_pairs[@]}")"
-          )
+          for cloud_run_service in "${target_services[@]}"; do
+            gcloud_args=(
+              run services update "${cloud_run_service}"
+              --region "${CLOUD_RUN_REGION}"
+              --concurrency 1
+              --max-instances 1
+              --remove-env-vars "$(IFS=,; echo "${remove_env_vars[*]}")"
+              --update-env-vars "^|^$(join_by_delimiter "|" "${env_pairs[@]}")"
+            )
 
-          if [ "${#remove_secret_vars[@]}" -gt 0 ]; then
-            gcloud_args+=(--remove-secrets "$(IFS=,; echo "${remove_secret_vars[*]}")")
-          fi
+            if [ "${#remove_secret_vars[@]}" -gt 0 ]; then
+              gcloud_args+=(--remove-secrets "$(IFS=,; echo "${remove_secret_vars[*]}")")
+            fi
 
-          if [ "${#secret_pairs[@]}" -gt 0 ]; then
-            gcloud_args+=(--update-secrets "$(IFS=,; echo "${secret_pairs[*]}")")
-          fi
+            if [ "${#secret_pairs[@]}" -gt 0 ]; then
+              gcloud_args+=(--update-secrets "$(IFS=,; echo "${secret_pairs[*]}")")
+            fi
 
-          gcloud "${gcloud_args[@]}"
+            gcloud "${gcloud_args[@]}"
+          done
