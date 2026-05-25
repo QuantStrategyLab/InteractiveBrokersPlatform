@@ -112,9 +112,9 @@ For IBKR, keep `paper` as a single account-group entry. If you later add live ac
 | `TELEGRAM_TOKEN` | Yes | Telegram bot token. For Cloud Run, prefer a Secret Manager reference instead of a literal env var. |
 | `GLOBAL_TELEGRAM_CHAT_ID` | Yes | Telegram chat ID used by this service. |
 | `NOTIFY_LANG` | No | `en` (default) or `zh` |
-| `CRISIS_ALERT_GOOGLE_VOICE_GATEWAY` | No | Comma/semicolon/newline-separated Google Voice SMS gateway recipients, usually ending in `@txt.voice.google.com`. |
-| `CRISIS_ALERT_GOOGLE_VOICE_GMAIL_USER` | No | Gmail address used to send Google Voice gateway alerts. |
-| `CRISIS_ALERT_GOOGLE_VOICE_GMAIL_APP_PASSWORD` | No | Gmail App Password for Google Voice gateway alerts. For Cloud Run, prefer `CRISIS_ALERT_GOOGLE_VOICE_GMAIL_APP_PASSWORD_SECRET_NAME` in env sync. |
+| `CRISIS_ALERT_GOOGLE_VOICE_RECIPIENTS` | No | Comma/semicolon/newline-separated email-form recipients. Use a normal mailbox for email-only delivery, or a Google Voice mailbox/address to also trigger GV prompts. |
+| `CRISIS_ALERT_GOOGLE_VOICE_GMAIL_USER` | No | Gmail address used as the sender for Google Voice notification mail. |
+| `CRISIS_ALERT_GOOGLE_VOICE_GMAIL_APP_PASSWORD` | No | Gmail App Password for the sender account. For Cloud Run, prefer `CRISIS_ALERT_GOOGLE_VOICE_GMAIL_APP_PASSWORD_SECRET_NAME` in env sync. |
 
 The selected account-group entry must provide at least:
 
@@ -358,9 +358,9 @@ IBKR 账户
 | `TELEGRAM_TOKEN` | 是 | Telegram 机器人 Token。Cloud Run 上更推荐走 Secret Manager 引用，不要直接写成明文 env。 |
 | `GLOBAL_TELEGRAM_CHAT_ID` | 是 | 这个服务使用的 Telegram Chat ID。 |
 | `NOTIFY_LANG` | 否 | `en`（默认）或 `zh` |
-| `CRISIS_ALERT_GOOGLE_VOICE_GATEWAY` | 否 | Google Voice 短信网关收件人，通常以 `@txt.voice.google.com` 结尾，支持逗号、分号或换行分隔。 |
+| `CRISIS_ALERT_GOOGLE_VOICE_RECIPIENTS` | 否 | 通知收件邮箱。普通邮箱只收邮件；Google Voice 邮箱/地址会额外触发 GV 提醒。支持逗号、分号或换行分隔。 |
 | `CRISIS_ALERT_GOOGLE_VOICE_GMAIL_USER` | 否 | Google Voice 通知使用的 Gmail 地址。 |
-| `CRISIS_ALERT_GOOGLE_VOICE_GMAIL_APP_PASSWORD` | 否 | Google Voice 通知使用的 Gmail App Password。Cloud Run env sync 建议配置 `CRISIS_ALERT_GOOGLE_VOICE_GMAIL_APP_PASSWORD_SECRET_NAME`。 |
+| `CRISIS_ALERT_GOOGLE_VOICE_GMAIL_APP_PASSWORD` | 否 | 发送方 Gmail 账号的 App Password。Cloud Run env sync 建议配置 `CRISIS_ALERT_GOOGLE_VOICE_GMAIL_APP_PASSWORD_SECRET_NAME`。 |
 
 选中的账号组配置里，至少要有：
 
