@@ -322,7 +322,16 @@ def test_execution_report_prefers_configured_managed_symbols_without_ranking_poo
     module = strategy_module_factory(STRATEGY_PROFILE="soxl_soxx_trend_income")
     report = module.build_execution_report(module.RUNTIME_LOG_CONTEXT.with_run("run-001"))
 
-    assert report["summary"]["managed_symbols"] == ["SOXL", "SOXX", "BOXX", "QQQI", "SPYI"]
+    assert report["summary"]["managed_symbols"] == [
+        "SOXL",
+        "SOXX",
+        "BOXX",
+        "SCHD",
+        "DGRO",
+        "SGOV",
+        "SPYI",
+        "QQQI",
+    ]
     assert report["summary"]["safe_haven"] == "BIL"
     assert report["summary"]["execution_timing_contract"] == "next_trading_day"
 

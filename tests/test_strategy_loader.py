@@ -51,7 +51,16 @@ def test_load_strategy_entrypoint_for_profile_resolves_tqqq_growth_income(monkey
     assert entrypoint.manifest.profile == "tqqq_growth_income"
     assert entrypoint.manifest.required_inputs == frozenset({"benchmark_history", "portfolio_snapshot"})
     assert entrypoint.manifest.default_config["benchmark_symbol"] == "QQQ"
-    assert entrypoint.manifest.default_config["managed_symbols"] == ("TQQQ", "QQQ", "BOXX", "SPYI", "QQQI")
+    assert entrypoint.manifest.default_config["managed_symbols"] == (
+        "TQQQ",
+        "QQQ",
+        "BOXX",
+        "SCHD",
+        "DGRO",
+        "SGOV",
+        "SPYI",
+        "QQQI",
+    )
     assert entrypoint.manifest.default_config["attack_allocation_mode"] == "fixed_qqq_tqqq_pullback"
 
 
