@@ -31,8 +31,11 @@ def strategy_module_factory(monkeypatch):
             "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME": None,
             "GLOBAL_TELEGRAM_CHAT_ID": None,
             "CRISIS_ALERT_GOOGLE_VOICE_RECIPIENTS": None,
-            "CRISIS_ALERT_GOOGLE_VOICE_GMAIL_USER": None,
-            "CRISIS_ALERT_GOOGLE_VOICE_GMAIL_APP_PASSWORD": None,
+            "CRISIS_ALERT_GOOGLE_VOICE_SENDER_EMAIL": None,
+            "CRISIS_ALERT_GOOGLE_VOICE_SENDER_PASSWORD": None,
+            "CRISIS_ALERT_GOOGLE_VOICE_SMTP_HOST": None,
+            "CRISIS_ALERT_GOOGLE_VOICE_SMTP_PORT": None,
+            "CRISIS_ALERT_GOOGLE_VOICE_SMTP_SECURITY": None,
         }
         defaults.update(env_overrides)
         if "RUNTIME_TARGET_JSON" not in defaults:
