@@ -30,7 +30,7 @@ def strategy_module_factory(monkeypatch):
             ),
             "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME": None,
             "GLOBAL_TELEGRAM_CHAT_ID": None,
-            "CRISIS_ALERT_GOOGLE_VOICE_GATEWAY": None,
+            "CRISIS_ALERT_GOOGLE_VOICE_RECIPIENTS": None,
             "CRISIS_ALERT_GOOGLE_VOICE_GMAIL_USER": None,
             "CRISIS_ALERT_GOOGLE_VOICE_GMAIL_APP_PASSWORD": None,
         }

@@ -135,7 +135,7 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.tg_token is None
     assert settings.tg_chat_id is None
     assert settings.strategy_plugin_mounts_json is None
-    assert settings.crisis_alert_google_voice_gateway == ()
+    assert settings.crisis_alert_google_voice_recipients == ()
     assert settings.crisis_alert_google_voice_gmail_user is None
     assert settings.crisis_alert_google_voice_gmail_app_password is None
 
@@ -207,13 +207,13 @@ def test_load_platform_runtime_settings_reads_crisis_alert_google_voice_config(m
     monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(SAMPLE_STRATEGY_PROFILE))
     monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
-    monkeypatch.setenv("CRISIS_ALERT_GOOGLE_VOICE_GATEWAY", "gateway@txt.voice.google.com")
+    monkeypatch.setenv("CRISIS_ALERT_GOOGLE_VOICE_RECIPIENTS", "alerts@example.com; voice@example.com")
     monkeypatch.setenv("CRISIS_ALERT_GOOGLE_VOICE_GMAIL_USER", "sender@gmail.com")
     monkeypatch.setenv("CRISIS_ALERT_GOOGLE_VOICE_GMAIL_APP_PASSWORD", "secret")
 
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
-    assert settings.crisis_alert_google_voice_gateway == ("gateway@txt.voice.google.com",)
+    assert settings.crisis_alert_google_voice_recipients == ("alerts@example.com", "voice@example.com")
     assert settings.crisis_alert_google_voice_gmail_user == "sender@gmail.com"
     assert settings.crisis_alert_google_voice_gmail_app_password == "secret"
 
