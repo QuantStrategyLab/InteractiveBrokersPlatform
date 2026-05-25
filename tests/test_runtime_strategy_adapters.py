@@ -63,9 +63,14 @@ def test_strategy_plugin_true_crisis_builds_escalated_alert_message():
         "strategy_plugin_alert_subject": "alert:{strategy}:{plugin}:{route}",
         "strategy_plugin_alert_title": "alert title",
         "strategy_plugin_alert_strategy": "strategy={strategy}",
+        "strategy_plugin_alert_plugin": "plugin={plugin}",
+        "strategy_plugin_alert_status": "route={route}",
+        "strategy_plugin_alert_action": "action={action}",
+        "strategy_plugin_alert_mode": "mode={mode}",
         "strategy_plugin_alert_as_of": "as_of={as_of}",
         "strategy_plugin_alert_would_trade": "would_trade={value}",
         "strategy_plugin_alert_source": "source={source}",
+        "strategy_plugin_alert_yes": "yes",
         "strategy_plugin_name_crisis_response_shadow": "Crisis",
         "strategy_plugin_mode_shadow": "shadow",
         "strategy_plugin_route_true_crisis": "true crisis",
@@ -95,7 +100,11 @@ def test_strategy_plugin_true_crisis_builds_escalated_alert_message():
 
     assert len(alerts) == 1
     assert alerts[0].subject == "alert:soxl_soxx_trend_income:Crisis:true crisis"
-    assert "plugin=Crisis|mode=shadow|route=true crisis|action=defend" in alerts[0].body
+    assert "plugin=Crisis" in alerts[0].body
+    assert "route=true crisis" in alerts[0].body
+    assert "action=defend" in alerts[0].body
+    assert "mode=shadow" in alerts[0].body
+    assert "would_trade=yes" in alerts[0].body
     assert "source=gs://bucket/latest_signal.json" in alerts[0].body
 
 
