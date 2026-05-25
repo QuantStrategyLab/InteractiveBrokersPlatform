@@ -228,6 +228,7 @@ Recommended setup:
   - `CLOUD_RUN_REGION`
   - `CLOUD_RUN_SERVICES` (comma-, semicolon-, or newline-separated Cloud Run service names; preferred for slot deployments)
   - `CLOUD_RUN_SERVICE` (single-service fallback when `CLOUD_RUN_SERVICES` is not set)
+  - `CLOUD_RUN_SERVICE_TARGETS_JSON` (preferred for full slot sync; see below)
   - Optional: `CLOUD_RUN_ENV_SYNC_WAIT_FOR_COMMIT=false` if the target services are managed by a deployment flow that does not update the `commit-sha` label before this sync runs
   - `TELEGRAM_TOKEN_SECRET_NAME` (recommended when Cloud Run already uses Secret Manager for `TELEGRAM_TOKEN`)
   - `STRATEGY_PROFILE` (set explicitly to one enabled profile, such as `soxl_soxx_trend_income`)
@@ -245,14 +246,72 @@ Recommended setup:
   - `IB_GATEWAY_ZONE`
   - `IB_GATEWAY_IP_MODE`
 
-On every push to `main`, the workflow updates the configured Cloud Run service or services with the values above and removes legacy env vars that should now live in the account-group config (`IB_CLIENT_ID`, `IB_GATEWAY_INSTANCE_NAME`, `IB_GATEWAY_MODE`) plus the older transport vars (`IB_GATEWAY_HOST`, `IB_GATEWAY_PORT`, `TELEGRAM_CHAT_ID`). If `IB_GATEWAY_ZONE` or `IB_GATEWAY_IP_MODE` are blank in GitHub, the workflow also removes them from Cloud Run to avoid drift.
+On every push to `main`, the workflow builds a Cloud Run sync plan, updates the configured Cloud Run service or services, and removes legacy env vars that should now live in the account-group config (`IB_CLIENT_ID`, `IB_GATEWAY_INSTANCE_NAME`, `IB_GATEWAY_MODE`) plus the older transport vars (`IB_GATEWAY_HOST`, `IB_GATEWAY_PORT`, `TELEGRAM_CHAT_ID`). If `IB_GATEWAY_ZONE` or `IB_GATEWAY_IP_MODE` are blank in the selected sync target, the workflow also removes them from Cloud Run to avoid drift.
 
 `STRATEGY_PROFILE` is resolved from a platform capability matrix plus a rollout allowlist derived from `runtime_enabled` strategy metadata. The current strategy domain is `us_equity`: `eligible` means the platform can run the strategy in theory, while `enabled` means the current rollout really allows it. `ACCOUNT_GROUP` selects one account-group config entry, and the service fails fast if that runtime identity is incomplete. `RUNTIME_TARGET_JSON` carries the structured runtime identity; strategy defaults continue to come from `UsEquityStrategies`.
 
+For slot deployments, use `CLOUD_RUN_SERVICE_TARGETS_JSON` instead of a shared `RUNTIME_TARGET_JSON`. This keeps shared alert policy in one place while each Cloud Run service owns its runtime identity:
+
+```json
+{
+  "defaults": {
+    "GLOBAL_TELEGRAM_CHAT_ID": "5992562050",
+    "NOTIFY_LANG": "zh",
+    "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME": "ibkr-account-groups",
+    "IB_GATEWAY_ZONE": "us-central1-c",
+    "IB_GATEWAY_IP_MODE": "internal",
+    "EXECUTION_REPORT_GCS_URI": "gs://qsl-runtime-logs-interactivebrokersquant/execution-reports"
+  },
+  "targets": [
+    {
+      "service": "interactive-brokers-live-slot-a-service",
+      "account_group": "live-slot-a",
+      "runtime_target": {
+        "platform_id": "ibkr",
+        "strategy_profile": "tqqq_growth_income",
+        "dry_run_only": false,
+        "deployment_selector": "live-slot-a",
+        "account_selector": ["U18308207"],
+        "account_scope": "live-slot-a",
+        "service_name": "interactive-brokers-live-slot-a-service",
+        "execution_mode": "live"
+      },
+      "ibkr_strategy_plugin_mounts_json": {
+        "strategy_plugins": [
+          {
+            "strategy": "tqqq_growth_income",
+            "plugin": "crisis_response_shadow",
+            "signal_path": "gs://qsl-runtime-logs-interactivebrokersquant/strategy-artifacts/us_equity/tqqq_growth_income/plugins/crisis_response_shadow/latest_signal.json",
+            "enabled": true,
+            "expected_mode": "shadow"
+          }
+        ]
+      }
+    },
+    {
+      "service": "interactive-brokers-live-slot-b-service",
+      "account_group": "live-slot-b",
+      "runtime_target": {
+        "platform_id": "ibkr",
+        "strategy_profile": "mega_cap_leader_rotation_top50_balanced",
+        "dry_run_only": false,
+        "deployment_selector": "live-slot-b",
+        "account_selector": ["U15998061"],
+        "account_scope": "live-slot-b",
+        "service_name": "interactive-brokers-live-slot-b-service",
+        "execution_mode": "live"
+      },
+      "ibkr_feature_snapshot_path": "gs://qsl-runtime-logs-interactivebrokersquant/strategy-artifacts/us_equity/mega_cap_leader_rotation_top50_balanced_staging/mega_cap_leader_rotation_top50_balanced_feature_snapshot_latest.csv",
+      "ibkr_feature_snapshot_manifest_path": "gs://qsl-runtime-logs-interactivebrokersquant/strategy-artifacts/us_equity/mega_cap_leader_rotation_top50_balanced_staging/mega_cap_leader_rotation_top50_balanced_feature_snapshot_latest.csv.manifest.json"
+    }
+  ]
+}
+```
+
 Important:
 
-- The workflow only becomes strict when `ENABLE_GITHUB_ENV_SYNC=true`. If this variable is unset, the sync job is skipped. When enabled, it resolves the selected profile's snapshot/config requirements from `scripts/print_strategy_profile_status.py --json` instead of a hard-coded strategy-name list.
-- For slot deployments, configure `CLOUD_RUN_SERVICES` instead of the legacy `CLOUD_RUN_SERVICE`. Do not enable the workflow until the GitHub runtime variables describe every selected slot correctly; otherwise one shared `RUNTIME_TARGET_JSON` can overwrite per-slot runtime identity.
+- The workflow only becomes strict when `ENABLE_GITHUB_ENV_SYNC=true`. If this variable is unset, the sync job is skipped. When enabled, it builds the per-service plan with `scripts/build_cloud_run_env_sync_plan.py` and resolves each selected profile's snapshot/config requirements from the strategy status matrix instead of a hard-coded strategy-name list.
+- For full slot sync, configure `CLOUD_RUN_SERVICE_TARGETS_JSON`. `CLOUD_RUN_SERVICES` is only for the legacy mode where every listed service intentionally receives the same runtime env.
 - Here "shared config" still only means the **IBKR pair** (`InteractiveBrokersPlatform` + `IBKRGatewayManager`). `TELEGRAM_TOKEN` and `TELEGRAM_TOKEN_SECRET_NAME` remain repository-specific. If crisis alert recipients and sender policy are shared across platforms, manage `CRISIS_ALERT_CHANNELS`, `CRISIS_ALERT_EMAIL_*`, and `CRISIS_ALERT_PUSH_*` with GitHub Organization Variables/Secrets or GCP Secret Manager.
 - If `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME` is set, the Cloud Run runtime needs Secret Manager access to that secret.
 - GitHub now authenticates to Google Cloud with OIDC + Workload Identity Federation, so `GCP_SA_KEY` is no longer required for this workflow.
@@ -449,6 +508,7 @@ IB_GATEWAY_IP_MODE=internal
   - `CLOUD_RUN_REGION`
   - `CLOUD_RUN_SERVICES`（逗号、分号或换行分隔的 Cloud Run 服务名；slot 部署优先用这个）
   - `CLOUD_RUN_SERVICE`（没设置 `CLOUD_RUN_SERVICES` 时的单服务兼容入口）
+  - `CLOUD_RUN_SERVICE_TARGETS_JSON`（全量同步 slot 时优先用这个，见下面示例）
   - 可选：`CLOUD_RUN_ENV_SYNC_WAIT_FOR_COMMIT=false`（当目标服务由另一个部署链路管理、不会在同步前更新 `commit-sha` label 时使用）
   - `TELEGRAM_TOKEN_SECRET_NAME`（如果 Cloud Run 上的 `TELEGRAM_TOKEN` 已经改成 Secret Manager，建议配置）
   - `STRATEGY_PROFILE`（显式设置为任一已启用 profile，例如 `soxl_soxx_trend_income`）
@@ -466,14 +526,14 @@ IB_GATEWAY_IP_MODE=internal
   - `IB_GATEWAY_ZONE`
   - `IB_GATEWAY_IP_MODE`
 
-每次 push 到 `main` 时，这个 workflow 会把上面这些值同步到配置的一个或多个 Cloud Run 服务里，并清掉已经转移到账号组配置里的旧 env（`IB_CLIENT_ID`、`IB_GATEWAY_INSTANCE_NAME`、`IB_GATEWAY_MODE`）以及更早的传输层 env（`IB_GATEWAY_HOST`、`IB_GATEWAY_PORT`、`TELEGRAM_CHAT_ID`）。如果 GitHub 里没有配置 `IB_GATEWAY_ZONE` 或 `IB_GATEWAY_IP_MODE`，workflow 也会把 Cloud Run 上这两个旧值一起删除，避免双配置源漂移。
+每次 push 到 `main` 时，这个 workflow 会先生成 Cloud Run sync plan，再把目标值同步到配置的一个或多个 Cloud Run 服务里，并清掉已经转移到账号组配置里的旧 env（`IB_CLIENT_ID`、`IB_GATEWAY_INSTANCE_NAME`、`IB_GATEWAY_MODE`）以及更早的传输层 env（`IB_GATEWAY_HOST`、`IB_GATEWAY_PORT`、`TELEGRAM_CHAT_ID`）。如果目标 sync 配置里没有 `IB_GATEWAY_ZONE` 或 `IB_GATEWAY_IP_MODE`，workflow 也会把 Cloud Run 上这两个旧值一起删除，避免双配置源漂移。
 
 `STRATEGY_PROFILE` 由平台能力矩阵和从 `runtime_enabled` 策略元数据派生的 rollout allowlist 一起决定。当前策略域仍是 `us_equity`：`eligible` 表示平台理论上能跑，`enabled` 表示当前 rollout 真正放开。`ACCOUNT_GROUP` 是严格必填项，并会选中一份账号组配置。运行身份不完整时，服务会直接失败，不再静默回退。
 
 注意：
 
-- 只有在 `ENABLE_GITHUB_ENV_SYNC=true` 时，这个 workflow 才会严格校验并执行同步。没打开时会直接跳过。打开后，它会通过 `scripts/print_strategy_profile_status.py --json` 动态解析目标策略需要的 snapshot/config 输入，不再维护硬编码策略名列表。
-- slot 部署应配置 `CLOUD_RUN_SERVICES`，不要继续依赖旧的 `CLOUD_RUN_SERVICE`。在 GitHub runtime 变量能准确描述每个 slot 前，不要打开全量同步；否则一份共享的 `RUNTIME_TARGET_JSON` 会覆盖各 slot 自己的运行身份。
+- 只有在 `ENABLE_GITHUB_ENV_SYNC=true` 时，这个 workflow 才会严格校验并执行同步。没打开时会直接跳过。打开后，它会用 `scripts/build_cloud_run_env_sync_plan.py` 生成 per-service plan，并从策略状态矩阵动态解析每个目标策略需要的 snapshot/config 输入，不再维护硬编码策略名列表。
+- 全量同步 slot 时应配置 `CLOUD_RUN_SERVICE_TARGETS_JSON`。`CLOUD_RUN_SERVICES` 只适合旧模式，也就是多个服务确实要收到同一份 runtime env。
 - 这里说的“共享配置”仍然只针对 **IBKR 这一组系统**。`TELEGRAM_TOKEN` 和 `TELEGRAM_TOKEN_SECRET_NAME` 都还是这个仓库自己的配置，不建议提升成所有 quant 共用的全局配置。危机告警如果确实跨平台共用同一套收件人和发送方，可以用 GitHub Organization Variables/Secrets 管理 `CRISIS_ALERT_CHANNELS`、`CRISIS_ALERT_EMAIL_*` 和 `CRISIS_ALERT_PUSH_*`。
 - 如果设置了 `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME`，Cloud Run 运行时还需要有对应 Secret 的访问权限。
 - GitHub 现在通过 OIDC + Workload Identity Federation 登录 Google Cloud，这个 workflow 不再需要 `GCP_SA_KEY`。

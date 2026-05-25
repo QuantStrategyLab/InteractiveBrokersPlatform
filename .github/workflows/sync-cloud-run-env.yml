@@ -21,6 +21,7 @@ jobs:
       CLOUD_RUN_REGION: ${{ vars.CLOUD_RUN_REGION }}
       CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
       CLOUD_RUN_SERVICES: ${{ vars.CLOUD_RUN_SERVICES }}
+      CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ vars.CLOUD_RUN_SERVICE_TARGETS_JSON }}
       CLOUD_RUN_ENV_SYNC_WAIT_FOR_COMMIT: ${{ vars.CLOUD_RUN_ENV_SYNC_WAIT_FOR_COMMIT }}
       TELEGRAM_TOKEN_SECRET_NAME: ${{ vars.TELEGRAM_TOKEN_SECRET_NAME }}
       RUNTIME_TARGET_JSON: ${{ vars.RUNTIME_TARGET_JSON }}
@@ -102,115 +103,28 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
-      - name: Resolve selected strategy runtime requirements
+      - name: Resolve Cloud Run sync targets
         id: strategy_requirements
         if: steps.config.outputs.enabled == 'true'
         run: |
           set -euo pipefail
-          python - <<'PY'
-          import json
-          import os
-          import subprocess
-          import sys
-          from us_equity_strategies import resolve_canonical_profile
-
-          raw_runtime_target = os.environ.get("RUNTIME_TARGET_JSON", "").strip()
-          if not raw_runtime_target:
-              raise SystemExit("RUNTIME_TARGET_JSON is required")
-          runtime_target = json.loads(raw_runtime_target)
-          profile = str(runtime_target.get("strategy_profile") or "").strip().lower()
-          if not profile:
-              raise SystemExit("RUNTIME_TARGET_JSON.strategy_profile is required")
-          canonical_profile = resolve_canonical_profile(profile)
-
-          raw_status = subprocess.check_output(
-              [sys.executable, "scripts/print_strategy_profile_status.py", "--json"],
-              text=True,
-          )
-          rows = json.loads(raw_status)
-          selected = next((row for row in rows if row["canonical_profile"] == canonical_profile), None)
-          if selected is None:
-              supported = ", ".join(sorted(row["canonical_profile"] for row in rows))
-              raise SystemExit(f"Unsupported STRATEGY_PROFILE={profile!r}; supported: {supported}")
-          if not selected.get("eligible") or not selected.get("enabled"):
-              raise SystemExit(f"STRATEGY_PROFILE={profile!r} is not eligible/enabled: {selected}")
-
-          output_path = os.environ["GITHUB_OUTPUT"]
-          with open(output_path, "a", encoding="utf-8") as output:
-              output.write(
-                  f"requires_snapshot_artifacts={str(bool(selected.get('requires_snapshot_artifacts'))).lower()}\n"
-              )
-              output.write(
-                  f"requires_snapshot_manifest_path={str(bool(selected.get('requires_snapshot_manifest_path'))).lower()}\n"
-              )
-              output.write(
-                  f"requires_strategy_config_path={str(bool(selected.get('requires_strategy_config_path'))).lower()}\n"
-              )
-              output.write(
-                  f"config_source_policy={str(selected.get('config_source_policy') or 'none')}\n"
-              )
-              output.write(
-                  f"reconciliation_output_policy={str(selected.get('reconciliation_output_policy') or 'none')}\n"
-              )
-              output.write(f"strategy_profile={canonical_profile}\n")
-              output.write(f"runtime_target_json={json.dumps(runtime_target, sort_keys=True)}\n")
-          PY
+          sync_plan_json="$(python scripts/build_cloud_run_env_sync_plan.py --json)"
+          {
+            echo "sync_plan_json<<__SYNC_PLAN_JSON__"
+            printf '%s\n' "${sync_plan_json}"
+            echo "__SYNC_PLAN_JSON__"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Validate env sync inputs
         if: steps.config.outputs.enabled == 'true'
         env:
-          REQUIRES_SNAPSHOT_ARTIFACTS: ${{ steps.strategy_requirements.outputs.requires_snapshot_artifacts }}
-          REQUIRES_SNAPSHOT_MANIFEST_PATH: ${{ steps.strategy_requirements.outputs.requires_snapshot_manifest_path }}
-          REQUIRES_STRATEGY_CONFIG_PATH: ${{ steps.strategy_requirements.outputs.requires_strategy_config_path }}
-          CONFIG_SOURCE_POLICY: ${{ steps.strategy_requirements.outputs.config_source_policy }}
-          RECONCILIATION_OUTPUT_POLICY: ${{ steps.strategy_requirements.outputs.reconciliation_output_policy }}
-          RUNTIME_TARGET_JSON: ${{ steps.strategy_requirements.outputs.runtime_target_json }}
+          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
         run: |
           set -euo pipefail
 
           required_vars=(
             CLOUD_RUN_REGION
-            ACCOUNT_GROUP
-            IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME
-            GLOBAL_TELEGRAM_CHAT_ID
-            NOTIFY_LANG
           )
-
-          resolve_cloud_run_services() {
-            local raw_services="${CLOUD_RUN_SERVICES:-}"
-            if [ -z "$(printf '%s' "${raw_services}" | tr -d '[:space:],;')" ]; then
-              raw_services="${CLOUD_RUN_SERVICE:-}"
-            fi
-            printf '%s\n' "${raw_services}" \
-              | tr ',;' '\n' \
-              | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
-              | sed '/^$/d'
-          }
-
-          mapfile -t target_services < <(resolve_cloud_run_services)
-          if [ "${#target_services[@]}" -eq 0 ]; then
-            required_vars+=("CLOUD_RUN_SERVICES or CLOUD_RUN_SERVICE")
-          fi
-
-          if [ "${REQUIRES_SNAPSHOT_ARTIFACTS:-}" = "true" ]; then
-            required_vars+=(IBKR_FEATURE_SNAPSHOT_PATH)
-          fi
-
-          if [ "${REQUIRES_SNAPSHOT_MANIFEST_PATH:-}" = "true" ]; then
-            required_vars+=(IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH)
-          fi
-
-          if [ "${REQUIRES_STRATEGY_CONFIG_PATH:-}" = "true" ] && [ "${CONFIG_SOURCE_POLICY:-}" = "env_only" ]; then
-            required_vars+=(IBKR_STRATEGY_CONFIG_PATH)
-          fi
-
-          if [ "${RECONCILIATION_OUTPUT_POLICY:-}" = "required" ]; then
-            required_vars+=(IBKR_RECONCILIATION_OUTPUT_PATH)
-          fi
-
-          if [ -z "${RUNTIME_TARGET_JSON:-}" ]; then
-            required_vars+=(RUNTIME_TARGET_JSON)
-          fi
 
           missing_vars=()
           for var_name in "${required_vars[@]}"; do
@@ -222,6 +136,21 @@ jobs:
           if [ -z "${TELEGRAM_TOKEN_SECRET_NAME:-}" ] && [ -z "${TELEGRAM_TOKEN:-}" ]; then
             missing_vars+=("TELEGRAM_TOKEN_SECRET_NAME or TELEGRAM_TOKEN")
           fi
+
+          python - <<'PY'
+          import json
+          import os
+          plan = json.loads(os.environ["SYNC_PLAN_JSON"])
+          targets = plan.get("targets") or []
+          if not targets:
+              raise SystemExit("Cloud Run env sync did not resolve any targets")
+          for target in targets:
+              service_name = str(target.get("service_name") or "").strip()
+              if not service_name:
+                  raise SystemExit("Cloud Run sync target is missing service_name")
+              if not isinstance(target.get("env"), dict):
+                  raise SystemExit(f"Cloud Run sync target {service_name} is missing env")
+          PY
 
           if [ "${#missing_vars[@]}" -gt 0 ]; then
             echo "Cloud Run env sync is enabled, but these values are missing:" >&2
@@ -246,23 +175,21 @@ jobs:
 
       - name: Wait for Cloud Run deployment of current commit
         if: steps.config.outputs.enabled == 'true'
+        env:
+          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
         run: |
           set -euo pipefail
 
-          resolve_cloud_run_services() {
-            local raw_services="${CLOUD_RUN_SERVICES:-}"
-            if [ -z "$(printf '%s' "${raw_services}" | tr -d '[:space:],;')" ]; then
-              raw_services="${CLOUD_RUN_SERVICE:-}"
-            fi
-            printf '%s\n' "${raw_services}" \
-              | tr ',;' '\n' \
-              | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
-              | sed '/^$/d'
-          }
-
-          mapfile -t target_services < <(resolve_cloud_run_services)
+          mapfile -t target_services < <(python - <<'PY'
+          import json
+          import os
+          plan = json.loads(os.environ["SYNC_PLAN_JSON"])
+          for target in plan["targets"]:
+              print(target["service_name"])
+          PY
+          )
           if [ "${#target_services[@]}" -eq 0 ]; then
-            echo "CLOUD_RUN_SERVICES or CLOUD_RUN_SERVICE is required." >&2
+            echo "Cloud Run env sync did not resolve any targets." >&2
             exit 1
           fi
 
@@ -298,27 +225,46 @@ jobs:
       - name: Sync Cloud Run environment
         if: steps.config.outputs.enabled == 'true'
         env:
-          RUNTIME_TARGET_JSON: ${{ steps.strategy_requirements.outputs.runtime_target_json }}
-          STRATEGY_PROFILE: ${{ steps.strategy_requirements.outputs.strategy_profile }}
+          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
         run: |
           set -euo pipefail
 
-          resolve_cloud_run_services() {
-            local raw_services="${CLOUD_RUN_SERVICES:-}"
-            if [ -z "$(printf '%s' "${raw_services}" | tr -d '[:space:],;')" ]; then
-              raw_services="${CLOUD_RUN_SERVICE:-}"
-            fi
-            printf '%s\n' "${raw_services}" \
-              | tr ',;' '\n' \
-              | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
-              | sed '/^$/d'
-          }
-
-          mapfile -t target_services < <(resolve_cloud_run_services)
+          mapfile -t target_services < <(python - <<'PY'
+          import json
+          import os
+          plan = json.loads(os.environ["SYNC_PLAN_JSON"])
+          for target in plan["targets"]:
+              print(target["service_name"])
+          PY
+          )
           if [ "${#target_services[@]}" -eq 0 ]; then
-            echo "CLOUD_RUN_SERVICES or CLOUD_RUN_SERVICE is required." >&2
+            echo "Cloud Run env sync did not resolve any targets." >&2
             exit 1
           fi
+
+          emit_target_env_pairs() {
+            local target_index="$1"
+            SYNC_TARGET_INDEX="${target_index}" python - <<'PY'
+          import json
+          import os
+          plan = json.loads(os.environ["SYNC_PLAN_JSON"])
+          target = plan["targets"][int(os.environ["SYNC_TARGET_INDEX"])]
+          for key, value in sorted(target["env"].items()):
+              print(f"{key}={value}")
+          PY
+          }
+
+          emit_target_remove_env_vars() {
+            local target_index="$1"
+            SYNC_TARGET_INDEX="${target_index}" python - <<'PY'
+          import json
+          import os
+          plan = json.loads(os.environ["SYNC_PLAN_JSON"])
+          target = plan["targets"][int(os.environ["SYNC_TARGET_INDEX"])]
+          for key in sorted(target.get("remove_env_vars") or []):
+              print(key)
+          PY
+          }
 
           join_by_delimiter() {
             local delimiter="$1"
@@ -335,17 +281,10 @@ jobs:
             printf '%s' "${output}"
           }
 
-          env_pairs=(
-            "GLOBAL_TELEGRAM_CHAT_ID=${GLOBAL_TELEGRAM_CHAT_ID}"
-            "NOTIFY_LANG=${NOTIFY_LANG}"
-            "ACCOUNT_GROUP=${ACCOUNT_GROUP}"
-            "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=${IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME}"
-            "STRATEGY_PROFILE=${STRATEGY_PROFILE}"
-            "RUNTIME_TARGET_JSON=${RUNTIME_TARGET_JSON}"
-          )
-          secret_pairs=()
+          shared_env_pairs=()
+          shared_secret_pairs=()
 
-          remove_env_vars=(
+          shared_remove_env_vars=(
             "IB_GATEWAY_HOST"
             "IB_GATEWAY_PORT"
             "TELEGRAM_CHAT_ID"
@@ -370,262 +309,192 @@ jobs:
             "CRISIS_ALERT_SMTP_STARTTLS"
             "CRISIS_ALERT_SMTP_SSL"
           )
-          remove_secret_vars=(
+          shared_remove_secret_vars=(
             "CRISIS_ALERT_SMTP_PASSWORD"
             "CRISIS_ALERT_GOOGLE_VOICE_GMAIL_APP_PASSWORD"
             "CRISIS_ALERT_GOOGLE_VOICE_SENDER_PASSWORD"
           )
 
           if [ -n "${TELEGRAM_TOKEN_SECRET_NAME:-}" ]; then
-            secret_pairs+=("TELEGRAM_TOKEN=${TELEGRAM_TOKEN_SECRET_NAME}:latest")
+            shared_secret_pairs+=("TELEGRAM_TOKEN=${TELEGRAM_TOKEN_SECRET_NAME}:latest")
           else
-            env_pairs+=("TELEGRAM_TOKEN=${TELEGRAM_TOKEN}")
-            remove_secret_vars+=("TELEGRAM_TOKEN")
+            shared_env_pairs+=("TELEGRAM_TOKEN=${TELEGRAM_TOKEN}")
+            shared_remove_secret_vars+=("TELEGRAM_TOKEN")
           fi
 
           if [ -n "${CRISIS_ALERT_EMAIL_SENDER_PASSWORD_SECRET_NAME:-}" ]; then
-            secret_pairs+=("CRISIS_ALERT_EMAIL_SENDER_PASSWORD=${CRISIS_ALERT_EMAIL_SENDER_PASSWORD_SECRET_NAME}:latest")
-            remove_env_vars+=("CRISIS_ALERT_EMAIL_SENDER_PASSWORD")
+            shared_secret_pairs+=("CRISIS_ALERT_EMAIL_SENDER_PASSWORD=${CRISIS_ALERT_EMAIL_SENDER_PASSWORD_SECRET_NAME}:latest")
+            shared_remove_env_vars+=("CRISIS_ALERT_EMAIL_SENDER_PASSWORD")
           elif [ -n "${CRISIS_ALERT_EMAIL_SENDER_PASSWORD:-}" ]; then
-            env_pairs+=("CRISIS_ALERT_EMAIL_SENDER_PASSWORD=${CRISIS_ALERT_EMAIL_SENDER_PASSWORD}")
-            remove_secret_vars+=("CRISIS_ALERT_EMAIL_SENDER_PASSWORD")
+            shared_env_pairs+=("CRISIS_ALERT_EMAIL_SENDER_PASSWORD=${CRISIS_ALERT_EMAIL_SENDER_PASSWORD}")
+            shared_remove_secret_vars+=("CRISIS_ALERT_EMAIL_SENDER_PASSWORD")
           else
-            remove_env_vars+=("CRISIS_ALERT_EMAIL_SENDER_PASSWORD")
-            remove_secret_vars+=("CRISIS_ALERT_EMAIL_SENDER_PASSWORD")
+            shared_remove_env_vars+=("CRISIS_ALERT_EMAIL_SENDER_PASSWORD")
+            shared_remove_secret_vars+=("CRISIS_ALERT_EMAIL_SENDER_PASSWORD")
           fi
 
           if [ -n "${CRISIS_ALERT_SMS_AUTH_TOKEN_SECRET_NAME:-}" ]; then
-            secret_pairs+=("CRISIS_ALERT_SMS_AUTH_TOKEN=${CRISIS_ALERT_SMS_AUTH_TOKEN_SECRET_NAME}:latest")
-            remove_env_vars+=("CRISIS_ALERT_SMS_AUTH_TOKEN")
+            shared_secret_pairs+=("CRISIS_ALERT_SMS_AUTH_TOKEN=${CRISIS_ALERT_SMS_AUTH_TOKEN_SECRET_NAME}:latest")
+            shared_remove_env_vars+=("CRISIS_ALERT_SMS_AUTH_TOKEN")
           elif [ -n "${CRISIS_ALERT_SMS_AUTH_TOKEN:-}" ]; then
-            env_pairs+=("CRISIS_ALERT_SMS_AUTH_TOKEN=${CRISIS_ALERT_SMS_AUTH_TOKEN}")
-            remove_secret_vars+=("CRISIS_ALERT_SMS_AUTH_TOKEN")
+            shared_env_pairs+=("CRISIS_ALERT_SMS_AUTH_TOKEN=${CRISIS_ALERT_SMS_AUTH_TOKEN}")
+            shared_remove_secret_vars+=("CRISIS_ALERT_SMS_AUTH_TOKEN")
           else
-            remove_env_vars+=("CRISIS_ALERT_SMS_AUTH_TOKEN")
-            remove_secret_vars+=("CRISIS_ALERT_SMS_AUTH_TOKEN")
+            shared_remove_env_vars+=("CRISIS_ALERT_SMS_AUTH_TOKEN")
+            shared_remove_secret_vars+=("CRISIS_ALERT_SMS_AUTH_TOKEN")
           fi
 
           if [ -n "${CRISIS_ALERT_PUSH_APP_TOKEN_SECRET_NAME:-}" ]; then
-            secret_pairs+=("CRISIS_ALERT_PUSH_APP_TOKEN=${CRISIS_ALERT_PUSH_APP_TOKEN_SECRET_NAME}:latest")
-            remove_env_vars+=("CRISIS_ALERT_PUSH_APP_TOKEN")
+            shared_secret_pairs+=("CRISIS_ALERT_PUSH_APP_TOKEN=${CRISIS_ALERT_PUSH_APP_TOKEN_SECRET_NAME}:latest")
+            shared_remove_env_vars+=("CRISIS_ALERT_PUSH_APP_TOKEN")
           elif [ -n "${CRISIS_ALERT_PUSH_APP_TOKEN:-}" ]; then
-            env_pairs+=("CRISIS_ALERT_PUSH_APP_TOKEN=${CRISIS_ALERT_PUSH_APP_TOKEN}")
-            remove_secret_vars+=("CRISIS_ALERT_PUSH_APP_TOKEN")
+            shared_env_pairs+=("CRISIS_ALERT_PUSH_APP_TOKEN=${CRISIS_ALERT_PUSH_APP_TOKEN}")
+            shared_remove_secret_vars+=("CRISIS_ALERT_PUSH_APP_TOKEN")
           else
-            remove_env_vars+=("CRISIS_ALERT_PUSH_APP_TOKEN")
-            remove_secret_vars+=("CRISIS_ALERT_PUSH_APP_TOKEN")
+            shared_remove_env_vars+=("CRISIS_ALERT_PUSH_APP_TOKEN")
+            shared_remove_secret_vars+=("CRISIS_ALERT_PUSH_APP_TOKEN")
           fi
 
           if [ -n "${CRISIS_ALERT_PUSH_ACCESS_TOKEN_SECRET_NAME:-}" ]; then
-            secret_pairs+=("CRISIS_ALERT_PUSH_ACCESS_TOKEN=${CRISIS_ALERT_PUSH_ACCESS_TOKEN_SECRET_NAME}:latest")
-            remove_env_vars+=("CRISIS_ALERT_PUSH_ACCESS_TOKEN")
+            shared_secret_pairs+=("CRISIS_ALERT_PUSH_ACCESS_TOKEN=${CRISIS_ALERT_PUSH_ACCESS_TOKEN_SECRET_NAME}:latest")
+            shared_remove_env_vars+=("CRISIS_ALERT_PUSH_ACCESS_TOKEN")
           elif [ -n "${CRISIS_ALERT_PUSH_ACCESS_TOKEN:-}" ]; then
-            env_pairs+=("CRISIS_ALERT_PUSH_ACCESS_TOKEN=${CRISIS_ALERT_PUSH_ACCESS_TOKEN}")
-            remove_secret_vars+=("CRISIS_ALERT_PUSH_ACCESS_TOKEN")
+            shared_env_pairs+=("CRISIS_ALERT_PUSH_ACCESS_TOKEN=${CRISIS_ALERT_PUSH_ACCESS_TOKEN}")
+            shared_remove_secret_vars+=("CRISIS_ALERT_PUSH_ACCESS_TOKEN")
           else
-            remove_env_vars+=("CRISIS_ALERT_PUSH_ACCESS_TOKEN")
-            remove_secret_vars+=("CRISIS_ALERT_PUSH_ACCESS_TOKEN")
-          fi
-
-          if [ -n "${IB_GATEWAY_ZONE:-}" ]; then
-            env_pairs+=("IB_GATEWAY_ZONE=${IB_GATEWAY_ZONE}")
-          else
-            remove_env_vars+=("IB_GATEWAY_ZONE")
-          fi
-
-          if [ -n "${IB_GATEWAY_IP_MODE:-}" ]; then
-            env_pairs+=("IB_GATEWAY_IP_MODE=${IB_GATEWAY_IP_MODE}")
-          else
-            remove_env_vars+=("IB_GATEWAY_IP_MODE")
-          fi
-
-          if [ -n "${IBKR_FEATURE_SNAPSHOT_PATH:-}" ]; then
-            env_pairs+=("IBKR_FEATURE_SNAPSHOT_PATH=${IBKR_FEATURE_SNAPSHOT_PATH}")
-          else
-            remove_env_vars+=("IBKR_FEATURE_SNAPSHOT_PATH")
-          fi
-
-          if [ -n "${IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH:-}" ]; then
-            env_pairs+=("IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH=${IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH}")
-          else
-            remove_env_vars+=("IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH")
-          fi
-
-          if [ -n "${IBKR_STRATEGY_CONFIG_PATH:-}" ]; then
-            env_pairs+=("IBKR_STRATEGY_CONFIG_PATH=${IBKR_STRATEGY_CONFIG_PATH}")
-          else
-            remove_env_vars+=("IBKR_STRATEGY_CONFIG_PATH")
-          fi
-
-          if [ -n "${IBKR_STRATEGY_PLUGIN_MOUNTS_JSON:-}" ]; then
-            env_pairs+=("IBKR_STRATEGY_PLUGIN_MOUNTS_JSON=${IBKR_STRATEGY_PLUGIN_MOUNTS_JSON}")
-          else
-            remove_env_vars+=("IBKR_STRATEGY_PLUGIN_MOUNTS_JSON")
-          fi
-
-          if [ -n "${IBKR_RECONCILIATION_OUTPUT_PATH:-}" ]; then
-            env_pairs+=("IBKR_RECONCILIATION_OUTPUT_PATH=${IBKR_RECONCILIATION_OUTPUT_PATH}")
-          else
-            remove_env_vars+=("IBKR_RECONCILIATION_OUTPUT_PATH")
-          fi
-
-          if [ -n "${IBKR_DRY_RUN_ONLY:-}" ]; then
-            env_pairs+=("IBKR_DRY_RUN_ONLY=${IBKR_DRY_RUN_ONLY}")
-          else
-            remove_env_vars+=("IBKR_DRY_RUN_ONLY")
-          fi
-
-          if [ -n "${IBKR_PAPER_LIQUIDATE_ONLY:-}" ]; then
-            env_pairs+=("IBKR_PAPER_LIQUIDATE_ONLY=${IBKR_PAPER_LIQUIDATE_ONLY}")
-          else
-            remove_env_vars+=("IBKR_PAPER_LIQUIDATE_ONLY")
-          fi
-
-          if [ -n "${IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD:-}" ]; then
-            env_pairs+=("IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD=${IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD}")
-          else
-            remove_env_vars+=("IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD")
-          fi
-
-          if [ -n "${IBKR_MIN_RESERVED_CASH_USD:-}" ]; then
-            env_pairs+=("IBKR_MIN_RESERVED_CASH_USD=${IBKR_MIN_RESERVED_CASH_USD}")
-          else
-            remove_env_vars+=("IBKR_MIN_RESERVED_CASH_USD")
-          fi
-
-          if [ -n "${IBKR_RESERVED_CASH_RATIO:-}" ]; then
-            env_pairs+=("IBKR_RESERVED_CASH_RATIO=${IBKR_RESERVED_CASH_RATIO}")
-          else
-            remove_env_vars+=("IBKR_RESERVED_CASH_RATIO")
+            shared_remove_env_vars+=("CRISIS_ALERT_PUSH_ACCESS_TOKEN")
+            shared_remove_secret_vars+=("CRISIS_ALERT_PUSH_ACCESS_TOKEN")
           fi
 
           if [ -n "${CRISIS_ALERT_CHANNELS:-}" ]; then
-            env_pairs+=("CRISIS_ALERT_CHANNELS=${CRISIS_ALERT_CHANNELS}")
+            shared_env_pairs+=("CRISIS_ALERT_CHANNELS=${CRISIS_ALERT_CHANNELS}")
           else
-            remove_env_vars+=("CRISIS_ALERT_CHANNELS")
+            shared_remove_env_vars+=("CRISIS_ALERT_CHANNELS")
           fi
 
           if [ -n "${CRISIS_ALERT_EMAIL_RECIPIENTS:-}" ]; then
-            env_pairs+=("CRISIS_ALERT_EMAIL_RECIPIENTS=${CRISIS_ALERT_EMAIL_RECIPIENTS}")
+            shared_env_pairs+=("CRISIS_ALERT_EMAIL_RECIPIENTS=${CRISIS_ALERT_EMAIL_RECIPIENTS}")
           else
-            remove_env_vars+=("CRISIS_ALERT_EMAIL_RECIPIENTS")
+            shared_remove_env_vars+=("CRISIS_ALERT_EMAIL_RECIPIENTS")
           fi
 
           if [ -n "${CRISIS_ALERT_EMAIL_SENDER_EMAIL:-}" ]; then
-            env_pairs+=("CRISIS_ALERT_EMAIL_SENDER_EMAIL=${CRISIS_ALERT_EMAIL_SENDER_EMAIL}")
+            shared_env_pairs+=("CRISIS_ALERT_EMAIL_SENDER_EMAIL=${CRISIS_ALERT_EMAIL_SENDER_EMAIL}")
           else
-            remove_env_vars+=("CRISIS_ALERT_EMAIL_SENDER_EMAIL")
+            shared_remove_env_vars+=("CRISIS_ALERT_EMAIL_SENDER_EMAIL")
           fi
 
           if [ -n "${CRISIS_ALERT_EMAIL_SMTP_HOST:-}" ]; then
-            env_pairs+=("CRISIS_ALERT_EMAIL_SMTP_HOST=${CRISIS_ALERT_EMAIL_SMTP_HOST}")
+            shared_env_pairs+=("CRISIS_ALERT_EMAIL_SMTP_HOST=${CRISIS_ALERT_EMAIL_SMTP_HOST}")
           else
-            remove_env_vars+=("CRISIS_ALERT_EMAIL_SMTP_HOST")
+            shared_remove_env_vars+=("CRISIS_ALERT_EMAIL_SMTP_HOST")
           fi
 
           if [ -n "${CRISIS_ALERT_EMAIL_SMTP_PORT:-}" ]; then
-            env_pairs+=("CRISIS_ALERT_EMAIL_SMTP_PORT=${CRISIS_ALERT_EMAIL_SMTP_PORT}")
+            shared_env_pairs+=("CRISIS_ALERT_EMAIL_SMTP_PORT=${CRISIS_ALERT_EMAIL_SMTP_PORT}")
           else
-            remove_env_vars+=("CRISIS_ALERT_EMAIL_SMTP_PORT")
+            shared_remove_env_vars+=("CRISIS_ALERT_EMAIL_SMTP_PORT")
           fi
 
           if [ -n "${CRISIS_ALERT_EMAIL_SMTP_SECURITY:-}" ]; then
-            env_pairs+=("CRISIS_ALERT_EMAIL_SMTP_SECURITY=${CRISIS_ALERT_EMAIL_SMTP_SECURITY}")
+            shared_env_pairs+=("CRISIS_ALERT_EMAIL_SMTP_SECURITY=${CRISIS_ALERT_EMAIL_SMTP_SECURITY}")
           else
-            remove_env_vars+=("CRISIS_ALERT_EMAIL_SMTP_SECURITY")
+            shared_remove_env_vars+=("CRISIS_ALERT_EMAIL_SMTP_SECURITY")
           fi
 
           if [ -n "${CRISIS_ALERT_SMS_RECIPIENTS:-}" ]; then
-            env_pairs+=("CRISIS_ALERT_SMS_RECIPIENTS=${CRISIS_ALERT_SMS_RECIPIENTS}")
+            shared_env_pairs+=("CRISIS_ALERT_SMS_RECIPIENTS=${CRISIS_ALERT_SMS_RECIPIENTS}")
           else
-            remove_env_vars+=("CRISIS_ALERT_SMS_RECIPIENTS")
+            shared_remove_env_vars+=("CRISIS_ALERT_SMS_RECIPIENTS")
           fi
 
           if [ -n "${CRISIS_ALERT_SMS_PROVIDER:-}" ]; then
-            env_pairs+=("CRISIS_ALERT_SMS_PROVIDER=${CRISIS_ALERT_SMS_PROVIDER}")
+            shared_env_pairs+=("CRISIS_ALERT_SMS_PROVIDER=${CRISIS_ALERT_SMS_PROVIDER}")
           else
-            remove_env_vars+=("CRISIS_ALERT_SMS_PROVIDER")
+            shared_remove_env_vars+=("CRISIS_ALERT_SMS_PROVIDER")
           fi
 
           if [ -n "${CRISIS_ALERT_SMS_ACCOUNT_ID:-}" ]; then
-            env_pairs+=("CRISIS_ALERT_SMS_ACCOUNT_ID=${CRISIS_ALERT_SMS_ACCOUNT_ID}")
+            shared_env_pairs+=("CRISIS_ALERT_SMS_ACCOUNT_ID=${CRISIS_ALERT_SMS_ACCOUNT_ID}")
           else
-            remove_env_vars+=("CRISIS_ALERT_SMS_ACCOUNT_ID")
+            shared_remove_env_vars+=("CRISIS_ALERT_SMS_ACCOUNT_ID")
           fi
 
           if [ -n "${CRISIS_ALERT_SMS_SENDER:-}" ]; then
-            env_pairs+=("CRISIS_ALERT_SMS_SENDER=${CRISIS_ALERT_SMS_SENDER}")
+            shared_env_pairs+=("CRISIS_ALERT_SMS_SENDER=${CRISIS_ALERT_SMS_SENDER}")
           else
-            remove_env_vars+=("CRISIS_ALERT_SMS_SENDER")
+            shared_remove_env_vars+=("CRISIS_ALERT_SMS_SENDER")
           fi
 
           if [ -n "${CRISIS_ALERT_SMS_MESSAGING_SERVICE_ID:-}" ]; then
-            env_pairs+=("CRISIS_ALERT_SMS_MESSAGING_SERVICE_ID=${CRISIS_ALERT_SMS_MESSAGING_SERVICE_ID}")
+            shared_env_pairs+=("CRISIS_ALERT_SMS_MESSAGING_SERVICE_ID=${CRISIS_ALERT_SMS_MESSAGING_SERVICE_ID}")
           else
-            remove_env_vars+=("CRISIS_ALERT_SMS_MESSAGING_SERVICE_ID")
+            shared_remove_env_vars+=("CRISIS_ALERT_SMS_MESSAGING_SERVICE_ID")
           fi
 
           if [ -n "${CRISIS_ALERT_SMS_API_BASE_URL:-}" ]; then
-            env_pairs+=("CRISIS_ALERT_SMS_API_BASE_URL=${CRISIS_ALERT_SMS_API_BASE_URL}")
+            shared_env_pairs+=("CRISIS_ALERT_SMS_API_BASE_URL=${CRISIS_ALERT_SMS_API_BASE_URL}")
           else
-            remove_env_vars+=("CRISIS_ALERT_SMS_API_BASE_URL")
+            shared_remove_env_vars+=("CRISIS_ALERT_SMS_API_BASE_URL")
           fi
 
           if [ -n "${CRISIS_ALERT_SMS_BODY_MAX_CHARS:-}" ]; then
-            env_pairs+=("CRISIS_ALERT_SMS_BODY_MAX_CHARS=${CRISIS_ALERT_SMS_BODY_MAX_CHARS}")
+            shared_env_pairs+=("CRISIS_ALERT_SMS_BODY_MAX_CHARS=${CRISIS_ALERT_SMS_BODY_MAX_CHARS}")
           else
-            remove_env_vars+=("CRISIS_ALERT_SMS_BODY_MAX_CHARS")
+            shared_remove_env_vars+=("CRISIS_ALERT_SMS_BODY_MAX_CHARS")
           fi
 
           if [ -n "${CRISIS_ALERT_PUSH_RECIPIENTS:-}" ]; then
-            env_pairs+=("CRISIS_ALERT_PUSH_RECIPIENTS=${CRISIS_ALERT_PUSH_RECIPIENTS}")
+            shared_env_pairs+=("CRISIS_ALERT_PUSH_RECIPIENTS=${CRISIS_ALERT_PUSH_RECIPIENTS}")
           else
-            remove_env_vars+=("CRISIS_ALERT_PUSH_RECIPIENTS")
+            shared_remove_env_vars+=("CRISIS_ALERT_PUSH_RECIPIENTS")
           fi
 
           if [ -n "${CRISIS_ALERT_PUSH_PROVIDER:-}" ]; then
-            env_pairs+=("CRISIS_ALERT_PUSH_PROVIDER=${CRISIS_ALERT_PUSH_PROVIDER}")
+            shared_env_pairs+=("CRISIS_ALERT_PUSH_PROVIDER=${CRISIS_ALERT_PUSH_PROVIDER}")
           else
-            remove_env_vars+=("CRISIS_ALERT_PUSH_PROVIDER")
+            shared_remove_env_vars+=("CRISIS_ALERT_PUSH_PROVIDER")
           fi
 
           if [ -n "${CRISIS_ALERT_PUSH_API_BASE_URL:-}" ]; then
-            env_pairs+=("CRISIS_ALERT_PUSH_API_BASE_URL=${CRISIS_ALERT_PUSH_API_BASE_URL}")
+            shared_env_pairs+=("CRISIS_ALERT_PUSH_API_BASE_URL=${CRISIS_ALERT_PUSH_API_BASE_URL}")
           else
-            remove_env_vars+=("CRISIS_ALERT_PUSH_API_BASE_URL")
+            shared_remove_env_vars+=("CRISIS_ALERT_PUSH_API_BASE_URL")
           fi
 
           if [ -n "${CRISIS_ALERT_PUSH_DEVICE:-}" ]; then
-            env_pairs+=("CRISIS_ALERT_PUSH_DEVICE=${CRISIS_ALERT_PUSH_DEVICE}")
+            shared_env_pairs+=("CRISIS_ALERT_PUSH_DEVICE=${CRISIS_ALERT_PUSH_DEVICE}")
           else
-            remove_env_vars+=("CRISIS_ALERT_PUSH_DEVICE")
+            shared_remove_env_vars+=("CRISIS_ALERT_PUSH_DEVICE")
           fi
 
           if [ -n "${CRISIS_ALERT_PUSH_PRIORITY:-}" ]; then
-            env_pairs+=("CRISIS_ALERT_PUSH_PRIORITY=${CRISIS_ALERT_PUSH_PRIORITY}")
+            shared_env_pairs+=("CRISIS_ALERT_PUSH_PRIORITY=${CRISIS_ALERT_PUSH_PRIORITY}")
           else
-            remove_env_vars+=("CRISIS_ALERT_PUSH_PRIORITY")
+            shared_remove_env_vars+=("CRISIS_ALERT_PUSH_PRIORITY")
           fi
 
           if [ -n "${CRISIS_ALERT_PUSH_TAGS:-}" ]; then
-            env_pairs+=("CRISIS_ALERT_PUSH_TAGS=${CRISIS_ALERT_PUSH_TAGS}")
+            shared_env_pairs+=("CRISIS_ALERT_PUSH_TAGS=${CRISIS_ALERT_PUSH_TAGS}")
           else
-            remove_env_vars+=("CRISIS_ALERT_PUSH_TAGS")
+            shared_remove_env_vars+=("CRISIS_ALERT_PUSH_TAGS")
           fi
 
           if [ -n "${CRISIS_ALERT_PUSH_BODY_MAX_CHARS:-}" ]; then
-            env_pairs+=("CRISIS_ALERT_PUSH_BODY_MAX_CHARS=${CRISIS_ALERT_PUSH_BODY_MAX_CHARS}")
+            shared_env_pairs+=("CRISIS_ALERT_PUSH_BODY_MAX_CHARS=${CRISIS_ALERT_PUSH_BODY_MAX_CHARS}")
           else
-            remove_env_vars+=("CRISIS_ALERT_PUSH_BODY_MAX_CHARS")
+            shared_remove_env_vars+=("CRISIS_ALERT_PUSH_BODY_MAX_CHARS")
           fi
 
-          if [ -n "${EXECUTION_REPORT_GCS_URI:-}" ]; then
-            env_pairs+=("EXECUTION_REPORT_GCS_URI=${EXECUTION_REPORT_GCS_URI}")
-          else
-            remove_env_vars+=("EXECUTION_REPORT_GCS_URI")
-          fi
+          for target_index in "${!target_services[@]}"; do
+            cloud_run_service="${target_services[${target_index}]}"
+            mapfile -t target_env_pairs < <(emit_target_env_pairs "${target_index}")
+            mapfile -t target_remove_env_vars < <(emit_target_remove_env_vars "${target_index}")
+            env_pairs=("${target_env_pairs[@]}" "${shared_env_pairs[@]}")
+            remove_env_vars=("${target_remove_env_vars[@]}" "${shared_remove_env_vars[@]}")
+            secret_pairs=("${shared_secret_pairs[@]}")
+            remove_secret_vars=("${shared_remove_secret_vars[@]}")
 
-          for cloud_run_service in "${target_services[@]}"; do
             gcloud_args=(
               run services update "${cloud_run_service}"
               --region "${CLOUD_RUN_REGION}"
