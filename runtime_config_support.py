@@ -96,6 +96,12 @@ class PlatformRuntimeSettings:
     crisis_alert_push_priority: str | None = None
     crisis_alert_push_tags: str | None = None
     crisis_alert_push_body_max_chars: str | None = None
+    crisis_alert_telegram_chat_ids: tuple[str, ...] = ()
+    crisis_alert_telegram_bot_token: str | None = None
+    crisis_alert_telegram_api_base_url: str | None = None
+    crisis_alert_telegram_parse_mode: str | None = None
+    crisis_alert_telegram_disable_web_page_preview: str | None = None
+    crisis_alert_telegram_body_max_chars: str | None = None
     runtime_target: RuntimeTarget | None = None
 
 
@@ -273,6 +279,24 @@ def load_platform_runtime_settings(
         ),
         crisis_alert_push_body_max_chars=first_non_empty(
             os.getenv("CRISIS_ALERT_PUSH_BODY_MAX_CHARS")
+        ),
+        crisis_alert_telegram_chat_ids=split_env_list(
+            os.getenv("CRISIS_ALERT_TELEGRAM_CHAT_IDS")
+        ),
+        crisis_alert_telegram_bot_token=first_non_empty(
+            os.getenv("CRISIS_ALERT_TELEGRAM_BOT_TOKEN")
+        ),
+        crisis_alert_telegram_api_base_url=first_non_empty(
+            os.getenv("CRISIS_ALERT_TELEGRAM_API_BASE_URL")
+        ),
+        crisis_alert_telegram_parse_mode=first_non_empty(
+            os.getenv("CRISIS_ALERT_TELEGRAM_PARSE_MODE")
+        ),
+        crisis_alert_telegram_disable_web_page_preview=first_non_empty(
+            os.getenv("CRISIS_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW")
+        ),
+        crisis_alert_telegram_body_max_chars=first_non_empty(
+            os.getenv("CRISIS_ALERT_TELEGRAM_BODY_MAX_CHARS")
         ),
         runtime_target=runtime_target,
     )

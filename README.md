@@ -112,13 +112,15 @@ For IBKR, keep `paper` as a single account-group entry. If you later add live ac
 | `TELEGRAM_TOKEN` | Yes | Telegram bot token. For Cloud Run, prefer a Secret Manager reference instead of a literal env var. |
 | `GLOBAL_TELEGRAM_CHAT_ID` | Yes | Telegram chat ID used by this service. |
 | `NOTIFY_LANG` | No | `en` (default) or `zh` |
-| `CRISIS_ALERT_CHANNELS` | No | Optional crisis alert channel list: `email`, `sms`, and/or `push`. |
+| `CRISIS_ALERT_CHANNELS` | No | Optional crisis alert channel list: `email`, `sms`, `push`, and/or `telegram`. |
 | `CRISIS_ALERT_EMAIL_RECIPIENTS` | No | Comma/semicolon/newline-separated email-form recipients. Use a normal mailbox for email-only delivery, or a Google Voice-associated mailbox/address to also trigger Google Voice prompts. |
 | `CRISIS_ALERT_EMAIL_SENDER_EMAIL` | No | Sender email address used for crisis alert email. Gmail is the default transport, but the sender naming is provider-neutral. |
 | `CRISIS_ALERT_EMAIL_SENDER_PASSWORD` | No | Sender SMTP password or app password. For Cloud Run, prefer `CRISIS_ALERT_EMAIL_SENDER_PASSWORD_SECRET_NAME` in env sync. |
 | `CRISIS_ALERT_EMAIL_SMTP_HOST` | No | Optional SMTP host override. Defaults to Gmail SMTP when unset. |
 | `CRISIS_ALERT_EMAIL_SMTP_PORT` | No | Optional SMTP port override. Defaults to `465` when unset. |
 | `CRISIS_ALERT_EMAIL_SMTP_SECURITY` | No | Optional SMTP security override: `ssl`, `starttls`, or `none`. Defaults to `ssl` when unset. |
+| `CRISIS_ALERT_TELEGRAM_CHAT_IDS` | No | Dedicated crisis-alert Telegram chat IDs. Separate from the strategy-cycle Telegram chat. |
+| `CRISIS_ALERT_TELEGRAM_BOT_TOKEN` | No | Dedicated crisis-alert Telegram bot token. For Cloud Run, prefer `CRISIS_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME` in env sync. |
 
 The selected account-group entry must provide at least:
 
@@ -426,13 +428,15 @@ IBKR 账户
 | `TELEGRAM_TOKEN` | 是 | Telegram 机器人 Token。Cloud Run 上更推荐走 Secret Manager 引用，不要直接写成明文 env。 |
 | `GLOBAL_TELEGRAM_CHAT_ID` | 是 | 这个服务使用的 Telegram Chat ID。 |
 | `NOTIFY_LANG` | 否 | `en`（默认）或 `zh` |
-| `CRISIS_ALERT_CHANNELS` | 否 | 可选危机告警通道列表：`email`、`sms` 和/或 `push`。 |
+| `CRISIS_ALERT_CHANNELS` | 否 | 可选危机告警通道列表：`email`、`sms`、`push` 和/或 `telegram`。 |
 | `CRISIS_ALERT_EMAIL_RECIPIENTS` | 否 | 通知收件邮箱。普通邮箱只收邮件；关联 Google Voice 的邮箱/地址会额外触发 Google Voice 提醒。支持逗号、分号或换行分隔。 |
 | `CRISIS_ALERT_EMAIL_SENDER_EMAIL` | 否 | 邮件通知的发送方邮箱。默认传输走 Gmail SMTP，但命名不绑定 Gmail。 |
 | `CRISIS_ALERT_EMAIL_SENDER_PASSWORD` | 否 | 发送方 SMTP 密码或 app password。Cloud Run env sync 建议配置 `CRISIS_ALERT_EMAIL_SENDER_PASSWORD_SECRET_NAME`。 |
 | `CRISIS_ALERT_EMAIL_SMTP_HOST` | 否 | 可选 SMTP host 覆盖。不设置时默认 Gmail SMTP。 |
 | `CRISIS_ALERT_EMAIL_SMTP_PORT` | 否 | 可选 SMTP port 覆盖。不设置时默认 `465`。 |
 | `CRISIS_ALERT_EMAIL_SMTP_SECURITY` | 否 | 可选 SMTP 加密方式：`ssl`、`starttls` 或 `none`。不设置时默认 `ssl`。 |
+| `CRISIS_ALERT_TELEGRAM_CHAT_IDS` | 否 | 危机告警专用 Telegram chat ID，和常规策略周期 Telegram 分开。 |
+| `CRISIS_ALERT_TELEGRAM_BOT_TOKEN` | 否 | 危机告警专用 Telegram bot token。Cloud Run env sync 建议配置 `CRISIS_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME`。 |
 
 选中的账号组配置里，至少要有：
 

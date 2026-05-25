@@ -46,6 +46,12 @@ def strategy_module_factory(monkeypatch):
             "CRISIS_ALERT_PUSH_PRIORITY": None,
             "CRISIS_ALERT_PUSH_TAGS": None,
             "CRISIS_ALERT_PUSH_BODY_MAX_CHARS": None,
+            "CRISIS_ALERT_TELEGRAM_CHAT_IDS": None,
+            "CRISIS_ALERT_TELEGRAM_BOT_TOKEN": None,
+            "CRISIS_ALERT_TELEGRAM_API_BASE_URL": None,
+            "CRISIS_ALERT_TELEGRAM_PARSE_MODE": None,
+            "CRISIS_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW": None,
+            "CRISIS_ALERT_TELEGRAM_BODY_MAX_CHARS": None,
         }
         defaults.update(env_overrides)
         if "RUNTIME_TARGET_JSON" not in defaults:

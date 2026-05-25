@@ -61,6 +61,12 @@ jobs:
       CRISIS_ALERT_PUSH_PRIORITY: ${{ vars.CRISIS_ALERT_PUSH_PRIORITY }}
       CRISIS_ALERT_PUSH_TAGS: ${{ vars.CRISIS_ALERT_PUSH_TAGS }}
       CRISIS_ALERT_PUSH_BODY_MAX_CHARS: ${{ vars.CRISIS_ALERT_PUSH_BODY_MAX_CHARS }}
+      CRISIS_ALERT_TELEGRAM_CHAT_IDS: ${{ vars.CRISIS_ALERT_TELEGRAM_CHAT_IDS }}
+      CRISIS_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME: ${{ vars.CRISIS_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME }}
+      CRISIS_ALERT_TELEGRAM_API_BASE_URL: ${{ vars.CRISIS_ALERT_TELEGRAM_API_BASE_URL }}
+      CRISIS_ALERT_TELEGRAM_PARSE_MODE: ${{ vars.CRISIS_ALERT_TELEGRAM_PARSE_MODE }}
+      CRISIS_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW: ${{ vars.CRISIS_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW }}
+      CRISIS_ALERT_TELEGRAM_BODY_MAX_CHARS: ${{ vars.CRISIS_ALERT_TELEGRAM_BODY_MAX_CHARS }}
       # Strategy-owned defaults continue to come from UsEquityStrategies; this workflow only syncs platform/runtime inputs.
       EXECUTION_REPORT_GCS_URI: ${{ vars.EXECUTION_REPORT_GCS_URI }}
       IB_GATEWAY_ZONE: ${{ vars.IB_GATEWAY_ZONE }}
@@ -72,6 +78,7 @@ jobs:
       CRISIS_ALERT_SMS_AUTH_TOKEN: ${{ secrets.CRISIS_ALERT_SMS_AUTH_TOKEN }}
       CRISIS_ALERT_PUSH_APP_TOKEN: ${{ secrets.CRISIS_ALERT_PUSH_APP_TOKEN }}
       CRISIS_ALERT_PUSH_ACCESS_TOKEN: ${{ secrets.CRISIS_ALERT_PUSH_ACCESS_TOKEN }}
+      CRISIS_ALERT_TELEGRAM_BOT_TOKEN: ${{ secrets.CRISIS_ALERT_TELEGRAM_BOT_TOKEN }}
     steps:
       - name: Check whether env sync is enabled
         id: config
@@ -366,6 +373,17 @@ jobs:
             shared_remove_secret_vars+=("CRISIS_ALERT_PUSH_ACCESS_TOKEN")
           fi
 
+          if [ -n "${CRISIS_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME:-}" ]; then
+            shared_secret_pairs+=("CRISIS_ALERT_TELEGRAM_BOT_TOKEN=${CRISIS_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME}:latest")
+            shared_remove_env_vars+=("CRISIS_ALERT_TELEGRAM_BOT_TOKEN")
+          elif [ -n "${CRISIS_ALERT_TELEGRAM_BOT_TOKEN:-}" ]; then
+            shared_env_pairs+=("CRISIS_ALERT_TELEGRAM_BOT_TOKEN=${CRISIS_ALERT_TELEGRAM_BOT_TOKEN}")
+            shared_remove_secret_vars+=("CRISIS_ALERT_TELEGRAM_BOT_TOKEN")
+          else
+            shared_remove_env_vars+=("CRISIS_ALERT_TELEGRAM_BOT_TOKEN")
+            shared_remove_secret_vars+=("CRISIS_ALERT_TELEGRAM_BOT_TOKEN")
+          fi
+
           if [ -n "${CRISIS_ALERT_CHANNELS:-}" ]; then
             shared_env_pairs+=("CRISIS_ALERT_CHANNELS=${CRISIS_ALERT_CHANNELS}")
           else
@@ -484,6 +502,36 @@ jobs:
             shared_env_pairs+=("CRISIS_ALERT_PUSH_BODY_MAX_CHARS=${CRISIS_ALERT_PUSH_BODY_MAX_CHARS}")
           else
             shared_remove_env_vars+=("CRISIS_ALERT_PUSH_BODY_MAX_CHARS")
+          fi
+
+          if [ -n "${CRISIS_ALERT_TELEGRAM_CHAT_IDS:-}" ]; then
+            shared_env_pairs+=("CRISIS_ALERT_TELEGRAM_CHAT_IDS=${CRISIS_ALERT_TELEGRAM_CHAT_IDS}")
+          else
+            shared_remove_env_vars+=("CRISIS_ALERT_TELEGRAM_CHAT_IDS")
+          fi
+
+          if [ -n "${CRISIS_ALERT_TELEGRAM_API_BASE_URL:-}" ]; then
+            shared_env_pairs+=("CRISIS_ALERT_TELEGRAM_API_BASE_URL=${CRISIS_ALERT_TELEGRAM_API_BASE_URL}")
+          else
+            shared_remove_env_vars+=("CRISIS_ALERT_TELEGRAM_API_BASE_URL")
+          fi
+
+          if [ -n "${CRISIS_ALERT_TELEGRAM_PARSE_MODE:-}" ]; then
+            shared_env_pairs+=("CRISIS_ALERT_TELEGRAM_PARSE_MODE=${CRISIS_ALERT_TELEGRAM_PARSE_MODE}")
+          else
+            shared_remove_env_vars+=("CRISIS_ALERT_TELEGRAM_PARSE_MODE")
+          fi
+
+          if [ -n "${CRISIS_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW:-}" ]; then
+            shared_env_pairs+=("CRISIS_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW=${CRISIS_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW}")
+          else
+            shared_remove_env_vars+=("CRISIS_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW")
+          fi
+
+          if [ -n "${CRISIS_ALERT_TELEGRAM_BODY_MAX_CHARS:-}" ]; then
+            shared_env_pairs+=("CRISIS_ALERT_TELEGRAM_BODY_MAX_CHARS=${CRISIS_ALERT_TELEGRAM_BODY_MAX_CHARS}")
+          else
+            shared_remove_env_vars+=("CRISIS_ALERT_TELEGRAM_BODY_MAX_CHARS")
           fi
 
           for target_index in "${!target_services[@]}"; do
