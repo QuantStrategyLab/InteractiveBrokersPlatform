@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 
-from application.runtime_strategy_adapters import build_runtime_strategy_adapters
+from application.runtime_strategy_adapters import _coerce_yfinance_candles, build_runtime_strategy_adapters
 
 
 def test_strategy_plugin_signals_are_loaded_reported_and_rendered():
@@ -96,6 +96,31 @@ def test_historical_candles_fall_back_when_ibkr_history_is_empty():
     )
 
     assert adapters.get_historical_candles("fake-ib", "QQQ") == fallback
+
+
+def test_yfinance_candle_coercion_handles_single_symbol_multiindex_columns():
+    frame = pd.DataFrame(
+        [[100.0, 101.0, 102.0, 99.0, 1_000_000.0]],
+        index=pd.to_datetime(["2026-05-22"]),
+        columns=pd.MultiIndex.from_tuples(
+            [
+                ("Open", "QQQ"),
+                ("Close", "QQQ"),
+                ("High", "QQQ"),
+                ("Low", "QQQ"),
+                ("Volume", "QQQ"),
+            ]
+        ),
+    )
+
+    candles = _coerce_yfinance_candles(frame)
+
+    assert len(candles) == 1
+    assert candles[0]["open"] == 100.0
+    assert candles[0]["close"] == 101.0
+    assert candles[0]["high"] == 102.0
+    assert candles[0]["low"] == 99.0
+    assert candles[0]["volume"] == 1_000_000.0
 
 
 def test_strategy_plugin_true_crisis_builds_escalated_alert_message():
