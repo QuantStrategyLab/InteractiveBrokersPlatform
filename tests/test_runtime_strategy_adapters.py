@@ -59,14 +59,17 @@ def test_strategy_plugin_signals_are_loaded_reported_and_rendered():
     assert adapters.build_strategy_plugin_alert_messages(signals) == ()
 
 
-def test_historical_close_falls_back_when_ibkr_history_is_empty():
+def test_historical_close_uses_fallback_before_ibkr_history():
+    def fail_broker_history(*_args, **_kwargs):
+        raise AssertionError("broker historical close should not be called when fallback has data")
+
     adapters = build_runtime_strategy_adapters(
         strategy_runtime=SimpleNamespace(),
         strategy_profile="tqqq_growth_income",
         translator=lambda key, **_kwargs: key,
         pacing_sec=0.0,
         resolve_run_as_of_date_fn=lambda: None,
-        fetch_historical_price_series_fn=lambda *_args, **_kwargs: SimpleNamespace(points=()),
+        fetch_historical_price_series_fn=fail_broker_history,
         fetch_historical_price_candles_fn=lambda *_args, **_kwargs: (),
         fallback_historical_candles_fn=lambda symbol, **_kwargs: [
             {"as_of": pd.Timestamp("2026-05-21"), "close": 100.0},
@@ -81,7 +84,10 @@ def test_historical_close_falls_back_when_ibkr_history_is_empty():
     assert [str(item.date()) for item in history.index] == ["2026-05-21", "2026-05-22"]
 
 
-def test_historical_candles_fall_back_when_ibkr_history_is_empty():
+def test_historical_candles_use_fallback_before_ibkr_history():
+    def fail_broker_history(*_args, **_kwargs):
+        raise AssertionError("broker historical candles should not be called when fallback has data")
+
     fallback = [{"as_of": pd.Timestamp("2026-05-22"), "close": 101.0}]
     adapters = build_runtime_strategy_adapters(
         strategy_runtime=SimpleNamespace(),
@@ -90,12 +96,35 @@ def test_historical_candles_fall_back_when_ibkr_history_is_empty():
         pacing_sec=0.0,
         resolve_run_as_of_date_fn=lambda: None,
         fetch_historical_price_series_fn=lambda *_args, **_kwargs: SimpleNamespace(points=()),
-        fetch_historical_price_candles_fn=lambda *_args, **_kwargs: (),
+        fetch_historical_price_candles_fn=fail_broker_history,
         fallback_historical_candles_fn=lambda symbol, **_kwargs: fallback,
         map_strategy_decision_fn=lambda *_args, **_kwargs: (),
     )
 
     assert adapters.get_historical_candles("fake-ib", "QQQ") == fallback
+
+
+def test_historical_close_uses_ibkr_history_when_fallback_is_empty():
+    adapters = build_runtime_strategy_adapters(
+        strategy_runtime=SimpleNamespace(),
+        strategy_profile="tqqq_growth_income",
+        translator=lambda key, **_kwargs: key,
+        pacing_sec=0.0,
+        resolve_run_as_of_date_fn=lambda: None,
+        fetch_historical_price_series_fn=lambda *_args, **_kwargs: SimpleNamespace(
+            points=(
+                SimpleNamespace(as_of=pd.Timestamp("2026-05-21"), close=99.0),
+                SimpleNamespace(as_of=pd.Timestamp("2026-05-22"), close=100.0),
+            )
+        ),
+        fetch_historical_price_candles_fn=lambda *_args, **_kwargs: (),
+        fallback_historical_candles_fn=lambda symbol, **_kwargs: (),
+        map_strategy_decision_fn=lambda *_args, **_kwargs: (),
+    )
+
+    history = adapters.get_historical_close("fake-ib", "QQQ")
+
+    assert list(history) == [99.0, 100.0]
 
 
 def test_yfinance_candle_coercion_handles_single_symbol_multiindex_columns():
