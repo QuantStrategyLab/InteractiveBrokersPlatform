@@ -391,7 +391,7 @@ def test_trade_notification_keeps_detailed_logs_out_of_compact_message():
         separator="---",
         strategy_display_name="TQQQ Growth Income",
         extra_notification_lines=(
-            "🆔 Account: U18308207",
+            "🆔 Account: U1234567",
             "🧩 Plugin: Crisis Watch Notice | status: no crisis detected | notice: no action",
         ),
     )
@@ -401,7 +401,7 @@ def test_trade_notification_keeps_detailed_logs_out_of_compact_message():
     assert "📌 Strategy portfolio" in notification.compact_text
     assert "⏱ Timing: 2026-04-01 -> 2026-04-02 (next trading day)" in notification.compact_text
     assert "no_order_plan_reason reason=min_notional:QQQ,TQQQ" in notification.compact_text
-    assert notification.compact_text.index("🆔 Account: U18308207") < notification.compact_text.index("🧩 Plugin:")
+    assert notification.compact_text.index("🆔 Account: U1234567") < notification.compact_text.index("🧩 Plugin:")
 
 
 def test_run_strategy_core_writes_reconciliation_record_under_strategy_dir(tmp_path):

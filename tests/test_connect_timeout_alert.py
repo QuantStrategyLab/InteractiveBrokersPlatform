@@ -105,7 +105,7 @@ def install_stub_modules():
         strategy_display_name="TQQQ Growth Income",
         strategy_domain="us_equity",
         account_group="default",
-        account_ids=("U18308207",),
+        account_ids=("U1234567",),
         service_name="interactive-brokers-platform",
         ib_gateway_instance_name="127.0.0.1",
         ib_gateway_zone=None,

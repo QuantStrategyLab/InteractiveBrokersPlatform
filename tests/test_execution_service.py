@@ -233,8 +233,8 @@ def test_execute_rebalance_routes_order_to_single_account_id(monkeypatch, tmp_pa
 
         def accountValues(self):
             return [
-                SimpleNamespace(account="U18308207", tag="AvailableFunds", currency="USD", value="5000"),
-                SimpleNamespace(account="U15998061", tag="AvailableFunds", currency="USD", value="100"),
+                SimpleNamespace(account="U1234567", tag="AvailableFunds", currency="USD", value="5000"),
+                SimpleNamespace(account="U7654321", tag="AvailableFunds", currency="USD", value="100"),
             ]
 
     submitted = []
@@ -260,7 +260,7 @@ def test_execute_rebalance_routes_order_to_single_account_id(monkeypatch, tmp_pa
         strategy_profile="tqqq_growth_income",
         account_group="live-tqqq",
         service_name="ibkr-tqqq-live",
-        account_ids=("U18308207",),
+        account_ids=("U1234567",),
         signal_metadata=_signal_metadata({"TQQQ": 1.0}, risk_symbols=("TQQQ",), trade_date="2026-04-01"),
         dry_run_only=False,
         cash_reserve_ratio=0.0,
@@ -272,8 +272,8 @@ def test_execute_rebalance_routes_order_to_single_account_id(monkeypatch, tmp_pa
     )
 
     assert len(submitted) == 1
-    assert submitted[0].account_id == "U18308207"
-    assert summary["order_account_id"] == "U18308207"
+    assert submitted[0].account_id == "U1234567"
+    assert summary["order_account_id"] == "U1234567"
 
 
 def test_execute_rebalance_rejects_multiple_order_account_ids():
@@ -293,7 +293,7 @@ def test_execute_rebalance_rejects_multiple_order_account_ids():
             translator=translate,
             strategy_symbols=["TQQQ"],
             signal_metadata=_signal_metadata({"TQQQ": 1.0}, risk_symbols=("TQQQ",)),
-            account_ids=("U18308207", "U15998061"),
+            account_ids=("U1234567", "U7654321"),
             dry_run_only=False,
             cash_reserve_ratio=0.0,
             rebalance_threshold_ratio=0.02,

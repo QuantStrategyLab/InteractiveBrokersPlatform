@@ -66,11 +66,11 @@ def test_submit_order_intent_preserves_account_id():
 
     report = submit_order_intent(
         ib,
-        OrderIntent(symbol="AAPL", side="buy", quantity=3, account_id="U18308207"),
+        OrderIntent(symbol="AAPL", side="buy", quantity=3, account_id="U1234567"),
         wait_seconds=0,
         stock_factory=fake_stock,
         market_order_factory=FakeMarketOrder,
     )
 
-    assert ib.placed_order.account == "U18308207"
-    assert report.raw_payload["account_id"] == "U18308207"
+    assert ib.placed_order.account == "U1234567"
+    assert report.raw_payload["account_id"] == "U1234567"
