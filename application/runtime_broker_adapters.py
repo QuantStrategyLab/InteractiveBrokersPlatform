@@ -48,6 +48,24 @@ class IBKRRuntimeBrokerAdapters:
     sleep_fn: Any
     printer: Any = print
 
+    def validate_configured_accounts(self, ib):
+        if not self.account_ids:
+            return
+        managed_accounts_fn = getattr(ib, "managedAccounts", None)
+        if not callable(managed_accounts_fn):
+            return
+        managed_accounts = {str(account_id).strip() for account_id in (managed_accounts_fn() or ())}
+        missing_accounts = tuple(
+            account_id for account_id in self.account_ids if str(account_id).strip() not in managed_accounts
+        )
+        if not missing_accounts:
+            return
+        raise RuntimeError(
+            "Configured IBKR account_ids are not available to the current Gateway username "
+            f"for account_group={self.account_group!r}; "
+            f"missing_count={len(missing_accounts)}; managed_count={len(managed_accounts)}."
+        )
+
     def fetch_account_portfolio_snapshot(self, ib):
         if self.account_ids:
             return self.fetch_portfolio_snapshot_fn(ib, account_ids=self.account_ids)
@@ -68,12 +86,20 @@ class IBKRRuntimeBrokerAdapters:
                 flush=True,
             )
             try:
-                return self.connect_ib_fn(
+                ib = self.connect_ib_fn(
                     host,
                     self.ib_port,
                     client_id,
                     timeout=self.connect_timeout_seconds,
                 )
+                try:
+                    self.validate_configured_accounts(ib)
+                except Exception:
+                    disconnect_fn = getattr(ib, "disconnect", None)
+                    if callable(disconnect_fn):
+                        disconnect_fn()
+                    raise
+                return ib
             except (ConnectionError, TimeoutError, OSError) as exc:
                 last_error = exc
                 self.printer(

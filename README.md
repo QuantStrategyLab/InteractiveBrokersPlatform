@@ -207,6 +207,8 @@ Recommended account-group config payload:
 
 For live multi-account rollout, keep one Cloud Run service per live account group. Each live group should carry exactly one `account_ids` value so portfolio reads, pending/fill guards, and submitted IBKR orders are all routed to that account.
 
+If the IB Gateway username can access multiple linked IBKR accounts, keep those broader login credentials in the Gateway layer and restrict each Cloud Run service with its selected account-group `account_ids` value. At connect time the service validates that the configured account is visible in IBKR `managedAccounts`; if it is not visible, the cycle fails before portfolio reads or order submission. This keeps open-source configuration examples generic while allowing private deployments to map separate services to separate live accounts.
+
 See [`docs/examples/ibkr-account-groups.paper.json`](docs/examples/ibkr-account-groups.paper.json) for a ready-to-edit starter example, and [`docs/ibkr_runtime_rollout.md`](docs/ibkr_runtime_rollout.md) for the exact rollout steps to get `ACCOUNT_GROUP=paper` running.
 
 Current behavior is fail-fast:
@@ -490,6 +492,8 @@ IB_GATEWAY_IP_MODE=internal
 仓库里也提供了一个可以直接改的起始样例：[`docs/examples/ibkr-account-groups.paper.json`](docs/examples/ibkr-account-groups.paper.json)。如果你要按 `ACCOUNT_GROUP=paper` 先落地，直接看 [`docs/ibkr_runtime_rollout.md`](docs/ibkr_runtime_rollout.md)。
 
 实盘多账户建议一个 UID 对应一个 Cloud Run 服务和一个账号组。每个实盘账号组只放一个 `account_ids` 值；运行时会用它过滤持仓、pending/fill 检查，并把同一个 UID 写进 IBKR 订单的 `order.account`。
+
+如果 IB Gateway 登录用户名本身能访问多个 linked IBKR 账户，仍然建议把这种更宽的登录权限留在 Gateway 层，每个 Cloud Run 服务只通过自己选中的账号组 `account_ids` 限定一个交易账户。服务连接成功后会校验该账号是否出现在 IBKR `managedAccounts` 里；如果不可见，会在读取组合或提交订单之前失败。开源仓库只保留通用示例，私有实盘映射放在 Secret Manager 等运行配置里。
 
 当前行为改成了 fail-fast：
 
