@@ -173,7 +173,27 @@ class IBKRRuntimeStrategyAdapters:
             strategy_label=self.strategy_profile,
         )
 
+    def _get_fallback_historical_candles(self, symbol, *, duration: str, bar_size: str) -> tuple[dict[str, Any], ...]:
+        if self.fallback_historical_candles_fn is None:
+            return ()
+        try:
+            return tuple(self.fallback_historical_candles_fn(symbol, duration=duration, bar_size=bar_size) or ())
+        except Exception:
+            return ()
+
     def get_historical_close(self, ib, symbol, duration="2 Y", bar_size="1 day"):
+        fallback_candles = self._get_fallback_historical_candles(symbol, duration=duration, bar_size=bar_size)
+        fallback_points = tuple(
+            (candle["as_of"], candle["close"])
+            for candle in fallback_candles
+            if "close" in candle
+        )
+        if fallback_points:
+            return pd.Series(
+                data=[close for _, close in fallback_points],
+                index=pd.to_datetime([as_of for as_of, _ in fallback_points]),
+            )
+
         series = self.fetch_historical_price_series_fn(
             ib,
             symbol,
@@ -186,31 +206,19 @@ class IBKRRuntimeStrategyAdapters:
                 data=[point.close for point in points],
                 index=pd.to_datetime([point.as_of for point in points]),
             )
-        if self.fallback_historical_candles_fn is not None:
-            candles = self.fallback_historical_candles_fn(symbol, duration=duration, bar_size=bar_size)
-            fallback_points = tuple(
-                (candle["as_of"], candle["close"])
-                for candle in candles
-                if "close" in candle
-            )
-        else:
-            fallback_points = ()
-        if not fallback_points:
-            return pd.Series(dtype=float)
-        return pd.Series(
-            data=[close for _, close in fallback_points],
-            index=pd.to_datetime([as_of for as_of, _ in fallback_points]),
-        )
+        return pd.Series(dtype=float)
 
     def get_historical_candles(self, ib, symbol, duration="2 Y", bar_size="1 day"):
+        fallback_candles = self._get_fallback_historical_candles(symbol, duration=duration, bar_size=bar_size)
+        if fallback_candles:
+            return list(fallback_candles)
+
         candles = self.fetch_historical_price_candles_fn(
             ib,
             symbol,
             duration=duration,
             bar_size=bar_size,
         )
-        if not candles and self.fallback_historical_candles_fn is not None:
-            return self.fallback_historical_candles_fn(symbol, duration=duration, bar_size=bar_size)
         return candles
 
     def compute_signals(self, ib, current_holdings):
