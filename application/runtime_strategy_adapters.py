@@ -48,14 +48,26 @@ def _bar_size_to_yfinance_interval(bar_size: str) -> str:
     return "1d"
 
 
-def _frame_column(frame: pd.DataFrame, name: str):
+def _coerce_frame_selection_to_series(selection: Any) -> pd.Series | None:
+    if isinstance(selection, pd.Series):
+        return selection
+    if isinstance(selection, pd.DataFrame) and len(selection.columns) > 0:
+        return selection.iloc[:, 0]
+    return None
+
+
+def _frame_column(frame: pd.DataFrame, name: str) -> pd.Series | None:
     if name in frame.columns:
-        return frame[name]
+        series = _coerce_frame_selection_to_series(frame[name])
+        if series is not None:
+            return series
     if isinstance(frame.columns, pd.MultiIndex):
         expected = name.lower()
         for column in frame.columns:
             if any(str(part).lower() == expected for part in column):
-                return frame[column]
+                series = _coerce_frame_selection_to_series(frame[column])
+                if series is not None:
+                    return series
     return None
 
 
