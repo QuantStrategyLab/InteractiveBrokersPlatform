@@ -56,6 +56,10 @@ def test_build_translator_supports_chinese():
         )
         == "🧩 插件：TACO 抄底观察通知 | 状态：TACO 反弹确认 | 提醒：通知人工复核"
     )
+    assert translate("strategy_plugin_alert_guidance", guidance="小仓位博弈") == "处置建议：小仓位博弈"
+    assert translate("strategy_plugin_alert_scope_note", scope_note="不会自动下单") == "执行范围：不会自动下单"
+    assert "降低杠杆" in translate("strategy_plugin_guidance_crisis_response_shadow_true_crisis_defend")
+    assert "小仓位" in translate("strategy_plugin_guidance_taco_rebound_shadow_taco_rebound_notify_manual_review")
     assert translate("account_ids_detail", account_ids="U18308207") == "🆔 账户: U18308207"
     assert (
         translate(
