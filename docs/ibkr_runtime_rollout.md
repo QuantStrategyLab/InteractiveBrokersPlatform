@@ -34,8 +34,9 @@
 
 ### Secret Manager 里的 `ibkr-account-groups` 管 broker 运行身份
 
-至少放这些字段：
+Gateway 后端至少放这些字段：
 
+- `execution_backend`：默认是 `gateway`，建议显式写出来。
 - `ib_gateway_instance_name`
 - `ib_gateway_mode`
 - `ib_client_id`
@@ -46,7 +47,9 @@
 - `ib_gateway_port`：同一台 VM 上跑多个 Gateway 时填写；不填则 live 默认 `4001`，paper 默认 `4002`。
 - `ib_gateway_ip_mode`
 
-当前代码里，`ib_gateway_instance_name`、`ib_gateway_mode`、`ib_client_id` 已经不再从 Cloud Run env 读了，所以不要继续把它们放在 GitHub Repository Variables 里当主配置源。
+当前代码里，`execution_backend`、`ib_gateway_instance_name`、`ib_gateway_mode`、`ib_client_id` 已经不再从 Cloud Run env 读了，所以不要继续把它们放在 GitHub Repository Variables 里当主配置源。
+
+如果账号组未来交给 QuantConnect Cloud 管理，可以把 `execution_backend` 设为 `quantconnect`。这时该账号组不再要求 Gateway 主机、端口和 client id，但要在私有配置里提供 QuantConnect 项目、节点、compile id 和 Secret 名。当前平台只识别并保护这个后端，不会把实盘账号配置写入仓库；真正下单仍需 QuantConnect 算法项目消费同一套策略/目标配置。
 
 ## 2. `ibkr-account-groups` 怎么配
 
@@ -67,6 +70,7 @@ cp docs/examples/ibkr-account-groups.paper.json /tmp/ibkr-account-groups.json
 {
   "groups": {
     "paper": {
+      "execution_backend": "gateway",
       "ib_gateway_instance_name": "interactive-brokers-quant-instance",
       "ib_gateway_zone": "us-central1-c",
       "ib_gateway_mode": "paper",
@@ -83,6 +87,7 @@ cp docs/examples/ibkr-account-groups.paper.json /tmp/ibkr-account-groups.json
 说明：
 
 - `paper`：就是这次先跑通的账号组名，要和 Cloud Run env 里的 `ACCOUNT_GROUP=paper` 一致。
+- `execution_backend`：`gateway` 表示继续通过自托管 IB Gateway 连接和下单；`quantconnect` 表示该账号组交给 QuantConnect 路径，当前服务不会误连 Gateway。
 - `ib_gateway_instance_name`：GCE 上 IB Gateway 实例名。
 - `ib_gateway_zone`：建议现在就配上。当前推荐是按实例名解析内网 IP，这样 Cloud Run 不用手填固定私网 IP。
 - `ib_gateway_mode`：`paper` 或 `live`。
@@ -91,6 +96,28 @@ cp docs/examples/ibkr-account-groups.paper.json /tmp/ibkr-account-groups.json
 - `ib_client_id`：这个账号组对应的 client id。
 - `service_name`：当前只是预留元数据，建议先填成现有 Cloud Run 服务名，后面多账号拆服务时更顺。
 - `account_ids`：实盘账号组建议只放一个 UID。运行时会用它过滤持仓、pending/fill 检查，并写入 IBKR 订单的 `order.account`；如果一个服务配置多个 UID，实盘下单会因为账户路由不明确而失败。
+
+QuantConnect 后端占位结构示例：
+
+```json
+{
+  "groups": {
+    "qc-slot": {
+      "execution_backend": "quantconnect",
+      "service_name": "interactive-brokers-qc-slot-service",
+      "account_ids": ["U00000000"],
+      "quantconnect_project_id": 12345678,
+      "quantconnect_node_id": "LN-placeholder",
+      "quantconnect_compile_id": "compile-placeholder",
+      "quantconnect_version_id": "-1",
+      "quantconnect_credentials_secret_name": "qc-api-credentials",
+      "quantconnect_brokerage_secret_name": "qc-ibkr-slot"
+    }
+  }
+}
+```
+
+上面只展示字段形状；真实账号、用户名、密码、API token 和 TOTP 不应进入仓库。
 
 把 secret 建起来：
 

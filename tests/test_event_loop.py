@@ -57,6 +57,25 @@ def test_connect_ib_retries_with_offset_client_ids(strategy_module_factory, monk
     assert observed["client_ids"] == [1, 101, 201]
 
 
+def test_connect_ib_rejects_quantconnect_execution_backend(strategy_module_factory, monkeypatch):
+    module = strategy_module_factory(
+        IB_ACCOUNT_GROUP_CONFIG_JSON=(
+            '{"groups":{"default":{"execution_backend":"quantconnect",'
+            '"account_ids":["U00000000"],"service_name":"interactive-brokers-qc-service",'
+            '"quantconnect_project_id":12345678,"quantconnect_node_id":"LN-placeholder",'
+            '"quantconnect_compile_id":"compile-placeholder"}}}'
+        )
+    )
+    monkeypatch.setattr(
+        module,
+        "ibkr_connect_ib",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should not connect gateway")),
+    )
+
+    with pytest.raises(RuntimeError, match="execution_backend='quantconnect'"):
+        module.connect_ib()
+
+
 def test_ib_connect_attempts_falls_back_when_invalid(strategy_module_factory):
     module = strategy_module_factory(IBKR_CONNECT_ATTEMPTS="0")
 

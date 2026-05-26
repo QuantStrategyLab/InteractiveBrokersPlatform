@@ -9,8 +9,11 @@ import pytest
 from runtime_config_support import (
     DEFAULT_RESERVED_CASH_FLOOR_USD,
     DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD,
+    EXECUTION_BACKEND_GATEWAY,
+    EXECUTION_BACKEND_QUANTCONNECT,
     load_platform_runtime_settings,
     parse_account_group_configs,
+    resolve_execution_backend,
     resolve_non_negative_float_env,
     resolve_optional_ratio_env,
 )
@@ -106,6 +109,7 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
     assert settings.project_id == "project-1"
+    assert settings.execution_backend == EXECUTION_BACKEND_GATEWAY
     assert settings.ib_gateway_instance_name == "ib-gateway"
     assert settings.ib_gateway_zone == ""
     assert settings.ib_gateway_mode == "paper"
@@ -137,6 +141,12 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.tg_token is None
     assert settings.tg_chat_id is None
     assert settings.strategy_plugin_mounts_json is None
+    assert settings.quantconnect_project_id is None
+    assert settings.quantconnect_node_id is None
+    assert settings.quantconnect_compile_id is None
+    assert settings.quantconnect_version_id is None
+    assert settings.quantconnect_credentials_secret_name is None
+    assert settings.quantconnect_brokerage_secret_name is None
     assert settings.crisis_alert_channels == ()
     assert settings.crisis_alert_email_recipients == ()
     assert settings.crisis_alert_email_sender_email is None
@@ -231,6 +241,52 @@ def test_load_platform_runtime_settings_supports_explicit_group_config_values(mo
     assert settings.tg_token == "token-1"
     assert settings.tg_chat_id == "chat-1"
     assert settings.notify_lang == "zh"
+
+
+def test_load_platform_runtime_settings_supports_quantconnect_backend_without_gateway(monkeypatch):
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(SAMPLE_STRATEGY_PROFILE))
+    monkeypatch.setenv("ACCOUNT_GROUP", "qc_slot")
+    monkeypatch.setenv(
+        "IB_ACCOUNT_GROUP_CONFIG_JSON",
+        json.dumps(
+            {
+                "groups": {
+                    "qc_slot": {
+                        "execution_backend": "quantconnect",
+                        "service_name": "interactive-brokers-qc-slot-service",
+                        "account_ids": ["U00000000"],
+                        "quantconnect_project_id": 12345678,
+                        "quantconnect_node_id": "LN-placeholder",
+                        "quantconnect_compile_id": "compile-placeholder",
+                        "quantconnect_version_id": "-1",
+                        "quantconnect_credentials_secret_name": "qc-api-credentials",
+                        "quantconnect_brokerage_secret_name": "qc-ibkr-slot",
+                    }
+                }
+            }
+        ),
+    )
+
+    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
+
+    assert settings.execution_backend == EXECUTION_BACKEND_QUANTCONNECT
+    assert settings.ib_gateway_instance_name == ""
+    assert settings.ib_gateway_mode == "live"
+    assert settings.ib_gateway_port == 0
+    assert settings.ib_client_id == 0
+    assert settings.service_name == "interactive-brokers-qc-slot-service"
+    assert settings.account_ids == ("U00000000",)
+    assert settings.quantconnect_project_id == 12345678
+    assert settings.quantconnect_node_id == "LN-placeholder"
+    assert settings.quantconnect_compile_id == "compile-placeholder"
+    assert settings.quantconnect_version_id == "-1"
+    assert settings.quantconnect_credentials_secret_name == "qc-api-credentials"
+    assert settings.quantconnect_brokerage_secret_name == "qc-ibkr-slot"
+
+
+def test_resolve_execution_backend_rejects_unknown_backend():
+    with pytest.raises(EnvironmentError, match="IBKR_EXECUTION_BACKEND"):
+        resolve_execution_backend("unsupported")
 
 
 def test_load_platform_runtime_settings_reads_crisis_alert_email_config(monkeypatch):

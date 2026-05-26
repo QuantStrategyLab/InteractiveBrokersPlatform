@@ -1,6 +1,7 @@
 {
   "groups": {
     "paper": {
+      "execution_backend": "gateway",
       "ib_gateway_instance_name": "interactive-brokers-quant-instance",
       "ib_gateway_zone": "us-central1-c",
       "ib_gateway_mode": "paper",

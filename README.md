@@ -122,8 +122,9 @@ For IBKR, keep `paper` as a single account-group entry. If you later add live ac
 | `CRISIS_ALERT_TELEGRAM_CHAT_IDS` | No | Dedicated crisis-alert Telegram chat IDs. Separate from the strategy-cycle Telegram chat. |
 | `CRISIS_ALERT_TELEGRAM_BOT_TOKEN` | No | Dedicated crisis-alert Telegram bot token. For Cloud Run, prefer `CRISIS_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME` in env sync. |
 
-The selected account-group entry must provide at least:
+For the default Gateway execution backend, the selected account-group entry must provide at least:
 
+- `execution_backend` (optional; defaults to `gateway`)
 - `ib_gateway_instance_name`
 - `ib_gateway_mode`
 - `ib_client_id`
@@ -135,6 +136,8 @@ For the recommended Cloud Run deployment, also include:
 - `ib_gateway_ip_mode` (or let it default to `internal`)
 
 If you use instance-name resolution with `ib_gateway_zone`, the Cloud Run runtime service account needs `roles/compute.viewer`. If you load the payload from Secret Manager, the same runtime service account also needs `roles/secretmanager.secretAccessor` on `ibkr-account-groups`.
+
+The account-group entry may also set `execution_backend` to `quantconnect`. In that mode, Gateway host/port/client-id fields are no longer required and this Cloud Run service will fail fast instead of accidentally connecting to Gateway. The QuantConnect path is a deployment/algorithm backend: real account mapping, QuantConnect project/node/compile identifiers, API token, and IBKR brokerage credentials must stay in private runtime configuration, and a QuantConnect algorithm must consume the same strategy or target configuration before live orders can be placed.
 
 **Recommended shared-config mode**
 
@@ -194,6 +197,7 @@ Recommended account-group config payload:
 {
   "groups": {
     "paper": {
+      "execution_backend": "gateway",
       "ib_gateway_instance_name": "interactive-brokers-quant-instance",
       "ib_gateway_zone": "us-central1-c",
       "ib_gateway_mode": "paper",
@@ -220,7 +224,8 @@ Current behavior is fail-fast:
 - missing `STRATEGY_PROFILE` → startup error
 - missing `ACCOUNT_GROUP` → startup error
 - missing account-group config source → startup error
-- missing key fields in the selected group (`ib_gateway_instance_name`, `ib_gateway_mode`, `ib_client_id`) → startup error
+- missing Gateway key fields in a `gateway` group (`ib_gateway_instance_name`, `ib_gateway_mode`, `ib_client_id`) → startup error
+- direct Gateway execution requested while `execution_backend=quantconnect` → startup error before any Gateway connection attempt
 
 When `IBKR_STRATEGY_PLUGIN_MOUNTS_JSON` includes the `crisis_response_shadow` plugin, the normal strategy-cycle Telegram message still includes the compact plugin line. If the plugin signal escalates beyond `no_action` (for example `canonical_route=true_crisis`, `suggested_action=defend`/`blocked`, or `would_trade_if_enabled=true`), the service also sends independent crisis alerts through configured `CRISIS_ALERT_CHANNELS` channels.
 Alert results are written into the runtime report. Duplicate suppression uses stable plugin alert keys and stores markers under `STRATEGY_PLUGIN_ALERT_STATE_GCS_URI` when set, otherwise `EXECUTION_REPORT_GCS_URI`, with a local `/tmp` marker fallback.
@@ -444,8 +449,9 @@ IBKR 账户
 | `CRISIS_ALERT_TELEGRAM_CHAT_IDS` | 否 | 危机告警专用 Telegram chat ID，和常规策略周期 Telegram 分开。 |
 | `CRISIS_ALERT_TELEGRAM_BOT_TOKEN` | 否 | 危机告警专用 Telegram bot token。Cloud Run env sync 建议配置 `CRISIS_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME`。 |
 
-选中的账号组配置里，至少要有：
+默认 Gateway 执行后端下，选中的账号组配置里至少要有：
 
+- `execution_backend`（可选；默认 `gateway`）
 - `ib_gateway_instance_name`
 - `ib_gateway_mode`
 - `ib_client_id`
@@ -457,6 +463,8 @@ IBKR 账户
 - `ib_gateway_ip_mode`（或者直接走默认 `internal`）
 
 如果你配置了 `ib_gateway_zone` 让程序通过实例名解析内网 IP，Cloud Run runtime service account 需要 `roles/compute.viewer`。如果账号组配置来源是 Secret Manager，同一个 runtime service account 还需要对 `ibkr-account-groups` 具备 `roles/secretmanager.secretAccessor`。
+
+账号组也可以把 `execution_backend` 设为 `quantconnect`。这个模式不再要求 Gateway 主机、端口和 client id，当前 Cloud Run 服务也会 fail-fast，避免误连 Gateway。QuantConnect 路径是部署/算法后端：真实账号映射、QuantConnect project/node/compile 标识、API token 和 IBKR 券商凭证都必须留在私有运行配置里，并且需要 QuantConnect 算法项目消费同一套策略或目标配置后才能实盘下单。
 
 **推荐的共享配置模式**
 
@@ -482,6 +490,7 @@ IB_GATEWAY_IP_MODE=internal
 {
   "groups": {
     "paper": {
+      "execution_backend": "gateway",
       "ib_gateway_instance_name": "interactive-brokers-quant-instance",
       "ib_gateway_zone": "us-central1-c",
       "ib_gateway_mode": "paper",
@@ -508,7 +517,8 @@ IB_GATEWAY_IP_MODE=internal
 - 没有 `STRATEGY_PROFILE` → 启动直接报错
 - 没有 `ACCOUNT_GROUP` → 启动直接报错
 - 没有账号组配置来源 → 启动直接报错
-- 选中的账号组缺少关键字段（`ib_gateway_instance_name`、`ib_gateway_mode`、`ib_client_id`）→ 启动直接报错
+- `gateway` 账号组缺少关键字段（`ib_gateway_instance_name`、`ib_gateway_mode`、`ib_client_id`）→ 启动直接报错
+- `execution_backend=quantconnect` 时直接请求 Gateway 执行 → 启动/执行前直接报错，不会尝试连接 Gateway
 
 如果 `IBKR_STRATEGY_PLUGIN_MOUNTS_JSON` 挂载了 `crisis_response_shadow` 插件，常规策略周期 Telegram 仍会包含插件摘要行。当插件信号升级到非 `no_action`（例如 `canonical_route=true_crisis`、`suggested_action=defend`/`blocked`，或 `would_trade_if_enabled=true`）时，服务还会按 `CRISIS_ALERT_CHANNELS` 配置额外发送独立危机通知。
 告警结果会写入 runtime report。重复发送抑制使用稳定的插件告警 key；如配置了 `STRATEGY_PLUGIN_ALERT_STATE_GCS_URI` 则写入该前缀，否则复用 `EXECUTION_REPORT_GCS_URI`，并有本地 `/tmp` marker fallback。
