@@ -117,7 +117,11 @@ def test_load_strategy_runtime_uses_entrypoint_defaults_and_runtime_adapter(monk
             display_name="Tech/Communication Pullback Enhancement",
             description="test",
             required_inputs=frozenset({"feature_snapshot"}),
-            default_config={"safe_haven": "BOXX", "benchmark_symbol": "QQQ"},
+            default_config={
+                "safe_haven": "BOXX",
+                "benchmark_symbol": "QQQ",
+                "execution_rebalance_threshold_ratio": 0.0,
+            },
         )
 
         def evaluate(self, ctx):
@@ -156,6 +160,7 @@ def test_load_strategy_runtime_uses_entrypoint_defaults_and_runtime_adapter(monk
     assert runtime.merged_runtime_config["safe_haven"] == "BOXX"
     assert runtime.merged_runtime_config["benchmark_symbol"] == "SPY"
     assert runtime.merged_runtime_config["rebalance_months"] == (1, 4, 7, 10)
+    assert runtime.rebalance_threshold_ratio == 0.0
     assert runtime.status_icon == "🧲"
 
 
@@ -374,6 +379,81 @@ def test_market_history_runtime_uses_canonical_market_history_key(monkeypatch):
     assert result.metadata["signal_date"] == "2026-04-01"
     assert result.metadata["effective_date"] == "2026-04-02"
     assert result.metadata["execution_timing_contract"] == "next_trading_day"
+
+
+def test_market_history_value_runtime_requires_portfolio_snapshot(monkeypatch):
+    captured = {}
+
+    class FakeEntrypoint:
+        manifest = StrategyManifest(
+            profile="nasdaq_sp500_smart_dca",
+            domain="us_equity",
+            display_name="Nasdaq/S&P 500 Smart DCA",
+            description="test",
+            required_inputs=frozenset({"market_history", "portfolio_snapshot"}),
+            default_config={"managed_symbols": ("QQQM", "SPLG")},
+        )
+
+        def evaluate(self, ctx):
+            captured["market_data"] = dict(ctx.market_data)
+            captured["portfolio"] = ctx.portfolio
+            captured["runtime_config"] = dict(ctx.runtime_config)
+            return StrategyDecision(
+                positions=(
+                    PositionTarget(symbol="QQQM", target_value=1500.0),
+                    PositionTarget(symbol="SPLG", target_value=1700.0),
+                )
+            )
+
+    runtime = strategy_runtime_module.LoadedStrategyRuntime(
+        entrypoint=FakeEntrypoint(),
+        runtime_adapter=StrategyRuntimeAdapter(
+            status_icon="🧺",
+            portfolio_input_name="portfolio_snapshot",
+            runtime_policy=StrategyRuntimePolicy(signal_effective_after_trading_days=0),
+        ),
+        runtime_settings=_build_runtime_settings(
+            profile="nasdaq_sp500_smart_dca",
+            display_name="Nasdaq/S&P 500 Smart DCA",
+            target_mode="value",
+        ),
+        runtime_config={},
+        merged_runtime_config={"managed_symbols": ("QQQM", "SPLG")},
+        status_icon="🧺",
+        logger=lambda _message: None,
+    )
+    portfolio_snapshot = SimpleNamespace(total_equity=10000.0)
+
+    def fetch_snapshot(ib):
+        assert ib == "fake-ib"
+        return portfolio_snapshot
+
+    close_loader_symbols = []
+
+    def close_loader(_ib, symbol, duration="2 Y", bar_size="1 day"):
+        close_loader_symbols.append((symbol, duration, bar_size))
+        return strategy_runtime_module.pd.Series([100.0, 101.0])
+
+    monkeypatch.setattr(strategy_runtime_module, "fetch_portfolio_snapshot", fetch_snapshot)
+
+    result = runtime.evaluate(
+        ib="fake-ib",
+        current_holdings=(),
+        historical_close_loader=close_loader,
+        run_as_of=strategy_runtime_module.pd.Timestamp("2026-05-26"),
+        translator=lambda key, **_kwargs: key,
+        pacing_sec=0.0,
+    )
+
+    assert captured["market_data"]["market_history"] is close_loader
+    assert captured["portfolio"] is portfolio_snapshot
+    assert captured["runtime_config"]["signal_effective_after_trading_days"] == 0
+    assert result.metadata["portfolio_total_equity"] == 10000.0
+    assert result.metadata["managed_symbols"] == ("QQQM", "SPLG")
+    assert result.metadata["signal_date"] == "2026-05-26"
+    assert result.metadata["effective_date"] == "2026-05-26"
+    assert result.metadata["execution_timing_contract"] == "same_trading_day"
+    assert close_loader_symbols == [("QQQM", "10 D", "1 day"), ("SPLG", "10 D", "1 day")]
 
 
 def test_feature_snapshot_runtime_fail_closes_on_entrypoint_exception(monkeypatch):

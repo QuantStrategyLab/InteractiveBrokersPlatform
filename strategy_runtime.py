@@ -37,6 +37,7 @@ from strategy_loader import (
 
 
 DEFAULT_CASH_RESERVE_RATIO = 0.03
+DEFAULT_REBALANCE_THRESHOLD_RATIO = 0.02
 _FEATURE_SNAPSHOT_INPUT = "feature_snapshot"
 _MARKET_HISTORY_INPUT = "market_history"
 _BENCHMARK_HISTORY_INPUT = "benchmark_history"
@@ -59,6 +60,7 @@ class LoadedStrategyRuntime:
     merged_runtime_config: Mapping[str, Any] = field(default_factory=dict)
     status_icon: str = "🐤"
     cash_reserve_ratio: float = DEFAULT_CASH_RESERVE_RATIO
+    rebalance_threshold_ratio: float = DEFAULT_REBALANCE_THRESHOLD_RATIO
     cash_reserve_floor_usd: float = 0.0
     logger: Callable[[str], None] = print
 
@@ -293,7 +295,14 @@ class LoadedStrategyRuntime:
         runtime_config.setdefault("translator", translator)
         runtime_config.setdefault("pacing_sec", float(pacing_sec))
         apply_runtime_policy_to_runtime_config(runtime_config, self.runtime_adapter)
-        portfolio_snapshot = self._fetch_portfolio_snapshot_for_context(ib, required=False)
+        requires_portfolio = (
+            _PORTFOLIO_SNAPSHOT_INPUT in self.required_inputs
+            or self.runtime_adapter.portfolio_input_name == _PORTFOLIO_SNAPSHOT_INPUT
+        )
+        portfolio_snapshot = self._fetch_portfolio_snapshot_for_context(
+            ib,
+            required=requires_portfolio,
+        )
         ctx = self._build_strategy_context(
             runtime_adapter=self.runtime_adapter,
             as_of=run_as_of,
@@ -305,8 +314,11 @@ class LoadedStrategyRuntime:
         )
         decision = self.entrypoint.evaluate(ctx)
         safe_haven_symbol = str(self.merged_runtime_config.get("safe_haven") or "").strip().upper() or None
+        managed_config_symbols = tuple(
+            str(symbol) for symbol in self.merged_runtime_config.get("managed_symbols", ())
+        )
         ranking_pool = tuple(str(symbol) for symbol in self.merged_runtime_config.get("ranking_pool", ()))
-        managed_candidates = list(ranking_pool)
+        managed_candidates = [*managed_config_symbols, *ranking_pool]
         if safe_haven_symbol:
             managed_candidates.append(safe_haven_symbol)
         managed_symbols = tuple(dict.fromkeys(managed_candidates))
@@ -638,6 +650,15 @@ def load_strategy_runtime(
             DEFAULT_CASH_RESERVE_RATIO,
         )
     )
+    strategy_rebalance_threshold_ratio = float(
+        merged_runtime_config.get(
+            "execution_rebalance_threshold_ratio",
+            merged_runtime_config.get(
+                "rebalance_threshold_ratio",
+                DEFAULT_REBALANCE_THRESHOLD_RATIO,
+            ),
+        )
+    )
     platform_cash_reserve_ratio = runtime_settings.reserved_cash_ratio
     if platform_cash_reserve_ratio is not None:
         strategy_cash_reserve_ratio = max(
@@ -652,6 +673,7 @@ def load_strategy_runtime(
         merged_runtime_config=merged_runtime_config,
         status_icon=runtime_adapter.status_icon,
         cash_reserve_ratio=strategy_cash_reserve_ratio,
+        rebalance_threshold_ratio=max(0.0, strategy_rebalance_threshold_ratio),
         cash_reserve_floor_usd=float(runtime_settings.reserved_cash_floor_usd or 0.0),
         logger=logger,
     )

@@ -92,6 +92,7 @@ def install_stub_modules():
             available_inputs=frozenset({"derived_indicators", "portfolio_snapshot"})
         ),
         cash_reserve_ratio=0.03,
+        rebalance_threshold_ratio=0.02,
         evaluate=lambda **_kwargs: None,
     )
 
