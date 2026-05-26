@@ -717,15 +717,15 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
                 },
             },
             {
-                "service": "interactive-brokers-live-slot-b-service",
-                "account_group": "live-slot-b",
+                "service": "interactive-brokers-live-u7654-mega-service",
+                "account_group": "live-u7654-mega",
                 "runtime_target": json.loads(
                     runtime_target_json(
                         "mega_cap_leader_rotation_top50_balanced",
-                        deployment_selector="live-slot-b",
+                        deployment_selector="live-u7654-mega",
                         account_selector=["U7654321"],
-                        account_scope="live-slot-b",
-                        service_name="interactive-brokers-live-slot-b-service",
+                        account_scope="live-u7654-mega",
+                        service_name="interactive-brokers-live-u7654-mega-service",
                     )
                 ),
                 "ibkr_feature_snapshot_path": "gs://runtime/mega/snapshot.csv",
@@ -751,7 +751,7 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
     assert plan["mode"] == "per_service"
     by_service = {target["service_name"]: target for target in plan["targets"]}
     slot_a = by_service["interactive-brokers-live-slot-a-service"]
-    slot_b = by_service["interactive-brokers-live-slot-b-service"]
+    u7654_mega = by_service["interactive-brokers-live-u7654-mega-service"]
 
     assert slot_a["env"]["ACCOUNT_GROUP"] == "live-slot-a"
     assert slot_a["env"]["STRATEGY_PROFILE"] == "tqqq_growth_income"
@@ -762,11 +762,11 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
         "strategy"
     ] == "tqqq_growth_income"
 
-    assert slot_b["env"]["ACCOUNT_GROUP"] == "live-slot-b"
-    assert slot_b["env"]["STRATEGY_PROFILE"] == "mega_cap_leader_rotation_top50_balanced"
-    assert slot_b["env"]["IBKR_FEATURE_SNAPSHOT_PATH"] == "gs://runtime/mega/snapshot.csv"
+    assert u7654_mega["env"]["ACCOUNT_GROUP"] == "live-u7654-mega"
+    assert u7654_mega["env"]["STRATEGY_PROFILE"] == "mega_cap_leader_rotation_top50_balanced"
+    assert u7654_mega["env"]["IBKR_FEATURE_SNAPSHOT_PATH"] == "gs://runtime/mega/snapshot.csv"
     assert (
-        slot_b["env"]["IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH"]
+        u7654_mega["env"]["IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH"]
         == "gs://runtime/mega/snapshot.csv.manifest.json"
     )
 
@@ -780,15 +780,15 @@ def test_build_cloud_run_env_sync_plan_requires_target_snapshot_in_per_service_m
         },
         "targets": [
             {
-                "service": "interactive-brokers-live-slot-b-service",
-                "account_group": "live-slot-b",
+                "service": "interactive-brokers-live-u7654-mega-service",
+                "account_group": "live-u7654-mega",
                 "runtime_target": json.loads(
                     runtime_target_json(
                         "mega_cap_leader_rotation_top50_balanced",
-                        deployment_selector="live-slot-b",
+                        deployment_selector="live-u7654-mega",
                         account_selector=["U7654321"],
-                        account_scope="live-slot-b",
-                        service_name="interactive-brokers-live-slot-b-service",
+                        account_scope="live-u7654-mega",
+                        service_name="interactive-brokers-live-u7654-mega-service",
                     )
                 ),
             }
@@ -808,7 +808,7 @@ def test_build_cloud_run_env_sync_plan_requires_target_snapshot_in_per_service_m
     )
 
     assert result.returncode != 0
-    assert "interactive-brokers-live-slot-b-service:IBKR_FEATURE_SNAPSHOT_PATH" in result.stderr
+    assert "interactive-brokers-live-u7654-mega-service:IBKR_FEATURE_SNAPSHOT_PATH" in result.stderr
     assert "gs://stale-paper/snapshot.csv" not in result.stderr
 
 

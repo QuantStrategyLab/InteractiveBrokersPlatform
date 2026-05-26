@@ -304,16 +304,16 @@ For slot deployments, use `CLOUD_RUN_SERVICE_TARGETS_JSON` instead of a shared `
       }
     },
     {
-      "service": "interactive-brokers-live-slot-b-service",
-      "account_group": "live-slot-b",
+      "service": "interactive-brokers-live-u7654-mega-service",
+      "account_group": "live-u7654-mega",
       "runtime_target": {
         "platform_id": "ibkr",
         "strategy_profile": "mega_cap_leader_rotation_top50_balanced",
         "dry_run_only": false,
-        "deployment_selector": "live-slot-b",
+        "deployment_selector": "live-u7654-mega",
         "account_selector": ["U7654321"],
-        "account_scope": "live-slot-b",
-        "service_name": "interactive-brokers-live-slot-b-service",
+        "account_scope": "live-u7654-mega",
+        "service_name": "interactive-brokers-live-u7654-mega-service",
         "execution_mode": "live"
       },
       "ibkr_feature_snapshot_path": "gs://qsl-runtime-logs-interactivebrokersquant/strategy-artifacts/us_equity/mega_cap_leader_rotation_top50_balanced_staging/mega_cap_leader_rotation_top50_balanced_feature_snapshot_latest.csv",
