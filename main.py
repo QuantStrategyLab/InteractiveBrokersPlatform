@@ -317,7 +317,8 @@ def build_strategy_adapters():
     )
 
 
-def build_broker_adapters():
+def build_broker_adapters(*, dry_run_only_override: bool | None = None):
+    effective_dry_run_only = RUNTIME_SETTINGS.dry_run_only if dry_run_only_override is None else bool(dry_run_only_override)
     return build_runtime_broker_adapters(
         host_resolver=get_ib_host,
         ib_port=IB_PORT,
@@ -340,7 +341,7 @@ def build_broker_adapters():
         account_group=ACCOUNT_GROUP,
         service_name=SERVICE_NAME,
         account_ids=tuple(ACCOUNT_IDS),
-        dry_run_only=RUNTIME_SETTINGS.dry_run_only,
+        dry_run_only=effective_dry_run_only,
         cash_reserve_ratio=CASH_RESERVE_RATIO,
         cash_reserve_floor_usd=CASH_RESERVE_FLOOR_USD,
         rebalance_threshold_ratio=REBALANCE_THRESHOLD_RATIO,
@@ -393,7 +394,14 @@ def build_composer(*, dry_run_only_override: bool | None = None):
         connect_ib_fn=connect_ib,
         build_portfolio_snapshot_fn=build_portfolio_snapshot,
         compute_signals_fn=compute_signals,
-        execute_rebalance_fn=execute_rebalance,
+        execute_rebalance_fn=lambda ib, target_weights, positions, account_values, **kwargs: execute_rebalance(
+            ib,
+            target_weights,
+            positions,
+            account_values,
+            dry_run_only_override=effective_dry_run_only,
+            **kwargs,
+        ),
         run_id_builder=build_run_id,
         event_logger=emit_runtime_log,
         report_builder=build_runtime_report_base,
@@ -575,8 +583,9 @@ def execute_rebalance(
     *,
     strategy_symbols=None,
     signal_metadata=None,
+    dry_run_only_override: bool | None = None,
 ):
-    return build_broker_adapters().execute_rebalance(
+    return build_broker_adapters(dry_run_only_override=dry_run_only_override).execute_rebalance(
         ib,
         target_weights,
         positions,
