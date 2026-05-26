@@ -44,7 +44,17 @@ def test_build_translator_supports_chinese():
             route=translate("strategy_plugin_route_no_action"),
             action=translate("strategy_plugin_action_watch_only"),
         )
-        == "🧩 插件：危机观察通知 | 状态：未触发危机 | 提醒：仅通知"
+        == "🧩 插件：危机观察通知 | 状态：未触发 | 提醒：仅通知"
+    )
+    assert (
+        translate(
+            "strategy_plugin_line",
+            plugin=translate("strategy_plugin_name_taco_rebound_shadow"),
+            mode=translate("strategy_plugin_mode_shadow"),
+            route=translate("strategy_plugin_route_taco_rebound"),
+            action=translate("strategy_plugin_action_notify_manual_review"),
+        )
+        == "🧩 插件：TACO 抄底观察通知 | 状态：TACO 反弹确认 | 提醒：通知人工复核"
     )
     assert translate("account_ids_detail", account_ids="U18308207") == "🆔 账户: U18308207"
     assert (
