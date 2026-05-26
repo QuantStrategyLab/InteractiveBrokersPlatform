@@ -131,6 +131,7 @@ The selected account-group entry must provide at least:
 For the recommended Cloud Run deployment, also include:
 
 - `ib_gateway_zone`
+- `ib_gateway_port` when a VM hosts more than one Gateway; omit it to use `4001` for live and `4002` for paper.
 - `ib_gateway_ip_mode` (or let it default to `internal`)
 
 If you use instance-name resolution with `ib_gateway_zone`, the Cloud Run runtime service account needs `roles/compute.viewer`. If you load the payload from Secret Manager, the same runtime service account also needs `roles/secretmanager.secretAccessor` on `ibkr-account-groups`.
@@ -196,6 +197,7 @@ Recommended account-group config payload:
       "ib_gateway_instance_name": "interactive-brokers-quant-instance",
       "ib_gateway_zone": "us-central1-c",
       "ib_gateway_mode": "paper",
+      "ib_gateway_port": 4002,
       "ib_gateway_ip_mode": "internal",
       "ib_client_id": 1,
       "service_name": "interactive-brokers-quant-service",
@@ -208,6 +210,8 @@ Recommended account-group config payload:
 For live multi-account rollout, keep one Cloud Run service per live account group. Each live group should carry exactly one `account_ids` value so portfolio reads, pending/fill guards, and submitted IBKR orders are all routed to that account.
 
 If the IB Gateway username can access multiple linked IBKR accounts, keep those broader login credentials in the Gateway layer and restrict each Cloud Run service with its selected account-group `account_ids` value. At connect time the service validates that the configured account is visible in IBKR `managedAccounts`; if it is not visible, the cycle fails before portfolio reads or order submission. This keeps open-source configuration examples generic while allowing private deployments to map separate services to separate live accounts.
+
+If each IBKR username can only access one linked account, run one Gateway session per username and give each account group its own `ib_gateway_port` and `ib_client_id`. The `ib_gateway_instance_name` can still point to the same VM when the Gateway containers expose different host ports.
 
 See [`docs/examples/ibkr-account-groups.paper.json`](docs/examples/ibkr-account-groups.paper.json) for a ready-to-edit starter example, and [`docs/ibkr_runtime_rollout.md`](docs/ibkr_runtime_rollout.md) for the exact rollout steps to get `ACCOUNT_GROUP=paper` running.
 
@@ -449,6 +453,7 @@ IBKR 账户
 按当前推荐的 Cloud Run 部署方式，最好再一起放上：
 
 - `ib_gateway_zone`
+- `ib_gateway_port`（同一台 VM 上有多个 Gateway 时填写；不填则 live 默认 `4001`，paper 默认 `4002`）
 - `ib_gateway_ip_mode`（或者直接走默认 `internal`）
 
 如果你配置了 `ib_gateway_zone` 让程序通过实例名解析内网 IP，Cloud Run runtime service account 需要 `roles/compute.viewer`。如果账号组配置来源是 Secret Manager，同一个 runtime service account 还需要对 `ibkr-account-groups` 具备 `roles/secretmanager.secretAccessor`。
@@ -480,6 +485,7 @@ IB_GATEWAY_IP_MODE=internal
       "ib_gateway_instance_name": "interactive-brokers-quant-instance",
       "ib_gateway_zone": "us-central1-c",
       "ib_gateway_mode": "paper",
+      "ib_gateway_port": 4002,
       "ib_gateway_ip_mode": "internal",
       "ib_client_id": 1,
       "service_name": "interactive-brokers-quant-service",
@@ -494,6 +500,8 @@ IB_GATEWAY_IP_MODE=internal
 实盘多账户建议一个 UID 对应一个 Cloud Run 服务和一个账号组。每个实盘账号组只放一个 `account_ids` 值；运行时会用它过滤持仓、pending/fill 检查，并把同一个 UID 写进 IBKR 订单的 `order.account`。
 
 如果 IB Gateway 登录用户名本身能访问多个 linked IBKR 账户，仍然建议把这种更宽的登录权限留在 Gateway 层，每个 Cloud Run 服务只通过自己选中的账号组 `account_ids` 限定一个交易账户。服务连接成功后会校验该账号是否出现在 IBKR `managedAccounts` 里；如果不可见，会在读取组合或提交订单之前失败。开源仓库只保留通用示例，私有实盘映射放在 Secret Manager 等运行配置里。
+
+如果 IBKR 的每个副用户名只能看到一个 linked 账户，就按“一个用户名一个 Gateway session”部署；每个账号组配置自己的 `ib_gateway_port` 和 `ib_client_id`。多个 Gateway 可以在同一台 VM 上运行，只要 Gateway 容器暴露到不同 host port。
 
 当前行为改成了 fail-fast：
 

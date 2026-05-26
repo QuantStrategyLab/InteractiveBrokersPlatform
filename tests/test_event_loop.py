@@ -130,6 +130,17 @@ def test_ib_gateway_mode_derives_paper_port(strategy_module_factory):
     assert module.IB_PORT == 4002
 
 
+def test_account_group_can_override_ib_gateway_port(strategy_module_factory):
+    module = strategy_module_factory(
+        IB_ACCOUNT_GROUP_CONFIG_JSON=(
+            '{"groups":{"default":{"ib_gateway_instance_name":"127.0.0.1",'
+            '"ib_gateway_mode":"live","ib_gateway_port":4011,"ib_client_id":1}}}'
+        )
+    )
+
+    assert module.IB_PORT == 4011
+
+
 def test_ib_gateway_mode_is_required(strategy_module_factory):
     with pytest.raises(EnvironmentError, match="requires ib_gateway_mode"):
         strategy_module_factory(

@@ -134,7 +134,7 @@ def get_ib_gateway_mode():
 
 
 def get_ib_port():
-    return 4002 if get_ib_gateway_mode() == "paper" else 4001
+    return RUNTIME_SETTINGS.ib_gateway_port
 
 
 def get_ib_connect_timeout_seconds():
@@ -515,11 +515,8 @@ def build_account_notification_lines() -> tuple[str, ...]:
     return (t("account_ids_detail", account_ids=", ".join(account_ids)),)
 
 
-def build_extra_notification_lines(strategy_plugin_signals=()) -> tuple[str, ...]:
-    return (
-        *build_account_notification_lines(),
-        *build_strategy_plugin_notification_lines(strategy_plugin_signals),
-    )
+def build_extra_notification_lines(_strategy_plugin_signals=()) -> tuple[str, ...]:
+    return build_account_notification_lines()
 
 
 def get_current_portfolio(ib):
@@ -575,6 +572,7 @@ def run_paper_liquidation_cycle():
 
 
 def run_strategy_core(*, strategy_plugin_signals=(), dry_run_only_override: bool | None = None):
+    del strategy_plugin_signals
     if PAPER_LIQUIDATE_ONLY and dry_run_only_override is None:
         return run_paper_liquidation_cycle()
     composer = build_composer(dry_run_only_override=dry_run_only_override)
@@ -582,7 +580,7 @@ def run_strategy_core(*, strategy_plugin_signals=(), dry_run_only_override: bool
         runtime=composer.build_rebalance_runtime(
             silent_cycle_notifications=bool(dry_run_only_override),
         ),
-        config=composer.build_rebalance_config(extra_notification_lines=build_extra_notification_lines(strategy_plugin_signals)),
+        config=composer.build_rebalance_config(extra_notification_lines=build_extra_notification_lines()),
     )
 
 

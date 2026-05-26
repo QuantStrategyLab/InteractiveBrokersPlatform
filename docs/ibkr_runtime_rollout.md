@@ -43,6 +43,7 @@
 建议一起放进去：
 
 - `ib_gateway_zone`
+- `ib_gateway_port`：同一台 VM 上跑多个 Gateway 时填写；不填则 live 默认 `4001`，paper 默认 `4002`。
 - `ib_gateway_ip_mode`
 
 当前代码里，`ib_gateway_instance_name`、`ib_gateway_mode`、`ib_client_id` 已经不再从 Cloud Run env 读了，所以不要继续把它们放在 GitHub Repository Variables 里当主配置源。
@@ -69,6 +70,7 @@ cp docs/examples/ibkr-account-groups.paper.json /tmp/ibkr-account-groups.json
       "ib_gateway_instance_name": "interactive-brokers-quant-instance",
       "ib_gateway_zone": "us-central1-c",
       "ib_gateway_mode": "paper",
+      "ib_gateway_port": 4002,
       "ib_gateway_ip_mode": "internal",
       "ib_client_id": 1,
       "service_name": "interactive-brokers-quant-service",
@@ -84,6 +86,7 @@ cp docs/examples/ibkr-account-groups.paper.json /tmp/ibkr-account-groups.json
 - `ib_gateway_instance_name`：GCE 上 IB Gateway 实例名。
 - `ib_gateway_zone`：建议现在就配上。当前推荐是按实例名解析内网 IP，这样 Cloud Run 不用手填固定私网 IP。
 - `ib_gateway_mode`：`paper` 或 `live`。
+- `ib_gateway_port`：Cloud Run 连接 Gateway VM 的 host port。多个 IBKR 用户名分别跑 Gateway 时，每个 Gateway 要用不同 port。
 - `ib_gateway_ip_mode`：推荐 `internal`。
 - `ib_client_id`：这个账号组对应的 client id。
 - `service_name`：当前只是预留元数据，建议先填成现有 Cloud Run 服务名，后面多账号拆服务时更顺。
