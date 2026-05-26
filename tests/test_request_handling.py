@@ -97,6 +97,27 @@ def test_handle_precheck_post_uses_dry_run_override(strategy_module, monkeypatch
     assert observed["events"][0][1]["execution_window"] == "precheck"
 
 
+def test_precheck_composer_wires_dry_run_override_to_order_execution(strategy_module, monkeypatch):
+    observed = {}
+
+    class FakeBrokerAdapters:
+        def execute_rebalance(self, *_args, **_kwargs):
+            observed["called"] = True
+            return (), {"mode": "dry_run"}
+
+    def fake_build_broker_adapters(*, dry_run_only_override=None):
+        observed["dry_run_only_override"] = dry_run_only_override
+        return FakeBrokerAdapters()
+
+    monkeypatch.setattr(strategy_module, "build_broker_adapters", fake_build_broker_adapters)
+
+    runtime = strategy_module.build_composer(dry_run_only_override=True).build_rebalance_runtime()
+    runtime.execute_rebalance("ib", {}, {}, {}, strategy_symbols=(), signal_metadata={})
+
+    assert observed["called"] is True
+    assert observed["dry_run_only_override"] is True
+
+
 def test_handle_precheck_ignores_paper_liquidate_only(strategy_module, monkeypatch):
     observed = {"called": False}
 
