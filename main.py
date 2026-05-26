@@ -134,7 +134,10 @@ def get_ib_gateway_mode():
 
 
 def get_ib_port():
-    return RUNTIME_SETTINGS.ib_gateway_port
+    configured_port = getattr(RUNTIME_SETTINGS, "ib_gateway_port", None)
+    if configured_port is not None:
+        return configured_port
+    return 4002 if get_ib_gateway_mode() == "paper" else 4001
 
 
 def get_ib_connect_timeout_seconds():
