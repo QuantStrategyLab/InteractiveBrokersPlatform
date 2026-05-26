@@ -98,6 +98,7 @@ def install_stub_modules():
     runtime_config_support_module = types.ModuleType("runtime_config_support")
     runtime_config_support_module.load_platform_runtime_settings = lambda **_kwargs: types.SimpleNamespace(
         project_id=None,
+        execution_backend="gateway",
         secret_name="secret",
         strategy_profile="tqqq_growth_income",
         strategy_display_name="TQQQ Growth Income",
@@ -133,6 +134,7 @@ def install_stub_modules():
         ibkr_reconciliation_output_path=None,
         market_hours_source="cloud_run",
     )
+    runtime_config_support_module.EXECUTION_BACKEND_GATEWAY = "gateway"
     runtime_config_support_module.resolve_ib_gateway_ip_mode = lambda *_args, **_kwargs: "internal"
 
     modules = {

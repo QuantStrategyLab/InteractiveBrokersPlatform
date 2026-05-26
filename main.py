@@ -58,7 +58,11 @@ from application.execution_service import (
 )
 from application.paper_liquidation_service import execute_paper_liquidation
 from runtime_logging import build_run_id, emit_runtime_log, extract_cloud_trace
-from runtime_config_support import load_platform_runtime_settings, resolve_ib_gateway_ip_mode
+from runtime_config_support import (
+    EXECUTION_BACKEND_GATEWAY,
+    load_platform_runtime_settings,
+    resolve_ib_gateway_ip_mode,
+)
 from strategy_runtime import load_strategy_runtime
 
 app = Flask(__name__)
@@ -197,6 +201,9 @@ ACCOUNT_GROUP = RUNTIME_SETTINGS.account_group
 SERVICE_NAME = RUNTIME_SETTINGS.service_name
 ACCOUNT_IDS = RUNTIME_SETTINGS.account_ids
 PROJECT_ID = RUNTIME_SETTINGS.project_id
+EXECUTION_BACKEND = RUNTIME_SETTINGS.execution_backend
+QUANTCONNECT_PROJECT_ID = getattr(RUNTIME_SETTINGS, "quantconnect_project_id", None)
+QUANTCONNECT_NODE_ID = getattr(RUNTIME_SETTINGS, "quantconnect_node_id", None)
 
 STRATEGY_RUNTIME = load_strategy_runtime(
     STRATEGY_PROFILE,
@@ -275,8 +282,11 @@ RUNTIME_LOG_CONTEXT = build_runtime_assembly(
         "strategy_artifact_dir": RUNTIME_SETTINGS.strategy_artifact_dir,
         "strategy_display_name": STRATEGY_DISPLAY_NAME,
         "strategy_display_name_localized": strategy_display_name,
+        "execution_backend": EXECUTION_BACKEND,
         "ib_connect_attempts": IB_CONNECT_ATTEMPTS,
         "ib_client_id_retry_offset": IB_CLIENT_ID_RETRY_OFFSET,
+        "quantconnect_project_id": QUANTCONNECT_PROJECT_ID,
+        "quantconnect_node_id": QUANTCONNECT_NODE_ID,
     },
 ).build_log_context(run_id="")
 
@@ -392,6 +402,11 @@ def build_composer(*, dry_run_only_override: bool | None = None):
         env_reader=os.getenv,
         printer=print,
         runtime_target=RUNTIME_SETTINGS.runtime_target,
+        extra_reporting_fields={
+            "execution_backend": EXECUTION_BACKEND,
+            "quantconnect_project_id": QUANTCONNECT_PROJECT_ID,
+            "quantconnect_node_id": QUANTCONNECT_NODE_ID,
+        },
     )
 
 
@@ -411,7 +426,18 @@ def publish_notification(*, detailed_text, compact_text):
     )
 
 
+def require_gateway_execution_backend():
+    if EXECUTION_BACKEND == EXECUTION_BACKEND_GATEWAY:
+        return
+    raise RuntimeError(
+        f"IBKR execution_backend={EXECUTION_BACKEND!r} is configured; "
+        "Gateway connection and direct order execution are disabled for this service. "
+        "Run the QuantConnect deployment/algorithm path for this account group."
+    )
+
+
 def connect_ib():
+    require_gateway_execution_backend()
     return build_broker_adapters().connect_ib()
 
 
@@ -565,6 +591,7 @@ def _format_liquidation_orders(orders) -> str:
 
 
 def run_paper_liquidation_cycle():
+    require_gateway_execution_backend()
     if RUNTIME_SETTINGS.ib_gateway_mode != "paper":
         raise RuntimeError("IBKR_PAPER_LIQUIDATE_ONLY is only allowed when ib_gateway_mode=paper")
     return build_broker_adapters().run_paper_liquidation_cycle(

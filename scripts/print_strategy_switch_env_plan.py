@@ -68,6 +68,7 @@ def build_switch_plan(profile: str) -> dict[str, object]:
         "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME",
     ]
     optional_env = [
+        "IBKR_EXECUTION_BACKEND",
         "IBKR_DRY_RUN_ONLY",
         "IBKR_MIN_RESERVED_CASH_USD",
         "IBKR_RESERVED_CASH_RATIO",

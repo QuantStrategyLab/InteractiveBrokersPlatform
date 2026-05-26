@@ -27,10 +27,19 @@ from us_equity_strategies import get_strategy_catalog
 DEFAULT_ACCOUNT_GROUP = "default"
 DEFAULT_RESERVED_CASH_FLOOR_USD = 0.0
 DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD = 1000.0
+EXECUTION_BACKEND_GATEWAY = "gateway"
+EXECUTION_BACKEND_QUANTCONNECT = "quantconnect"
+SUPPORTED_EXECUTION_BACKENDS = frozenset(
+    {
+        EXECUTION_BACKEND_GATEWAY,
+        EXECUTION_BACKEND_QUANTCONNECT,
+    }
+)
 
 
 @dataclass(frozen=True)
 class AccountGroupConfig:
+    execution_backend: str | None = None
     ib_gateway_instance_name: str | None = None
     ib_gateway_zone: str | None = None
     ib_gateway_mode: str | None = None
@@ -39,6 +48,12 @@ class AccountGroupConfig:
     ib_client_id: int | None = None
     service_name: str | None = None
     account_ids: tuple[str, ...] = ()
+    quantconnect_project_id: int | None = None
+    quantconnect_node_id: str | None = None
+    quantconnect_compile_id: str | None = None
+    quantconnect_version_id: str | None = None
+    quantconnect_credentials_secret_name: str | None = None
+    quantconnect_brokerage_secret_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -74,6 +89,12 @@ class PlatformRuntimeSettings:
     tg_chat_id: str | None = None
     notify_lang: str = "en"
     strategy_plugin_mounts_json: str | None = None
+    quantconnect_project_id: int | None = None
+    quantconnect_node_id: str | None = None
+    quantconnect_compile_id: str | None = None
+    quantconnect_version_id: str | None = None
+    quantconnect_credentials_secret_name: str | None = None
+    quantconnect_brokerage_secret_name: str | None = None
     crisis_alert_channels: tuple[str, ...] = ()
     crisis_alert_email_recipients: tuple[str, ...] = ()
     crisis_alert_email_sender_email: str | None = None
@@ -105,6 +126,7 @@ class PlatformRuntimeSettings:
     crisis_alert_telegram_disable_web_page_preview: str | None = None
     crisis_alert_telegram_body_max_chars: str | None = None
     runtime_target: RuntimeTarget | None = None
+    execution_backend: str = EXECUTION_BACKEND_GATEWAY
 
 
 def load_platform_runtime_settings(
@@ -141,30 +163,54 @@ def load_platform_runtime_settings(
         include_reconciliation_output=True,
     )
 
-    instance_name = require_group_string(
-        group_config.ib_gateway_instance_name,
-        field_name="ib_gateway_instance_name",
-        account_group=account_group,
-    )
-
-    ib_gateway_mode = resolve_ib_gateway_mode(
-        require_group_string(
-            group_config.ib_gateway_mode,
-            field_name="ib_gateway_mode",
-            account_group=account_group,
+    execution_backend = resolve_execution_backend(
+        first_non_empty(
+            group_config.execution_backend,
+            os.getenv("IBKR_EXECUTION_BACKEND"),
         )
     )
-    ib_gateway_port = resolve_ib_gateway_port(
-        (
+    if execution_backend == EXECUTION_BACKEND_GATEWAY:
+        instance_name = require_group_string(
+            group_config.ib_gateway_instance_name,
+            field_name="ib_gateway_instance_name",
+            account_group=account_group,
+        )
+
+        ib_gateway_mode = resolve_ib_gateway_mode(
+            require_group_string(
+                group_config.ib_gateway_mode,
+                field_name="ib_gateway_mode",
+                account_group=account_group,
+            )
+        )
+        ib_gateway_port = resolve_ib_gateway_port(
+            (
+                group_config.ib_gateway_port
+                if group_config.ib_gateway_port is not None
+                else parse_optional_int(os.getenv("IB_GATEWAY_PORT"))
+            ),
+            gateway_mode=ib_gateway_mode,
+        )
+        ib_client_id = require_group_int(
+            group_config.ib_client_id,
+            field_name="ib_client_id",
+            account_group=account_group,
+        )
+    else:
+        instance_name = first_non_empty(group_config.ib_gateway_instance_name) or ""
+        ib_gateway_mode = resolve_ib_gateway_mode(
+            first_non_empty(group_config.ib_gateway_mode, os.getenv("IB_GATEWAY_MODE"), "live")
+        )
+        ib_gateway_port = (
             group_config.ib_gateway_port
             if group_config.ib_gateway_port is not None
-            else parse_optional_int(os.getenv("IB_GATEWAY_PORT"))
-        ),
-        gateway_mode=ib_gateway_mode,
-    )
+            else parse_optional_int(os.getenv("IB_GATEWAY_PORT")) or 0
+        )
+        ib_client_id = group_config.ib_client_id or 0
 
     return PlatformRuntimeSettings(
         project_id=project_id,
+        execution_backend=execution_backend,
         ib_gateway_instance_name=instance_name,
         ib_gateway_zone=first_non_empty(
             group_config.ib_gateway_zone,
@@ -177,11 +223,7 @@ def load_platform_runtime_settings(
             first_non_empty(group_config.ib_gateway_ip_mode, os.getenv("IB_GATEWAY_IP_MODE")),
             logger=logger,
         ),
-        ib_client_id=require_group_int(
-            group_config.ib_client_id,
-            field_name="ib_client_id",
-            account_group=account_group,
-        ),
+        ib_client_id=ib_client_id,
         strategy_profile=runtime_paths.strategy_profile,
         strategy_display_name=runtime_paths.strategy_display_name,
         strategy_domain=runtime_paths.strategy_domain,
@@ -223,6 +265,12 @@ def load_platform_runtime_settings(
             os.getenv("IBKR_STRATEGY_PLUGIN_MOUNTS_JSON")
             or os.getenv("STRATEGY_PLUGIN_MOUNTS_JSON")
         ),
+        quantconnect_project_id=group_config.quantconnect_project_id,
+        quantconnect_node_id=group_config.quantconnect_node_id,
+        quantconnect_compile_id=group_config.quantconnect_compile_id,
+        quantconnect_version_id=group_config.quantconnect_version_id,
+        quantconnect_credentials_secret_name=group_config.quantconnect_credentials_secret_name,
+        quantconnect_brokerage_secret_name=group_config.quantconnect_brokerage_secret_name,
         crisis_alert_channels=split_env_list(os.getenv("CRISIS_ALERT_CHANNELS")),
         crisis_alert_email_recipients=split_env_list(
             os.getenv("CRISIS_ALERT_EMAIL_RECIPIENTS")
@@ -409,6 +457,7 @@ def parse_account_group_configs(payload: str) -> dict[str, AccountGroupConfig]:
         if not isinstance(group_payload, dict):
             raise ValueError(f"Account group {group_name!r} must be a JSON object")
         parsed[str(group_name)] = AccountGroupConfig(
+            execution_backend=normalize_optional_string(group_payload.get("execution_backend")),
             ib_gateway_instance_name=normalize_optional_string(group_payload.get("ib_gateway_instance_name")),
             ib_gateway_zone=normalize_optional_string(group_payload.get("ib_gateway_zone")),
             ib_gateway_mode=normalize_optional_string(group_payload.get("ib_gateway_mode")),
@@ -417,6 +466,16 @@ def parse_account_group_configs(payload: str) -> dict[str, AccountGroupConfig]:
             ib_client_id=parse_optional_int(group_payload.get("ib_client_id")),
             service_name=normalize_optional_string(group_payload.get("service_name")),
             account_ids=parse_account_ids(group_payload.get("account_ids")),
+            quantconnect_project_id=parse_optional_int(group_payload.get("quantconnect_project_id")),
+            quantconnect_node_id=normalize_optional_string(group_payload.get("quantconnect_node_id")),
+            quantconnect_compile_id=normalize_optional_string(group_payload.get("quantconnect_compile_id")),
+            quantconnect_version_id=normalize_optional_string(group_payload.get("quantconnect_version_id")),
+            quantconnect_credentials_secret_name=normalize_optional_string(
+                group_payload.get("quantconnect_credentials_secret_name")
+            ),
+            quantconnect_brokerage_secret_name=normalize_optional_string(
+                group_payload.get("quantconnect_brokerage_secret_name")
+            ),
         )
     return parsed
 
@@ -493,6 +552,14 @@ def require_group_int(
             f"Account group {account_group!r} requires {field_name}"
         )
     return int(raw_value)
+
+
+def resolve_execution_backend(raw_value: str | None) -> str:
+    backend = (raw_value or EXECUTION_BACKEND_GATEWAY).strip().lower()
+    if backend in SUPPORTED_EXECUTION_BACKENDS:
+        return backend
+    supported = ", ".join(sorted(SUPPORTED_EXECUTION_BACKENDS))
+    raise EnvironmentError(f"IBKR_EXECUTION_BACKEND must be one of: {supported}")
 
 
 def resolve_ib_gateway_mode(raw_value: str | None) -> str:
