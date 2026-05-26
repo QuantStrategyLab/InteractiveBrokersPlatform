@@ -82,6 +82,8 @@ def test_strategy_display_name_translates_new_live_profiles():
     assert en_name("global_etf_confidence_vol_gate") == "Global ETF Confidence Vol Gate"
     assert zh_name("mega_cap_leader_rotation_top50_balanced") == "Mega Cap Top50 平衡龙头轮动"
     assert en_name("mega_cap_leader_rotation_top50_balanced") == "Mega Cap Leader Rotation Top50 Balanced"
+    assert zh_name("nasdaq_sp500_smart_dca") == "纳斯达克 / 标普智能定投"
+    assert en_name("nasdaq_sp500_smart_dca") == "Nasdaq/S&P 500 Smart DCA"
 
 
 def test_supported_strategy_profiles_have_translated_names():

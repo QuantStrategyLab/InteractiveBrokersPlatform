@@ -463,6 +463,7 @@ def test_platform_supported_profiles_are_filtered_by_registry():
             "tech_communication_pullback_enhancement",
             "global_etf_rotation",
             "mega_cap_leader_rotation_top50_balanced",
+            "nasdaq_sp500_smart_dca",
             "russell_1000_multi_factor_defensive",
         }
     )
@@ -476,6 +477,7 @@ def test_platform_eligible_profiles_are_exposed_by_capability_matrix():
             "tech_communication_pullback_enhancement",
             "global_etf_rotation",
             "mega_cap_leader_rotation_top50_balanced",
+            "nasdaq_sp500_smart_dca",
             "russell_1000_multi_factor_defensive",
         }
     )
@@ -528,6 +530,18 @@ def test_load_platform_runtime_settings_accepts_tqqq_growth_income(monkeypatch):
     assert settings.strategy_target_mode == "value"
 
 
+def test_load_platform_runtime_settings_accepts_nasdaq_sp500_smart_dca(monkeypatch):
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json("nasdaq_sp500_smart_dca"))
+    monkeypatch.setenv("ACCOUNT_GROUP", "paper")
+    monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
+
+    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
+
+    assert settings.strategy_profile == "nasdaq_sp500_smart_dca"
+    assert settings.strategy_display_name == "Nasdaq/S&P 500 Smart DCA"
+    assert settings.strategy_target_mode == "value"
+
+
 def test_load_platform_runtime_settings_rejects_legacy_qqq_tech_alias(monkeypatch):
     monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json("tech_pullback_cash_buffer"))
     monkeypatch.setenv("ACCOUNT_GROUP", "paper")
@@ -557,6 +571,7 @@ def test_platform_profile_status_matrix_matches_current_ibkr_rollout():
         "tqqq_growth_income",
         "tech_communication_pullback_enhancement",
         "mega_cap_leader_rotation_top50_balanced",
+        "nasdaq_sp500_smart_dca",
     }
     assert by_profile["global_etf_rotation"] == {
         "canonical_profile": "global_etf_rotation",
@@ -572,6 +587,9 @@ def test_platform_profile_status_matrix_matches_current_ibkr_rollout():
     assert by_profile["tqqq_growth_income"]["display_name"] == "TQQQ Growth Income"
     assert by_profile["tqqq_growth_income"]["eligible"] is True
     assert by_profile["tqqq_growth_income"]["enabled"] is True
+    assert by_profile["nasdaq_sp500_smart_dca"]["display_name"] == "Nasdaq/S&P 500 Smart DCA"
+    assert by_profile["nasdaq_sp500_smart_dca"]["eligible"] is True
+    assert by_profile["nasdaq_sp500_smart_dca"]["enabled"] is True
 
 
 def test_print_strategy_profile_status_json_matches_registry():
@@ -602,6 +620,9 @@ def test_print_strategy_profile_status_json_matches_registry():
     assert by_profile["global_etf_rotation"]["input_mode"] == "market_history"
     assert by_profile["global_etf_rotation"]["requires_snapshot_artifacts"] is False
     assert by_profile["global_etf_rotation"]["requires_strategy_config_path"] is False
+    assert by_profile["nasdaq_sp500_smart_dca"]["profile_group"] == "direct_runtime_inputs"
+    assert by_profile["nasdaq_sp500_smart_dca"]["input_mode"] == "market_history+portfolio_snapshot"
+    assert by_profile["nasdaq_sp500_smart_dca"]["requires_snapshot_artifacts"] is False
     assert by_profile["tech_communication_pullback_enhancement"]["profile_group"] == "snapshot_backed"
     assert by_profile["tech_communication_pullback_enhancement"]["input_mode"] == "feature_snapshot"
     assert by_profile["tech_communication_pullback_enhancement"]["requires_snapshot_artifacts"] is True
