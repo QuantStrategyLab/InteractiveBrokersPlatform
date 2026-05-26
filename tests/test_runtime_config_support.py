@@ -203,7 +203,7 @@ def test_load_platform_runtime_settings_supports_explicit_group_config_values(mo
         "IB_ACCOUNT_GROUP_CONFIG_JSON",
         '{"groups":{"taxable_main":{"ib_gateway_instance_name":"ib-gateway-main",'
         '"ib_gateway_zone":"us-central1-a","ib_gateway_mode":"live",'
-        '"ib_gateway_ip_mode":"external","ib_client_id":7,'
+        '"ib_gateway_port":4011,"ib_gateway_ip_mode":"external","ib_client_id":7,'
         '"service_name":"interactive-brokers-quant-taxable-main-service",'
         '"account_ids":["U1234567"]}}}',
     )
@@ -216,6 +216,7 @@ def test_load_platform_runtime_settings_supports_explicit_group_config_values(mo
     assert settings.ib_gateway_instance_name == "ib-gateway-main"
     assert settings.ib_gateway_zone == "us-central1-a"
     assert settings.ib_gateway_mode == "live"
+    assert settings.ib_gateway_port == 4011
     assert settings.ib_gateway_ip_mode == "external"
     assert settings.ib_client_id == 7
     assert settings.strategy_profile == SAMPLE_STRATEGY_PROFILE
@@ -912,6 +913,7 @@ def test_load_platform_runtime_settings_uses_account_group_secret(monkeypatch):
           "ib_gateway_instance_name": "ib-gateway-paper",
           "ib_gateway_zone": "us-central1-a",
           "ib_gateway_mode": "live",
+          "ib_gateway_port": 4011,
           "ib_gateway_ip_mode": "external",
           "ib_client_id": 9,
           "service_name": "interactive-brokers-paper-service",
@@ -938,6 +940,7 @@ def test_load_platform_runtime_settings_uses_account_group_secret(monkeypatch):
     assert settings.ib_gateway_instance_name == "ib-gateway-paper"
     assert settings.ib_gateway_zone == "us-central1-a"
     assert settings.ib_gateway_mode == "live"
+    assert settings.ib_gateway_port == 4011
     assert settings.ib_gateway_ip_mode == "external"
     assert settings.ib_client_id == 9
     assert settings.account_group == "paper"
@@ -985,9 +988,10 @@ def test_load_platform_runtime_settings_requires_key_group_fields(monkeypatch):
 def test_parse_account_group_configs_supports_top_level_mapping():
     configs = parse_account_group_configs(
         '{"paper": {"ib_gateway_instance_name":"ib-gateway","ib_gateway_mode":"paper",'
-        '"ib_client_id":"4","account_ids":["U1"],"service_name":"svc"}}'
+        '"ib_gateway_port":"4012","ib_client_id":"4","account_ids":["U1"],"service_name":"svc"}}'
     )
 
+    assert configs["paper"].ib_gateway_port == 4012
     assert configs["paper"].ib_client_id == 4
     assert configs["paper"].account_ids == ("U1",)
     assert configs["paper"].service_name == "svc"

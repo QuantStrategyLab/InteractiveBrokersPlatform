@@ -22,6 +22,7 @@ def _build_runtime_settings(
         ib_gateway_instance_name="127.0.0.1",
         ib_gateway_zone="",
         ib_gateway_mode="live",
+        ib_gateway_port=4001,
         ib_gateway_ip_mode="internal",
         ib_client_id=1,
         strategy_profile=profile,

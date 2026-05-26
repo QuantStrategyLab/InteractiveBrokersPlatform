@@ -34,6 +34,7 @@ class AccountGroupConfig:
     ib_gateway_instance_name: str | None = None
     ib_gateway_zone: str | None = None
     ib_gateway_mode: str | None = None
+    ib_gateway_port: int | None = None
     ib_gateway_ip_mode: str | None = None
     ib_client_id: int | None = None
     service_name: str | None = None
@@ -46,6 +47,7 @@ class PlatformRuntimeSettings:
     ib_gateway_instance_name: str
     ib_gateway_zone: str
     ib_gateway_mode: str
+    ib_gateway_port: int
     ib_gateway_ip_mode: str
     ib_client_id: int
     strategy_profile: str
@@ -145,6 +147,22 @@ def load_platform_runtime_settings(
         account_group=account_group,
     )
 
+    ib_gateway_mode = resolve_ib_gateway_mode(
+        require_group_string(
+            group_config.ib_gateway_mode,
+            field_name="ib_gateway_mode",
+            account_group=account_group,
+        )
+    )
+    ib_gateway_port = resolve_ib_gateway_port(
+        (
+            group_config.ib_gateway_port
+            if group_config.ib_gateway_port is not None
+            else parse_optional_int(os.getenv("IB_GATEWAY_PORT"))
+        ),
+        gateway_mode=ib_gateway_mode,
+    )
+
     return PlatformRuntimeSettings(
         project_id=project_id,
         ib_gateway_instance_name=instance_name,
@@ -153,13 +171,8 @@ def load_platform_runtime_settings(
             os.getenv("IB_GATEWAY_ZONE", "").strip(),
         )
         or "",
-        ib_gateway_mode=resolve_ib_gateway_mode(
-            require_group_string(
-                group_config.ib_gateway_mode,
-                field_name="ib_gateway_mode",
-                account_group=account_group,
-            )
-        ),
+        ib_gateway_mode=ib_gateway_mode,
+        ib_gateway_port=ib_gateway_port,
         ib_gateway_ip_mode=resolve_ib_gateway_ip_mode(
             first_non_empty(group_config.ib_gateway_ip_mode, os.getenv("IB_GATEWAY_IP_MODE")),
             logger=logger,
@@ -399,6 +412,7 @@ def parse_account_group_configs(payload: str) -> dict[str, AccountGroupConfig]:
             ib_gateway_instance_name=normalize_optional_string(group_payload.get("ib_gateway_instance_name")),
             ib_gateway_zone=normalize_optional_string(group_payload.get("ib_gateway_zone")),
             ib_gateway_mode=normalize_optional_string(group_payload.get("ib_gateway_mode")),
+            ib_gateway_port=parse_optional_int(group_payload.get("ib_gateway_port")),
             ib_gateway_ip_mode=normalize_optional_string(group_payload.get("ib_gateway_ip_mode")),
             ib_client_id=parse_optional_int(group_payload.get("ib_client_id")),
             service_name=normalize_optional_string(group_payload.get("service_name")),
@@ -488,6 +502,18 @@ def resolve_ib_gateway_mode(raw_value: str | None) -> str:
     if mode in {"live", "paper"}:
         return mode
     raise EnvironmentError("IB_GATEWAY_MODE must be either 'live' or 'paper'")
+
+
+def resolve_ib_gateway_port(raw_value: Any, *, gateway_mode: str) -> int:
+    if raw_value is None or raw_value == "":
+        return 4002 if gateway_mode == "paper" else 4001
+    try:
+        port = int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise EnvironmentError("ib_gateway_port must be an integer between 1 and 65535") from exc
+    if port < 1 or port > 65535:
+        raise EnvironmentError("ib_gateway_port must be an integer between 1 and 65535")
+    return port
 
 
 def resolve_ib_gateway_ip_mode(
