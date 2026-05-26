@@ -562,3 +562,62 @@ jobs:
 
             gcloud "${gcloud_args[@]}"
           done
+
+      - name: Prune old Cloud Run revisions
+        if: steps.config.outputs.enabled == 'true'
+        env:
+          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t target_services < <(python - <<'PY'
+          import json
+          import os
+          plan = json.loads(os.environ["SYNC_PLAN_JSON"])
+          for target in plan["targets"]:
+              print(target["service_name"])
+          PY
+          )
+
+          for cloud_run_service in "${target_services[@]}"; do
+            keep_revisions="$(
+              gcloud run services describe "${cloud_run_service}" \
+                --region "${CLOUD_RUN_REGION}" \
+                --format=json \
+              | python -c '
+          import json
+          import sys
+          service = json.load(sys.stdin)
+          revisions = {
+              item.get("revisionName")
+              for item in service.get("status", {}).get("traffic", [])
+              if item.get("revisionName") and int(item.get("percent") or 0) > 0
+          }
+          latest_ready = service.get("status", {}).get("latestReadyRevisionName")
+          if latest_ready:
+              revisions.add(latest_ready)
+          for revision in sorted(revisions):
+              print(revision)
+          '
+            )"
+
+            if [ -z "${keep_revisions}" ]; then
+              echo "No active Cloud Run revision found for ${cloud_run_service}; skipping revision prune." >&2
+              continue
+            fi
+
+            mapfile -t revisions_to_delete < <(
+              gcloud run revisions list \
+                --service "${cloud_run_service}" \
+                --region "${CLOUD_RUN_REGION}" \
+                --format='value(metadata.name)' \
+              | grep -Fvx -f <(printf '%s\n' "${keep_revisions}") || true
+            )
+
+            for revision in "${revisions_to_delete[@]}"; do
+              echo "Deleting old Cloud Run revision ${revision} for ${cloud_run_service}."
+              gcloud run revisions delete "${revision}" \
+                --region "${CLOUD_RUN_REGION}" \
+                --quiet
+            done
+          done
