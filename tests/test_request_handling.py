@@ -230,7 +230,7 @@ def test_handle_probe_failure_sends_notification(strategy_module, monkeypatch):
 
 def test_build_extra_notification_lines_includes_account_id(strategy_module):
     lines = strategy_module.build_extra_notification_lines(("plugin-line",))
-    assert any("U18308207" in line for line in lines)
+    assert any("U1234567" in line for line in lines)
     assert all("plugin-line" not in line for line in lines)
 
 

@@ -699,7 +699,7 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
                     runtime_target_json(
                         "tqqq_growth_income",
                         deployment_selector="live-slot-a",
-                        account_selector=["U18308207"],
+                        account_selector=["U1234567"],
                         account_scope="live-slot-a",
                         service_name="interactive-brokers-live-slot-a-service",
                     )
@@ -723,7 +723,7 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
                     runtime_target_json(
                         "mega_cap_leader_rotation_top50_balanced",
                         deployment_selector="live-slot-b",
-                        account_selector=["U15998061"],
+                        account_selector=["U7654321"],
                         account_scope="live-slot-b",
                         service_name="interactive-brokers-live-slot-b-service",
                     )
@@ -786,7 +786,7 @@ def test_build_cloud_run_env_sync_plan_requires_target_snapshot_in_per_service_m
                     runtime_target_json(
                         "mega_cap_leader_rotation_top50_balanced",
                         deployment_selector="live-slot-b",
-                        account_selector=["U15998061"],
+                        account_selector=["U7654321"],
                         account_scope="live-slot-b",
                         service_name="interactive-brokers-live-slot-b-service",
                     )

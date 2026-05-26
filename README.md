@@ -286,7 +286,7 @@ For slot deployments, use `CLOUD_RUN_SERVICE_TARGETS_JSON` instead of a shared `
         "strategy_profile": "tqqq_growth_income",
         "dry_run_only": false,
         "deployment_selector": "live-slot-a",
-        "account_selector": ["U18308207"],
+        "account_selector": ["U1234567"],
         "account_scope": "live-slot-a",
         "service_name": "interactive-brokers-live-slot-a-service",
         "execution_mode": "live"
@@ -311,7 +311,7 @@ For slot deployments, use `CLOUD_RUN_SERVICE_TARGETS_JSON` instead of a shared `
         "strategy_profile": "mega_cap_leader_rotation_top50_balanced",
         "dry_run_only": false,
         "deployment_selector": "live-slot-b",
-        "account_selector": ["U15998061"],
+        "account_selector": ["U7654321"],
         "account_scope": "live-slot-b",
         "service_name": "interactive-brokers-live-slot-b-service",
         "execution_mode": "live"
