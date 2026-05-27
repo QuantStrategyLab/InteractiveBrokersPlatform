@@ -547,6 +547,17 @@ def _sell_order_quantity(
 
 
 DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD = 1000.0
+SMALL_ACCOUNT_SAFE_HAVEN_CASH_SUBSTITUTE_LIMIT_USD = 2000.0
+
+
+def _positive_target_total(targets: dict[str, Any]) -> float:
+    total = 0.0
+    for value in dict(targets or {}).values():
+        try:
+            total += max(0.0, float(value or 0.0))
+        except (TypeError, ValueError):
+            continue
+    return total
 
 
 def _apply_safe_haven_cash_substitution_to_weights(
@@ -651,6 +662,7 @@ def execute_rebalance(
         ),
         "safe_haven_cash_substituted_symbols": [],
         "small_account_whole_share_substituted_symbols": [],
+        "small_account_safe_haven_cash_substituted_symbols": [],
         "residual_cash_estimate": float(account_values.get("buying_power", 0.0) or 0.0),
         "current_stock_weight": 0.0,
         "current_safe_haven_weight": 0.0,
@@ -726,11 +738,17 @@ def execute_rebalance(
 
     target_mv = {symbol: investable * weight for symbol, weight in target_weights.items()}
     small_account_candidate_symbols = tuple(
-        dict.fromkeys(tuple(allocation["risk_symbols"]) + tuple(allocation["income_symbols"]))
+        dict.fromkeys(
+            str(symbol or "").strip().upper()
+            for symbol in tuple(allocation["risk_symbols"]) + tuple(allocation["income_symbols"])
+            if str(symbol or "").strip()
+        )
     )
     if not small_account_candidate_symbols:
         small_account_candidate_symbols = tuple(
-            symbol for symbol in target_mv if symbol not in safe_haven_symbols
+            str(symbol or "").strip().upper()
+            for symbol in target_mv
+            if str(symbol or "").strip().upper() not in safe_haven_symbols
         )
     target_mv, small_account_substituted_symbols = project_unbuyable_value_targets_to_cash(
         target_mv,
@@ -740,8 +758,35 @@ def execute_rebalance(
     )
     for symbol in small_account_substituted_symbols:
         target_weights[symbol] = 0.0
+    remaining_non_safe_targets = [
+        symbol
+        for symbol in small_account_candidate_symbols
+        if float(target_mv.get(str(symbol or "").strip().upper(), 0.0) or 0.0) > 0.0
+    ]
+    small_account_safe_haven_cash_substituted_symbols: list[str] = []
+    if (
+        small_account_substituted_symbols
+        and not remaining_non_safe_targets
+        and _positive_target_total(target_mv) <= SMALL_ACCOUNT_SAFE_HAVEN_CASH_SUBSTITUTE_LIMIT_USD
+    ):
+        for symbol in safe_haven_symbols:
+            normalized_symbol = str(symbol or "").strip().upper()
+            if float(target_mv.get(normalized_symbol, 0.0) or 0.0) > 0.0:
+                target_mv[normalized_symbol] = 0.0
+                target_weights[normalized_symbol] = 0.0
+                small_account_safe_haven_cash_substituted_symbols.append(normalized_symbol)
+    if safe_haven_symbols:
+        execution_summary["realized_safe_haven_weight"] = float(
+            sum(
+                float(target_weights.get(str(symbol or "").strip().upper(), 0.0) or 0.0)
+                for symbol in safe_haven_symbols
+            )
+        )
     execution_summary["small_account_whole_share_substituted_symbols"] = list(
         small_account_substituted_symbols
+    )
+    execution_summary["small_account_safe_haven_cash_substituted_symbols"] = (
+        small_account_safe_haven_cash_substituted_symbols
     )
     trade_logs = []
     target_hash = _build_target_hash(target_weights)
