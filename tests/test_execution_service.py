@@ -55,6 +55,12 @@ def translate(key, **kwargs):
         "dry_run_snapshot_prices": "dry_run_snapshot_prices count={count} symbols={symbols}",
         "price_fallback_prices": "price_fallback_prices count={count} symbols={symbols}",
         "no_equity": "❌ No equity",
+        "cash_label": "现金",
+        "buy_deferred": "ℹ️ [买入说明] {detail}",
+        "buy_deferred_small_account_cash_substitution": (
+            "{symbol} 目标金额 ${diff} 低于 1 股价格 ${price}；"
+            "为避免超过目标仓位，小账户本轮保留现金，不回补 {cash_symbols}"
+        ),
     }
     template = templates[key]
     return template.format(**kwargs) if kwargs else template
@@ -238,7 +244,7 @@ def test_execute_rebalance_keeps_safe_haven_cash_when_only_risk_target_is_unbuya
     submitted = []
     monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
 
-    _trade_logs, summary = execute_rebalance(
+    trade_logs, summary = execute_rebalance(
         FakeIB(),
         {},
         {},
@@ -273,6 +279,13 @@ def test_execute_rebalance_keeps_safe_haven_cash_when_only_risk_target_is_unbuya
     assert submitted == []
     assert summary["small_account_whole_share_substituted_symbols"] == ["SOXX"]
     assert summary["small_account_safe_haven_cash_substituted_symbols"] == ["BOXX"]
+    assert len(summary["small_account_whole_share_cash_notes"]) == 1
+    cash_note = summary["small_account_whole_share_cash_notes"][0]
+    assert cash_note["symbol"] == "SOXX"
+    assert round(cash_note["target_value"], 3) == 188.277
+    assert cash_note["price"] == 525.0
+    assert cash_note["cash_symbols"] == ("BOXX",)
+    assert any("SOXX.US 目标金额 $188.28 低于 1 股价格 $525.00" in log for log in trade_logs)
     assert summary["realized_safe_haven_weight"] == 0.0
     boxx_row = next(row for row in summary["target_vs_current"] if row["symbol"] == "BOXX")
     assert boxx_row["target_weight"] == 0.0
