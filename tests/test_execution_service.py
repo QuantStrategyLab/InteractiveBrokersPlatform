@@ -223,6 +223,61 @@ def test_execute_rebalance_projects_unbuyable_weight_target_to_zero(tmp_path, mo
     assert summary["orders_submitted"][1]["quantity"] == 2
 
 
+def test_execute_rebalance_keeps_safe_haven_cash_when_only_risk_target_is_unbuyable(tmp_path, monkeypatch):
+    class FakeIB:
+        def openTrades(self):
+            return []
+
+        def fills(self):
+            return []
+
+        def accountValues(self):
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1294.00")]
+
+    prices = {"SOXL": 175.0, "SOXX": 525.0, "BOXX": 116.83}
+    submitted = []
+    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+
+    _trade_logs, summary = execute_rebalance(
+        FakeIB(),
+        {},
+        {},
+        {"equity": 1294.0, "buying_power": 1294.0},
+        fetch_quote_snapshots=lambda _ib, symbols: {
+            symbol: SimpleNamespace(last_price=prices[symbol]) for symbol in symbols
+        },
+        submit_order_intent=lambda _ib, intent: submitted.append(intent) or SimpleNamespace(
+            broker_order_id="dry-run",
+            status="Submitted",
+        ),
+        order_intent_cls=OrderIntent,
+        translator=translate,
+        strategy_symbols=["SOXL", "SOXX", "BOXX"],
+        strategy_profile="soxl_soxx_trend_income",
+        signal_metadata=_signal_metadata(
+            {"SOXL": 0.0, "SOXX": 0.15, "BOXX": 0.85},
+            risk_symbols=("SOXL", "SOXX"),
+            safe_haven_symbols=("BOXX",),
+            trade_date="2026-05-26",
+        ),
+        dry_run_only=True,
+        cash_reserve_ratio=0.03,
+        rebalance_threshold_ratio=0.01,
+        limit_buy_premium=1.0,
+        quantity_step=1.0,
+        sell_settle_delay_sec=0,
+        execution_lock_dir=tmp_path,
+        return_summary=True,
+    )
+
+    assert submitted == []
+    assert summary["small_account_whole_share_substituted_symbols"] == ["SOXX"]
+    assert summary["small_account_safe_haven_cash_substituted_symbols"] == ["BOXX"]
+    assert summary["realized_safe_haven_weight"] == 0.0
+    boxx_row = next(row for row in summary["target_vs_current"] if row["symbol"] == "BOXX")
+    assert boxx_row["target_weight"] == 0.0
+
+
 def test_execute_rebalance_routes_order_to_single_account_id(monkeypatch, tmp_path):
     class FakeIB:
         def openTrades(self):
