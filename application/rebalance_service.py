@@ -13,6 +13,7 @@ from application.reconciliation_service import (
     build_reconciliation_record,
     write_reconciliation_record,
 )
+from application.signal_snapshot import build_signal_snapshot
 from notifications.events import NotificationPublisher
 from notifications import renderers as notification_renderers
 from quant_platform_kit.common.models import PortfolioSnapshot, Position
@@ -581,6 +582,18 @@ def run_strategy_core(
             signal_metadata = {}
         allocation = _resolve_weight_allocation(signal_metadata, required=target_weights is not None)
         resolved_target_weights = dict(allocation.get("targets") or {}) if target_weights is not None else None
+        signal_metadata = dict(signal_metadata or {})
+        signal_metadata["signal_snapshot"] = build_signal_snapshot(
+            platform="ibkr",
+            strategy_profile=signal_metadata.get("strategy_profile"),
+            metadata={
+                **signal_metadata,
+                "latest_price_source": signal_metadata.get("price_source_mode")
+                or "ibkr_strategy_market_data",
+            },
+            allocation={**allocation, "target_mode": "weight"},
+            target_weights=resolved_target_weights,
+        )
 
         dashboard = notification_renderers.build_dashboard(
             positions,
