@@ -232,18 +232,20 @@ Current behavior is fail-fast:
 When `IBKR_STRATEGY_PLUGIN_MOUNTS_JSON` includes the `crisis_response_shadow` plugin, the normal strategy-cycle Telegram message still includes the compact plugin line. If the plugin signal escalates beyond `no_action` (for example `canonical_route=true_crisis`, `suggested_action=defend`/`blocked`, or `would_trade_if_enabled=true`), the service also sends independent crisis alerts through configured `CRISIS_ALERT_CHANNELS` channels.
 Alert results are written into the runtime report. Duplicate suppression uses stable plugin alert keys and stores markers under `STRATEGY_PLUGIN_ALERT_STATE_GCS_URI` when set, otherwise `EXECUTION_REPORT_GCS_URI`, with a local `/tmp` marker fallback.
 
-### GitHub-managed Cloud Run env sync
+### GitHub-managed Cloud Run deploy and env sync
 
-If code deployment still uses Google Cloud Trigger, but you want GitHub to be the single source of truth for runtime env vars, this repo now includes `.github/workflows/sync-cloud-run-env.yml`. The workflow now also emits `RUNTIME_TARGET_JSON`, so the control plane carries a structured runtime target alongside the legacy `STRATEGY_PROFILE` selector.
+This repo includes `.github/workflows/sync-cloud-run-env.yml` for GitHub-managed Cloud Run automation. Set `ENABLE_GITHUB_CLOUD_RUN_DEPLOY=true` to build and deploy the container image from GitHub Actions; set `ENABLE_GITHUB_ENV_SYNC=true` to sync runtime env vars. You can enable either flag independently during migration from a Google Cloud Trigger. The workflow also emits `RUNTIME_TARGET_JSON`, so the control plane carries a structured runtime target alongside the legacy `STRATEGY_PROFILE` selector.
 
 Recommended setup:
 
 - **Repository Variables**
+  - `ENABLE_GITHUB_CLOUD_RUN_DEPLOY` = `true` to let GitHub Actions build/push/deploy the Cloud Run image
   - `ENABLE_GITHUB_ENV_SYNC` = `true`
   - `CLOUD_RUN_REGION`
   - `CLOUD_RUN_SERVICES` (comma-, semicolon-, or newline-separated Cloud Run service names; preferred for slot deployments)
   - `CLOUD_RUN_SERVICE` (single-service fallback when `CLOUD_RUN_SERVICES` is not set)
   - `CLOUD_RUN_SERVICE_TARGETS_JSON` (preferred for full slot sync; see below)
+  - Optional: `GCP_ARTIFACT_REGISTRY_HOSTNAME` when Artifact Registry is not in the Cloud Run region (default: `<CLOUD_RUN_REGION>-docker.pkg.dev`)
   - Optional: `CLOUD_RUN_ENV_SYNC_WAIT_FOR_COMMIT=false` if the target services are managed by a deployment flow that does not update the `commit-sha` label before this sync runs
   - `TELEGRAM_TOKEN_SECRET_NAME` (recommended when Cloud Run already uses Secret Manager for `TELEGRAM_TOKEN`)
   - `STRATEGY_PROFILE` (set explicitly to one enabled profile, such as `soxl_soxx_trend_income`)
@@ -261,7 +263,7 @@ Recommended setup:
   - `IB_GATEWAY_ZONE`
   - `IB_GATEWAY_IP_MODE`
 
-On every push to `main`, the workflow builds a Cloud Run sync plan, updates the configured Cloud Run service or services, and removes legacy env vars that should now live in the account-group config (`IB_CLIENT_ID`, `IB_GATEWAY_INSTANCE_NAME`, `IB_GATEWAY_MODE`) plus the older transport vars (`IB_GATEWAY_HOST`, `IB_GATEWAY_PORT`, `TELEGRAM_CHAT_ID`). If `IB_GATEWAY_ZONE` or `IB_GATEWAY_IP_MODE` are blank in the selected sync target, the workflow also removes them from Cloud Run to avoid drift.
+On every push to `main`, the workflow can build one container image, deploy it to one or more configured Cloud Run services, build a Cloud Run sync plan, update the configured Cloud Run service env vars, and remove legacy env vars that should now live in the account-group config (`IB_CLIENT_ID`, `IB_GATEWAY_INSTANCE_NAME`, `IB_GATEWAY_MODE`) plus the older transport vars (`IB_GATEWAY_HOST`, `IB_GATEWAY_PORT`, `TELEGRAM_CHAT_ID`). If `IB_GATEWAY_ZONE` or `IB_GATEWAY_IP_MODE` are blank in the selected sync target, the workflow also removes them from Cloud Run to avoid drift.
 
 `STRATEGY_PROFILE` is resolved from a platform capability matrix plus a rollout allowlist derived from `runtime_enabled` strategy metadata. The current strategy domain is `us_equity`: `eligible` means the platform can run the strategy in theory, while `enabled` means the current rollout really allows it. `ACCOUNT_GROUP` selects one account-group config entry, and the service fails fast if that runtime identity is incomplete. `RUNTIME_TARGET_JSON` carries the structured runtime identity; strategy defaults continue to come from `UsEquityStrategies`.
 
@@ -270,7 +272,7 @@ For slot deployments, use `CLOUD_RUN_SERVICE_TARGETS_JSON` instead of a shared `
 ```json
 {
   "defaults": {
-    "GLOBAL_TELEGRAM_CHAT_ID": "5992562050",
+    "GLOBAL_TELEGRAM_CHAT_ID": "<telegram-chat-id>",
     "NOTIFY_LANG": "zh",
     "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME": "ibkr-account-groups",
     "IB_GATEWAY_ZONE": "us-central1-c",
@@ -326,11 +328,12 @@ For slot deployments, use `CLOUD_RUN_SERVICE_TARGETS_JSON` instead of a shared `
 Important:
 
 - The workflow only becomes strict when `ENABLE_GITHUB_ENV_SYNC=true`. If this variable is unset, the sync job is skipped. When enabled, it builds the per-service plan with `scripts/build_cloud_run_env_sync_plan.py` and resolves each selected profile's snapshot/config requirements from the strategy status matrix instead of a hard-coded strategy-name list.
+- The deploy path only becomes active when `ENABLE_GITHUB_CLOUD_RUN_DEPLOY=true`. If it is unset, an existing Cloud Build trigger can keep owning code deployment while this workflow only syncs env.
 - For full slot sync, configure `CLOUD_RUN_SERVICE_TARGETS_JSON`. `CLOUD_RUN_SERVICES` is only for the legacy mode where every listed service intentionally receives the same runtime env.
 - Here "shared config" still only means the **IBKR pair** (`InteractiveBrokersPlatform` + `IBKRGatewayManager`). `TELEGRAM_TOKEN` and `TELEGRAM_TOKEN_SECRET_NAME` remain repository-specific. If crisis alert recipients and sender policy are shared across platforms, manage `CRISIS_ALERT_CHANNELS`, `CRISIS_ALERT_EMAIL_*`, and `CRISIS_ALERT_PUSH_*` with GitHub Organization Variables/Secrets or GCP Secret Manager.
 - If `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME` is set, the Cloud Run runtime needs Secret Manager access to that secret.
 - GitHub now authenticates to Google Cloud with OIDC + Workload Identity Federation, so `GCP_SA_KEY` is no longer required for this workflow.
-- If you deploy with `gcloud run deploy --source` or a Cloud Run source trigger, the staging bucket `gs://run-sources-<project>-<region>` also needs `roles/storage.objectViewer` for the build service account, the deploy service account, and the default compute service account. Missing this binding fails the deploy before Cloud Build starts with `storage.objects.get` denied.
+- GitHub deploy uses the repository Dockerfile and Artifact Registry. The deploy service account needs Artifact Registry writer, Cloud Run admin, and service-account user permissions for the runtime service account.
 
 ### Deployment unit and naming
 
@@ -525,18 +528,20 @@ IB_GATEWAY_IP_MODE=internal
 如果 `IBKR_STRATEGY_PLUGIN_MOUNTS_JSON` 挂载了 `crisis_response_shadow` 插件，常规策略周期 Telegram 仍会包含插件摘要行。当插件信号升级到非 `no_action`（例如 `canonical_route=true_crisis`、`suggested_action=defend`/`blocked`，或 `would_trade_if_enabled=true`）时，服务还会按 `CRISIS_ALERT_CHANNELS` 配置额外发送独立危机通知。
 告警结果会写入 runtime report。重复发送抑制使用稳定的插件告警 key；如配置了 `STRATEGY_PLUGIN_ALERT_STATE_GCS_URI` 则写入该前缀，否则复用 `EXECUTION_REPORT_GCS_URI`，并有本地 `/tmp` marker fallback。
 
-### GitHub 统一管理 Cloud Run 环境变量
+### GitHub 统一管理 Cloud Run 部署和环境变量
 
-如果代码部署继续走 Google Cloud Trigger，但你想把运行时环境变量统一放在 GitHub 管理，这个仓库现在提供了 `.github/workflows/sync-cloud-run-env.yml`。
+这个仓库提供 `.github/workflows/sync-cloud-run-env.yml` 作为 GitHub 管理 Cloud Run 的入口。设置 `ENABLE_GITHUB_CLOUD_RUN_DEPLOY=true` 时，GitHub Actions 会构建并发布容器镜像；设置 `ENABLE_GITHUB_ENV_SYNC=true` 时，GitHub Actions 会同步运行时环境变量。迁移期间两个开关可以独立启用，旧的 Google Cloud Trigger 也可以先保留。
 
 推荐配置方式：
 
 - **仓库级 Variables**
+  - `ENABLE_GITHUB_CLOUD_RUN_DEPLOY` = `true`（让 GitHub Actions 负责 build/push/deploy）
   - `ENABLE_GITHUB_ENV_SYNC` = `true`
   - `CLOUD_RUN_REGION`
   - `CLOUD_RUN_SERVICES`（逗号、分号或换行分隔的 Cloud Run 服务名；slot 部署优先用这个）
   - `CLOUD_RUN_SERVICE`（没设置 `CLOUD_RUN_SERVICES` 时的单服务兼容入口）
   - `CLOUD_RUN_SERVICE_TARGETS_JSON`（全量同步 slot 时优先用这个，见下面示例）
+  - 可选：`GCP_ARTIFACT_REGISTRY_HOSTNAME`（Artifact Registry 不在 Cloud Run region 时才需要；默认 `<CLOUD_RUN_REGION>-docker.pkg.dev`）
   - 可选：`CLOUD_RUN_ENV_SYNC_WAIT_FOR_COMMIT=false`（当目标服务由另一个部署链路管理、不会在同步前更新 `commit-sha` label 时使用）
   - `TELEGRAM_TOKEN_SECRET_NAME`（如果 Cloud Run 上的 `TELEGRAM_TOKEN` 已经改成 Secret Manager，建议配置）
   - `STRATEGY_PROFILE`（显式设置为任一已启用 profile，例如 `soxl_soxx_trend_income`）
@@ -554,18 +559,19 @@ IB_GATEWAY_IP_MODE=internal
   - `IB_GATEWAY_ZONE`
   - `IB_GATEWAY_IP_MODE`
 
-每次 push 到 `main` 时，这个 workflow 会先生成 Cloud Run sync plan，再把目标值同步到配置的一个或多个 Cloud Run 服务里，并清掉已经转移到账号组配置里的旧 env（`IB_CLIENT_ID`、`IB_GATEWAY_INSTANCE_NAME`、`IB_GATEWAY_MODE`）以及更早的传输层 env（`IB_GATEWAY_HOST`、`IB_GATEWAY_PORT`、`TELEGRAM_CHAT_ID`）。如果目标 sync 配置里没有 `IB_GATEWAY_ZONE` 或 `IB_GATEWAY_IP_MODE`，workflow 也会把 Cloud Run 上这两个旧值一起删除，避免双配置源漂移。
+每次 push 到 `main` 时，这个 workflow 可以先构建一份容器镜像并部署到一个或多个 Cloud Run 服务，再生成 Cloud Run sync plan，把目标值同步到配置的服务里，并清掉已经转移到账号组配置里的旧 env（`IB_CLIENT_ID`、`IB_GATEWAY_INSTANCE_NAME`、`IB_GATEWAY_MODE`）以及更早的传输层 env（`IB_GATEWAY_HOST`、`IB_GATEWAY_PORT`、`TELEGRAM_CHAT_ID`）。如果目标 sync 配置里没有 `IB_GATEWAY_ZONE` 或 `IB_GATEWAY_IP_MODE`，workflow 也会把 Cloud Run 上这两个旧值一起删除，避免双配置源漂移。
 
 `STRATEGY_PROFILE` 由平台能力矩阵和从 `runtime_enabled` 策略元数据派生的 rollout allowlist 一起决定。当前策略域仍是 `us_equity`：`eligible` 表示平台理论上能跑，`enabled` 表示当前 rollout 真正放开。`ACCOUNT_GROUP` 是严格必填项，并会选中一份账号组配置。运行身份不完整时，服务会直接失败，不再静默回退。
 
 注意：
 
 - 只有在 `ENABLE_GITHUB_ENV_SYNC=true` 时，这个 workflow 才会严格校验并执行同步。没打开时会直接跳过。打开后，它会用 `scripts/build_cloud_run_env_sync_plan.py` 生成 per-service plan，并从策略状态矩阵动态解析每个目标策略需要的 snapshot/config 输入，不再维护硬编码策略名列表。
+- 只有在 `ENABLE_GITHUB_CLOUD_RUN_DEPLOY=true` 时，GitHub Actions 才会接管代码部署；没打开时，旧的 Cloud Build trigger 仍可继续负责发布。
 - 全量同步 slot 时应配置 `CLOUD_RUN_SERVICE_TARGETS_JSON`。`CLOUD_RUN_SERVICES` 只适合旧模式，也就是多个服务确实要收到同一份 runtime env。
 - 这里说的“共享配置”仍然只针对 **IBKR 这一组系统**。`TELEGRAM_TOKEN` 和 `TELEGRAM_TOKEN_SECRET_NAME` 都还是这个仓库自己的配置，不建议提升成所有 quant 共用的全局配置。危机告警如果确实跨平台共用同一套收件人和发送方，可以用 GitHub Organization Variables/Secrets 管理 `CRISIS_ALERT_CHANNELS`、`CRISIS_ALERT_EMAIL_*` 和 `CRISIS_ALERT_PUSH_*`。
 - 如果设置了 `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME`，Cloud Run 运行时还需要有对应 Secret 的访问权限。
 - GitHub 现在通过 OIDC + Workload Identity Federation 登录 Google Cloud，这个 workflow 不再需要 `GCP_SA_KEY`。
-- 如果你用 `gcloud run deploy --source` 或 Cloud Run source trigger 部署，还要给 staging bucket `gs://run-sources-<project>-<region>` 补 `roles/storage.objectViewer`，对象包括 build service account、deploy service account、默认 compute service account。少了这层权限，会在 Cloud Build 启动前直接报 `storage.objects.get denied`。
+- GitHub 部署路径使用仓库里的 Dockerfile 和 Artifact Registry。部署服务账号需要 Artifact Registry 写入、Cloud Run 管理，以及对 runtime service account 的 service-account user 权限。
 
 ### 部署单元和命名建议
 
