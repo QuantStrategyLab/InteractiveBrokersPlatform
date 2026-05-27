@@ -300,6 +300,36 @@ def _build_timing_audit_lines(signal_metadata, *, translator) -> list[str]:
     return [f"{label}: {value}"]
 
 
+def _format_signal_snapshot_line(snapshot, *, translator) -> str:
+    if not isinstance(snapshot, Mapping):
+        return ""
+    market_date = str(snapshot.get("market_date") or snapshot.get("signal_as_of") or "").strip()
+    source = str(snapshot.get("latest_price_source") or "").strip()
+    overlay = snapshot.get("quote_overlay_used")
+    warning = snapshot.get("data_freshness_warning")
+    if not market_date and not source and overlay is None and warning in (None, "", False):
+        return ""
+    if _translator_uses_zh(translator):
+        overlay_text = "是" if overlay is True else "否" if overlay is False else "未知"
+        parts = [
+            f"日期 {market_date or '未知'}",
+            f"数据源 {source or '未知'}",
+            f"报价覆盖 {overlay_text}",
+        ]
+        if warning not in (None, "", False):
+            parts.append(f"提示 {warning}")
+        return "🧾 信号快照: " + " | ".join(parts)
+    overlay_text = "yes" if overlay is True else "no" if overlay is False else "unknown"
+    parts = [
+        f"date {market_date or 'unknown'}",
+        f"source {source or 'unknown'}",
+        f"quote overlay {overlay_text}",
+    ]
+    if warning not in (None, "", False):
+        parts.append(f"warning {warning}")
+    return "🧾 Signal snapshot: " + " | ".join(parts)
+
+
 def _strategy_dashboard_text(signal_metadata, *, translator) -> str:
     metadata = signal_metadata if isinstance(signal_metadata, Mapping) else {}
     raw_annotations = metadata.get("execution_annotations")
@@ -311,11 +341,13 @@ def _strategy_dashboard_text(signal_metadata, *, translator) -> str:
         or ""
     )
     timing_lines = _build_timing_audit_lines(metadata, translator=translator)
-    if not timing_lines:
+    snapshot_line = _format_signal_snapshot_line(metadata.get("signal_snapshot"), translator=translator)
+    audit_lines = [*timing_lines, *([snapshot_line] if snapshot_line else [])]
+    if not audit_lines:
         return dashboard_text
     if not dashboard_text:
-        return "\n".join(timing_lines)
-    return f"{dashboard_text}\n" + "\n".join(timing_lines)
+        return "\n".join(audit_lines)
+    return f"{dashboard_text}\n" + "\n".join(audit_lines)
 
 
 def build_dashboard(

@@ -22,6 +22,7 @@ from application.runtime_broker_adapters import build_runtime_broker_adapters
 from application.runtime_composer import build_runtime_composer
 from application.runtime_strategy_adapters import build_runtime_strategy_adapters
 from application.rebalance_service import run_strategy_core as run_rebalance_cycle
+from application.signal_snapshot import build_signal_snapshot
 from decision_mapper import map_strategy_decision
 from entrypoints.cloud_run import is_market_open_today
 from notifications.telegram import build_strategy_display_name, build_translator, send_telegram_message
@@ -530,6 +531,22 @@ def build_strategy_plugin_alert_context_label() -> str:
     )
 
 
+def _has_signal_snapshot_details(snapshot: dict[str, object]) -> bool:
+    return any(
+        snapshot.get(field_name)
+        for field_name in (
+            "signal_as_of",
+            "market_date",
+            "latest_price_source",
+            "target_weights",
+            "target_values",
+            "indicators",
+            "signal",
+            "status",
+        )
+    )
+
+
 def publish_strategy_plugin_alerts(signals, *, report=None):
     result = dispatch_strategy_plugin_alerts(
         signals,
@@ -688,6 +705,35 @@ def _handle_request(*, dry_run_only_override: bool | None = None, response_body:
         )
         execution_summary = dict(cycle_result.execution_summary or {})
         reconciliation_record = dict(cycle_result.reconciliation_record or {})
+        signal_metadata = dict(cycle_result.signal_metadata or {})
+        signal_snapshot = dict(signal_metadata.get("signal_snapshot") or {})
+        if not signal_snapshot:
+            signal_snapshot = build_signal_snapshot(
+                platform="ibkr",
+                strategy_profile=signal_metadata.get("strategy_profile") or STRATEGY_PROFILE,
+                metadata=signal_metadata,
+                target_weights=cycle_result.target_weights,
+            )
+        if execution_summary.get("price_source_mode") or reconciliation_record.get("price_source_mode"):
+            signal_snapshot["latest_price_source"] = (
+                execution_summary.get("price_source_mode")
+                or reconciliation_record.get("price_source_mode")
+            )
+        fallback_used = bool(
+            execution_summary.get("snapshot_price_fallback_used")
+            or reconciliation_record.get("snapshot_price_fallback_used")
+        )
+        if fallback_used:
+            signal_snapshot["data_freshness_warning"] = "snapshot_price_fallback_used"
+        has_signal_snapshot = _has_signal_snapshot_details(signal_snapshot)
+        if has_signal_snapshot:
+            log_runtime_event(
+                log_context,
+                "strategy_signal_snapshot",
+                message="Strategy signal snapshot",
+                execution_window="precheck" if dry_run_only_override else "execution",
+                **signal_snapshot,
+            )
         finalize_runtime_report(
             report,
             status="ok",
@@ -721,6 +767,7 @@ def _handle_request(*, dry_run_only_override: bool | None = None, response_body:
                 "snapshot_price_fallback_symbols": execution_summary.get("snapshot_price_fallback_symbols")
                 or reconciliation_record.get("snapshot_price_fallback_symbols")
                 or [],
+                **({"signal_snapshot": signal_snapshot} if has_signal_snapshot else {}),
             },
             artifacts={
                 "reconciliation_record_path": cycle_result.reconciliation_record_path,
