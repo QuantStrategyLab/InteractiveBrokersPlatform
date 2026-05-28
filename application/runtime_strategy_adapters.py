@@ -221,16 +221,19 @@ class IBKRRuntimeStrategyAdapters:
         )
         return candles
 
-    def compute_signals(self, ib, current_holdings):
-        evaluation = self.strategy_runtime.evaluate(
-            ib=ib,
-            current_holdings=current_holdings,
-            historical_close_loader=self.get_historical_close,
-            historical_candle_loader=self.get_historical_candles,
-            run_as_of=self.resolve_run_as_of_date_fn(),
-            translator=self.translator,
-            pacing_sec=self.pacing_sec,
-        )
+    def compute_signals(self, ib, current_holdings, *, strategy_plugin_signals=()):
+        evaluate_kwargs = {
+            "ib": ib,
+            "current_holdings": current_holdings,
+            "historical_close_loader": self.get_historical_close,
+            "historical_candle_loader": self.get_historical_candles,
+            "run_as_of": self.resolve_run_as_of_date_fn(),
+            "translator": self.translator,
+            "pacing_sec": self.pacing_sec,
+        }
+        if strategy_plugin_signals:
+            evaluate_kwargs["strategy_plugin_signals"] = tuple(strategy_plugin_signals or ())
+        evaluation = self.strategy_runtime.evaluate(**evaluate_kwargs)
         return self.map_strategy_decision_fn(
             evaluation.decision,
             strategy_profile=self.strategy_profile,

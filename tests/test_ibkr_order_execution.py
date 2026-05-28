@@ -12,6 +12,14 @@ class FakeMarketOrder:
         self.tif = ""
 
 
+class FakeLimitOrder:
+    def __init__(self, side, quantity, limit_price):
+        self.action = side
+        self.totalQuantity = quantity
+        self.lmtPrice = limit_price
+        self.tif = ""
+
+
 class FakeIB:
     def __init__(self):
         self.placed_order = None
@@ -29,6 +37,17 @@ class FakeIB:
 
 def fake_stock(symbol, exchange, currency):
     return SimpleNamespace(symbol=symbol, exchange=exchange, currency=currency)
+
+
+def fake_option(symbol, expiration, strike, right, exchange, currency):
+    return SimpleNamespace(
+        symbol=symbol,
+        lastTradeDateOrContractMonth=expiration,
+        strike=strike,
+        right=right,
+        exchange=exchange,
+        currency=currency,
+    )
 
 
 def test_submit_order_intent_sets_default_day_tif_on_market_orders():
@@ -74,3 +93,32 @@ def test_submit_order_intent_preserves_account_id():
 
     assert ib.placed_order.account == "U1234567"
     assert report.raw_payload["account_id"] == "U1234567"
+
+
+def test_submit_order_intent_passes_option_factory_and_default_tif():
+    ib = FakeIB()
+
+    report = submit_order_intent(
+        ib,
+        OrderIntent(
+            symbol="QQQ",
+            side="buy_to_open",
+            quantity=1,
+            order_type="limit",
+            limit_price=150.0,
+            metadata={
+                "asset_class": "option",
+                "intent_type": "single_leg_option",
+                "underlier": "QQQ",
+                "right": "C",
+                "expiration": "2028-01-21",
+                "strike": 520.0,
+            },
+        ),
+        wait_seconds=0,
+        option_factory=fake_option,
+        limit_order_factory=FakeLimitOrder,
+    )
+
+    assert ib.placed_order.tif == "DAY"
+    assert report.raw_payload["asset_class"] == "option"

@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import strategy_runtime as strategy_runtime_module
+from quant_platform_kit.common.models import PortfolioSnapshot
 from quant_platform_kit.strategy_contracts import (
     PositionTarget,
     StrategyDecision,
@@ -9,6 +10,19 @@ from quant_platform_kit.strategy_contracts import (
     StrategyRuntimePolicy,
 )
 from runtime_config_support import PlatformRuntimeSettings
+
+
+class _FakeStrategyPluginSignal:
+    plugin = "taco_rebound_shadow"
+    execution_controls = {"strategy_runtime_metadata_allowed": True}
+    payload = {
+        "plugin": "taco_rebound_shadow",
+        "canonical_route": "taco_rebound",
+        "rebound_context_active": True,
+    }
+
+    def report_summary(self):
+        return {"plugin": self.plugin, "canonical_route": "taco_rebound"}
 
 
 def _build_runtime_settings(
@@ -109,6 +123,111 @@ def test_main_compute_signals_uses_strategy_runtime_decision(strategy_module, mo
     assert callable(observed["historical_candle_loader"])
 
 
+def test_main_compute_signals_passes_strategy_plugin_signals_to_runtime(strategy_module, monkeypatch):
+    observed = {}
+
+    class FakeRuntime:
+        def evaluate(
+            self,
+            *,
+            ib,
+            current_holdings,
+            historical_close_loader,
+            historical_candle_loader,
+            run_as_of,
+            translator,
+            pacing_sec,
+            strategy_plugin_signals=(),
+        ):
+            del ib, current_holdings, historical_close_loader, historical_candle_loader, run_as_of, translator, pacing_sec
+            observed["strategy_plugin_signals"] = strategy_plugin_signals
+            return type(
+                "Evaluation",
+                (),
+                {
+                    "decision": StrategyDecision(
+                        positions=(PositionTarget(symbol="BOXX", target_weight=1.0),),
+                        diagnostics={"signal_description": "defense", "status_description": "plugin-aware"},
+                    ),
+                    "metadata": {
+                        "strategy_profile": "global_etf_rotation",
+                        "managed_symbols": ("BOXX",),
+                        "status_icon": "🐤",
+                        "dry_run_only": False,
+                    },
+                },
+            )()
+
+    signal = _FakeStrategyPluginSignal()
+    monkeypatch.setattr(strategy_module, "STRATEGY_RUNTIME", FakeRuntime())
+    monkeypatch.setattr(strategy_module, "resolve_run_as_of_date", lambda: strategy_module.pd.Timestamp("2026-04-07"))
+
+    result = strategy_module.compute_signals("fake-ib", {"AAA"}, strategy_plugin_signals=(signal,))
+
+    assert result[0] == {"BOXX": 1.0}
+    assert observed["strategy_plugin_signals"] == (signal,)
+
+
+def test_loaded_strategy_runtime_attaches_strategy_plugin_metadata_to_portfolio(monkeypatch):
+    observed = {}
+
+    class FakeEntrypoint:
+        manifest = StrategyManifest(
+            profile="tqqq_growth_income",
+            domain="us_equity",
+            display_name="TQQQ Growth Income",
+            description="test",
+            required_inputs=frozenset({"market_history"}),
+            default_config={"managed_symbols": ("TQQQ", "QQQ", "BOXX")},
+        )
+
+        def evaluate(self, ctx):
+            observed["portfolio_metadata"] = dict(ctx.portfolio.metadata)
+            return StrategyDecision(
+                positions=(PositionTarget(symbol="BOXX", target_weight=1.0),),
+                diagnostics={"signal_description": "defense", "status_description": "plugin-aware"},
+            )
+
+    runtime = strategy_runtime_module.LoadedStrategyRuntime(
+        entrypoint=FakeEntrypoint(),
+        runtime_settings=_build_runtime_settings(profile="tqqq_growth_income", display_name="TQQQ Growth Income"),
+        runtime_adapter=StrategyRuntimeAdapter(
+            available_inputs=frozenset({"market_history"}),
+            portfolio_input_name="portfolio_snapshot",
+            runtime_policy=StrategyRuntimePolicy(),
+        ),
+        merged_runtime_config={"managed_symbols": ("TQQQ", "QQQ", "BOXX")},
+        logger=lambda _message: None,
+    )
+    monkeypatch.setattr(
+        strategy_runtime_module,
+        "fetch_portfolio_snapshot",
+        lambda _ib: PortfolioSnapshot(
+            as_of=strategy_runtime_module.pd.Timestamp("2026-04-07").to_pydatetime(),
+            total_equity=100000.0,
+            metadata={"account_hash": "demo"},
+        ),
+    )
+
+    runtime.evaluate(
+        ib=object(),
+        current_holdings={"TQQQ"},
+        historical_close_loader=lambda *_args, **_kwargs: strategy_runtime_module.pd.Series(dtype=float),
+        historical_candle_loader=lambda *_args, **_kwargs: (),
+        run_as_of=strategy_runtime_module.pd.Timestamp("2026-04-07"),
+        translator=lambda value, **_kwargs: value,
+        pacing_sec=0.0,
+        strategy_plugin_signals=(_FakeStrategyPluginSignal(),),
+    )
+
+    assert observed["portfolio_metadata"]["account_hash"] == "demo"
+    assert observed["portfolio_metadata"]["taco_rebound_shadow"]["canonical_route"] == "taco_rebound"
+    assert (
+        observed["portfolio_metadata"]["strategy_plugins"]["taco_rebound_shadow"]["rebound_context_active"]
+        is True
+    )
+
+
 def test_load_strategy_runtime_uses_entrypoint_defaults_and_runtime_adapter(monkeypatch):
     class FakeEntrypoint:
         manifest = StrategyManifest(
@@ -162,6 +281,49 @@ def test_load_strategy_runtime_uses_entrypoint_defaults_and_runtime_adapter(monk
     assert runtime.merged_runtime_config["rebalance_months"] == (1, 4, 7, 10)
     assert runtime.rebalance_threshold_ratio == 0.0
     assert runtime.status_icon == "🧲"
+
+
+def test_option_chain_fetch_uses_merged_manifest_overlay_defaults(monkeypatch):
+    observed = {}
+
+    class FakeEntrypoint:
+        manifest = StrategyManifest(
+            profile="tqqq_growth_income",
+            domain="us_equity",
+            display_name="TQQQ",
+            description="test",
+            required_inputs=frozenset({"benchmark_history", "portfolio_snapshot"}),
+            default_config={},
+        )
+
+    runtime = strategy_runtime_module.LoadedStrategyRuntime(
+        entrypoint=FakeEntrypoint(),
+        runtime_adapter=StrategyRuntimeAdapter(),
+        runtime_settings=_build_runtime_settings(profile="tqqq_growth_income"),
+        runtime_config={},
+        merged_runtime_config={
+            "option_growth_overlay_enabled": True,
+            "option_growth_overlay_recipe": "tqqq_leaps_growth_v1",
+            "option_growth_overlay_start_usd": 250000.0,
+        },
+        logger=lambda _message: None,
+    )
+
+    def fake_fetch_option_chain_snapshot(_ib, underlier, **kwargs):
+        observed["underlier"] = underlier
+        observed["kwargs"] = kwargs
+        return {"underlier": underlier, "contracts": ()}
+
+    monkeypatch.setattr(strategy_runtime_module, "fetch_option_chain_snapshot", fake_fetch_option_chain_snapshot)
+    chains = runtime._fetch_option_chains_for_runtime(
+        object(),
+        {},
+        SimpleNamespace(total_equity=300000.0),
+    )
+
+    assert observed["underlier"] == "TQQQ"
+    assert observed["kwargs"]["rights"] == ("C",)
+    assert chains["TQQQ"]["underlier"] == "TQQQ"
 
 
 def test_feature_snapshot_runtime_prefers_unified_runtime_adapter_metadata(monkeypatch):

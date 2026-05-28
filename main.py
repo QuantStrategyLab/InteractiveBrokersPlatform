@@ -358,8 +358,18 @@ def build_broker_adapters(*, dry_run_only_override: bool | None = None):
     )
 
 
-def build_composer(*, dry_run_only_override: bool | None = None):
+def build_composer(*, dry_run_only_override: bool | None = None, strategy_plugin_signals=()):
     effective_dry_run_only = RUNTIME_SETTINGS.dry_run_only if dry_run_only_override is None else bool(dry_run_only_override)
+
+    def compute_signals_fn(ib, current_holdings):
+        if strategy_plugin_signals:
+            return compute_signals(
+                ib,
+                current_holdings,
+                strategy_plugin_signals=strategy_plugin_signals,
+            )
+        return compute_signals(ib, current_holdings)
+
     return build_runtime_composer(
         service_name=SERVICE_NAME or os.getenv("K_SERVICE", "interactive-brokers-platform"),
         strategy_profile=STRATEGY_PROFILE,
@@ -394,7 +404,7 @@ def build_composer(*, dry_run_only_override: bool | None = None):
         send_message=send_tg_message,
         connect_ib_fn=connect_ib,
         build_portfolio_snapshot_fn=build_portfolio_snapshot,
-        compute_signals_fn=compute_signals,
+        compute_signals_fn=compute_signals_fn,
         execute_rebalance_fn=lambda ib, target_weights, positions, account_values, **kwargs: execute_rebalance(
             ib,
             target_weights,
@@ -493,8 +503,12 @@ def get_historical_candles(ib, symbol, duration="2 Y", bar_size="1 day"):
     )
 
 
-def compute_signals(ib, current_holdings):
-    return build_strategy_adapters().compute_signals(ib, current_holdings)
+def compute_signals(ib, current_holdings, *, strategy_plugin_signals=()):
+    return build_strategy_adapters().compute_signals(
+        ib,
+        current_holdings,
+        strategy_plugin_signals=strategy_plugin_signals,
+    )
 
 
 def load_strategy_plugin_signals():
@@ -569,8 +583,11 @@ def build_account_notification_lines() -> tuple[str, ...]:
     return (t("account_ids_detail", account_ids=", ".join(account_ids)),)
 
 
-def build_extra_notification_lines(_strategy_plugin_signals=()) -> tuple[str, ...]:
-    return build_account_notification_lines()
+def build_extra_notification_lines(strategy_plugin_signals=()) -> tuple[str, ...]:
+    return (
+        *build_account_notification_lines(),
+        *build_strategy_plugin_notification_lines(strategy_plugin_signals),
+    )
 
 
 def get_current_portfolio(ib):
@@ -628,15 +645,19 @@ def run_paper_liquidation_cycle():
 
 
 def run_strategy_core(*, strategy_plugin_signals=(), dry_run_only_override: bool | None = None):
-    del strategy_plugin_signals
     if PAPER_LIQUIDATE_ONLY and dry_run_only_override is None:
         return run_paper_liquidation_cycle()
-    composer = build_composer(dry_run_only_override=dry_run_only_override)
+    composer = build_composer(
+        dry_run_only_override=dry_run_only_override,
+        strategy_plugin_signals=strategy_plugin_signals,
+    )
     return run_rebalance_cycle(
         runtime=composer.build_rebalance_runtime(
             silent_cycle_notifications=bool(dry_run_only_override),
         ),
-        config=composer.build_rebalance_config(extra_notification_lines=build_extra_notification_lines()),
+        config=composer.build_rebalance_config(
+            extra_notification_lines=build_extra_notification_lines(strategy_plugin_signals),
+        ),
     )
 
 
