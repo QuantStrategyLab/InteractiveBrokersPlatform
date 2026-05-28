@@ -12,11 +12,13 @@ from quant_platform_kit.common.feature_snapshot_runtime import (
     FeatureSnapshotRuntimeSettings,
     evaluate_feature_snapshot_strategy,
 )
+from quant_platform_kit.common.strategy_plugins import attach_strategy_plugin_metadata
 from quant_platform_kit.ibkr import (
     build_ibkr_strategy_context,
     build_benchmark_history_inputs,
     build_market_history_inputs,
     build_semiconductor_rotation_inputs,
+    fetch_option_chain_snapshot,
     fetch_portfolio_snapshot,
 )
 from quant_platform_kit.strategy_contracts import (
@@ -43,6 +45,39 @@ _MARKET_HISTORY_INPUT = "market_history"
 _BENCHMARK_HISTORY_INPUT = "benchmark_history"
 _DERIVED_INDICATORS_INPUT = "derived_indicators"
 _PORTFOLIO_SNAPSHOT_INPUT = "portfolio_snapshot"
+
+_OPTION_CHAIN_FETCH_RULES = {
+    "tqqq_leaps_growth_v1": {
+        "underlier": "TQQQ",
+        "rights": ("C",),
+        "min_dte": 540,
+        "max_dte": 930,
+        "target_dte": 730,
+        "strike_range_pct": (0.45, 1.30),
+        "max_expirations": 3,
+        "max_contracts": 72,
+    },
+    "qqq_leaps_growth_v1": {
+        "underlier": "QQQ",
+        "rights": ("C",),
+        "min_dte": 540,
+        "max_dte": 930,
+        "target_dte": 730,
+        "strike_range_pct": (0.45, 1.30),
+        "max_expirations": 3,
+        "max_contracts": 72,
+    },
+    "soxx_put_credit_spread_income_v1": {
+        "underlier": "SOXX",
+        "rights": ("P",),
+        "min_dte": 25,
+        "max_dte": 65,
+        "target_dte": 45,
+        "strike_range_pct": (0.65, 1.02),
+        "max_expirations": 3,
+        "max_contracts": 72,
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -106,6 +141,15 @@ class LoadedStrategyRuntime:
                 f"profile={self.profile} error_type={type(exc).__name__} error={exc}"
             )
             return None
+
+    @staticmethod
+    def _attach_strategy_plugin_metadata(
+        portfolio_snapshot: Any | None,
+        strategy_plugin_signals,
+    ) -> Any | None:
+        if portfolio_snapshot is None or not strategy_plugin_signals:
+            return portfolio_snapshot
+        return attach_strategy_plugin_metadata(portfolio_snapshot, tuple(strategy_plugin_signals or ()))
 
     @staticmethod
     def _normalize_symbols(symbols) -> tuple[str, ...]:
@@ -172,6 +216,74 @@ class LoadedStrategyRuntime:
                 values.append(numeric)
         return float(values[-1]) if values else None
 
+    @staticmethod
+    def _as_bool(value: Any, *, default: bool = False) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "y", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "n", "off"}:
+                return False
+        return bool(value)
+
+    def _active_option_overlay_recipes(
+        self,
+        runtime_config: Mapping[str, Any],
+        portfolio_snapshot: Any | None,
+    ) -> tuple[str, ...]:
+        total_equity = float(getattr(portfolio_snapshot, "total_equity", 0.0) or 0.0)
+        recipes = []
+        for family in ("growth", "income"):
+            prefix = f"option_{family}_overlay"
+            if not self._as_bool(runtime_config.get(f"{prefix}_enabled"), default=False):
+                continue
+            recipe = str(runtime_config.get(f"{prefix}_recipe") or "").strip()
+            if recipe not in _OPTION_CHAIN_FETCH_RULES:
+                continue
+            start_usd = float(runtime_config.get(f"{prefix}_start_usd") or 0.0)
+            if portfolio_snapshot is None or total_equity < max(0.0, start_usd):
+                continue
+            recipes.append(recipe)
+        return tuple(dict.fromkeys(recipes))
+
+    def _fetch_option_chains_for_runtime(
+        self,
+        ib,
+        runtime_config: Mapping[str, Any],
+        portfolio_snapshot: Any | None,
+    ) -> dict[str, Any]:
+        if ib is None:
+            return {}
+        overlay_config = dict(self.merged_runtime_config)
+        overlay_config.update(dict(runtime_config or {}))
+        chains: dict[str, Any] = {}
+        for recipe in self._active_option_overlay_recipes(overlay_config, portfolio_snapshot):
+            rule = _OPTION_CHAIN_FETCH_RULES[recipe]
+            underlier = str(rule["underlier"])
+            try:
+                chains[underlier] = fetch_option_chain_snapshot(
+                    ib,
+                    underlier,
+                    rights=tuple(rule["rights"]),
+                    min_dte=int(rule["min_dte"]),
+                    max_dte=int(rule["max_dte"]),
+                    target_dte=int(rule["target_dte"]),
+                    max_expirations=int(rule["max_expirations"]),
+                    strike_range_pct=tuple(rule["strike_range_pct"]),
+                    max_contracts=int(rule["max_contracts"]),
+                )
+            except Exception as exc:
+                self.logger(
+                    "option_chain_fetch_failed | "
+                    f"profile={self.profile} recipe={recipe} underlier={underlier} "
+                    f"error_type={type(exc).__name__} error={exc}"
+                )
+        return chains
+
     def _build_historical_close_map(
         self,
         ib,
@@ -212,6 +324,8 @@ class LoadedStrategyRuntime:
         context_adapter = self._runtime_adapter_with_portfolio(runtime_adapter, portfolio_snapshot)
         available_inputs = set(context_adapter.available_inputs or self.required_inputs)
         available_inputs.update(self.required_inputs)
+        if portfolio_snapshot is not None and context_adapter.portfolio_input_name:
+            available_inputs.add(context_adapter.portfolio_input_name)
         evaluation_inputs = build_strategy_evaluation_inputs(
             available_inputs=available_inputs,
             market_inputs=market_inputs,
@@ -240,6 +354,7 @@ class LoadedStrategyRuntime:
         run_as_of: pd.Timestamp,
         translator: Callable[[str], str],
         pacing_sec: float,
+        strategy_plugin_signals=(),
     ) -> StrategyEvaluationResult:
         run_as_of = pd.Timestamp(run_as_of).normalize()
         if _FEATURE_SNAPSHOT_INPUT in self.required_inputs:
@@ -251,6 +366,7 @@ class LoadedStrategyRuntime:
                 run_as_of=run_as_of,
                 translator=translator,
                 pacing_sec=pacing_sec,
+                strategy_plugin_signals=strategy_plugin_signals,
             )
         if _MARKET_HISTORY_INPUT in self.required_inputs:
             return self._evaluate_market_data_strategy(
@@ -261,6 +377,7 @@ class LoadedStrategyRuntime:
                 run_as_of=run_as_of,
                 translator=translator,
                 pacing_sec=pacing_sec,
+                strategy_plugin_signals=strategy_plugin_signals,
             )
         if _PORTFOLIO_SNAPSHOT_INPUT in self.required_inputs and (
             _DERIVED_INDICATORS_INPUT in self.required_inputs
@@ -274,6 +391,7 @@ class LoadedStrategyRuntime:
                 run_as_of=run_as_of,
                 translator=translator,
                 pacing_sec=pacing_sec,
+                strategy_plugin_signals=strategy_plugin_signals,
             )
         raise ValueError(
             f"Unsupported required_inputs for IBKR strategy profile {self.profile!r}: "
@@ -290,6 +408,7 @@ class LoadedStrategyRuntime:
         run_as_of: pd.Timestamp,
         translator: Callable[[str], str],
         pacing_sec: float,
+        strategy_plugin_signals=(),
     ) -> StrategyEvaluationResult:
         runtime_config = dict(self.runtime_config)
         runtime_config.setdefault("translator", translator)
@@ -303,6 +422,10 @@ class LoadedStrategyRuntime:
             ib,
             required=requires_portfolio,
         )
+        portfolio_snapshot = self._attach_strategy_plugin_metadata(portfolio_snapshot, strategy_plugin_signals)
+        option_chains = self._fetch_option_chains_for_runtime(ib, runtime_config, portfolio_snapshot)
+        if option_chains:
+            runtime_config["option_chains"] = option_chains
         ctx = self._build_strategy_context(
             runtime_adapter=self.runtime_adapter,
             as_of=run_as_of,
@@ -363,11 +486,16 @@ class LoadedStrategyRuntime:
         run_as_of: pd.Timestamp,
         translator: Callable[[str], str],
         pacing_sec: float,
+        strategy_plugin_signals=(),
     ) -> StrategyEvaluationResult:
         runtime_config = dict(self.runtime_config)
         runtime_config.setdefault("translator", translator)
         apply_runtime_policy_to_runtime_config(runtime_config, self.runtime_adapter)
         portfolio_snapshot = self._fetch_portfolio_snapshot_for_context(ib, required=True)
+        portfolio_snapshot = self._attach_strategy_plugin_metadata(portfolio_snapshot, strategy_plugin_signals)
+        option_chains = self._fetch_option_chains_for_runtime(ib, runtime_config, portfolio_snapshot)
+        if option_chains:
+            runtime_config["option_chains"] = option_chains
         market_inputs = self._build_value_target_market_inputs(
             ib=ib,
             historical_close_loader=historical_close_loader,
@@ -465,6 +593,7 @@ class LoadedStrategyRuntime:
         run_as_of: pd.Timestamp,
         translator: Callable[[str], str],
         pacing_sec: float,
+        strategy_plugin_signals=(),
     ) -> StrategyEvaluationResult:
         del pacing_sec
         runtime_config_path = self.merged_runtime_config.get("runtime_config_path") or self.runtime_settings.strategy_config_path
@@ -482,8 +611,12 @@ class LoadedStrategyRuntime:
                 ib,
                 required=requires_portfolio,
             )
+            portfolio_snapshot = self._attach_strategy_plugin_metadata(portfolio_snapshot, strategy_plugin_signals)
             if portfolio_snapshot is not None:
                 portfolio_snapshot_holder["portfolio_snapshot"] = portfolio_snapshot
+            option_chains = self._fetch_option_chains_for_runtime(ib, runtime_config, portfolio_snapshot)
+            if option_chains:
+                runtime_config["option_chains"] = option_chains
             market_inputs: dict[str, Any] = {_FEATURE_SNAPSHOT_INPUT: feature_snapshot}
             if _MARKET_HISTORY_INPUT in self.required_inputs:
                 market_inputs.update(build_market_history_inputs(historical_close_loader))

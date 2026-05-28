@@ -42,6 +42,9 @@ def submit_order_intent(
     account_id: str | None = None,
     wait_seconds: float = 1.0,
     stock_factory: Callable[..., Any] | None = None,
+    option_factory: Callable[..., Any] | None = None,
+    combo_contract_factory: Callable[..., Any] | None = None,
+    combo_leg_factory: Callable[..., Any] | None = None,
     market_order_factory: Callable[..., Any] | None = None,
     limit_order_factory: Callable[..., Any] | None = None,
 ) -> ExecutionReport:
@@ -54,6 +57,9 @@ def submit_order_intent(
         account_id=account_id,
         wait_seconds=wait_seconds,
         stock_factory=stock_factory,
+        option_factory=option_factory,
+        combo_contract_factory=combo_contract_factory,
+        combo_leg_factory=combo_leg_factory,
         market_order_factory=_market_order_factory_with_time_in_force(
             market_order_factory,
             time_in_force=intent.time_in_force or DEFAULT_TIME_IN_FORCE,

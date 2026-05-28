@@ -471,6 +471,247 @@ def _resolve_weight_allocation(signal_metadata: dict[str, Any] | None) -> dict[s
     }
 
 
+def _normalize_option_order_intents(signal_metadata: dict[str, Any] | None) -> tuple[dict[str, Any], ...]:
+    metadata = dict(signal_metadata or {})
+    raw_payload = metadata.get("option_order_intents")
+    if isinstance(raw_payload, dict):
+        raw_intents = raw_payload.get("intents")
+    else:
+        raw_intents = raw_payload
+    intents = []
+    for intent in raw_intents or ():
+        if isinstance(intent, dict):
+            intents.append(dict(intent))
+    return tuple(intents)
+
+
+def _option_intent_underliers(option_intents: tuple[dict[str, Any], ...]) -> tuple[str, ...]:
+    underliers = []
+    for intent in option_intents:
+        underlier = str(intent.get("underlier") or intent.get("symbol") or "").strip().upper()
+        if underlier:
+            underliers.append(underlier)
+    return tuple(sorted(dict.fromkeys(underliers)))
+
+
+def _is_executable_option_intent(intent: dict[str, Any]) -> bool:
+    intent_type = str(intent.get("intent_type") or "").strip()
+    action = str(intent.get("action") or "").strip().lower()
+    if (
+        str(intent.get("asset_class") or "").strip().lower() == "option"
+        and intent_type == "single_leg_option"
+        and action in {"buy_to_open", "sell_to_close"}
+    ):
+        return True
+    return (
+        str(intent.get("asset_class") or "").strip().lower() == "option"
+        and intent_type == "multi_leg_option"
+        and action == "sell_to_open_put_credit_spread"
+    )
+
+
+def _has_executable_option_plan(option_intents: tuple[dict[str, Any], ...]) -> bool:
+    return any(_is_executable_option_intent(intent) for intent in option_intents)
+
+
+def _format_option_intent_symbol(intent: dict[str, Any]) -> str:
+    underlier = str(intent.get("underlier") or intent.get("symbol") or "").strip().upper()
+    if str(intent.get("intent_type") or "").strip() == "multi_leg_option":
+        expiration = str(intent.get("expiration") or "").strip()
+        return f"{underlier} {expiration} PCS".strip()
+    right = str(intent.get("right") or "").strip().upper()
+    expiration = str(intent.get("expiration") or "").strip()
+    strike = intent.get("strike")
+    if underlier and right and expiration and strike not in {None, ""}:
+        return f"{underlier} {expiration} {float(strike):g}{right}"
+    return underlier or "<option>"
+
+
+def _record_unsupported_option_intents(
+    execution_summary: dict[str, Any],
+    option_intents: tuple[dict[str, Any], ...],
+) -> None:
+    for intent in option_intents:
+        if _is_executable_option_intent(intent):
+            continue
+        symbol = _format_option_intent_symbol(intent)
+        reason = "unsupported_option_intent_type"
+        execution_summary["option_orders_skipped"].append(
+            {
+                "symbol": symbol,
+                "action": str(intent.get("action") or ""),
+                "intent_type": str(intent.get("intent_type") or ""),
+                "reason": reason,
+            }
+        )
+        execution_summary["skipped_reasons"].append(f"{reason}:{symbol}")
+
+
+def _build_single_leg_option_order_intent(
+    order_intent_cls,
+    intent: dict[str, Any],
+    *,
+    account_id: str | None,
+):
+    action = str(intent.get("action") or "").strip().lower()
+    side = "buy" if action.startswith("buy") else "sell"
+    return order_intent_cls(
+        symbol=str(intent.get("underlier") or intent.get("symbol") or "").strip().upper(),
+        side=side,
+        quantity=float(intent.get("quantity") or 0.0),
+        order_type=str(intent.get("order_type") or "limit").strip().lower(),
+        limit_price=(
+            float(intent["limit_price"])
+            if intent.get("limit_price") not in {None, ""}
+            else None
+        ),
+        time_in_force=str(intent.get("time_in_force") or "DAY").strip().upper(),
+        account_id=account_id,
+        metadata={
+            **intent,
+            "asset_class": "option",
+            "intent_type": "single_leg_option",
+            "security_type": "OPT",
+        },
+    )
+
+
+def _build_multi_leg_option_order_intent(
+    order_intent_cls,
+    intent: dict[str, Any],
+    *,
+    account_id: str | None,
+):
+    return order_intent_cls(
+        symbol=str(intent.get("underlier") or intent.get("symbol") or "").strip().upper(),
+        side="sell",
+        quantity=float(intent.get("quantity") or 0.0),
+        order_type=str(intent.get("order_type") or "limit").strip().lower(),
+        limit_price=(
+            float(intent["limit_price"])
+            if intent.get("limit_price") not in {None, ""}
+            else None
+        ),
+        time_in_force=str(intent.get("time_in_force") or "DAY").strip().upper(),
+        account_id=account_id,
+        metadata={
+            **intent,
+            "asset_class": "option",
+            "intent_type": "multi_leg_option",
+            "security_type": "BAG",
+        },
+    )
+
+
+def _execute_option_order_intents(
+    ib,
+    option_intents: tuple[dict[str, Any], ...],
+    *,
+    submit_order_intent,
+    order_intent_cls,
+    translator,
+    execution_summary: dict[str, Any],
+    trade_logs: list[str],
+    dry_run_only: bool,
+    order_account_id: str | None,
+    buying_power: float,
+) -> float:
+    if not option_intents:
+        return buying_power
+    _record_unsupported_option_intents(execution_summary, option_intents)
+    for intent in option_intents:
+        if not _is_executable_option_intent(intent):
+            continue
+        symbol = _format_option_intent_symbol(intent)
+        quantity = float(intent.get("quantity") or 0.0)
+        if quantity <= 0.0:
+            execution_summary["option_orders_skipped"].append(
+                {"symbol": symbol, "action": intent.get("action"), "reason": "quantity_zero"}
+            )
+            continue
+        limit_price = float(intent.get("limit_price") or 0.0)
+        multiplier = float(intent.get("contract_multiplier") or 100.0)
+        action = str(intent.get("action") or "").strip().lower()
+        intent_type = str(intent.get("intent_type") or "").strip()
+        estimated_notional = float(intent.get("max_notional_usd") or (quantity * limit_price * multiplier))
+        max_loss = float(intent.get("max_loss_usd") or 0.0)
+        if action.startswith("buy") and estimated_notional > max(0.0, buying_power * 0.95):
+            execution_summary["option_orders_skipped"].append(
+                {
+                    "symbol": symbol,
+                    "action": action,
+                    "quantity": quantity,
+                    "limit_price": limit_price,
+                    "reason": "insufficient_buying_power",
+                }
+            )
+            execution_summary["skipped_reasons"].append(f"option_insufficient_buying_power:{symbol}")
+            continue
+        if intent_type == "multi_leg_option" and max_loss > max(0.0, buying_power * 0.95):
+            execution_summary["option_orders_skipped"].append(
+                {
+                    "symbol": symbol,
+                    "action": action,
+                    "quantity": quantity,
+                    "limit_price": limit_price,
+                    "reason": "insufficient_buying_power_for_defined_risk",
+                }
+            )
+            execution_summary["skipped_reasons"].append(f"option_insufficient_buying_power:{symbol}")
+            continue
+        payload = {
+            "symbol": symbol,
+            "underlier": str(intent.get("underlier") or "").strip().upper(),
+            "action": action,
+            "quantity": quantity,
+            "limit_price": limit_price,
+            "status": "dry_run" if dry_run_only else "pending",
+        }
+        if dry_run_only:
+            execution_summary["option_orders_submitted"].append(payload)
+            trade_logs.append(f"DRY_RUN option {action} {symbol} {format_quantity(quantity)} @{limit_price:.2f}")
+            if action.startswith("buy"):
+                buying_power -= estimated_notional
+            elif intent_type == "multi_leg_option":
+                buying_power -= max_loss
+            continue
+        if intent_type == "multi_leg_option":
+            order_intent = _build_multi_leg_option_order_intent(
+                order_intent_cls,
+                intent,
+                account_id=order_account_id,
+            )
+        else:
+            order_intent = _build_single_leg_option_order_intent(
+                order_intent_cls,
+                intent,
+                account_id=order_account_id,
+            )
+        report = submit_order_intent(ib, order_intent)
+        ok, status_msg = check_order_submitted(report, translator=translator)
+        status = str(getattr(report, "status", "") or "")
+        order_payload = {
+            **payload,
+            "status": status,
+            "broker_order_id": getattr(report, "broker_order_id", None),
+        }
+        if status == "Filled":
+            execution_summary["option_orders_filled"].append(order_payload)
+        elif status in {"PartiallyFilled", "Partial"}:
+            execution_summary["option_orders_partially_filled"].append(order_payload)
+        elif ok:
+            execution_summary["option_orders_submitted"].append(order_payload)
+        else:
+            execution_summary["option_orders_skipped"].append({**order_payload, "reason": status or "submit_failed"})
+            execution_summary["skipped_reasons"].append(f"option_submit_failed:{symbol}:{status or 'unknown'}")
+        trade_logs.append(f"option {action} {symbol} {format_quantity(quantity)} @{limit_price:.2f} {status_msg}")
+        if ok and action.startswith("buy"):
+            buying_power -= estimated_notional
+        elif ok and intent_type == "multi_leg_option":
+            buying_power -= max_loss
+    return buying_power
+
+
 def _apply_snapshot_price_fallbacks(
     prices: dict[str, float],
     symbols,
@@ -753,6 +994,9 @@ def execute_rebalance(
     signal_metadata = signal_metadata or {}
     allocation = _resolve_weight_allocation(signal_metadata)
     target_weights = dict(allocation["targets"])
+    option_order_intents = _normalize_option_order_intents(signal_metadata)
+    option_underliers = _option_intent_underliers(option_order_intents)
+    has_executable_option_plan = _has_executable_option_plan(option_order_intents)
     strategy_symbols = tuple(allocation["strategy_symbols"])
     trade_date = str(signal_metadata.get("trade_date") or "").strip() or None
     snapshot_date = _normalize_date_like(signal_metadata.get("snapshot_as_of"))
@@ -779,6 +1023,12 @@ def execute_rebalance(
         "orders_filled": [],
         "orders_partially_filled": [],
         "orders_skipped": [],
+        "option_order_intent_count": len(option_order_intents),
+        "option_order_underliers": list(option_underliers),
+        "option_orders_submitted": [],
+        "option_orders_filled": [],
+        "option_orders_partially_filled": [],
+        "option_orders_skipped": [],
         "skipped_reasons": [],
         "target_vs_current": [],
         "execution_status": "not_started",
@@ -927,7 +1177,11 @@ def execute_rebalance(
             (sum(current_mv.values()) - current_safe_haven_mv) / equity
         )
 
-    pending_symbols = _collect_pending_symbols(ib, set(all_symbols), account_ids=normalized_account_ids)
+    pending_symbols = _collect_pending_symbols(
+        ib,
+        set(all_symbols) | set(option_underliers),
+        account_ids=normalized_account_ids,
+    )
     if pending_symbols:
         reason = f"pending_orders_detected:{','.join(pending_symbols)}"
         execution_summary["execution_status"] = "blocked"
@@ -1118,17 +1372,22 @@ def execute_rebalance(
             symbols = ",".join(sorted(dict.fromkeys(quantity_zero_symbols)))
             reason = f"quantity_zero:{symbols}"
 
+        if not (reason == "target_diff_below_threshold" and has_executable_option_plan):
+            _record_unsupported_option_intents(execution_summary, option_order_intents)
+            if execution_summary["option_orders_skipped"] and reason == "target_diff_below_threshold":
+                reason = "option_orders_skipped"
         execution_summary["execution_status"] = status
         execution_summary["no_op_reason"] = reason
         if reason != "target_diff_below_threshold":
             execution_summary["skipped_reasons"].append(reason)
             if status == "blocked":
                 trade_logs.append(translator("failed", reason=reason))
-        return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
+        if not (reason == "target_diff_below_threshold" and has_executable_option_plan):
+            return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
 
     same_day_filled_symbols = _collect_same_day_filled_symbols(
         ib,
-        set(all_symbols),
+        set(all_symbols) | set(option_underliers),
         trade_date,
         account_ids=normalized_account_ids,
     )
@@ -1363,14 +1622,32 @@ def execute_rebalance(
             if ok:
                 buying_power -= qty * limit_price
 
+    buying_power = _execute_option_order_intents(
+        ib,
+        option_order_intents,
+        submit_order_intent=submit_order_intent,
+        order_intent_cls=order_intent_cls,
+        translator=translator,
+        execution_summary=execution_summary,
+        trade_logs=trade_logs,
+        dry_run_only=dry_run_only,
+        order_account_id=order_account_id,
+        buying_power=buying_power,
+    )
+
     execution_summary["execution_status"] = (
         "executed"
         if (
             execution_summary["orders_submitted"]
             or execution_summary["orders_filled"]
             or execution_summary["orders_partially_filled"]
+            or execution_summary["option_orders_submitted"]
+            or execution_summary["option_orders_filled"]
+            or execution_summary["option_orders_partially_filled"]
         )
         else "no_op"
     )
+    if execution_summary["execution_status"] == "executed":
+        execution_summary["no_op_reason"] = None
     execution_summary["residual_cash_estimate"] = float(max(buying_power, 0.0))
     return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)

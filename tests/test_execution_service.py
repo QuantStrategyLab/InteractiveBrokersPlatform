@@ -136,6 +136,120 @@ def test_execute_rebalance_submits_limit_buy_for_underweight_position(monkeypatc
     assert any(log.startswith("buy VOO") for log in trade_logs)
 
 
+def test_execute_rebalance_executes_option_intent_when_stock_targets_are_unchanged(tmp_path):
+    class FakeIB:
+        def openTrades(self):
+            return []
+
+        def fills(self):
+            return []
+
+        def accountValues(self):
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="300000")]
+
+    def fake_fetch_quote_snapshots(_ib, symbols):
+        return {symbol: SimpleNamespace(last_price=100.0) for symbol in symbols}
+
+    option_intent = {
+        "intent_type": "single_leg_option",
+        "asset_class": "option",
+        "action": "buy_to_open",
+        "underlier": "TQQQ",
+        "right": "C",
+        "expiration": "2028-01-21",
+        "strike": 70.0,
+        "quantity": 2,
+        "order_type": "limit",
+        "limit_price": 32.5,
+        "time_in_force": "DAY",
+        "contract_multiplier": 100,
+        "max_notional_usd": 6500.0,
+    }
+
+    trade_logs, summary = execute_rebalance(
+        FakeIB(),
+        {"VOO": 0.0},
+        {},
+        {"equity": 300000.0, "buying_power": 300000.0},
+        fetch_quote_snapshots=fake_fetch_quote_snapshots,
+        submit_order_intent=lambda *_args, **_kwargs: None,
+        order_intent_cls=OrderIntent,
+        translator=translate,
+        strategy_symbols=["VOO"],
+        strategy_profile="tqqq_growth_income",
+        signal_metadata=_signal_metadata(
+            {"VOO": 0.0},
+            risk_symbols=("VOO",),
+            trade_date="2026-04-01",
+            snapshot_as_of="2026-03-31",
+            option_order_intents={"schema_version": "option_order_intents.v1", "intents": (option_intent,)},
+        ),
+        dry_run_only=True,
+        cash_reserve_ratio=0.03,
+        rebalance_threshold_ratio=0.02,
+        limit_buy_premium=1.005,
+        sell_settle_delay_sec=0,
+        execution_lock_dir=tmp_path,
+        return_summary=True,
+    )
+
+    assert summary["execution_status"] == "executed"
+    assert summary["option_order_intent_count"] == 1
+    assert summary["option_orders_submitted"][0]["symbol"] == "TQQQ 2028-01-21 70C"
+    assert any("DRY_RUN option buy_to_open TQQQ" in log for log in trade_logs)
+
+
+def test_execute_rebalance_dry_runs_multi_leg_option_intent_as_combo(tmp_path):
+    class FakeIB:
+        def openTrades(self):
+            return []
+
+        def accountValues(self):
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1000000")]
+
+    trade_logs, summary = execute_rebalance(
+        FakeIB(),
+        {"VOO": 0.0},
+        {},
+        {"equity": 1000000.0, "buying_power": 1000000.0},
+        fetch_quote_snapshots=lambda _ib, symbols: {symbol: SimpleNamespace(last_price=100.0) for symbol in symbols},
+        submit_order_intent=lambda *_args, **_kwargs: None,
+        order_intent_cls=OrderIntent,
+        translator=translate,
+        strategy_symbols=["VOO"],
+        strategy_profile="soxl_soxx_trend_income",
+        signal_metadata=_signal_metadata(
+            {"VOO": 0.0},
+            risk_symbols=("VOO",),
+            option_order_intents={
+                "schema_version": "option_order_intents.v1",
+                "intents": (
+                    {
+                        "intent_type": "multi_leg_option",
+                        "asset_class": "option",
+                        "action": "sell_to_open_put_credit_spread",
+                        "underlier": "SOXX",
+                        "expiration": "2026-07-17",
+                        "quantity": 1,
+                        "max_loss_usd": 750.0,
+                    },
+                ),
+            },
+        ),
+        dry_run_only=True,
+        cash_reserve_ratio=0.03,
+        rebalance_threshold_ratio=0.02,
+        limit_buy_premium=1.005,
+        sell_settle_delay_sec=0,
+        execution_lock_dir=tmp_path,
+        return_summary=True,
+    )
+
+    assert trade_logs
+    assert summary["execution_status"] == "executed"
+    assert summary["option_orders_submitted"][0]["symbol"] == "SOXX 2026-07-17 PCS"
+
+
 def test_execute_rebalance_uses_reserved_cash_floor_when_higher(tmp_path):
     class FakeIB:
         def openTrades(self):
