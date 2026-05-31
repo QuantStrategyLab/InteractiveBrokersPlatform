@@ -44,7 +44,7 @@ The mainline runtime now follows one path only:
 - `hk_blue_chip_leader_rotation` (architecture scaffold only; eligible but disabled)
 - `hk_index_mean_reversion` (market-history research candidate; eligible but disabled)
 - `hk_etf_regime_rotation` (market-history research candidate; eligible but disabled)
-- `hk_listed_global_etf_rotation` (volatility-targeted market-history research candidate; eligible but disabled)
+- `hk_listed_global_etf_rotation` (volatility-targeted market-history strategy; runtime-enabled, not deployed by default)
 
 
 **IBKR profile status**
@@ -61,7 +61,7 @@ The mainline runtime now follows one path only:
 | `hk_blue_chip_leader_rotation` | HK Blue Chip Leader Rotation | Yes | No | `hk_equity` | architecture scaffold only; not runtime-enabled |
 | `hk_index_mean_reversion` | HK Index Mean Reversion | Yes | No | `hk_equity` | market-history research candidate; not runtime-enabled |
 | `hk_etf_regime_rotation` | HK ETF Regime Rotation | Yes | No | `hk_equity` | market-history research candidate; not runtime-enabled |
-| `hk_listed_global_etf_rotation` | HK-listed Global ETF Rotation | Yes | No | `hk_equity` | volatility-targeted market-history research candidate; not runtime-enabled |
+| `hk_listed_global_etf_rotation` | HK-listed Global ETF Rotation | Yes | Yes | `hk_equity` | runtime-enabled; production env unchanged until explicit rollout |
 
 Check the current matrix locally:
 
@@ -113,7 +113,7 @@ For IBKR, keep `paper` as a single account-group entry. If you later add live ac
 | `IBKR_CONNECT_ATTEMPTS` | No | Number of IBKR connection attempts before failing the cycle. Defaults to `3`. |
 | `IBKR_CONNECT_RETRY_DELAY_SECONDS` | No | Delay between failed IBKR connection attempts. Defaults to `5`. |
 | `IBKR_CLIENT_ID_RETRY_OFFSET` | No | Offset added to the configured `ib_client_id` on each retry, so a timed-out API handshake can retry with a fresh client id. Defaults to `100`. |
-| `STRATEGY_PROFILE` | Yes | Strategy profile selector. Enabled values: `global_etf_rotation`, `russell_1000_multi_factor_defensive`, `tqqq_growth_income`, `soxl_soxx_trend_income`, `tech_communication_pullback_enhancement`, `mega_cap_leader_rotation_top50_balanced`, `nasdaq_sp500_smart_dca`. `hk_blue_chip_leader_rotation`, `hk_index_mean_reversion`, `hk_etf_regime_rotation`, and `hk_listed_global_etf_rotation` are present as eligible-but-disabled HK profiles and are not enabled. |
+| `STRATEGY_PROFILE` | Yes | Strategy profile selector. Enabled values: `global_etf_rotation`, `russell_1000_multi_factor_defensive`, `tqqq_growth_income`, `soxl_soxx_trend_income`, `tech_communication_pullback_enhancement`, `mega_cap_leader_rotation_top50_balanced`, `nasdaq_sp500_smart_dca`, `hk_listed_global_etf_rotation`. `hk_blue_chip_leader_rotation`, `hk_index_mean_reversion`, and `hk_etf_regime_rotation` are eligible-but-disabled HK profiles; production Cloud Run keeps its configured profile until an explicit rollout changes it. |
 | `ACCOUNT_GROUP` | Yes | Account-group selector. Set explicitly for each deployment. |
 | `IBKR_MARKET` | No | Market scope. Defaults to `HK` when `ACCOUNT_GROUP` contains `hk`, otherwise `US`. |
 | `IBKR_MARKET_CALENDAR` | No | Market calendar. Defaults to `XHKG` for HK and `NYSE` for US. |
@@ -453,7 +453,7 @@ IBKR 账户
 | `IBKR_CONNECT_ATTEMPTS` | 否 | IBKR 连接失败前最多尝试次数。默认 `3`。 |
 | `IBKR_CONNECT_RETRY_DELAY_SECONDS` | 否 | IBKR 连接重试间隔，单位秒。默认 `5`。 |
 | `IBKR_CLIENT_ID_RETRY_OFFSET` | 否 | 每次重试时加到 `ib_client_id` 上的偏移量，用新的 client id 避开超时握手留下的卡住会话。默认 `100`。 |
-| `STRATEGY_PROFILE` | 是 | 策略档位选择。当前已启用值：`global_etf_rotation`、`russell_1000_multi_factor_defensive`、`tqqq_growth_income`、`soxl_soxx_trend_income`、`tech_communication_pullback_enhancement`、`mega_cap_leader_rotation_top50_balanced`、`nasdaq_sp500_smart_dca`。`hk_blue_chip_leader_rotation`、`hk_index_mean_reversion`、`hk_etf_regime_rotation`、`hk_listed_global_etf_rotation` 是 eligible-but-disabled 港股档位，未启用 |
+| `STRATEGY_PROFILE` | 是 | 策略档位选择。当前已启用值：`global_etf_rotation`、`russell_1000_multi_factor_defensive`、`tqqq_growth_income`、`soxl_soxx_trend_income`、`tech_communication_pullback_enhancement`、`mega_cap_leader_rotation_top50_balanced`、`nasdaq_sp500_smart_dca`、`hk_listed_global_etf_rotation`。`hk_blue_chip_leader_rotation`、`hk_index_mean_reversion`、`hk_etf_regime_rotation` 是 eligible-but-disabled 港股档位；生产 Cloud Run 保持原配置，除非显式 rollout |
 | `ACCOUNT_GROUP` | 是 | 账号组选择器，每个部署都要显式设置。 |
 | `IBKR_MARKET` | 否 | 市场范围。`ACCOUNT_GROUP` 包含 `hk` 时默认 `HK`，其他情况默认 `US`。 |
 | `IBKR_MARKET_CALENDAR` | 否 | 市场日历。港股默认 `XHKG`，美股默认 `NYSE`。 |
