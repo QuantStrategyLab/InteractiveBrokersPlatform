@@ -250,6 +250,62 @@ def test_execute_rebalance_dry_runs_multi_leg_option_intent_as_combo(tmp_path):
     assert summary["option_orders_submitted"][0]["symbol"] == "SOXX 2026-07-17 PCS"
 
 
+def test_execute_rebalance_hk_profile_dry_run_keeps_whole_share_orders_off_broker(tmp_path):
+    class FakeIB:
+        def openTrades(self):
+            return []
+
+        def fills(self):
+            return []
+
+        def accountValues(self):
+            return [SimpleNamespace(tag="AvailableFunds", currency="HKD", value="200000")]
+
+    submitted = []
+    prices = {"02834": 12.0, "03110": 18.0}
+
+    trade_logs, summary = execute_rebalance(
+        FakeIB(),
+        {"02834": 0.45, "03110": 0.35},
+        {},
+        {"equity": 200000.0, "buying_power": 200000.0},
+        fetch_quote_snapshots=lambda _ib, symbols: {
+            symbol: SimpleNamespace(last_price=prices[symbol]) for symbol in symbols
+        },
+        submit_order_intent=lambda _ib, intent: submitted.append(intent),
+        order_intent_cls=OrderIntent,
+        translator=translate,
+        strategy_symbols=["02834", "03110"],
+        strategy_profile="hk_listed_global_etf_rotation",
+        account_group="paper-hk",
+        service_name="ibkr-hk-paper",
+        signal_metadata=_signal_metadata(
+            {"02834": 0.45, "03110": 0.35},
+            risk_symbols=("02834", "03110"),
+            trade_date="2026-06-01",
+            snapshot_as_of="2026-05-29",
+        ),
+        dry_run_only=True,
+        cash_reserve_ratio=0.02,
+        rebalance_threshold_ratio=0.01,
+        limit_buy_premium=1.0,
+        quantity_step=1.0,
+        min_order_notional=50.0,
+        sell_settle_delay_sec=0,
+        execution_lock_dir=tmp_path,
+        return_summary=True,
+    )
+
+    assert submitted == []
+    assert summary["mode"] == "dry_run"
+    assert summary["execution_status"] == "executed"
+    assert {order["symbol"] for order in summary["orders_submitted"]} == {"02834", "03110"}
+    assert all(order["status"] == "dry_run" for order in summary["orders_submitted"])
+    assert all(float(order["quantity"]).is_integer() for order in summary["orders_submitted"])
+    assert any(log.startswith("DRY_RUN buy 02834") for log in trade_logs)
+    assert any(log.startswith("DRY_RUN buy 03110") for log in trade_logs)
+
+
 def test_execute_rebalance_uses_reserved_cash_floor_when_higher(tmp_path):
     class FakeIB:
         def openTrades(self):
