@@ -39,7 +39,7 @@ The mainline runtime now follows one path only:
 - `tech_communication_pullback_enhancement`
 - `mega_cap_leader_rotation_top50_balanced`
 - `nasdaq_sp500_smart_dca`
-- `hk_blue_chip_leader_rotation`
+- `hk_blue_chip_leader_rotation` (architecture scaffold only; eligible but disabled)
 
 
 **IBKR profile status**
@@ -53,7 +53,7 @@ The mainline runtime now follows one path only:
 | `tech_communication_pullback_enhancement` | Tech/Communication Pullback Enhancement | Yes | Yes | `us_equity` | enabled feature-snapshot alternative |
 | `mega_cap_leader_rotation_top50_balanced` | Mega Cap Leader Rotation Top50 Balanced | Yes | Yes | `us_equity` | enabled balanced Top50 leader rotation |
 | `nasdaq_sp500_smart_dca` | Nasdaq/S&P 500 Smart DCA | Yes | Yes | `us_equity` | buy-only cash-deployment profile |
-| `hk_blue_chip_leader_rotation` | HK Blue Chip Leader Rotation | Yes | Yes | `hk_equity` | HK feature-snapshot strategy for SEHK/HKD accounts |
+| `hk_blue_chip_leader_rotation` | HK Blue Chip Leader Rotation | Yes | No | `hk_equity` | architecture scaffold only; not runtime-enabled |
 
 Check the current matrix locally:
 
@@ -105,7 +105,7 @@ For IBKR, keep `paper` as a single account-group entry. If you later add live ac
 | `IBKR_CONNECT_ATTEMPTS` | No | Number of IBKR connection attempts before failing the cycle. Defaults to `3`. |
 | `IBKR_CONNECT_RETRY_DELAY_SECONDS` | No | Delay between failed IBKR connection attempts. Defaults to `5`. |
 | `IBKR_CLIENT_ID_RETRY_OFFSET` | No | Offset added to the configured `ib_client_id` on each retry, so a timed-out API handshake can retry with a fresh client id. Defaults to `100`. |
-| `STRATEGY_PROFILE` | Yes | Strategy profile selector. Supported values: `global_etf_rotation`, `russell_1000_multi_factor_defensive`, `tqqq_growth_income`, `soxl_soxx_trend_income`, `tech_communication_pullback_enhancement`, `mega_cap_leader_rotation_top50_balanced`, `nasdaq_sp500_smart_dca`, `hk_blue_chip_leader_rotation` |
+| `STRATEGY_PROFILE` | Yes | Strategy profile selector. Enabled values: `global_etf_rotation`, `russell_1000_multi_factor_defensive`, `tqqq_growth_income`, `soxl_soxx_trend_income`, `tech_communication_pullback_enhancement`, `mega_cap_leader_rotation_top50_balanced`, `nasdaq_sp500_smart_dca`. `hk_blue_chip_leader_rotation` is present as an architecture scaffold but is not enabled. |
 | `ACCOUNT_GROUP` | Yes | Account-group selector. Set explicitly for each deployment. |
 | `IBKR_MARKET` | No | Market scope. Defaults to `HK` when `ACCOUNT_GROUP` contains `hk`, otherwise `US`. |
 | `IBKR_MARKET_CALENDAR` | No | Market calendar. Defaults to `XHKG` for HK and `NYSE` for US. |
@@ -113,7 +113,7 @@ For IBKR, keep `paper` as a single account-group entry. If you later add live ac
 | `IBKR_MARKET_EXCHANGE` | No | Stock contract exchange. Defaults to `SEHK` for HK and `SMART` for US. |
 | `IBKR_MARKET_CURRENCY` | No | Stock contract currency and portfolio currency scope. Defaults to `HKD` for HK and `USD` for US. |
 | `IBKR_MARKET_DATA_SYMBOL_SUFFIX` | No | Suffix used only for yfinance fallback symbols. Defaults to `.HK` for HK and empty for US. |
-| `IBKR_FEATURE_SNAPSHOT_PATH` | Conditionally required | Required for snapshot-backed profiles such as `russell_1000_multi_factor_defensive`, `tech_communication_pullback_enhancement`, `mega_cap_leader_rotation_top50_balanced`, and `hk_blue_chip_leader_rotation`. Path to the latest feature snapshot file (`.csv`, `.json`, `.jsonl`, `.parquet`). |
+| `IBKR_FEATURE_SNAPSHOT_PATH` | Conditionally required | Required for enabled snapshot-backed profiles such as `russell_1000_multi_factor_defensive`, `tech_communication_pullback_enhancement`, and `mega_cap_leader_rotation_top50_balanced`. The HK scaffold will also require this after promotion. Path to the latest feature snapshot file (`.csv`, `.json`, `.jsonl`, `.parquet`). |
 | `IBKR_STRATEGY_PLUGIN_MOUNTS_JSON` | No | Optional IBKR-side strategy plugin mount JSON. The plugin artifact controls mode; platform config must not set `mode`. |
 | `IBKR_MIN_ORDER_NOTIONAL_USD` | No | Minimum buy notional for limit buys; defaults to `50.0`. |
 | `IBKR_MIN_RESERVED_CASH_USD` | No | Platform-level minimum cash reserve in USD. Defaults to `0`; the effective reserve is the max of this floor and the effective cash reserve ratio. |
@@ -443,7 +443,7 @@ IBKR 账户
 | `IBKR_CONNECT_ATTEMPTS` | 否 | IBKR 连接失败前最多尝试次数。默认 `3`。 |
 | `IBKR_CONNECT_RETRY_DELAY_SECONDS` | 否 | IBKR 连接重试间隔，单位秒。默认 `5`。 |
 | `IBKR_CLIENT_ID_RETRY_OFFSET` | 否 | 每次重试时加到 `ib_client_id` 上的偏移量，用新的 client id 避开超时握手留下的卡住会话。默认 `100`。 |
-| `STRATEGY_PROFILE` | 是 | 策略档位选择。当前可用值：`global_etf_rotation`、`russell_1000_multi_factor_defensive`、`tqqq_growth_income`、`soxl_soxx_trend_income`、`tech_communication_pullback_enhancement`、`mega_cap_leader_rotation_top50_balanced`、`nasdaq_sp500_smart_dca`、`hk_blue_chip_leader_rotation` |
+| `STRATEGY_PROFILE` | 是 | 策略档位选择。当前已启用值：`global_etf_rotation`、`russell_1000_multi_factor_defensive`、`tqqq_growth_income`、`soxl_soxx_trend_income`、`tech_communication_pullback_enhancement`、`mega_cap_leader_rotation_top50_balanced`、`nasdaq_sp500_smart_dca`。`hk_blue_chip_leader_rotation` 只是架构占位，未启用 |
 | `ACCOUNT_GROUP` | 是 | 账号组选择器，每个部署都要显式设置。 |
 | `IBKR_MARKET` | 否 | 市场范围。`ACCOUNT_GROUP` 包含 `hk` 时默认 `HK`，其他情况默认 `US`。 |
 | `IBKR_MARKET_CALENDAR` | 否 | 市场日历。港股默认 `XHKG`，美股默认 `NYSE`。 |
@@ -451,7 +451,7 @@ IBKR 账户
 | `IBKR_MARKET_EXCHANGE` | 否 | 股票合约交易所。港股默认 `SEHK`，美股默认 `SMART`。 |
 | `IBKR_MARKET_CURRENCY` | 否 | 股票合约币种和组合现金口径。港股默认 `HKD`，美股默认 `USD`。 |
 | `IBKR_MARKET_DATA_SYMBOL_SUFFIX` | 否 | 仅用于 yfinance fallback 的标的后缀。港股默认 `.HK`，美股默认空。 |
-| `IBKR_FEATURE_SNAPSHOT_PATH` | 条件必填 | `russell_1000_multi_factor_defensive`、`tech_communication_pullback_enhancement`、`mega_cap_leader_rotation_top50_balanced`、`hk_blue_chip_leader_rotation` 等快照策略需要。指向最新特征快照文件（`.csv`、`.json`、`.jsonl`、`.parquet`）。 |
+| `IBKR_FEATURE_SNAPSHOT_PATH` | 条件必填 | `russell_1000_multi_factor_defensive`、`tech_communication_pullback_enhancement`、`mega_cap_leader_rotation_top50_balanced` 等已启用快照策略需要；港股架构占位后续启用时也会需要。指向最新特征快照文件（`.csv`、`.json`、`.jsonl`、`.parquet`）。 |
 | `IBKR_STRATEGY_PLUGIN_MOUNTS_JSON` | 否 | 可选的 IBKR 侧策略插件挂载 JSON。插件 artifact 自带模式；平台配置不要设置 `mode`。 |
 | `IBKR_MIN_ORDER_NOTIONAL_USD` | 否 | 限价买入的最小名义金额；默认 `50.0`。 |
 | `IBKR_MIN_RESERVED_CASH_USD` | 否 | 平台级最低预留现金 USD。默认 `0`；实际预留取该下限和有效预留现金比例中的最大值。 |

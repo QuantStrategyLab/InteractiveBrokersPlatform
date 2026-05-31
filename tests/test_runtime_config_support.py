@@ -54,10 +54,9 @@ SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "print_strategy_
 SWITCH_PLAN_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "print_strategy_switch_env_plan.py"
 SYNC_PLAN_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "build_cloud_run_env_sync_plan.py"
 SAMPLE_STRATEGY_PROFILE = "global_etf_rotation"
-EXPECTED_IBKR_PROFILES = frozenset(
+EXPECTED_IBKR_ENABLED_PROFILES = frozenset(
     {
         "global_etf_rotation",
-        "hk_blue_chip_leader_rotation",
         "mega_cap_leader_rotation_top50_balanced",
         "nasdaq_sp500_smart_dca",
         "russell_1000_multi_factor_defensive",
@@ -66,6 +65,7 @@ EXPECTED_IBKR_PROFILES = frozenset(
         "tqqq_growth_income",
     }
 )
+EXPECTED_IBKR_PROFILES = EXPECTED_IBKR_ENABLED_PROFILES | frozenset({"hk_blue_chip_leader_rotation"})
 
 
 def runtime_target_json(
@@ -546,7 +546,8 @@ def test_load_platform_runtime_settings_rejects_unknown_strategy_profile(monkeyp
 
 
 def test_platform_supported_profiles_are_filtered_by_registry():
-    assert get_supported_profiles_for_platform(IBKR_PLATFORM) == EXPECTED_IBKR_PROFILES
+    assert get_supported_profiles_for_platform(IBKR_PLATFORM) == EXPECTED_IBKR_ENABLED_PROFILES
+    assert "hk_blue_chip_leader_rotation" not in get_supported_profiles_for_platform(IBKR_PLATFORM)
 
 
 def test_platform_policy_accepts_future_hk_equity_domain():
@@ -576,27 +577,15 @@ def test_load_platform_runtime_settings_accepts_tech_communication_pullback_enha
     assert settings.strategy_target_mode == "weight"
 
 
-def test_load_platform_runtime_settings_accepts_hk_blue_chip_leader_rotation(monkeypatch):
+def test_load_platform_runtime_settings_rejects_hk_blue_chip_until_runtime_enabled(monkeypatch):
     monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json("hk_blue_chip_leader_rotation"))
     monkeypatch.setenv("ACCOUNT_GROUP", "hk-live")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_HK_GROUP_JSON)
     monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "gs://bucket/hk.csv")
     monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH", "gs://bucket/hk.csv.manifest.json")
 
-    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
-
-    assert settings.strategy_profile == "hk_blue_chip_leader_rotation"
-    assert settings.strategy_display_name == "HK Blue Chip Leader Rotation"
-    assert settings.strategy_domain == "hk_equity"
-    assert settings.strategy_target_mode == "weight"
-    assert settings.market == HK_MARKET
-    assert settings.market_calendar == HK_MARKET_CALENDAR
-    assert settings.market_timezone == HK_MARKET_TIMEZONE
-    assert settings.market_exchange == HK_MARKET_EXCHANGE
-    assert settings.market_currency == HK_MARKET_CURRENCY
-    assert settings.market_data_symbol_suffix == HK_MARKET_DATA_SYMBOL_SUFFIX
-    assert settings.feature_snapshot_path == "gs://bucket/hk.csv"
-    assert settings.feature_snapshot_manifest_path == "gs://bucket/hk.csv.manifest.json"
+    with pytest.raises(ValueError, match="Unsupported STRATEGY_PROFILE"):
+        load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
 
 @pytest.mark.parametrize(
@@ -687,7 +676,7 @@ def test_platform_profile_status_matrix_matches_current_ibkr_rollout():
         "display_name": "HK Blue Chip Leader Rotation",
         "domain": "hk_equity",
         "eligible": True,
-        "enabled": True,
+        "enabled": False,
         "platform": "ibkr",
     }
 
@@ -964,25 +953,15 @@ def test_print_strategy_switch_env_plan_for_mega_cap_top50_balanced_profile():
     assert plan["hints"]["feature_snapshot_filename"] == "mega_cap_leader_rotation_top50_balanced_feature_snapshot_latest.csv"
 
 
-def test_print_strategy_switch_env_plan_for_hk_blue_chip_leader_rotation():
+def test_print_strategy_switch_env_plan_rejects_hk_scaffold_profile():
     result = subprocess.run(
         [sys.executable, str(SWITCH_PLAN_SCRIPT_PATH), "--profile", "hk_blue_chip_leader_rotation", "--json"],
-        check=True,
         capture_output=True,
         text=True,
     )
 
-    plan = json.loads(result.stdout)
-    assert plan["canonical_profile"] == "hk_blue_chip_leader_rotation"
-    assert plan["domain"] == "hk_equity"
-    assert plan["profile_group"] == "snapshot_backed"
-    assert plan["input_mode"] == "feature_snapshot"
-    assert plan["requires_snapshot_artifacts"] is True
-    assert plan["requires_snapshot_manifest_path"] is True
-    assert plan["requires_strategy_config_path"] is False
-    assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_PATH"] == "<required>"
-    assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH"] == "<required>"
-    assert plan["hints"]["feature_snapshot_filename"] == "hk_blue_chip_leader_rotation_feature_snapshot_latest.csv"
+    assert result.returncode != 0
+    assert "Unsupported STRATEGY_PROFILE" in result.stderr
 
 
 def test_print_strategy_switch_env_plan_for_feature_snapshot_profile():
