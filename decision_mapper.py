@@ -3,14 +3,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from us_equity_strategies.catalog import resolve_canonical_profile
-
 from quant_platform_kit.strategy_contracts import (
     StrategyDecision,
     build_allocation_intent,
     build_allocation_payload,
     translate_decision_to_target_mode,
 )
+from strategy_registry import IBKR_PLATFORM, resolve_strategy_definition
 
 
 _EMERGENCY_FLAGS = frozenset({"emergency", "hard_defense"})
@@ -18,7 +17,10 @@ _NO_EXECUTE_FLAGS = frozenset({"no_execute"})
 
 
 def _resolve_allocation_order(strategy_profile: str) -> str:
-    canonical_profile = resolve_canonical_profile(strategy_profile)
+    canonical_profile = resolve_strategy_definition(
+        strategy_profile,
+        platform_id=IBKR_PLATFORM,
+    ).profile
     if canonical_profile == "soxl_soxx_trend_income":
         return "risk_income_safe"
     return "risk_safe_income"
@@ -133,7 +135,10 @@ def map_strategy_decision(
     runtime_metadata: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, float] | None, str, bool, str, dict[str, Any]]:
     runtime_metadata = dict(runtime_metadata or {})
-    canonical_profile = resolve_canonical_profile(strategy_profile)
+    canonical_profile = resolve_strategy_definition(
+        strategy_profile,
+        platform_id=IBKR_PLATFORM,
+    ).profile
     diagnostics = dict(decision.diagnostics)
     risk_flags = tuple(str(flag) for flag in decision.risk_flags)
     no_execute = bool(_NO_EXECUTE_FLAGS & set(risk_flags))

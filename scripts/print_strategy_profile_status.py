@@ -8,14 +8,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 QPK_SRC = ROOT.parent / "QuantPlatformKit" / "src"
 UES_SRC = ROOT.parent / "UsEquityStrategies" / "src"
+HES_SRC = ROOT.parent / "HkEquityStrategies" / "src"
 
-for candidate in (ROOT, QPK_SRC, UES_SRC):
+for candidate in (ROOT, QPK_SRC, UES_SRC, HES_SRC):
     candidate_str = str(candidate)
     if candidate_str not in sys.path:
         sys.path.insert(0, candidate_str)
 
-from strategy_registry import IBKR_PLATFORM, get_platform_profile_status_matrix  # noqa: E402
-from us_equity_strategies.runtime_adapters import describe_platform_runtime_requirements  # noqa: E402
+from strategy_registry import (  # noqa: E402
+    IBKR_PLATFORM,
+    describe_platform_runtime_requirements,
+    get_platform_profile_status_matrix,
+)
 
 
 def build_status_rows() -> list[dict[str, object]]:

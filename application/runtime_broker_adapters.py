@@ -46,6 +46,7 @@ class IBKRRuntimeBrokerAdapters:
     separator: str
     strategy_display_name: str
     sleep_fn: Any
+    market_currency: str = "USD"
     printer: Any = print
 
     def validate_configured_accounts(self, ib):
@@ -142,6 +143,7 @@ class IBKRRuntimeBrokerAdapters:
                     quantity=float(details.get("quantity") or 0),
                     market_value=float(details.get("quantity") or 0) * float(details.get("avg_cost") or 0.0),
                     average_cost=float(details.get("avg_cost") or 0.0),
+                    currency=self.market_currency,
                 )
                 for symbol, details in dict(positions or {}).items()
             ),
@@ -281,6 +283,7 @@ def build_runtime_broker_adapters(
     separator: str,
     strategy_display_name: str,
     sleep_fn,
+    market_currency: str = "USD",
     printer=print,
 ) -> IBKRRuntimeBrokerAdapters:
     return IBKRRuntimeBrokerAdapters(
@@ -318,5 +321,6 @@ def build_runtime_broker_adapters(
         separator=str(separator or ""),
         strategy_display_name=str(strategy_display_name or ""),
         sleep_fn=sleep_fn,
+        market_currency=str(market_currency or "USD").upper(),
         printer=printer,
     )

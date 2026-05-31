@@ -11,18 +11,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 QPK_SRC = ROOT.parent / "QuantPlatformKit" / "src"
 UES_SRC = ROOT.parent / "UsEquityStrategies" / "src"
+HES_SRC = ROOT.parent / "HkEquityStrategies" / "src"
 
-for candidate in (ROOT, QPK_SRC, UES_SRC):
+for candidate in (ROOT, QPK_SRC, UES_SRC, HES_SRC):
     candidate_str = str(candidate)
     if candidate_str not in sys.path:
         sys.path.insert(0, candidate_str)
 
 from strategy_registry import (  # noqa: E402
     IBKR_PLATFORM,
+    describe_platform_runtime_requirements,
     get_platform_profile_status_matrix,
     resolve_strategy_definition,
 )
-from us_equity_strategies.runtime_adapters import describe_platform_runtime_requirements  # noqa: E402
 
 
 TARGETS_JSON_ENV = "CLOUD_RUN_SERVICE_TARGETS_JSON"
@@ -32,6 +33,12 @@ SHARED_TARGET_FALLBACK_ENV = frozenset(
         "NOTIFY_LANG",
         "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME",
         "IBKR_EXECUTION_BACKEND",
+        "IBKR_MARKET",
+        "IBKR_MARKET_CALENDAR",
+        "IBKR_MARKET_CURRENCY",
+        "IBKR_MARKET_DATA_SYMBOL_SUFFIX",
+        "IBKR_MARKET_EXCHANGE",
+        "IBKR_MARKET_TIMEZONE",
         "IB_GATEWAY_ZONE",
         "IB_GATEWAY_IP_MODE",
         "EXECUTION_REPORT_GCS_URI",
@@ -47,6 +54,12 @@ OPTIONAL_TARGET_ENV = (
     "IB_GATEWAY_ZONE",
     "IB_GATEWAY_IP_MODE",
     "IBKR_EXECUTION_BACKEND",
+    "IBKR_MARKET",
+    "IBKR_MARKET_CALENDAR",
+    "IBKR_MARKET_CURRENCY",
+    "IBKR_MARKET_DATA_SYMBOL_SUFFIX",
+    "IBKR_MARKET_EXCHANGE",
+    "IBKR_MARKET_TIMEZONE",
     "IBKR_FEATURE_SNAPSHOT_PATH",
     "IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH",
     "IBKR_STRATEGY_CONFIG_PATH",

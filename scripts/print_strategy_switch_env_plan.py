@@ -9,8 +9,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 QPK_SRC = ROOT.parent / "QuantPlatformKit" / "src"
 UES_SRC = ROOT.parent / "UsEquityStrategies" / "src"
+HES_SRC = ROOT.parent / "HkEquityStrategies" / "src"
 
-for candidate in (ROOT, QPK_SRC, UES_SRC):
+for candidate in (ROOT, QPK_SRC, UES_SRC, HES_SRC):
     candidate_str = str(candidate)
     if candidate_str not in sys.path:
         sys.path.insert(0, candidate_str)
@@ -19,12 +20,12 @@ from quant_platform_kit.common.runtime_target import build_runtime_target  # noq
 from quant_platform_kit.common.strategies import derive_strategy_artifact_paths  # noqa: E402
 from strategy_registry import (  # noqa: E402
     IBKR_PLATFORM,
+    STRATEGY_CATALOG,
+    describe_platform_runtime_requirements,
     get_platform_profile_status_matrix,
     resolve_strategy_definition,
     resolve_strategy_metadata,
 )
-from us_equity_strategies import get_strategy_catalog  # noqa: E402
-from us_equity_strategies.runtime_adapters import describe_platform_runtime_requirements  # noqa: E402
 
 
 def build_switch_plan(profile: str) -> dict[str, object]:
@@ -34,7 +35,7 @@ def build_switch_plan(profile: str) -> dict[str, object]:
         row for row in get_platform_profile_status_matrix() if row["canonical_profile"] == definition.profile
     )
     artifact_paths = derive_strategy_artifact_paths(
-        get_strategy_catalog(),
+        STRATEGY_CATALOG,
         definition.profile,
         repo_root=ROOT,
     )
@@ -70,6 +71,12 @@ def build_switch_plan(profile: str) -> dict[str, object]:
     optional_env = [
         "IBKR_EXECUTION_BACKEND",
         "IBKR_DRY_RUN_ONLY",
+        "IBKR_MARKET",
+        "IBKR_MARKET_CALENDAR",
+        "IBKR_MARKET_CURRENCY",
+        "IBKR_MARKET_DATA_SYMBOL_SUFFIX",
+        "IBKR_MARKET_EXCHANGE",
+        "IBKR_MARKET_TIMEZONE",
         "IBKR_MIN_RESERVED_CASH_USD",
         "IBKR_RESERVED_CASH_RATIO",
         "IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD",
@@ -77,6 +84,7 @@ def build_switch_plan(profile: str) -> dict[str, object]:
     remove_if_present: list[str] = []
     notes = [
         "Keep ACCOUNT_GROUP and IB account-group config aligned with the current service identity.",
+        "For HK-equity deployments set IBKR_MARKET=HK, or use an ACCOUNT_GROUP containing hk to derive SEHK/HKD/XHKG defaults.",
     ]
 
     if requires_feature_snapshot:
@@ -125,6 +133,7 @@ def build_switch_plan(profile: str) -> dict[str, object]:
         "platform": IBKR_PLATFORM,
         "canonical_profile": definition.profile,
         "display_name": metadata.display_name,
+        "domain": definition.domain,
         "eligible": status_row["eligible"],
         "enabled": status_row["enabled"],
         **runtime_requirements,

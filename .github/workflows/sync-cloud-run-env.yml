@@ -22,6 +22,7 @@ jobs:
     env:
       ENABLE_GITHUB_CLOUD_RUN_DEPLOY: ${{ vars.ENABLE_GITHUB_CLOUD_RUN_DEPLOY }}
       ENABLE_GITHUB_ENV_SYNC: ${{ vars.ENABLE_GITHUB_ENV_SYNC }}
+      ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION: ${{ vars.ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION }}
       GCP_ARTIFACT_REGISTRY_HOSTNAME: ${{ vars.GCP_ARTIFACT_REGISTRY_HOSTNAME }}
       CLOUD_RUN_REGION: ${{ vars.CLOUD_RUN_REGION }}
       CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
@@ -39,6 +40,12 @@ jobs:
       IBKR_RECONCILIATION_OUTPUT_PATH: ${{ vars.IBKR_RECONCILIATION_OUTPUT_PATH }}
       IBKR_DRY_RUN_ONLY: ${{ vars.IBKR_DRY_RUN_ONLY }}
       IBKR_PAPER_LIQUIDATE_ONLY: ${{ vars.IBKR_PAPER_LIQUIDATE_ONLY }}
+      IBKR_MARKET: ${{ vars.IBKR_MARKET }}
+      IBKR_MARKET_CALENDAR: ${{ vars.IBKR_MARKET_CALENDAR }}
+      IBKR_MARKET_CURRENCY: ${{ vars.IBKR_MARKET_CURRENCY }}
+      IBKR_MARKET_DATA_SYMBOL_SUFFIX: ${{ vars.IBKR_MARKET_DATA_SYMBOL_SUFFIX }}
+      IBKR_MARKET_EXCHANGE: ${{ vars.IBKR_MARKET_EXCHANGE }}
+      IBKR_MARKET_TIMEZONE: ${{ vars.IBKR_MARKET_TIMEZONE }}
       IBKR_MIN_RESERVED_CASH_USD: ${{ vars.IBKR_MIN_RESERVED_CASH_USD }}
       IBKR_RESERVED_CASH_RATIO: ${{ vars.IBKR_RESERVED_CASH_RATIO }}
       IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD: ${{ vars.IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD }}
@@ -92,6 +99,14 @@ jobs:
 
           deploy_enabled=false
           env_sync_enabled=false
+
+          if [ "${GITHUB_EVENT_NAME:-}" = "push" ] && [ "${ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION:-}" != "true" ]; then
+            echo "deploy_enabled=false" >> "$GITHUB_OUTPUT"
+            echo "env_sync_enabled=false" >> "$GITHUB_OUTPUT"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping Cloud Run automation on push because ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION is not true." >&2
+            exit 0
+          fi
 
           if [ "${ENABLE_GITHUB_CLOUD_RUN_DEPLOY:-}" = "true" ]; then
             deploy_enabled=true

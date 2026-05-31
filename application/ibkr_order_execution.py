@@ -11,6 +11,23 @@ from quant_platform_kit.ibkr.execution import submit_order_intent as _submit_ord
 DEFAULT_TIME_IN_FORCE = "DAY"
 
 
+def _stock_factory_for_market(
+    stock_factory: Callable[..., Any] | None,
+    *,
+    exchange: str,
+    currency: str,
+) -> Callable[..., Any]:
+    def factory(symbol: str, _exchange: str = "SMART", _currency: str = "USD") -> Any:
+        factory_impl = stock_factory
+        if factory_impl is None:
+            from ib_insync import Stock
+
+            factory_impl = Stock
+        return factory_impl(symbol, exchange, currency)
+
+    return factory
+
+
 def _intent_with_default_time_in_force(order_intent: OrderIntent) -> OrderIntent:
     if order_intent.time_in_force:
         return order_intent
@@ -47,6 +64,8 @@ def submit_order_intent(
     combo_leg_factory: Callable[..., Any] | None = None,
     market_order_factory: Callable[..., Any] | None = None,
     limit_order_factory: Callable[..., Any] | None = None,
+    stock_exchange: str = "SMART",
+    stock_currency: str = "USD",
 ) -> ExecutionReport:
     """Submit an IBKR order with explicit TIF to avoid account-preset rejections."""
 
@@ -56,7 +75,11 @@ def submit_order_intent(
         intent,
         account_id=account_id,
         wait_seconds=wait_seconds,
-        stock_factory=stock_factory,
+        stock_factory=_stock_factory_for_market(
+            stock_factory,
+            exchange=str(stock_exchange or "SMART").upper(),
+            currency=str(stock_currency or "USD").upper(),
+        ),
         option_factory=option_factory,
         combo_contract_factory=combo_contract_factory,
         combo_leg_factory=combo_leg_factory,

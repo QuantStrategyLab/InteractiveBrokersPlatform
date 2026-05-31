@@ -20,7 +20,10 @@ except ImportError:
 from application.cycle_result import coerce_strategy_cycle_result
 from application.runtime_broker_adapters import build_runtime_broker_adapters
 from application.runtime_composer import build_runtime_composer
-from application.runtime_strategy_adapters import build_runtime_strategy_adapters
+from application.runtime_strategy_adapters import (
+    build_runtime_strategy_adapters,
+    fetch_yfinance_historical_candles,
+)
 from application.rebalance_service import run_strategy_core as run_rebalance_cycle
 from application.signal_snapshot import build_signal_snapshot
 from decision_mapper import map_strategy_decision
@@ -48,10 +51,10 @@ from quant_platform_kit.ibkr import (
     ensure_event_loop as ibkr_ensure_event_loop,
     fetch_historical_price_candles,
     fetch_historical_price_series,
-    fetch_portfolio_snapshot,
     fetch_quote_snapshots,
 )
 from application.ibkr_order_execution import submit_order_intent
+from application.ibkr_portfolio import fetch_portfolio_snapshot
 from application.execution_service import (
     check_order_submitted as application_check_order_submitted,
     execute_rebalance as application_execute_rebalance,
@@ -205,6 +208,12 @@ PROJECT_ID = RUNTIME_SETTINGS.project_id
 EXECUTION_BACKEND = RUNTIME_SETTINGS.execution_backend
 QUANTCONNECT_PROJECT_ID = getattr(RUNTIME_SETTINGS, "quantconnect_project_id", None)
 QUANTCONNECT_NODE_ID = getattr(RUNTIME_SETTINGS, "quantconnect_node_id", None)
+MARKET = RUNTIME_SETTINGS.market
+MARKET_CALENDAR = RUNTIME_SETTINGS.market_calendar
+MARKET_CURRENCY = RUNTIME_SETTINGS.market_currency
+MARKET_DATA_SYMBOL_SUFFIX = RUNTIME_SETTINGS.market_data_symbol_suffix
+MARKET_EXCHANGE = RUNTIME_SETTINGS.market_exchange
+MARKET_TIMEZONE = RUNTIME_SETTINGS.market_timezone
 
 STRATEGY_RUNTIME = load_strategy_runtime(
     STRATEGY_PROFILE,
@@ -288,6 +297,12 @@ RUNTIME_LOG_CONTEXT = build_runtime_assembly(
         "ib_client_id_retry_offset": IB_CLIENT_ID_RETRY_OFFSET,
         "quantconnect_project_id": QUANTCONNECT_PROJECT_ID,
         "quantconnect_node_id": QUANTCONNECT_NODE_ID,
+        "market": MARKET,
+        "market_calendar": MARKET_CALENDAR,
+        "market_currency": MARKET_CURRENCY,
+        "market_data_symbol_suffix": MARKET_DATA_SYMBOL_SUFFIX,
+        "market_exchange": MARKET_EXCHANGE,
+        "market_timezone": MARKET_TIMEZONE,
     },
 ).build_log_context(run_id="")
 
@@ -309,13 +324,69 @@ def build_strategy_adapters():
         translator=t,
         pacing_sec=HIST_DATA_PACING_SEC,
         resolve_run_as_of_date_fn=resolve_run_as_of_date,
-        fetch_historical_price_series_fn=fetch_historical_price_series,
-        fetch_historical_price_candles_fn=fetch_historical_price_candles,
+        fetch_historical_price_series_fn=fetch_market_historical_price_series,
+        fetch_historical_price_candles_fn=fetch_market_historical_price_candles,
         map_strategy_decision_fn=map_strategy_decision,
+        fallback_historical_candles_fn=fetch_market_fallback_historical_candles,
         build_strategy_plugin_report_payload_fn=build_strategy_plugin_report_payload,
         load_configured_strategy_plugin_signals_fn=load_configured_strategy_plugin_signals,
         parse_strategy_plugin_mounts_fn=parse_strategy_plugin_mounts,
     )
+
+
+def format_market_data_symbol(symbol: str) -> str:
+    value = str(symbol or "").strip().upper()
+    if not value or not MARKET_DATA_SYMBOL_SUFFIX or "." in value:
+        return value
+    return f"{value}{MARKET_DATA_SYMBOL_SUFFIX}"
+
+
+def fetch_market_historical_price_series(ib, symbol, **kwargs):
+    return fetch_historical_price_series(
+        ib,
+        str(symbol).strip().upper(),
+        exchange=MARKET_EXCHANGE,
+        currency=MARKET_CURRENCY,
+        **kwargs,
+    )
+
+
+def fetch_market_historical_price_candles(ib, symbol, **kwargs):
+    return fetch_historical_price_candles(
+        ib,
+        str(symbol).strip().upper(),
+        exchange=MARKET_EXCHANGE,
+        currency=MARKET_CURRENCY,
+        **kwargs,
+    )
+
+
+def fetch_market_fallback_historical_candles(symbol, **kwargs):
+    return fetch_yfinance_historical_candles(format_market_data_symbol(symbol), **kwargs)
+
+
+def fetch_market_quote_snapshots(ib, symbols, **kwargs):
+    return fetch_quote_snapshots(
+        ib,
+        symbols,
+        exchange=MARKET_EXCHANGE,
+        currency=MARKET_CURRENCY,
+        **kwargs,
+    )
+
+
+def submit_market_order_intent(ib, order_intent, **kwargs):
+    return submit_order_intent(
+        ib,
+        order_intent,
+        stock_exchange=MARKET_EXCHANGE,
+        stock_currency=MARKET_CURRENCY,
+        **kwargs,
+    )
+
+
+def fetch_market_portfolio_snapshot(ib, **kwargs):
+    return fetch_portfolio_snapshot(ib, currency=MARKET_CURRENCY, **kwargs)
 
 
 def build_broker_adapters(*, dry_run_only_override: bool | None = None):
@@ -330,9 +401,9 @@ def build_broker_adapters(*, dry_run_only_override: bool | None = None):
         client_id_retry_offset=IB_CLIENT_ID_RETRY_OFFSET,
         ensure_event_loop_fn=ensure_event_loop,
         connect_ib_fn=ibkr_connect_ib,
-        fetch_portfolio_snapshot_fn=fetch_portfolio_snapshot,
-        fetch_quote_snapshots_fn=fetch_quote_snapshots,
-        submit_order_intent_fn=submit_order_intent,
+        fetch_portfolio_snapshot_fn=fetch_market_portfolio_snapshot,
+        fetch_quote_snapshots_fn=fetch_market_quote_snapshots,
+        submit_order_intent_fn=submit_market_order_intent,
         application_get_market_prices_fn=application_get_market_prices,
         application_check_order_submitted_fn=application_check_order_submitted,
         application_execute_rebalance_fn=application_execute_rebalance,
@@ -354,6 +425,7 @@ def build_broker_adapters(*, dry_run_only_override: bool | None = None):
         separator=SEPARATOR,
         strategy_display_name=strategy_display_name,
         sleep_fn=time.sleep,
+        market_currency=MARKET_CURRENCY,
         printer=print,
     )
 
@@ -425,6 +497,12 @@ def build_composer(*, dry_run_only_override: bool | None = None, strategy_plugin
             "execution_backend": EXECUTION_BACKEND,
             "quantconnect_project_id": QUANTCONNECT_PROJECT_ID,
             "quantconnect_node_id": QUANTCONNECT_NODE_ID,
+            "market": MARKET,
+            "market_calendar": MARKET_CALENDAR,
+            "market_currency": MARKET_CURRENCY,
+            "market_data_symbol_suffix": MARKET_DATA_SYMBOL_SUFFIX,
+            "market_exchange": MARKET_EXCHANGE,
+            "market_timezone": MARKET_TIMEZONE,
         },
     )
 
@@ -585,6 +663,13 @@ def build_account_notification_lines() -> tuple[str, ...]:
 
 def build_extra_notification_lines(strategy_plugin_signals=()) -> tuple[str, ...]:
     return (
+        t(
+            "market_scope_detail",
+            market=MARKET,
+            currency=MARKET_CURRENCY,
+            exchange=MARKET_EXCHANGE,
+            calendar=MARKET_CALENDAR,
+        ),
         *build_account_notification_lines(),
         *build_strategy_plugin_notification_lines(strategy_plugin_signals),
     )
@@ -697,12 +782,19 @@ def _handle_request(*, dry_run_only_override: bool | None = None, response_body:
                 diagnostics={"skip_reason": "already_running"},
             )
             return "Already Running", 200
-        if not is_market_open_today():
+        if not is_market_open_today(
+            calendar_name=MARKET_CALENDAR,
+            timezone_name=MARKET_TIMEZONE,
+            logger=lambda message: print(message, flush=True),
+        ):
             log_runtime_event(
                 log_context,
                 "market_closed",
                 message="Market closed; skip strategy execution",
                 execution_window="precheck" if dry_run_only_override else "execution",
+                market=MARKET,
+                market_calendar=MARKET_CALENDAR,
+                market_timezone=MARKET_TIMEZONE,
             )
             finalize_runtime_report(
                 report,

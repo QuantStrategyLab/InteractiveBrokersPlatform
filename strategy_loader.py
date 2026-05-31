@@ -5,9 +5,8 @@ from quant_platform_kit.common.strategies import (
     load_strategy_entrypoint,
 )
 from quant_platform_kit.strategy_contracts import StrategyEntrypoint, StrategyRuntimeAdapter
-from us_equity_strategies import get_platform_runtime_adapter
 
-from strategy_registry import IBKR_PLATFORM, resolve_strategy_definition
+from strategy_registry import IBKR_PLATFORM, get_platform_runtime_adapter, resolve_strategy_definition
 
 
 def load_strategy_definition(raw_profile: str | None) -> StrategyDefinition:
