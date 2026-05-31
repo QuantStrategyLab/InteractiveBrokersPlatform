@@ -849,6 +849,59 @@ def test_print_strategy_switch_env_plan_for_tqqq_growth_income():
     assert "IBKR_FEATURE_SNAPSHOT_PATH" in plan["remove_if_present"]
 
 
+def test_print_strategy_switch_env_plan_for_hk_global_etf_dry_run():
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SWITCH_PLAN_SCRIPT_PATH),
+            "--profile",
+            "hk_listed_global_etf_rotation",
+            "--dry-run-only",
+            "--deployment-selector",
+            "hk-verify",
+            "--account-scope",
+            "hk-verify",
+            "--account-group",
+            "hk-verify",
+            "--service-name",
+            "interactive-brokers-hk-verify-service",
+            "--json",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    plan = json.loads(result.stdout)
+    assert plan["platform"] == "ibkr"
+    assert plan["canonical_profile"] == "hk_listed_global_etf_rotation"
+    assert plan["domain"] == HK_EQUITY_DOMAIN
+    assert plan["runtime_target"]["dry_run_only"] is True
+    assert plan["runtime_target"]["execution_mode"] == "paper"
+    assert plan["runtime_target"]["deployment_selector"] == "hk-verify"
+    assert plan["runtime_target"]["account_scope"] == "hk-verify"
+    assert plan["runtime_target"]["service_name"] == "interactive-brokers-hk-verify-service"
+    runtime_target_env = json.loads(plan["set_env"]["RUNTIME_TARGET_JSON"])
+    assert runtime_target_env["dry_run_only"] is True
+    assert runtime_target_env["execution_mode"] == "paper"
+    assert plan["set_env"]["ACCOUNT_GROUP"] == "hk-verify"
+    assert plan["set_env"]["IBKR_DRY_RUN_ONLY"] == "true"
+    assert plan["set_env"]["IBKR_MARKET"] == HK_MARKET
+    assert plan["set_env"]["IBKR_MARKET_CALENDAR"] == HK_MARKET_CALENDAR
+    assert plan["set_env"]["IBKR_MARKET_CURRENCY"] == HK_MARKET_CURRENCY
+    assert plan["set_env"]["IBKR_MARKET_DATA_SYMBOL_SUFFIX"] == HK_MARKET_DATA_SYMBOL_SUFFIX
+    assert plan["set_env"]["IBKR_MARKET_EXCHANGE"] == HK_MARKET_EXCHANGE
+    assert plan["set_env"]["IBKR_MARKET_TIMEZONE"] == HK_MARKET_TIMEZONE
+    assert plan["profile_group"] == "direct_runtime_inputs"
+    assert plan["input_mode"] == "market_history"
+    assert plan["requires_snapshot_artifacts"] is False
+    assert "IBKR_FEATURE_SNAPSHOT_PATH" in plan["remove_if_present"]
+    assert plan["dry_run_plan"]["dry_run_only"] is True
+    assert plan["dry_run_plan"]["verify_only"] is True
+    assert any("lot-size" in check for check in plan["dry_run_plan"]["checks"])
+    assert any("production Cloud Run" in action for action in plan["dry_run_plan"]["blocked_actions"])
+
+
 def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
     payload = {
         "defaults": {

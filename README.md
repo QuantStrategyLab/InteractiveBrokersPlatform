@@ -75,6 +75,12 @@ Snapshot-backed profiles use upstream artifacts from `UsEquitySnapshotPipelines`
 
 For the HK-equity runtime scope, platform matrix, and env defaults, see [`docs/hk_equity_runtime.md`](docs/hk_equity_runtime.md).
 
+For HK verify-only rollout planning, print the switch plan first instead of changing Cloud Run directly:
+
+```bash
+python scripts/print_strategy_switch_env_plan.py --profile hk_listed_global_etf_rotation --dry-run-only --deployment-selector hk-verify --account-scope hk-verify --account-group hk-verify --service-name interactive-brokers-hk-verify-service --json
+```
+
 Example runtime pointer:
 
 ```bash
@@ -426,6 +432,12 @@ IBKR runtime 负责把共享的 `us_equity` / `hk_equity` 策略档位部署到 
 feature-snapshot 类策略使用 `UsEquitySnapshotPipelines` 或 `HkEquitySnapshotPipelines` 发布的上游 artifact。这个运行时只需要 artifact 的位置，例如 `IBKR_FEATURE_SNAPSHOT_PATH`；策略逻辑、策略频率、特征定义和 snapshot schema 说明放在策略/快照仓库。
 
 港股运行时范围、平台矩阵和环境变量默认值见 [`docs/hk_equity_runtime.md`](docs/hk_equity_runtime.md)。
+
+港股 verify-only 接入先打印切换计划，不直接改 Cloud Run：
+
+```bash
+python scripts/print_strategy_switch_env_plan.py --profile hk_listed_global_etf_rotation --dry-run-only --deployment-selector hk-verify --account-scope hk-verify --account-group hk-verify --service-name interactive-brokers-hk-verify-service --json
+```
 
 ### 架构
 

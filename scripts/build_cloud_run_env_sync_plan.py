@@ -13,7 +13,35 @@ QPK_SRC = ROOT.parent / "QuantPlatformKit" / "src"
 UES_SRC = ROOT.parent / "UsEquityStrategies" / "src"
 HES_SRC = ROOT.parent / "HkEquityStrategies" / "src"
 
+
+def _has_catalog_marker(candidate: Path, package_name: str, marker: str) -> bool:
+    catalog_path = candidate / package_name / "catalog.py"
+    if not catalog_path.exists():
+        return False
+    return marker in catalog_path.read_text(encoding="utf-8")
+
+
+def _should_add_local_src(candidate: Path) -> bool:
+    if candidate == QPK_SRC:
+        return (candidate / "quant_platform_kit" / "common" / "runtime_target.py").exists()
+    if candidate == UES_SRC:
+        return _has_catalog_marker(
+            candidate,
+            "us_equity_strategies",
+            "mega_cap_leader_rotation_top50_balanced",
+        )
+    if candidate == HES_SRC:
+        return _has_catalog_marker(
+            candidate,
+            "hk_equity_strategies",
+            "hk_listed_global_etf_rotation",
+        )
+    return True
+
+
 for candidate in (ROOT, QPK_SRC, UES_SRC, HES_SRC):
+    if not _should_add_local_src(candidate):
+        continue
     candidate_str = str(candidate)
     if candidate_str not in sys.path:
         sys.path.insert(0, candidate_str)
