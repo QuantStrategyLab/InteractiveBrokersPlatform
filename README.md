@@ -246,6 +246,8 @@ Alert results are written into the runtime report. Duplicate suppression uses st
 
 This repo includes `.github/workflows/sync-cloud-run-env.yml` for GitHub-managed Cloud Run automation. Set `ENABLE_GITHUB_CLOUD_RUN_DEPLOY=true` to build and deploy the container image from GitHub Actions; set `ENABLE_GITHUB_ENV_SYNC=true` to sync runtime env vars. You can enable either flag independently during migration from a Google Cloud Trigger. The workflow also emits `RUNTIME_TARGET_JSON`, so the control plane carries a structured runtime target alongside the legacy `STRATEGY_PROFILE` selector.
 
+Pushes to `main` have an additional deployment guard: keep `ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION` unset or not `true` to allow framework changes to merge without touching Cloud Run. Manual `workflow_dispatch` runs still follow the deploy/env-sync flags above.
+
 Recommended setup:
 
 - **Repository Variables**
@@ -549,6 +551,8 @@ IB_GATEWAY_IP_MODE=internal
 ### GitHub 统一管理 Cloud Run 部署和环境变量
 
 这个仓库提供 `.github/workflows/sync-cloud-run-env.yml` 作为 GitHub 管理 Cloud Run 的入口。设置 `ENABLE_GITHUB_CLOUD_RUN_DEPLOY=true` 时，GitHub Actions 会构建并发布容器镜像；设置 `ENABLE_GITHUB_ENV_SYNC=true` 时，GitHub Actions 会同步运行时环境变量。迁移期间两个开关可以独立启用，旧的 Google Cloud Trigger 也可以先保留。
+
+`push main` 还有一层发布保护：保持 `ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION` 未设置或不是 `true`，即可让框架代码合入主线但不触碰 Cloud Run。手动 `workflow_dispatch` 仍按上面的部署/同步开关执行。
 
 推荐配置方式：
 
