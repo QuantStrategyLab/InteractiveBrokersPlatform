@@ -1,5 +1,7 @@
 # InteractiveBrokersPlatform
 
+> ⚠️ 投资有风险，不构成投资建议，仅供学习交流用途。
+
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
 ![Platform](https://img.shields.io/badge/Broker-Interactive%20Brokers-red)
 ![Strategy](https://img.shields.io/badge/Strategy-US%20Equity%20Profiles-green)
