@@ -65,7 +65,14 @@ EXPECTED_IBKR_ENABLED_PROFILES = frozenset(
         "tqqq_growth_income",
     }
 )
-EXPECTED_IBKR_PROFILES = EXPECTED_IBKR_ENABLED_PROFILES | frozenset({"hk_blue_chip_leader_rotation"})
+HK_DISABLED_PROFILES = frozenset(
+    {
+        "hk_blue_chip_leader_rotation",
+        "hk_index_mean_reversion",
+        "hk_etf_regime_rotation",
+    }
+)
+EXPECTED_IBKR_PROFILES = EXPECTED_IBKR_ENABLED_PROFILES | HK_DISABLED_PROFILES
 
 
 def runtime_target_json(
@@ -546,8 +553,10 @@ def test_load_platform_runtime_settings_rejects_unknown_strategy_profile(monkeyp
 
 
 def test_platform_supported_profiles_are_filtered_by_registry():
-    assert get_supported_profiles_for_platform(IBKR_PLATFORM) == EXPECTED_IBKR_ENABLED_PROFILES
-    assert "hk_blue_chip_leader_rotation" not in get_supported_profiles_for_platform(IBKR_PLATFORM)
+    supported_profiles = get_supported_profiles_for_platform(IBKR_PLATFORM)
+    assert supported_profiles == EXPECTED_IBKR_ENABLED_PROFILES
+    for profile in HK_DISABLED_PROFILES:
+        assert profile not in supported_profiles
 
 
 def test_platform_policy_accepts_future_hk_equity_domain():
@@ -577,8 +586,9 @@ def test_load_platform_runtime_settings_accepts_tech_communication_pullback_enha
     assert settings.strategy_target_mode == "weight"
 
 
-def test_load_platform_runtime_settings_rejects_hk_blue_chip_until_runtime_enabled(monkeypatch):
-    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json("hk_blue_chip_leader_rotation"))
+@pytest.mark.parametrize("profile", sorted(HK_DISABLED_PROFILES))
+def test_load_platform_runtime_settings_rejects_hk_profiles_until_runtime_enabled(monkeypatch, profile):
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(profile))
     monkeypatch.setenv("ACCOUNT_GROUP", "hk-live")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_HK_GROUP_JSON)
     monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "gs://bucket/hk.csv")
@@ -679,6 +689,22 @@ def test_platform_profile_status_matrix_matches_current_ibkr_rollout():
         "enabled": False,
         "platform": "ibkr",
     }
+    assert by_profile["hk_index_mean_reversion"] == {
+        "canonical_profile": "hk_index_mean_reversion",
+        "display_name": "HK Index Mean Reversion",
+        "domain": "hk_equity",
+        "eligible": True,
+        "enabled": False,
+        "platform": "ibkr",
+    }
+    assert by_profile["hk_etf_regime_rotation"] == {
+        "canonical_profile": "hk_etf_regime_rotation",
+        "display_name": "HK ETF Regime Rotation",
+        "domain": "hk_equity",
+        "eligible": True,
+        "enabled": False,
+        "platform": "ibkr",
+    }
 
 
 def test_print_strategy_profile_status_json_matches_registry():
@@ -725,6 +751,12 @@ def test_print_strategy_profile_status_json_matches_registry():
     assert by_profile["hk_blue_chip_leader_rotation"]["requires_snapshot_artifacts"] is True
     assert by_profile["hk_blue_chip_leader_rotation"]["requires_snapshot_manifest_path"] is True
     assert by_profile["hk_blue_chip_leader_rotation"]["requires_strategy_config_path"] is False
+    for profile in ("hk_index_mean_reversion", "hk_etf_regime_rotation"):
+        assert by_profile[profile]["profile_group"] == "direct_runtime_inputs"
+        assert by_profile[profile]["input_mode"] == "market_history"
+        assert by_profile[profile]["requires_snapshot_artifacts"] is False
+        assert by_profile[profile]["requires_snapshot_manifest_path"] is False
+        assert by_profile[profile]["requires_strategy_config_path"] is False
     assert by_profile["russell_1000_multi_factor_defensive"]["requires_strategy_config_path"] is False
 
 
@@ -743,8 +775,12 @@ def test_print_strategy_profile_status_table_contains_expected_headers():
     assert "requires_snapshot_artifacts" in result.stdout
     assert "global_etf_rotation" in result.stdout
     assert "hk_blue_chip_leader_rotation" in result.stdout
+    assert "hk_index_mean_reversion" in result.stdout
+    assert "hk_etf_regime_rotation" in result.stdout
     assert "Tech/Communication Pullback Enhancement" in result.stdout
     assert "HK Blue Chip Leader Rotation" in result.stdout
+    assert "HK Index Mean Reversion" in result.stdout
+    assert "HK ETF Regime Rotation" in result.stdout
     assert "TQQQ Growth Income" in result.stdout
 
 
@@ -953,9 +989,10 @@ def test_print_strategy_switch_env_plan_for_mega_cap_top50_balanced_profile():
     assert plan["hints"]["feature_snapshot_filename"] == "mega_cap_leader_rotation_top50_balanced_feature_snapshot_latest.csv"
 
 
-def test_print_strategy_switch_env_plan_rejects_hk_scaffold_profile():
+@pytest.mark.parametrize("profile", sorted(HK_DISABLED_PROFILES))
+def test_print_strategy_switch_env_plan_rejects_hk_disabled_profiles(profile):
     result = subprocess.run(
-        [sys.executable, str(SWITCH_PLAN_SCRIPT_PATH), "--profile", "hk_blue_chip_leader_rotation", "--json"],
+        [sys.executable, str(SWITCH_PLAN_SCRIPT_PATH), "--profile", profile, "--json"],
         capture_output=True,
         text=True,
     )
