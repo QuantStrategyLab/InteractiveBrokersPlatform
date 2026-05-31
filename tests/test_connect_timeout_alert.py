@@ -104,6 +104,12 @@ def install_stub_modules():
         strategy_profile="tqqq_growth_income",
         strategy_display_name="TQQQ Growth Income",
         strategy_domain="us_equity",
+        market="US",
+        market_calendar="NYSE",
+        market_currency="USD",
+        market_data_symbol_suffix="",
+        market_exchange="SMART",
+        market_timezone="America/New_York",
         account_group="default",
         account_ids=("U1234567",),
         service_name="interactive-brokers-platform",
@@ -153,10 +159,25 @@ def install_stub_modules():
         "runtime_config_support": runtime_config_support_module,
     }
     original = {name: sys.modules.get(name) for name in modules}
+    preexisting_modules = set(sys.modules)
     sys.modules.update(modules)
     try:
         yield
     finally:
+        project_module_prefixes = (
+            "application",
+            "decision_mapper",
+            "entrypoints",
+            "main",
+            "notifications",
+            "quant_platform_kit",
+            "runtime_logging",
+        )
+        for name in list(sys.modules):
+            if name in preexisting_modules:
+                continue
+            if name == "main" or name.startswith(project_module_prefixes):
+                sys.modules.pop(name, None)
         for name, previous in original.items():
             if previous is None:
                 sys.modules.pop(name, None)
@@ -171,7 +192,7 @@ class IBRKConnectTimeoutAlertTests(unittest.TestCase):
             module = importlib.import_module("main")
             observed = {"messages": []}
 
-            module.is_market_open_today = lambda: True
+            module.is_market_open_today = lambda **_kwargs: True
             module.run_strategy_core = lambda **_kwargs: (_ for _ in ()).throw(
                 TimeoutError("IBKR API handshake timed out")
             )
