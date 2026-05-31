@@ -14,7 +14,7 @@ QuantStrategyLab 现有平台仓库里，能接入港股股票交易的平台是
 
 ## 运行时设计
 
-本仓库只做券商运行时能力，不把港股策略逻辑硬编码进平台。当前已接入 `HkEquityStrategies` 的港股 profile 元数据：`hk_blue_chip_leader_rotation` 是架构占位，`hk_index_mean_reversion` 和 `hk_etf_regime_rotation` 是 `market_history` 研究候选。三者都只用于框架 wiring、feed/dry-run 兼容性检查，尚未 runtime-enabled。整体沿用美股策略的架构：
+本仓库只做券商运行时能力，不把港股策略逻辑硬编码进平台。当前已接入 `HkEquityStrategies` 的港股 profile 元数据：`hk_blue_chip_leader_rotation` 是架构占位，`hk_index_mean_reversion`、`hk_etf_regime_rotation` 和 `hk_listed_global_etf_rotation` 是 `market_history` 研究候选。这些 profile 都只用于框架 wiring、feed/dry-run 兼容性检查，尚未 runtime-enabled。整体沿用美股策略的架构：
 
 1. [`HkEquityStrategies`](https://github.com/QuantStrategyLab/HkEquityStrategies) 提供 `hk_equity` 策略 profile、运行入口和 IBKR runtime adapter。
 2. [`HkEquitySnapshotPipelines`](https://github.com/QuantStrategyLab/HkEquitySnapshotPipelines) 发布 snapshot-backed profile 的 `<profile>_feature_snapshot_latest.csv`、manifest、ranking 和 release summary。
@@ -31,6 +31,7 @@ QuantStrategyLab 现有平台仓库里，能接入港股股票交易的平台是
 | `hk_blue_chip_leader_rotation` | `hk_equity` | `feature_snapshot` | `weight` | required | eligible but disabled |
 | `hk_index_mean_reversion` | `hk_equity` | `market_history` | `weight` | not required | eligible but disabled |
 | `hk_etf_regime_rotation` | `hk_equity` | `market_history` | `weight` | not required | eligible but disabled |
+| `hk_listed_global_etf_rotation` | `hk_equity` | `market_history` | `weight` | not required | eligible but disabled |
 
 未来启用 snapshot-backed profile 后的最小策略配置示例；当前不要写入 Cloud Run：
 
@@ -85,5 +86,5 @@ IBKR_MARKET_DATA_SYMBOL_SUFFIX=.HK
 - IBKR 港股实盘依赖账户权限、行情权限、Gateway 登录账户可见账号和交易许可；平台配置无法替代这些权限。
 - 不同 IBKR 账户或区域对港股 symbol 格式可能有差异，首批上线前需要用 dry-run 和小范围 symbol 做实盘连接验证。
 - `XHKG` 是否可用取决于部署环境里的 `pandas_market_calendars` 版本；如不可用，可用 `IBKR_MARKET_CALENDAR` 临时覆盖。
-- `hk_blue_chip_leader_rotation`、`hk_index_mean_reversion`、`hk_etf_regime_rotation` 当前均未启用；不要把这些 profile 写入生产 Cloud Run。
-- `market_history` 研究候选后续真正启用前，需要先用 IBKR HK 行情 feed 对 `02800`、`03033`、`02822`、`02840`、`03110`、`03188` 做 dry-run 校验，不提交真实订单。
+- `hk_blue_chip_leader_rotation`、`hk_index_mean_reversion`、`hk_etf_regime_rotation`、`hk_listed_global_etf_rotation` 当前均未启用；不要把这些 profile 写入生产 Cloud Run。
+- `market_history` 研究候选后续真正启用前，需要先用 IBKR HK 行情 feed 对 `02800`、`03033`、`02822`、`02840`、`03110`、`03188`、`02834`、`03175` 做 dry-run 校验，不提交真实订单。

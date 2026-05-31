@@ -70,6 +70,7 @@ HK_DISABLED_PROFILES = frozenset(
         "hk_blue_chip_leader_rotation",
         "hk_index_mean_reversion",
         "hk_etf_regime_rotation",
+        "hk_listed_global_etf_rotation",
     }
 )
 EXPECTED_IBKR_PROFILES = EXPECTED_IBKR_ENABLED_PROFILES | HK_DISABLED_PROFILES
@@ -705,6 +706,14 @@ def test_platform_profile_status_matrix_matches_current_ibkr_rollout():
         "enabled": False,
         "platform": "ibkr",
     }
+    assert by_profile["hk_listed_global_etf_rotation"] == {
+        "canonical_profile": "hk_listed_global_etf_rotation",
+        "display_name": "HK-listed Global ETF Rotation",
+        "domain": "hk_equity",
+        "eligible": True,
+        "enabled": False,
+        "platform": "ibkr",
+    }
 
 
 def test_print_strategy_profile_status_json_matches_registry():
@@ -751,7 +760,7 @@ def test_print_strategy_profile_status_json_matches_registry():
     assert by_profile["hk_blue_chip_leader_rotation"]["requires_snapshot_artifacts"] is True
     assert by_profile["hk_blue_chip_leader_rotation"]["requires_snapshot_manifest_path"] is True
     assert by_profile["hk_blue_chip_leader_rotation"]["requires_strategy_config_path"] is False
-    for profile in ("hk_index_mean_reversion", "hk_etf_regime_rotation"):
+    for profile in ("hk_index_mean_reversion", "hk_etf_regime_rotation", "hk_listed_global_etf_rotation"):
         assert by_profile[profile]["profile_group"] == "direct_runtime_inputs"
         assert by_profile[profile]["input_mode"] == "market_history"
         assert by_profile[profile]["requires_snapshot_artifacts"] is False
@@ -777,10 +786,12 @@ def test_print_strategy_profile_status_table_contains_expected_headers():
     assert "hk_blue_chip_leader_rotation" in result.stdout
     assert "hk_index_mean_reversion" in result.stdout
     assert "hk_etf_regime_rotation" in result.stdout
+    assert "hk_listed_global_etf_rotation" in result.stdout
     assert "Tech/Communication Pullback Enhancement" in result.stdout
     assert "HK Blue Chip Leader Rotation" in result.stdout
     assert "HK Index Mean Reversion" in result.stdout
     assert "HK ETF Regime Rotation" in result.stdout
+    assert "HK-listed Global ETF Rotation" in result.stdout
     assert "TQQQ Growth Income" in result.stdout
 
 
