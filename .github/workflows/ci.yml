@@ -88,11 +88,13 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           from quant_platform_kit.common.port_adapters import CallableNotificationPort, CallablePortfolioPort
+          from hk_equity_strategies import resolve_canonical_profile as resolve_hk_canonical_profile
           from us_equity_strategies import resolve_canonical_profile
 
           assert CallableNotificationPort
           assert CallablePortfolioPort
           assert resolve_canonical_profile("mega_cap_leader_rotation_top50_balanced") == "mega_cap_leader_rotation_top50_balanced"
+          assert resolve_hk_canonical_profile("hk_blue_chip_leader_rotation") == "hk_blue_chip_leader_rotation"
           PY
 
       - name: Install editable shared repositories

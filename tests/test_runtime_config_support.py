@@ -7,17 +7,32 @@ from pathlib import Path
 import pytest
 
 from runtime_config_support import (
+    DEFAULT_MARKET,
+    DEFAULT_MARKET_CALENDAR,
+    DEFAULT_MARKET_CURRENCY,
+    DEFAULT_MARKET_DATA_SYMBOL_SUFFIX,
+    DEFAULT_MARKET_EXCHANGE,
+    DEFAULT_MARKET_TIMEZONE,
     DEFAULT_RESERVED_CASH_FLOOR_USD,
     DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD,
     EXECUTION_BACKEND_GATEWAY,
     EXECUTION_BACKEND_QUANTCONNECT,
+    HK_MARKET,
+    HK_MARKET_CALENDAR,
+    HK_MARKET_CURRENCY,
+    HK_MARKET_DATA_SYMBOL_SUFFIX,
+    HK_MARKET_EXCHANGE,
+    HK_MARKET_TIMEZONE,
     load_platform_runtime_settings,
+    normalize_market_data_symbol_suffix,
     parse_account_group_configs,
+    resolve_market,
     resolve_execution_backend,
     resolve_non_negative_float_env,
     resolve_optional_ratio_env,
 )
 from strategy_registry import (
+    HK_EQUITY_DOMAIN,
     IBKR_PLATFORM,
     US_EQUITY_DOMAIN,
     get_eligible_profiles_for_platform,
@@ -31,10 +46,26 @@ MINIMAL_GROUP_JSON = (
     '{"groups":{"paper":{"ib_gateway_instance_name":"ib-gateway",'
     '"ib_gateway_mode":"paper","ib_client_id":1}}}'
 )
+MINIMAL_HK_GROUP_JSON = (
+    '{"groups":{"hk-live":{"ib_gateway_instance_name":"ib-gateway",'
+    '"ib_gateway_mode":"live","ib_client_id":1}}}'
+)
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "print_strategy_profile_status.py"
 SWITCH_PLAN_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "print_strategy_switch_env_plan.py"
 SYNC_PLAN_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "build_cloud_run_env_sync_plan.py"
 SAMPLE_STRATEGY_PROFILE = "global_etf_rotation"
+EXPECTED_IBKR_PROFILES = frozenset(
+    {
+        "global_etf_rotation",
+        "hk_blue_chip_leader_rotation",
+        "mega_cap_leader_rotation_top50_balanced",
+        "nasdaq_sp500_smart_dca",
+        "russell_1000_multi_factor_defensive",
+        "soxl_soxx_trend_income",
+        "tech_communication_pullback_enhancement",
+        "tqqq_growth_income",
+    }
+)
 
 
 def runtime_target_json(
@@ -129,6 +160,12 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.strategy_config_source is None
     assert settings.reconciliation_output_path is None
     assert settings.dry_run_only is False
+    assert settings.market == DEFAULT_MARKET
+    assert settings.market_calendar == DEFAULT_MARKET_CALENDAR
+    assert settings.market_currency == DEFAULT_MARKET_CURRENCY
+    assert settings.market_data_symbol_suffix == DEFAULT_MARKET_DATA_SYMBOL_SUFFIX
+    assert settings.market_exchange == DEFAULT_MARKET_EXCHANGE
+    assert settings.market_timezone == DEFAULT_MARKET_TIMEZONE
     assert settings.quantity_step == 1.0
     assert settings.min_order_notional == 50.0
     assert settings.reserved_cash_floor_usd == DEFAULT_RESERVED_CASH_FLOOR_USD
@@ -241,6 +278,59 @@ def test_load_platform_runtime_settings_supports_explicit_group_config_values(mo
     assert settings.tg_token == "token-1"
     assert settings.tg_chat_id == "chat-1"
     assert settings.notify_lang == "zh"
+
+
+def test_load_platform_runtime_settings_derives_hk_market_from_account_group(monkeypatch):
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(SAMPLE_STRATEGY_PROFILE))
+    monkeypatch.setenv("ACCOUNT_GROUP", "hk-live")
+    monkeypatch.setenv(
+        "IB_ACCOUNT_GROUP_CONFIG_JSON",
+        '{"groups":{"hk-live":{"ib_gateway_instance_name":"ib-gateway-hk",'
+        '"ib_gateway_mode":"live","ib_client_id":8}}}',
+    )
+
+    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
+
+    assert settings.market == HK_MARKET
+    assert settings.market_calendar == HK_MARKET_CALENDAR
+    assert settings.market_currency == HK_MARKET_CURRENCY
+    assert settings.market_data_symbol_suffix == HK_MARKET_DATA_SYMBOL_SUFFIX
+    assert settings.market_exchange == HK_MARKET_EXCHANGE
+    assert settings.market_timezone == HK_MARKET_TIMEZONE
+
+
+def test_load_platform_runtime_settings_allows_market_env_overrides(monkeypatch):
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(SAMPLE_STRATEGY_PROFILE))
+    monkeypatch.setenv("ACCOUNT_GROUP", "hk-live")
+    monkeypatch.setenv(
+        "IB_ACCOUNT_GROUP_CONFIG_JSON",
+        '{"groups":{"hk-live":{"ib_gateway_instance_name":"ib-gateway-hk",'
+        '"ib_gateway_mode":"live","ib_client_id":8}}}',
+    )
+    monkeypatch.setenv("IBKR_MARKET", "US")
+    monkeypatch.setenv("IBKR_MARKET_CALENDAR", "XNYS")
+    monkeypatch.setenv("IBKR_MARKET_CURRENCY", "usd")
+    monkeypatch.setenv("IBKR_MARKET_DATA_SYMBOL_SUFFIX", "US")
+    monkeypatch.setenv("IBKR_MARKET_EXCHANGE", "smart")
+    monkeypatch.setenv("IBKR_MARKET_TIMEZONE", "Etc/UTC")
+
+    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
+
+    assert settings.market == DEFAULT_MARKET
+    assert settings.market_calendar == "XNYS"
+    assert settings.market_currency == DEFAULT_MARKET_CURRENCY
+    assert settings.market_data_symbol_suffix == ".US"
+    assert settings.market_exchange == DEFAULT_MARKET_EXCHANGE
+    assert settings.market_timezone == "Etc/UTC"
+
+
+def test_market_helpers_normalize_hk_and_symbol_suffix():
+    assert resolve_market(None, account_group="hk-live") == HK_MARKET
+    assert resolve_market("US", account_group="hk-live") == DEFAULT_MARKET
+    assert resolve_market("hong_kong", account_group="paper") == HK_MARKET
+    assert normalize_market_data_symbol_suffix("hk") == ".HK"
+    assert normalize_market_data_symbol_suffix(".HK") == ".HK"
+    assert normalize_market_data_symbol_suffix("") == ""
 
 
 def test_load_platform_runtime_settings_supports_quantconnect_backend_without_gateway(monkeypatch):
@@ -456,31 +546,18 @@ def test_load_platform_runtime_settings_rejects_unknown_strategy_profile(monkeyp
 
 
 def test_platform_supported_profiles_are_filtered_by_registry():
-    assert get_supported_profiles_for_platform(IBKR_PLATFORM) == frozenset(
-        {
-            "soxl_soxx_trend_income",
-            "tqqq_growth_income",
-            "tech_communication_pullback_enhancement",
-            "global_etf_rotation",
-            "mega_cap_leader_rotation_top50_balanced",
-            "nasdaq_sp500_smart_dca",
-            "russell_1000_multi_factor_defensive",
-        }
-    )
+    assert get_supported_profiles_for_platform(IBKR_PLATFORM) == EXPECTED_IBKR_PROFILES
+
+
+def test_platform_policy_accepts_future_hk_equity_domain():
+    from strategy_registry import PLATFORM_SUPPORTED_DOMAINS
+
+    assert HK_EQUITY_DOMAIN in PLATFORM_SUPPORTED_DOMAINS[IBKR_PLATFORM]
+    assert US_EQUITY_DOMAIN in PLATFORM_SUPPORTED_DOMAINS[IBKR_PLATFORM]
 
 
 def test_platform_eligible_profiles_are_exposed_by_capability_matrix():
-    assert get_eligible_profiles_for_platform(IBKR_PLATFORM) == frozenset(
-        {
-            "soxl_soxx_trend_income",
-            "tqqq_growth_income",
-            "tech_communication_pullback_enhancement",
-            "global_etf_rotation",
-            "mega_cap_leader_rotation_top50_balanced",
-            "nasdaq_sp500_smart_dca",
-            "russell_1000_multi_factor_defensive",
-        }
-    )
+    assert get_eligible_profiles_for_platform(IBKR_PLATFORM) == EXPECTED_IBKR_PROFILES
 
 
 def test_load_platform_runtime_settings_accepts_tech_communication_pullback_enhancement(monkeypatch):
@@ -497,6 +574,29 @@ def test_load_platform_runtime_settings_accepts_tech_communication_pullback_enha
     assert settings.strategy_profile == "tech_communication_pullback_enhancement"
     assert settings.strategy_display_name == "Tech/Communication Pullback Enhancement"
     assert settings.strategy_target_mode == "weight"
+
+
+def test_load_platform_runtime_settings_accepts_hk_blue_chip_leader_rotation(monkeypatch):
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json("hk_blue_chip_leader_rotation"))
+    monkeypatch.setenv("ACCOUNT_GROUP", "hk-live")
+    monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_HK_GROUP_JSON)
+    monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "gs://bucket/hk.csv")
+    monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH", "gs://bucket/hk.csv.manifest.json")
+
+    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
+
+    assert settings.strategy_profile == "hk_blue_chip_leader_rotation"
+    assert settings.strategy_display_name == "HK Blue Chip Leader Rotation"
+    assert settings.strategy_domain == "hk_equity"
+    assert settings.strategy_target_mode == "weight"
+    assert settings.market == HK_MARKET
+    assert settings.market_calendar == HK_MARKET_CALENDAR
+    assert settings.market_timezone == HK_MARKET_TIMEZONE
+    assert settings.market_exchange == HK_MARKET_EXCHANGE
+    assert settings.market_currency == HK_MARKET_CURRENCY
+    assert settings.market_data_symbol_suffix == HK_MARKET_DATA_SYMBOL_SUFFIX
+    assert settings.feature_snapshot_path == "gs://bucket/hk.csv"
+    assert settings.feature_snapshot_manifest_path == "gs://bucket/hk.csv.manifest.json"
 
 
 @pytest.mark.parametrize(
@@ -564,15 +664,7 @@ def test_platform_profile_status_matrix_matches_current_ibkr_rollout():
     rows = get_platform_profile_status_matrix()
     by_profile = {row["canonical_profile"]: row for row in rows}
 
-    assert set(by_profile) == {
-        "global_etf_rotation",
-        "russell_1000_multi_factor_defensive",
-        "soxl_soxx_trend_income",
-        "tqqq_growth_income",
-        "tech_communication_pullback_enhancement",
-        "mega_cap_leader_rotation_top50_balanced",
-        "nasdaq_sp500_smart_dca",
-    }
+    assert set(by_profile) == EXPECTED_IBKR_PROFILES
     assert by_profile["global_etf_rotation"] == {
         "canonical_profile": "global_etf_rotation",
         "display_name": "Global ETF Rotation",
@@ -590,6 +682,14 @@ def test_platform_profile_status_matrix_matches_current_ibkr_rollout():
     assert by_profile["nasdaq_sp500_smart_dca"]["display_name"] == "Nasdaq/S&P 500 Smart DCA"
     assert by_profile["nasdaq_sp500_smart_dca"]["eligible"] is True
     assert by_profile["nasdaq_sp500_smart_dca"]["enabled"] is True
+    assert by_profile["hk_blue_chip_leader_rotation"] == {
+        "canonical_profile": "hk_blue_chip_leader_rotation",
+        "display_name": "HK Blue Chip Leader Rotation",
+        "domain": "hk_equity",
+        "eligible": True,
+        "enabled": True,
+        "platform": "ibkr",
+    }
 
 
 def test_print_strategy_profile_status_json_matches_registry():
@@ -631,6 +731,11 @@ def test_print_strategy_profile_status_json_matches_registry():
     assert by_profile["mega_cap_leader_rotation_top50_balanced"]["input_mode"] == "feature_snapshot"
     assert by_profile["mega_cap_leader_rotation_top50_balanced"]["requires_snapshot_artifacts"] is True
     assert by_profile["mega_cap_leader_rotation_top50_balanced"]["requires_strategy_config_path"] is False
+    assert by_profile["hk_blue_chip_leader_rotation"]["profile_group"] == "snapshot_backed"
+    assert by_profile["hk_blue_chip_leader_rotation"]["input_mode"] == "feature_snapshot"
+    assert by_profile["hk_blue_chip_leader_rotation"]["requires_snapshot_artifacts"] is True
+    assert by_profile["hk_blue_chip_leader_rotation"]["requires_snapshot_manifest_path"] is True
+    assert by_profile["hk_blue_chip_leader_rotation"]["requires_strategy_config_path"] is False
     assert by_profile["russell_1000_multi_factor_defensive"]["requires_strategy_config_path"] is False
 
 
@@ -648,7 +753,9 @@ def test_print_strategy_profile_status_table_contains_expected_headers():
     assert "input_mode" in result.stdout
     assert "requires_snapshot_artifacts" in result.stdout
     assert "global_etf_rotation" in result.stdout
+    assert "hk_blue_chip_leader_rotation" in result.stdout
     assert "Tech/Communication Pullback Enhancement" in result.stdout
+    assert "HK Blue Chip Leader Rotation" in result.stdout
     assert "TQQQ Growth Income" in result.stdout
 
 
@@ -678,6 +785,12 @@ def test_print_strategy_switch_env_plan_for_tqqq_growth_income():
     assert "IBKR_MIN_RESERVED_CASH_USD" in plan["optional_env"]
     assert "IBKR_RESERVED_CASH_RATIO" in plan["optional_env"]
     assert "IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD" in plan["optional_env"]
+    assert "IBKR_MARKET" in plan["optional_env"]
+    assert "IBKR_MARKET_CALENDAR" in plan["optional_env"]
+    assert "IBKR_MARKET_CURRENCY" in plan["optional_env"]
+    assert "IBKR_MARKET_DATA_SYMBOL_SUFFIX" in plan["optional_env"]
+    assert "IBKR_MARKET_EXCHANGE" in plan["optional_env"]
+    assert "IBKR_MARKET_TIMEZONE" in plan["optional_env"]
     assert "IBKR_FEATURE_SNAPSHOT_PATH" in plan["remove_if_present"]
 
 
@@ -689,6 +802,12 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
             "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME": "ibkr-account-groups",
             "IB_GATEWAY_ZONE": "us-central1-c",
             "IB_GATEWAY_IP_MODE": "internal",
+            "IBKR_MARKET": "HK",
+            "IBKR_MARKET_CALENDAR": "XHKG",
+            "IBKR_MARKET_CURRENCY": "HKD",
+            "IBKR_MARKET_DATA_SYMBOL_SUFFIX": ".HK",
+            "IBKR_MARKET_EXCHANGE": "SEHK",
+            "IBKR_MARKET_TIMEZONE": "Asia/Hong_Kong",
             "EXECUTION_REPORT_GCS_URI": "gs://runtime/execution-reports",
         },
         "targets": [
@@ -755,6 +874,9 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
 
     assert slot_a["env"]["ACCOUNT_GROUP"] == "live-slot-a"
     assert slot_a["env"]["STRATEGY_PROFILE"] == "tqqq_growth_income"
+    assert slot_a["env"]["IBKR_MARKET"] == "HK"
+    assert slot_a["env"]["IBKR_MARKET_CURRENCY"] == "HKD"
+    assert slot_a["env"]["IBKR_MARKET_EXCHANGE"] == "SEHK"
     assert "IBKR_FEATURE_SNAPSHOT_PATH" not in slot_a["env"]
     assert "IBKR_FEATURE_SNAPSHOT_PATH" in slot_a["remove_env_vars"]
     assert "gs://stale-paper/snapshot.csv" not in json.dumps(slot_a)
@@ -840,6 +962,27 @@ def test_print_strategy_switch_env_plan_for_mega_cap_top50_balanced_profile():
     assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_PATH"] == "<required>"
     assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH"] == "<required>"
     assert plan["hints"]["feature_snapshot_filename"] == "mega_cap_leader_rotation_top50_balanced_feature_snapshot_latest.csv"
+
+
+def test_print_strategy_switch_env_plan_for_hk_blue_chip_leader_rotation():
+    result = subprocess.run(
+        [sys.executable, str(SWITCH_PLAN_SCRIPT_PATH), "--profile", "hk_blue_chip_leader_rotation", "--json"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    plan = json.loads(result.stdout)
+    assert plan["canonical_profile"] == "hk_blue_chip_leader_rotation"
+    assert plan["domain"] == "hk_equity"
+    assert plan["profile_group"] == "snapshot_backed"
+    assert plan["input_mode"] == "feature_snapshot"
+    assert plan["requires_snapshot_artifacts"] is True
+    assert plan["requires_snapshot_manifest_path"] is True
+    assert plan["requires_strategy_config_path"] is False
+    assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_PATH"] == "<required>"
+    assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH"] == "<required>"
+    assert plan["hints"]["feature_snapshot_filename"] == "hk_blue_chip_leader_rotation_feature_snapshot_latest.csv"
 
 
 def test_print_strategy_switch_env_plan_for_feature_snapshot_profile():

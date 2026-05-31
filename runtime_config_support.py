@@ -19,12 +19,24 @@ from quant_platform_kit.common.runtime_target import (
 )
 from strategy_registry import (
     IBKR_PLATFORM,
+    STRATEGY_CATALOG,
     resolve_strategy_definition,
     resolve_strategy_metadata,
 )
-from us_equity_strategies import get_strategy_catalog
 
 DEFAULT_ACCOUNT_GROUP = "default"
+DEFAULT_MARKET = "US"
+DEFAULT_MARKET_CALENDAR = "NYSE"
+DEFAULT_MARKET_CURRENCY = "USD"
+DEFAULT_MARKET_DATA_SYMBOL_SUFFIX = ""
+DEFAULT_MARKET_EXCHANGE = "SMART"
+DEFAULT_MARKET_TIMEZONE = "America/New_York"
+HK_MARKET = "HK"
+HK_MARKET_CALENDAR = "XHKG"
+HK_MARKET_CURRENCY = "HKD"
+HK_MARKET_DATA_SYMBOL_SUFFIX = ".HK"
+HK_MARKET_EXCHANGE = "SEHK"
+HK_MARKET_TIMEZONE = "Asia/Hong_Kong"
 DEFAULT_RESERVED_CASH_FLOOR_USD = 0.0
 DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD = 1000.0
 EXECUTION_BACKEND_GATEWAY = "gateway"
@@ -35,6 +47,45 @@ SUPPORTED_EXECUTION_BACKENDS = frozenset(
         EXECUTION_BACKEND_QUANTCONNECT,
     }
 )
+
+
+def resolve_market(raw_value: str | None, *, account_group: str) -> str:
+    for candidate in (raw_value, account_group):
+        value = str(candidate or "").strip().upper()
+        if not value:
+            continue
+        normalized = value.replace("-", "_")
+        parts = {part for part in normalized.split("_") if part}
+        if value in {HK_MARKET, "HONG_KONG", "HONGKONG"} or HK_MARKET in parts:
+            return HK_MARKET
+        if value in {DEFAULT_MARKET, "USA", "NYSE", "NASDAQ"} or DEFAULT_MARKET in parts:
+            return DEFAULT_MARKET
+    return DEFAULT_MARKET
+
+
+def market_default_settings(market: str) -> dict[str, str]:
+    if market == HK_MARKET:
+        return {
+            "market_calendar": HK_MARKET_CALENDAR,
+            "market_currency": HK_MARKET_CURRENCY,
+            "market_data_symbol_suffix": HK_MARKET_DATA_SYMBOL_SUFFIX,
+            "market_exchange": HK_MARKET_EXCHANGE,
+            "market_timezone": HK_MARKET_TIMEZONE,
+        }
+    return {
+        "market_calendar": DEFAULT_MARKET_CALENDAR,
+        "market_currency": DEFAULT_MARKET_CURRENCY,
+        "market_data_symbol_suffix": DEFAULT_MARKET_DATA_SYMBOL_SUFFIX,
+        "market_exchange": DEFAULT_MARKET_EXCHANGE,
+        "market_timezone": DEFAULT_MARKET_TIMEZONE,
+    }
+
+
+def normalize_market_data_symbol_suffix(raw_value: str | None) -> str:
+    value = str(raw_value or "").strip().upper()
+    if not value:
+        return ""
+    return value if value.startswith(".") else f".{value}"
 
 
 @dataclass(frozen=True)
@@ -77,6 +128,12 @@ class PlatformRuntimeSettings:
     strategy_config_source: str | None
     reconciliation_output_path: str | None
     dry_run_only: bool
+    market: str = DEFAULT_MARKET
+    market_calendar: str = DEFAULT_MARKET_CALENDAR
+    market_currency: str = DEFAULT_MARKET_CURRENCY
+    market_data_symbol_suffix: str = DEFAULT_MARKET_DATA_SYMBOL_SUFFIX
+    market_exchange: str = DEFAULT_MARKET_EXCHANGE
+    market_timezone: str = DEFAULT_MARKET_TIMEZONE
     quantity_step: float = 1.0
     min_order_notional: float = 50.0
     reserved_cash_floor_usd: float = DEFAULT_RESERVED_CASH_FLOOR_USD
@@ -154,7 +211,7 @@ def load_platform_runtime_settings(
         platform_id=IBKR_PLATFORM,
     )
     runtime_paths = resolve_strategy_runtime_path_settings(
-        strategy_catalog=get_strategy_catalog(),
+        strategy_catalog=STRATEGY_CATALOG,
         strategy_definition=strategy_definition,
         strategy_metadata=strategy_metadata,
         platform_env_prefix="IBKR",
@@ -208,6 +265,8 @@ def load_platform_runtime_settings(
         )
         ib_client_id = group_config.ib_client_id or 0
 
+    market = resolve_market(os.getenv("IBKR_MARKET"), account_group=account_group)
+    market_defaults = market_default_settings(market)
     return PlatformRuntimeSettings(
         project_id=project_id,
         execution_backend=execution_backend,
@@ -236,6 +295,29 @@ def load_platform_runtime_settings(
         strategy_config_source=runtime_paths.strategy_config_source,
         reconciliation_output_path=runtime_paths.reconciliation_output_path,
         dry_run_only=resolve_bool_value(os.getenv("IBKR_DRY_RUN_ONLY")),
+        market=market,
+        market_calendar=first_non_empty(
+            os.getenv("IBKR_MARKET_CALENDAR"),
+            market_defaults["market_calendar"],
+        ),
+        market_currency=first_non_empty(
+            os.getenv("IBKR_MARKET_CURRENCY"),
+            market_defaults["market_currency"],
+        ).upper(),
+        market_data_symbol_suffix=normalize_market_data_symbol_suffix(
+            first_non_empty(
+                os.getenv("IBKR_MARKET_DATA_SYMBOL_SUFFIX"),
+                market_defaults["market_data_symbol_suffix"],
+            )
+        ),
+        market_exchange=first_non_empty(
+            os.getenv("IBKR_MARKET_EXCHANGE"),
+            market_defaults["market_exchange"],
+        ).upper(),
+        market_timezone=first_non_empty(
+            os.getenv("IBKR_MARKET_TIMEZONE"),
+            market_defaults["market_timezone"],
+        ),
         quantity_step=1.0,
         min_order_notional=resolve_float_env(
             os.environ,

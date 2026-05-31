@@ -22,12 +22,14 @@ class FakeLimitOrder:
 
 class FakeIB:
     def __init__(self):
+        self.placed_contract = None
         self.placed_order = None
 
     def qualifyContracts(self, _contract):
         return None
 
-    def placeOrder(self, _contract, order):
+    def placeOrder(self, contract, order):
+        self.placed_contract = contract
         self.placed_order = order
         return SimpleNamespace(
             order=SimpleNamespace(orderId=42),
@@ -93,6 +95,24 @@ def test_submit_order_intent_preserves_account_id():
 
     assert ib.placed_order.account == "U1234567"
     assert report.raw_payload["account_id"] == "U1234567"
+
+
+def test_submit_order_intent_can_target_hk_stock_exchange_and_currency():
+    ib = FakeIB()
+
+    submit_order_intent(
+        ib,
+        OrderIntent(symbol="00700", side="buy", quantity=100),
+        wait_seconds=0,
+        stock_factory=fake_stock,
+        market_order_factory=FakeMarketOrder,
+        stock_exchange="SEHK",
+        stock_currency="HKD",
+    )
+
+    assert ib.placed_contract.symbol == "00700"
+    assert ib.placed_contract.exchange == "SEHK"
+    assert ib.placed_contract.currency == "HKD"
 
 
 def test_submit_order_intent_passes_option_factory_and_default_tif():
