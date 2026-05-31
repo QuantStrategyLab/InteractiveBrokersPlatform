@@ -63,6 +63,7 @@ EXPECTED_IBKR_ENABLED_PROFILES = frozenset(
         "soxl_soxx_trend_income",
         "tech_communication_pullback_enhancement",
         "tqqq_growth_income",
+        "hk_listed_global_etf_rotation",
     }
 )
 HK_DISABLED_PROFILES = frozenset(
@@ -70,7 +71,6 @@ HK_DISABLED_PROFILES = frozenset(
         "hk_blue_chip_leader_rotation",
         "hk_index_mean_reversion",
         "hk_etf_regime_rotation",
-        "hk_listed_global_etf_rotation",
     }
 )
 EXPECTED_IBKR_PROFILES = EXPECTED_IBKR_ENABLED_PROFILES | HK_DISABLED_PROFILES
@@ -588,7 +588,7 @@ def test_load_platform_runtime_settings_accepts_tech_communication_pullback_enha
 
 
 @pytest.mark.parametrize("profile", sorted(HK_DISABLED_PROFILES))
-def test_load_platform_runtime_settings_rejects_hk_profiles_until_runtime_enabled(monkeypatch, profile):
+def test_load_platform_runtime_settings_rejects_disabled_hk_profiles(monkeypatch, profile):
     monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(profile))
     monkeypatch.setenv("ACCOUNT_GROUP", "hk-live")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_HK_GROUP_JSON)
@@ -597,6 +597,25 @@ def test_load_platform_runtime_settings_rejects_hk_profiles_until_runtime_enable
 
     with pytest.raises(ValueError, match="Unsupported STRATEGY_PROFILE"):
         load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
+
+
+def test_load_platform_runtime_settings_accepts_runtime_enabled_hk_global_etf_rotation(monkeypatch):
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json("hk_listed_global_etf_rotation"))
+    monkeypatch.setenv("ACCOUNT_GROUP", "hk-live")
+    monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_HK_GROUP_JSON)
+
+    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
+
+    assert settings.strategy_profile == "hk_listed_global_etf_rotation"
+    assert settings.strategy_display_name == "HK-listed Global ETF Rotation"
+    assert settings.strategy_domain == "hk_equity"
+    assert settings.strategy_target_mode == "weight"
+    assert settings.market == HK_MARKET
+    assert settings.market_calendar == HK_MARKET_CALENDAR
+    assert settings.market_currency == HK_MARKET_CURRENCY
+    assert settings.market_data_symbol_suffix == HK_MARKET_DATA_SYMBOL_SUFFIX
+    assert settings.market_exchange == HK_MARKET_EXCHANGE
+    assert settings.market_timezone == HK_MARKET_TIMEZONE
 
 
 @pytest.mark.parametrize(
@@ -711,7 +730,7 @@ def test_platform_profile_status_matrix_matches_current_ibkr_rollout():
         "display_name": "HK-listed Global ETF Rotation",
         "domain": "hk_equity",
         "eligible": True,
-        "enabled": False,
+        "enabled": True,
         "platform": "ibkr",
     }
 
