@@ -14,7 +14,7 @@ QuantStrategyLab 现有平台仓库里，能接入港股股票交易的平台是
 
 ## 运行时设计
 
-本仓库只做券商运行时能力，不把港股策略逻辑硬编码进平台。当前已接入 `HkEquityStrategies` 的港股 profile 元数据，平台可选港股 profile 只暴露 `runtime_enabled` 的 `hk_listed_global_etf_rotation`。`hk_blue_chip_leader_rotation` 是 snapshot 架构占位，`hk_index_mean_reversion`、`hk_etf_regime_rotation` 是 `market_history` 研究候选，均留在研究/快照仓库，不进入平台可选列表。生产 Cloud Run 仍保持原策略，除非单独变更 `RUNTIME_TARGET_JSON` / `STRATEGY_PROFILE`。整体沿用美股策略的架构：
+本仓库只做券商运行时能力，不把港股策略逻辑硬编码进平台。当前已接入 `HkEquityStrategies` 的港股 profile 元数据，平台可选港股 profile 只暴露 `runtime_enabled` 的 `hk_listed_global_etf_rotation`。`hk_blue_chip_leader_rotation` 是 snapshot 架构占位，`hk_index_mean_reversion`、`hk_etf_regime_rotation` 是 `market_history` 研究候选，均留在研究/快照仓库，不进入平台可选列表。Cloud Run 通过 `RUNTIME_TARGET_JSON` / `STRATEGY_PROFILE` 选择当前运行策略。整体沿用美股策略的架构：
 
 1. [`HkEquityStrategies`](https://github.com/QuantStrategyLab/HkEquityStrategies) 提供非 snapshot `hk_equity` 策略 profile、运行入口和 IBKR runtime adapter。
 2. [`HkEquitySnapshotPipelines`](https://github.com/QuantStrategyLab/HkEquitySnapshotPipelines) 发布 snapshot-backed profile 的 `<profile>_feature_snapshot_latest.csv`、manifest、ranking 和 release summary。
@@ -35,7 +35,7 @@ QuantStrategyLab 现有平台仓库里，能接入港股股票交易的平台是
 
 `scripts/print_strategy_profile_status.py` 只显示平台可选 profile，因此只会列出 `hk_listed_global_etf_rotation` 这一条港股 profile。其他港股候选继续保留在研究文档和 snapshot pipeline，不应该出现在 Cloud Run switch plan 里。
 
-未来启用 snapshot-backed profile 后的最小策略配置示例；当前不要写入 Cloud Run：
+未来启用 snapshot-backed profile 后的最小策略配置示例；这些 profile 晋级为 `runtime_enabled` 前不会出现在平台可选列表：
 
 ```bash
 STRATEGY_PROFILE=hk_blue_chip_leader_rotation
@@ -72,7 +72,7 @@ IBKR_MARKET_DATA_SYMBOL_SUFFIX=.HK
 
 ## Dry-run 切换计划
 
-先只生成 verify-only 环境计划，不部署生产 Cloud Run：
+可用以下命令生成 HK dry-run 环境计划，复核当前 Cloud Run 配置或准备重新同步：
 
 ```bash
 python scripts/print_strategy_switch_env_plan.py \
@@ -92,11 +92,11 @@ python scripts/print_strategy_switch_env_plan.py \
 - `remove_if_present`：清理 snapshot/config 相关环境变量，因为该 profile 直接使用 `market_history`。
 - `dry_run_plan`：检查 HK 行情权限、SEHK/HKD 映射、整数股和 lot-size、HKD 现金口径、通知和 runtime report。
 
-合并代码或打印计划不会触发生产部署；只有单独执行 Cloud Run env 更新/部署命令才会改变服务配置。
+打印计划不会直接修改服务配置；只有执行 Cloud Run env 更新/部署命令才会改变服务。
 
-## 显式部署 HK verify-only Cloud Run
+## 部署或同步 HK Cloud Run
 
-仓库的 `Deploy Cloud Run` workflow 支持手动 `workflow_dispatch` 目标 `hk-verify`。这个目标会覆盖为独立服务和港股 dry-run 环境：
+仓库的 `Deploy Cloud Run` workflow 支持手动 `workflow_dispatch` 目标 `hk-verify`。这个目标会设置或更新独立港股 dry-run 服务：
 
 - `CLOUD_RUN_SERVICE=interactive-brokers-hk-verify-service`（可通过输入改名）
 - `STRATEGY_PROFILE=hk_listed_global_etf_rotation`
@@ -123,10 +123,10 @@ gh workflow run sync-cloud-run-env.yml \
 
 执行前确认：
 
-- 目标 Cloud Run service 是独立 HK verify service，不是当前生产服务。
+- 目标 Cloud Run service 是独立 HK service；不要和其他 IBKR 服务共用同一个 service 名。
 - GitHub 变量或输入里有 `CLOUD_RUN_REGION`、`GLOBAL_TELEGRAM_CHAT_ID`、`NOTIFY_LANG`、`IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME`。
 - `TELEGRAM_TOKEN_SECRET_NAME` 或 `TELEGRAM_TOKEN` 可用。
-- `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME` 指向的账号组里存在 `hk-verify`，且只绑定预期的 HK paper/verify 账号。
+- `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME` 指向的账号组里存在目标 HK account group，且只绑定预期的 HK paper/verify/live 账号。
 - GCP deploy service account 仍只负责部署；IBKR 登录、账号、Gateway 地址等私密配置继续放在 Secret Manager 的 account-group payload。
 
 ## 订单、组合和行情口径
@@ -147,5 +147,5 @@ gh workflow run sync-cloud-run-env.yml \
 - IBKR 港股实盘依赖账户权限、行情权限、Gateway 登录账户可见账号和交易许可；平台配置无法替代这些权限。
 - 不同 IBKR 账户或区域对港股 symbol 格式可能有差异，首批上线前需要用 dry-run 和小范围 symbol 做实盘连接验证。
 - `XHKG` 是否可用取决于部署环境里的 `pandas_market_calendars` 版本；如不可用，可用 `IBKR_MARKET_CALENDAR` 临时覆盖。
-- `hk_listed_global_etf_rotation` 已在策略包 runtime-enabled，但生产 Cloud Run 仍保持原配置；`hk_blue_chip_leader_rotation`、`hk_index_mean_reversion`、`hk_etf_regime_rotation` 不进入平台可选列表，不要写入生产 Cloud Run。
-- 港股 `market_history` profile 投入生产前，需要先用 IBKR HK 行情 feed 对 `02800`、`03033`、`02822`、`02840`、`03110`、`03188`、`02834`、`03175` 做 dry-run 校验，不提交真实订单。
+- `hk_listed_global_etf_rotation` 已在策略包 `runtime_enabled`，可由 IBKR HK Cloud Run 通过运行时环境选择；`hk_blue_chip_leader_rotation`、`hk_index_mean_reversion`、`hk_etf_regime_rotation` 仍不进入平台可选列表。
+- 港股 `market_history` profile 运行后，需要持续用 IBKR HK 行情 feed 对 `02800`、`03033`、`02822`、`02840`、`03110`、`03188`、`02834`、`03175` 做行情、价差、lot-size 和订单预览/执行结果复核。

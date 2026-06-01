@@ -76,7 +76,6 @@ HK_DRY_RUN_CHECKS = [
 ]
 
 HK_BLOCKED_DRY_RUN_ACTIONS = [
-    "Do not deploy or update the production Cloud Run service from this plan.",
     "Do not submit live IBKR orders while dry_run_only=true.",
     "Do not remove HK market overrides when testing hk_equity profiles.",
 ]
@@ -161,7 +160,6 @@ def build_switch_plan(
                 "Review broker order preview and notifications; do not submit live orders.",
             ],
             "blocked_actions": [
-                "Do not deploy or update production Cloud Run from a switch-plan printout alone.",
                 "Do not submit live orders while dry_run_only=true.",
             ],
         }
@@ -185,7 +183,7 @@ def build_switch_plan(
                 "sync_env": True,
             }
         notes.append(
-            "HK-equity switch plans are environment plans only; merge alone must not change production Cloud Run."
+            "HK-equity switch plans describe environment values; apply them through Cloud Run env sync or deployment."
         )
         if not dry_run_only:
             notes.append("Use --dry-run-only for first HK runtime validation; live mode requires separate operator approval.")

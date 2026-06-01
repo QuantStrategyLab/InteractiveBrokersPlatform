@@ -878,7 +878,14 @@ def test_print_strategy_switch_env_plan_for_hk_global_etf_dry_run():
         "sync_env": True,
     }
     assert any("lot-size" in check for check in plan["dry_run_plan"]["checks"])
-    assert any("production Cloud Run" in action for action in plan["dry_run_plan"]["blocked_actions"])
+    assert not any(
+        "Cloud Run" in action and "deploy" in action
+        for action in plan["dry_run_plan"]["blocked_actions"]
+    )
+    assert any(
+        "live" in action and "orders" in action
+        for action in plan["dry_run_plan"]["blocked_actions"]
+    )
 
 
 def test_build_cloud_run_env_sync_plan_supports_per_service_targets():

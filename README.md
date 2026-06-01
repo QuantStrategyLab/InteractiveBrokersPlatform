@@ -44,7 +44,7 @@ The mainline runtime now follows one path only:
 - `hk_blue_chip_leader_rotation` (architecture scaffold only; eligible but disabled)
 - `hk_index_mean_reversion` (market-history research candidate; eligible but disabled)
 - `hk_etf_regime_rotation` (market-history research candidate; eligible but disabled)
-- `hk_listed_global_etf_rotation` (volatility-targeted market-history strategy; runtime-enabled, not deployed by default)
+- `hk_listed_global_etf_rotation` (volatility-targeted market-history strategy; runtime-enabled and selectable by Cloud Run runtime config)
 
 
 **IBKR profile status**
@@ -61,7 +61,7 @@ The mainline runtime now follows one path only:
 | `hk_blue_chip_leader_rotation` | HK Blue Chip Leader Rotation | Yes | No | `hk_equity` | architecture scaffold only; not runtime-enabled |
 | `hk_index_mean_reversion` | HK Index Mean Reversion | Yes | No | `hk_equity` | market-history research candidate; not runtime-enabled |
 | `hk_etf_regime_rotation` | HK ETF Regime Rotation | Yes | No | `hk_equity` | market-history research candidate; not runtime-enabled |
-| `hk_listed_global_etf_rotation` | HK-listed Global ETF Rotation | Yes | Yes | `hk_equity` | runtime-enabled; production env unchanged until explicit rollout |
+| `hk_listed_global_etf_rotation` | HK-listed Global ETF Rotation | Yes | Yes | `hk_equity` | runtime-enabled; selectable by HK Cloud Run runtime config |
 
 Check the current matrix locally:
 
@@ -75,7 +75,7 @@ Snapshot-backed profiles use upstream artifacts from `UsEquitySnapshotPipelines`
 
 For the HK-equity runtime scope, platform matrix, and env defaults, see [`docs/hk_equity_runtime.md`](docs/hk_equity_runtime.md).
 
-For HK verify-only rollout planning, print the switch plan first. To deploy an isolated dry-run service, manually trigger the `Deploy Cloud Run` workflow with `target=hk-verify`:
+For HK Cloud Run deployment or env review, print the switch plan first. To deploy or resync an isolated HK dry-run service, manually trigger the `Deploy Cloud Run` workflow with `target=hk-verify`:
 
 ```bash
 python scripts/print_strategy_switch_env_plan.py --profile hk_listed_global_etf_rotation --dry-run-only --deployment-selector hk-verify --account-scope hk-verify --account-group hk-verify --service-name interactive-brokers-hk-verify-service --json
@@ -120,7 +120,7 @@ For IBKR, keep `paper` as a single account-group entry. If you later add live ac
 | `IBKR_CONNECT_ATTEMPTS` | No | Number of IBKR connection attempts before failing the cycle. Defaults to `3`. |
 | `IBKR_CONNECT_RETRY_DELAY_SECONDS` | No | Delay between failed IBKR connection attempts. Defaults to `5`. |
 | `IBKR_CLIENT_ID_RETRY_OFFSET` | No | Offset added to the configured `ib_client_id` on each retry, so a timed-out API handshake can retry with a fresh client id. Defaults to `100`. |
-| `STRATEGY_PROFILE` | Yes | Strategy profile selector. Enabled values: `global_etf_rotation`, `russell_1000_multi_factor_defensive`, `tqqq_growth_income`, `soxl_soxx_trend_income`, `tech_communication_pullback_enhancement`, `mega_cap_leader_rotation_top50_balanced`, `nasdaq_sp500_smart_dca`, `hk_listed_global_etf_rotation`. `hk_blue_chip_leader_rotation`, `hk_index_mean_reversion`, and `hk_etf_regime_rotation` are eligible-but-disabled HK profiles; production Cloud Run keeps its configured profile until an explicit rollout changes it. |
+| `STRATEGY_PROFILE` | Yes | Strategy profile selector. Enabled values: `global_etf_rotation`, `russell_1000_multi_factor_defensive`, `tqqq_growth_income`, `soxl_soxx_trend_income`, `tech_communication_pullback_enhancement`, `mega_cap_leader_rotation_top50_balanced`, `nasdaq_sp500_smart_dca`, `hk_listed_global_etf_rotation`. `hk_blue_chip_leader_rotation`, `hk_index_mean_reversion`, and `hk_etf_regime_rotation` are not runtime-enabled and are not selectable by the platform status/switch tooling. Cloud Run uses the values configured on the selected service. |
 | `ACCOUNT_GROUP` | Yes | Account-group selector. Set explicitly for each deployment. |
 | `IBKR_MARKET` | No | Market scope. Defaults to `HK` when `ACCOUNT_GROUP` contains `hk`, otherwise `US`. |
 | `IBKR_MARKET_CALENDAR` | No | Market calendar. Defaults to `XHKG` for HK and `NYSE` for US. |
@@ -261,7 +261,7 @@ Alert results are written into the runtime report. Duplicate suppression uses st
 
 This repo includes `.github/workflows/sync-cloud-run-env.yml` for GitHub-managed Cloud Run automation. Set `ENABLE_GITHUB_CLOUD_RUN_DEPLOY=true` to build and deploy the container image from GitHub Actions; set `ENABLE_GITHUB_ENV_SYNC=true` to sync runtime env vars. You can enable either flag independently during migration from a Google Cloud Trigger. The workflow also emits `RUNTIME_TARGET_JSON`, so the control plane carries a structured runtime target alongside the legacy `STRATEGY_PROFILE` selector.
 
-Pushes to `main` have an additional deployment guard: keep `ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION` unset or not `true` to allow framework changes to merge without touching Cloud Run. Manual `workflow_dispatch` runs still follow the deploy/env-sync flags above.
+Pushes to `main` use the `ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION` automation switch. Set it to `true` when main-branch pushes should also run Cloud Run automation; manual `workflow_dispatch` runs still follow the deploy/env-sync flags above.
 
 Recommended setup:
 
@@ -434,7 +434,7 @@ feature-snapshot 类策略使用 `UsEquitySnapshotPipelines` 或 `HkEquitySnapsh
 
 港股运行时范围、平台矩阵和环境变量默认值见 [`docs/hk_equity_runtime.md`](docs/hk_equity_runtime.md)。
 
-港股 verify-only 接入先打印切换计划；如需部署独立 dry-run 服务，再手动触发 `Deploy Cloud Run` workflow 的 `target=hk-verify`：
+港股 Cloud Run 部署或环境复核先打印切换计划；如需部署或重新同步独立 HK dry-run 服务，再手动触发 `Deploy Cloud Run` workflow 的 `target=hk-verify`：
 
 ```bash
 python scripts/print_strategy_switch_env_plan.py --profile hk_listed_global_etf_rotation --dry-run-only --deployment-selector hk-verify --account-scope hk-verify --account-group hk-verify --service-name interactive-brokers-hk-verify-service --json
@@ -467,7 +467,7 @@ IBKR 账户
 | `IBKR_CONNECT_ATTEMPTS` | 否 | IBKR 连接失败前最多尝试次数。默认 `3`。 |
 | `IBKR_CONNECT_RETRY_DELAY_SECONDS` | 否 | IBKR 连接重试间隔，单位秒。默认 `5`。 |
 | `IBKR_CLIENT_ID_RETRY_OFFSET` | 否 | 每次重试时加到 `ib_client_id` 上的偏移量，用新的 client id 避开超时握手留下的卡住会话。默认 `100`。 |
-| `STRATEGY_PROFILE` | 是 | 策略档位选择。当前已启用值：`global_etf_rotation`、`russell_1000_multi_factor_defensive`、`tqqq_growth_income`、`soxl_soxx_trend_income`、`tech_communication_pullback_enhancement`、`mega_cap_leader_rotation_top50_balanced`、`nasdaq_sp500_smart_dca`、`hk_listed_global_etf_rotation`。`hk_blue_chip_leader_rotation`、`hk_index_mean_reversion`、`hk_etf_regime_rotation` 是 eligible-but-disabled 港股档位；生产 Cloud Run 保持原配置，除非显式 rollout |
+| `STRATEGY_PROFILE` | 是 | 策略档位选择。当前已启用值：`global_etf_rotation`、`russell_1000_multi_factor_defensive`、`tqqq_growth_income`、`soxl_soxx_trend_income`、`tech_communication_pullback_enhancement`、`mega_cap_leader_rotation_top50_balanced`、`nasdaq_sp500_smart_dca`、`hk_listed_global_etf_rotation`。`hk_blue_chip_leader_rotation`、`hk_index_mean_reversion`、`hk_etf_regime_rotation` 不是 runtime-enabled，不会被平台状态/切换工具列为可选；Cloud Run 使用当前服务上配置的取值 |
 | `ACCOUNT_GROUP` | 是 | 账号组选择器，每个部署都要显式设置。 |
 | `IBKR_MARKET` | 否 | 市场范围。`ACCOUNT_GROUP` 包含 `hk` 时默认 `HK`，其他情况默认 `US`。 |
 | `IBKR_MARKET_CALENDAR` | 否 | 市场日历。港股默认 `XHKG`，美股默认 `NYSE`。 |
@@ -574,7 +574,7 @@ IB_GATEWAY_IP_MODE=internal
 
 这个仓库提供 `.github/workflows/sync-cloud-run-env.yml` 作为 GitHub 管理 Cloud Run 的入口。设置 `ENABLE_GITHUB_CLOUD_RUN_DEPLOY=true` 时，GitHub Actions 会构建并发布容器镜像；设置 `ENABLE_GITHUB_ENV_SYNC=true` 时，GitHub Actions 会同步运行时环境变量。迁移期间两个开关可以独立启用，旧的 Google Cloud Trigger 也可以先保留。
 
-`push main` 还有一层发布保护：保持 `ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION` 未设置或不是 `true`，即可让框架代码合入主线但不触碰 Cloud Run。手动 `workflow_dispatch` 仍按上面的部署/同步开关执行。
+`push main` 使用 `ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION` 自动化开关。需要 main 分支 push 也触发 Cloud Run 自动化时，把它设为 `true`；手动 `workflow_dispatch` 仍按上面的部署/同步开关执行。
 
 推荐配置方式：
 
