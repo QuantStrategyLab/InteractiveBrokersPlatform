@@ -105,7 +105,7 @@ PLATFORM_CAPABILITY_MATRIX = PlatformCapabilityMatrix(
     ),
     supported_capabilities=frozenset({"broker_client"}),
 )
-ELIGIBLE_STRATEGY_PROFILES = derive_eligible_profiles_for_platform(
+_STRUCTURALLY_ELIGIBLE_STRATEGY_PROFILES = derive_eligible_profiles_for_platform(
     STRATEGY_CATALOG,
     capability_matrix=PLATFORM_CAPABILITY_MATRIX,
     runtime_adapter_loader=lambda profile: get_platform_runtime_adapter(
@@ -113,6 +113,8 @@ ELIGIBLE_STRATEGY_PROFILES = derive_eligible_profiles_for_platform(
         platform_id=IBKR_PLATFORM,
     ),
 )
+# Keep research-only and snapshot-scaffold HK profiles out of platform switch/status output.
+ELIGIBLE_STRATEGY_PROFILES = _STRUCTURALLY_ELIGIBLE_STRATEGY_PROFILES & IBKR_ROLLOUT_ALLOWLIST
 IBKR_ENABLED_PROFILES = derive_enabled_profiles_for_platform(
     STRATEGY_CATALOG,
     capability_matrix=PLATFORM_CAPABILITY_MATRIX,
