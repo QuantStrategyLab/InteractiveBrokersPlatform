@@ -92,6 +92,41 @@ python scripts/print_strategy_switch_env_plan.py \
 
 合并代码或打印计划不会触发生产部署；只有单独执行 Cloud Run env 更新/部署命令才会改变服务配置。
 
+## 显式部署 HK verify-only Cloud Run
+
+仓库的 `Deploy Cloud Run` workflow 支持手动 `workflow_dispatch` 目标 `hk-verify`。这个目标会覆盖为独立服务和港股 dry-run 环境：
+
+- `CLOUD_RUN_SERVICE=interactive-brokers-hk-verify-service`（可通过输入改名）
+- `STRATEGY_PROFILE=hk_listed_global_etf_rotation`
+- `ACCOUNT_GROUP=hk-verify`
+- `RUNTIME_TARGET_JSON.execution_mode=paper`、`dry_run_only=true`
+- `IBKR_DRY_RUN_ONLY=true`
+- `IBKR_MARKET=HK`、`IBKR_MARKET_EXCHANGE=SEHK`、`IBKR_MARKET_CURRENCY=HKD`、`IBKR_MARKET_DATA_SYMBOL_SUFFIX=.HK`
+
+手动部署示例：
+
+```bash
+gh workflow run sync-cloud-run-env.yml \
+  --repo QuantStrategyLab/InteractiveBrokersPlatform \
+  -f target=hk-verify \
+  -f cloud_run_region=<gcp-region> \
+  -f cloud_run_service=interactive-brokers-hk-verify-service \
+  -f account_group=hk-verify \
+  -f account_group_config_secret_name=ibkr-account-groups \
+  -f deploy_image=true \
+  -f sync_env=true
+```
+
+如果只想同步环境变量、不重新部署镜像，可以设置 `-f deploy_image=false -f sync_env=true`；workflow 会跳过 commit wait，避免等待一个并未部署的新 revision。
+
+执行前确认：
+
+- 目标 Cloud Run service 是独立 HK verify service，不是当前生产服务。
+- GitHub 变量或输入里有 `CLOUD_RUN_REGION`、`GLOBAL_TELEGRAM_CHAT_ID`、`NOTIFY_LANG`、`IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME`。
+- `TELEGRAM_TOKEN_SECRET_NAME` 或 `TELEGRAM_TOKEN` 可用。
+- `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME` 指向的账号组里存在 `hk-verify`，且只绑定预期的 HK paper/verify 账号。
+- GCP deploy service account 仍只负责部署；IBKR 登录、账号、Gateway 地址等私密配置继续放在 Secret Manager 的 account-group payload。
+
 ## 订单、组合和行情口径
 
 - 股票订单通过 `Stock(symbol, IBKR_MARKET_EXCHANGE, IBKR_MARKET_CURRENCY)` 构造；港股默认是 `SEHK/HKD`。

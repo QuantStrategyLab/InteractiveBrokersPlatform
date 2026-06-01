@@ -898,6 +898,13 @@ def test_print_strategy_switch_env_plan_for_hk_global_etf_dry_run():
     assert "IBKR_FEATURE_SNAPSHOT_PATH" in plan["remove_if_present"]
     assert plan["dry_run_plan"]["dry_run_only"] is True
     assert plan["dry_run_plan"]["verify_only"] is True
+    assert plan["dry_run_plan"]["workflow_dispatch"] == {
+        "workflow": "sync-cloud-run-env.yml",
+        "target": "hk-verify",
+        "cloud_run_service": "interactive-brokers-hk-verify-service",
+        "deploy_image": True,
+        "sync_env": True,
+    }
     assert any("lot-size" in check for check in plan["dry_run_plan"]["checks"])
     assert any("production Cloud Run" in action for action in plan["dry_run_plan"]["blocked_actions"])
 
