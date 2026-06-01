@@ -4,6 +4,43 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      target:
+        description: "Deployment target to run. Use hk-verify for an isolated HK dry-run Cloud Run service."
+        required: true
+        type: choice
+        default: configured
+        options:
+          - configured
+          - hk-verify
+      cloud_run_region:
+        description: "Cloud Run region for hk-verify. Leave blank to use repository/environment variables."
+        required: false
+        type: string
+      cloud_run_service:
+        description: "Cloud Run service for hk-verify."
+        required: false
+        type: string
+        default: interactive-brokers-hk-verify-service
+      account_group:
+        description: "IBKR account-group selector for hk-verify."
+        required: false
+        type: string
+        default: hk-verify
+      account_group_config_secret_name:
+        description: "Optional Secret Manager secret name for the IBKR account-group config."
+        required: false
+        type: string
+      deploy_image:
+        description: "Build and deploy the container image for hk-verify."
+        required: true
+        type: boolean
+        default: true
+      sync_env:
+        description: "Sync hk-verify Cloud Run environment variables."
+        required: true
+        type: boolean
+        default: true
 
 env:
   GCP_PROJECT_ID: interactivebrokersquant
@@ -23,6 +60,13 @@ jobs:
       ENABLE_GITHUB_CLOUD_RUN_DEPLOY: ${{ vars.ENABLE_GITHUB_CLOUD_RUN_DEPLOY }}
       ENABLE_GITHUB_ENV_SYNC: ${{ vars.ENABLE_GITHUB_ENV_SYNC }}
       ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION: ${{ vars.ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION }}
+      WORKFLOW_TARGET: ${{ inputs.target || 'configured' }}
+      INPUT_CLOUD_RUN_REGION: ${{ inputs.cloud_run_region }}
+      INPUT_CLOUD_RUN_SERVICE: ${{ inputs.cloud_run_service }}
+      INPUT_ACCOUNT_GROUP: ${{ inputs.account_group }}
+      INPUT_ACCOUNT_GROUP_CONFIG_SECRET_NAME: ${{ inputs.account_group_config_secret_name }}
+      INPUT_DEPLOY_IMAGE: ${{ inputs.deploy_image }}
+      INPUT_SYNC_ENV: ${{ inputs.sync_env }}
       GCP_ARTIFACT_REGISTRY_HOSTNAME: ${{ vars.GCP_ARTIFACT_REGISTRY_HOSTNAME }}
       CLOUD_RUN_REGION: ${{ vars.CLOUD_RUN_REGION }}
       CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
@@ -108,12 +152,21 @@ jobs:
             exit 0
           fi
 
-          if [ "${ENABLE_GITHUB_CLOUD_RUN_DEPLOY:-}" = "true" ]; then
-            deploy_enabled=true
-          fi
+          if [ "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch" ] && [ "${WORKFLOW_TARGET:-configured}" = "hk-verify" ]; then
+            if [ "${INPUT_DEPLOY_IMAGE:-true}" = "true" ]; then
+              deploy_enabled=true
+            fi
+            if [ "${INPUT_SYNC_ENV:-true}" = "true" ]; then
+              env_sync_enabled=true
+            fi
+          else
+            if [ "${ENABLE_GITHUB_CLOUD_RUN_DEPLOY:-}" = "true" ]; then
+              deploy_enabled=true
+            fi
 
-          if [ "${ENABLE_GITHUB_ENV_SYNC:-}" = "true" ]; then
-            env_sync_enabled=true
+            if [ "${ENABLE_GITHUB_ENV_SYNC:-}" = "true" ]; then
+              env_sync_enabled=true
+            fi
           fi
 
           echo "deploy_enabled=${deploy_enabled}" >> "$GITHUB_OUTPUT"
@@ -130,6 +183,60 @@ jobs:
       - name: Checkout repository
         if: steps.config.outputs.enabled == 'true'
         uses: actions/checkout@v6
+
+      - name: Apply HK verify-only dispatch defaults
+        if: steps.config.outputs.enabled == 'true' && github.event_name == 'workflow_dispatch' && inputs.target == 'hk-verify'
+        run: |
+          set -euo pipefail
+
+          service="${INPUT_CLOUD_RUN_SERVICE:-interactive-brokers-hk-verify-service}"
+          account_group="${INPUT_ACCOUNT_GROUP:-hk-verify}"
+          region="${INPUT_CLOUD_RUN_REGION:-${CLOUD_RUN_REGION:-}}"
+          runtime_target="$(SERVICE="${service}" ACCOUNT_GROUP_VALUE="${account_group}" python3 - <<'PY'
+          import json
+          import os
+
+          print(
+              json.dumps(
+                  {
+                      "platform_id": "ibkr",
+                      "strategy_profile": "hk_listed_global_etf_rotation",
+                      "deployment_selector": os.environ["ACCOUNT_GROUP_VALUE"],
+                      "account_scope": os.environ["ACCOUNT_GROUP_VALUE"],
+                      "execution_mode": "paper",
+                      "dry_run_only": True,
+                      "service_name": os.environ["SERVICE"],
+                  },
+                  separators=(",", ":"),
+              )
+          )
+          PY
+          )"
+
+          {
+            echo "CLOUD_RUN_SERVICE=${service}"
+            echo "CLOUD_RUN_SERVICES="
+            echo "CLOUD_RUN_SERVICE_TARGETS_JSON="
+            echo "ACCOUNT_GROUP=${account_group}"
+            echo "RUNTIME_TARGET_JSON=${runtime_target}"
+            echo "IBKR_DRY_RUN_ONLY=true"
+            echo "IBKR_MARKET=HK"
+            echo "IBKR_MARKET_CALENDAR=XHKG"
+            echo "IBKR_MARKET_CURRENCY=HKD"
+            echo "IBKR_MARKET_DATA_SYMBOL_SUFFIX=.HK"
+            echo "IBKR_MARKET_EXCHANGE=SEHK"
+            echo "IBKR_MARKET_TIMEZONE=Asia/Hong_Kong"
+          } >> "$GITHUB_ENV"
+
+          if [ -n "${region}" ]; then
+            echo "CLOUD_RUN_REGION=${region}" >> "$GITHUB_ENV"
+          fi
+          if [ -n "${INPUT_ACCOUNT_GROUP_CONFIG_SECRET_NAME:-}" ]; then
+            echo "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=${INPUT_ACCOUNT_GROUP_CONFIG_SECRET_NAME}" >> "$GITHUB_ENV"
+          fi
+          if [ "${INPUT_DEPLOY_IMAGE:-true}" != "true" ]; then
+            echo "CLOUD_RUN_ENV_SYNC_WAIT_FOR_COMMIT=false" >> "$GITHUB_ENV"
+          fi
 
       - name: Set up Python for strategy requirement resolution
         if: steps.config.outputs.env_sync_enabled == 'true'

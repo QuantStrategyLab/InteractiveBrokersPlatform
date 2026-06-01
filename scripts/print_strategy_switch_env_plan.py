@@ -176,6 +176,14 @@ def build_switch_plan(
             "checks": HK_DRY_RUN_CHECKS,
             "blocked_actions": HK_BLOCKED_DRY_RUN_ACTIONS if dry_run_only else [],
         }
+        if dry_run_only:
+            dry_run_plan["workflow_dispatch"] = {
+                "workflow": "sync-cloud-run-env.yml",
+                "target": "hk-verify",
+                "cloud_run_service": service_name or "interactive-brokers-hk-verify-service",
+                "deploy_image": True,
+                "sync_env": True,
+            }
         notes.append(
             "HK-equity switch plans are environment plans only; merge alone must not change production Cloud Run."
         )
