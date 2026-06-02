@@ -499,3 +499,30 @@ def test_global_telegram_chat_id_is_used(strategy_module_factory):
     )
 
     assert module.TG_CHAT_ID == "shared-chat-id"
+
+
+def test_handle_request_runtime_error_fallback_sends_telegram(strategy_module, monkeypatch):
+    sent_payloads = []
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+
+    def fake_post(_url, *, json, timeout):
+        sent_payloads.append((json, timeout))
+        return FakeResponse()
+
+    monkeypatch.setattr(strategy_module, "_handle_request", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(strategy_module, "TG_TOKEN", "token-1")
+    monkeypatch.setattr(strategy_module, "TG_CHAT_ID", "chat-1")
+    monkeypatch.setattr(strategy_module.requests, "post", fake_post)
+
+    with strategy_module.app.test_request_context("/", method="POST"):
+        body, status = strategy_module.handle_request()
+
+    assert status == 500
+    assert body == "Error"
+    assert len(sent_payloads) == 1
+    assert sent_payloads[0][0]["chat_id"] == "chat-1"
+    assert "IBKR strategy run failed" in sent_payloads[0][0]["text"]
+    assert "RuntimeError: boom" in sent_payloads[0][0]["text"]
