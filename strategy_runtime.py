@@ -80,6 +80,34 @@ _OPTION_CHAIN_FETCH_RULES = {
 }
 
 
+def _get_direct_market_history_profiles() -> frozenset[str]:
+    try:
+        from hk_equity_strategies import get_direct_market_history_profiles
+    except (ImportError, AttributeError):  # pragma: no cover - compatibility fallback
+        return frozenset()
+    return frozenset(
+        str(profile).strip().lower()
+        for profile in get_direct_market_history_profiles()
+    )
+
+
+def _requires_materialized_market_history(strategy_profile: str) -> bool:
+    return str(strategy_profile or "").strip().lower() in _get_direct_market_history_profiles()
+
+
+def _loaded_history_to_rows(history):
+    if (
+        hasattr(history, "items")
+        and not hasattr(history, "columns")
+        and not isinstance(history, Mapping)
+    ):
+        return [
+            {"date": date_value, "close": close_value}
+            for date_value, close_value in history.items()
+        ]
+    return history
+
+
 @dataclass(frozen=True)
 class StrategyEvaluationResult:
     decision: StrategyDecision
@@ -310,6 +338,37 @@ class LoadedStrategyRuntime:
                 close_map[symbol] = latest_close
         return close_map
 
+    def _market_history_symbols(self) -> tuple[str, ...]:
+        raw_symbols = (
+            self.merged_runtime_config.get("universe_symbols")
+            or dict(getattr(self.entrypoint.manifest, "default_config", {}) or {}).get("universe_symbols")
+            or self.merged_runtime_config.get("managed_symbols")
+            or ()
+        )
+        if isinstance(raw_symbols, str):
+            raw_symbols = raw_symbols.replace(";", ",").split(",")
+        return tuple(
+            dict.fromkeys(
+                str(symbol).strip()
+                for symbol in raw_symbols
+                if str(symbol).strip()
+            )
+        )
+
+    def _build_market_history_inputs(
+        self,
+        ib,
+        historical_close_loader: Callable[..., Any],
+    ) -> Mapping[str, Any]:
+        if not _requires_materialized_market_history(self.profile):
+            return build_market_history_inputs(historical_close_loader)
+        return {
+            _MARKET_HISTORY_INPUT: {
+                symbol: _loaded_history_to_rows(historical_close_loader(ib, symbol))
+                for symbol in self._market_history_symbols()
+            }
+        }
+
     def _build_strategy_context(
         self,
         *,
@@ -429,7 +488,7 @@ class LoadedStrategyRuntime:
         ctx = self._build_strategy_context(
             runtime_adapter=self.runtime_adapter,
             as_of=run_as_of,
-            market_inputs=build_market_history_inputs(historical_close_loader),
+            market_inputs=self._build_market_history_inputs(ib, historical_close_loader),
             portfolio_snapshot=portfolio_snapshot,
             runtime_config=runtime_config,
             current_holdings=current_holdings,
@@ -619,7 +678,7 @@ class LoadedStrategyRuntime:
                 runtime_config["option_chains"] = option_chains
             market_inputs: dict[str, Any] = {_FEATURE_SNAPSHOT_INPUT: feature_snapshot}
             if _MARKET_HISTORY_INPUT in self.required_inputs:
-                market_inputs.update(build_market_history_inputs(historical_close_loader))
+                market_inputs.update(self._build_market_history_inputs(ib, historical_close_loader))
             if _BENCHMARK_HISTORY_INPUT in self.required_inputs:
                 if historical_candle_loader is None:
                     raise ValueError(

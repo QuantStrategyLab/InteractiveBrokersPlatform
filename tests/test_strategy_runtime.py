@@ -543,6 +543,72 @@ def test_market_history_runtime_uses_canonical_market_history_key(monkeypatch):
     assert result.metadata["execution_timing_contract"] == "next_trading_day"
 
 
+def test_hk_direct_market_history_runtime_materializes_loader(monkeypatch):
+    captured = {}
+    observed_calls = []
+
+    class FakeEntrypoint:
+        manifest = StrategyManifest(
+            profile="hk_listed_global_etf_rotation",
+            domain="hk_equity",
+            display_name="HK-listed Global ETF Rotation",
+            description="test",
+            required_inputs=frozenset({"market_history"}),
+            default_config={"universe_symbols": ("02800", "02834")},
+        )
+
+        def evaluate(self, ctx):
+            captured["market_data"] = dict(ctx.market_data)
+            return StrategyDecision()
+
+    def close_loader(ib, symbol, **_kwargs):
+        observed_calls.append((ib, symbol))
+        return strategy_runtime_module.pd.Series(
+            [10.0, 11.0],
+            index=strategy_runtime_module.pd.to_datetime(
+                ["2026-05-29", "2026-06-01"],
+                utc=True,
+            ),
+            dtype=float,
+        )
+
+    runtime = strategy_runtime_module.LoadedStrategyRuntime(
+        entrypoint=FakeEntrypoint(),
+        runtime_adapter=StrategyRuntimeAdapter(
+            status_icon="🇭🇰",
+            runtime_policy=StrategyRuntimePolicy(signal_effective_after_trading_days=1),
+        ),
+        runtime_settings=_build_runtime_settings(profile="hk_listed_global_etf_rotation"),
+        runtime_config={},
+        merged_runtime_config={"universe_symbols": ("02800", "02834")},
+        status_icon="🇭🇰",
+        logger=lambda _message: None,
+    )
+    monkeypatch.setattr(
+        strategy_runtime_module,
+        "_requires_materialized_market_history",
+        lambda profile: profile == "hk_listed_global_etf_rotation",
+    )
+
+    runtime.evaluate(
+        ib="fake-ib",
+        current_holdings=set(),
+        historical_close_loader=close_loader,
+        run_as_of=strategy_runtime_module.pd.Timestamp("2026-04-01"),
+        translator=lambda key, **_kwargs: key,
+        pacing_sec=0.5,
+    )
+
+    market_history = captured["market_data"]["market_history"]
+    assert observed_calls == [("fake-ib", "02800"), ("fake-ib", "02834")]
+    assert sorted(market_history) == ["02800", "02834"]
+    assert market_history["02800"][0]["date"] == strategy_runtime_module.pd.Timestamp(
+        "2026-05-29",
+        tz="UTC",
+    )
+    assert market_history["02800"][0]["close"] == 10.0
+
+
 def test_market_history_value_runtime_requires_portfolio_snapshot(monkeypatch):
     captured = {}
 
