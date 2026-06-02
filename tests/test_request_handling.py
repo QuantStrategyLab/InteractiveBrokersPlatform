@@ -425,6 +425,47 @@ def test_cycle_report_summary_counts_dry_run_order_previews(strategy_module):
     assert summary["quote_snapshot"]["quotes"][0]["symbol"] == "AAA"
 
 
+def test_notification_delivery_log_summary_records_sent_dry_run_without_raw_text(strategy_module):
+    payload = strategy_module._build_notification_delivery_log_for_report(
+        platform="interactive_brokers",
+        strategy_profile="hk_low_vol_dividend_quality",
+        run_id="run-001",
+        dry_run=True,
+        orders_previewed_count=2,
+        delivery_events=[
+            {
+                "sink": "telegram",
+                "delivery_status": "sent",
+                "compact_text_sha256": "a" * 64,
+                "compact_text_length": 42,
+            }
+        ],
+    )
+
+    assert payload["notification_schema_version"] == "hk_live_enablement_notification.v1"
+    assert payload["notification_event_type"] == "hk_snapshot_live_enablement_dry_run"
+    assert payload["notification_correlation_id"] == "run-001"
+    assert payload["locales"] == ["en", "zh-Hans"]
+    assert payload["profile"] == "hk_low_vol_dividend_quality"
+    assert payload["platform"] == "interactive_brokers"
+    assert payload["orders_previewed"] == 2
+    assert payload["notification_redacts_sensitive_fields"] is True
+    assert "compact_text" not in payload["delivery_events"][0]
+
+
+def test_notification_delivery_log_summary_stays_empty_without_sent_event(strategy_module):
+    payload = strategy_module._build_notification_delivery_log_for_report(
+        platform="interactive_brokers",
+        strategy_profile="hk_low_vol_dividend_quality",
+        run_id="run-001",
+        dry_run=True,
+        orders_previewed_count=2,
+        delivery_events=[],
+    )
+
+    assert payload == {}
+
+
 def test_handle_request_post_returns_market_closed_when_schedule_empty(strategy_module, monkeypatch):
     observed = {}
 

@@ -64,10 +64,11 @@ class IBKRRuntimeComposer:
     runtime_target: RuntimeTarget | None = None
     extra_reporting_fields: Mapping[str, Any] = field(default_factory=dict)
 
-    def build_notification_adapters(self):
+    def build_notification_adapters(self, *, delivery_events: list[dict[str, Any]] | None = None):
         return self.notification_builder(
             send_message=self.send_message,
             log_message=lambda message: self.printer(message, flush=True),
+            delivery_events=delivery_events,
         )
 
     def build_reporting_adapters(self):
@@ -124,8 +125,13 @@ class IBKRRuntimeComposer:
             printer=lambda line: self.printer(line, flush=True),
         )
 
-    def build_rebalance_runtime(self, *, silent_cycle_notifications: bool = False):
-        notification_adapters = self.build_notification_adapters()
+    def build_rebalance_runtime(
+        self,
+        *,
+        silent_cycle_notifications: bool = False,
+        notification_delivery_events: list[dict[str, Any]] | None = None,
+    ):
+        notification_adapters = self.build_notification_adapters(delivery_events=notification_delivery_events)
         notifications = (
             CallableNotificationPort(lambda _message: None)
             if silent_cycle_notifications

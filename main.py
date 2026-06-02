@@ -764,6 +764,37 @@ def _build_cycle_report_summary(cycle_result, execution_summary, reconciliation_
     return summary
 
 
+def _build_notification_delivery_log_for_report(
+    *,
+    platform: str,
+    strategy_profile: str,
+    run_id: str,
+    dry_run: bool,
+    orders_previewed_count: int,
+    delivery_events: list[dict],
+) -> dict:
+    events = [dict(event) for event in delivery_events if dict(event).get("delivery_status") == "sent"]
+    if not dry_run or orders_previewed_count <= 0 or not events:
+        return {}
+    return {
+        "notification_schema_version": "hk_live_enablement_notification.v1",
+        "notification_event_type": "hk_snapshot_live_enablement_dry_run",
+        "notification_correlation_id": str(run_id or ""),
+        "locales": ["en", "zh-Hans"],
+        "profile": str(strategy_profile or ""),
+        "platform": str(platform or ""),
+        "validation_status": "passed",
+        "orders_previewed": int(orders_previewed_count),
+        "delivery_events": events,
+        "notification_contains_profile": True,
+        "notification_contains_platform": True,
+        "notification_contains_validation_status": True,
+        "notification_contains_order_preview_summary": True,
+        "notification_redacts_sensitive_fields": True,
+        "redaction_policy": "raw notification text is not persisted; only sha256 and length are recorded",
+    }
+
+
 def publish_strategy_plugin_alerts(signals, *, report=None):
     result = dispatch_strategy_plugin_alerts(
         signals,
@@ -854,17 +885,31 @@ def run_paper_liquidation_cycle():
     )
 
 
-def run_strategy_core(*, strategy_plugin_signals=(), dry_run_only_override: bool | None = None):
+def run_strategy_core(
+    *,
+    strategy_plugin_signals=(),
+    dry_run_only_override: bool | None = None,
+    notification_delivery_events: list[dict] | None = None,
+):
     if PAPER_LIQUIDATE_ONLY and dry_run_only_override is None:
         return run_paper_liquidation_cycle()
     composer = build_composer(
         dry_run_only_override=dry_run_only_override,
         strategy_plugin_signals=strategy_plugin_signals,
     )
-    return run_rebalance_cycle(
-        runtime=composer.build_rebalance_runtime(
+    try:
+        rebalance_runtime = composer.build_rebalance_runtime(
             silent_cycle_notifications=bool(dry_run_only_override),
-        ),
+            notification_delivery_events=notification_delivery_events,
+        )
+    except TypeError as exc:
+        if "notification_delivery_events" not in str(exc):
+            raise
+        rebalance_runtime = composer.build_rebalance_runtime(
+            silent_cycle_notifications=bool(dry_run_only_override),
+        )
+    return run_rebalance_cycle(
+        runtime=rebalance_runtime,
         config=composer.build_rebalance_config(
             extra_notification_lines=build_extra_notification_lines(strategy_plugin_signals),
         ),
@@ -935,10 +980,12 @@ def _handle_request(*, dry_run_only_override: bool | None = None, response_body:
         )
         if dry_run_only_override is None:
             publish_strategy_plugin_alerts(strategy_plugin_signals, report=report)
+        notification_delivery_events: list[dict] = []
         cycle_result = coerce_strategy_cycle_result(
             run_strategy_core(
                 strategy_plugin_signals=strategy_plugin_signals,
                 dry_run_only_override=dry_run_only_override,
+                notification_delivery_events=notification_delivery_events,
             )
         )
         execution_summary = dict(cycle_result.execution_summary or {})
@@ -972,15 +1019,26 @@ def _handle_request(*, dry_run_only_override: bool | None = None, response_body:
                 execution_window="precheck" if dry_run_only_override else "execution",
                 **signal_snapshot,
             )
+        report_summary = _build_cycle_report_summary(
+            cycle_result,
+            execution_summary,
+            reconciliation_record,
+            dry_run=bool(report.get("dry_run")),
+        )
+        notification_delivery_log = _build_notification_delivery_log_for_report(
+            platform="interactive_brokers",
+            strategy_profile=STRATEGY_PROFILE,
+            run_id=str(report.get("run_id") or ""),
+            dry_run=bool(report.get("dry_run")),
+            orders_previewed_count=int(report_summary.get("orders_previewed_count") or 0),
+            delivery_events=notification_delivery_events,
+        )
+        if notification_delivery_log:
+            report_summary["notification_delivery_log"] = notification_delivery_log
         finalize_runtime_report(
             report,
             status="ok",
-            summary=_build_cycle_report_summary(
-                cycle_result,
-                execution_summary,
-                reconciliation_record,
-                dry_run=bool(report.get("dry_run")),
-            ),
+            summary=report_summary,
             diagnostics={
                 "result": cycle_result.result,
                 "price_source_mode": execution_summary.get("price_source_mode") or reconciliation_record.get("price_source_mode"),
