@@ -408,6 +408,7 @@ def test_cycle_report_summary_counts_dry_run_order_previews(strategy_module):
         "execution_status": "dry_run",
         "orders_submitted": [{"symbol": "AAA"}, {"symbol": "BBB"}],
         "orders_skipped": [{"symbol": "CCC", "reason": "min_notional"}],
+        "quote_snapshot": {"quotes": [{"symbol": "AAA", "last_price": 100.0}]},
     }
 
     summary = strategy_module._build_cycle_report_summary(
@@ -421,6 +422,7 @@ def test_cycle_report_summary_counts_dry_run_order_previews(strategy_module):
     assert summary["orders_previewed_count"] == 2
     assert summary["orders_skipped_count"] == 1
     assert summary["dry_run_order_preview_available"] is True
+    assert summary["quote_snapshot"]["quotes"][0]["symbol"] == "AAA"
 
 
 def test_handle_request_post_returns_market_closed_when_schedule_empty(strategy_module, monkeypatch):

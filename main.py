@@ -740,7 +740,7 @@ def _build_cycle_report_summary(cycle_result, execution_summary, reconciliation_
         reconciliation_record.get("orders_skipped"),
     )
     orders_previewed_count = orders_submitted_count if dry_run else 0
-    return {
+    summary = {
         "result": cycle_result.result,
         "execution_status": execution_summary.get("execution_status") or reconciliation_record.get("execution_status"),
         "no_op_reason": execution_summary.get("no_op_reason") or reconciliation_record.get("no_op_reason"),
@@ -758,6 +758,10 @@ def _build_cycle_report_summary(cycle_result, execution_summary, reconciliation_
             or 0
         ),
     }
+    quote_snapshot = execution_summary.get("quote_snapshot") or reconciliation_record.get("quote_snapshot")
+    if quote_snapshot:
+        summary["quote_snapshot"] = quote_snapshot
+    return summary
 
 
 def publish_strategy_plugin_alerts(signals, *, report=None):
