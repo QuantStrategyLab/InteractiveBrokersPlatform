@@ -191,6 +191,14 @@ def _env_flag(name: str) -> bool:
     return str(os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _split_env_list(value: str | None) -> tuple[str, ...]:
+    return tuple(
+        item.strip()
+        for item in str(value or "").replace(";", ",").split(",")
+        if item.strip()
+    )
+
+
 RUNTIME_SETTINGS = load_platform_runtime_settings(project_id_resolver=get_project_id)
 IB_HOST = None
 IB_PORT = get_ib_port()
@@ -521,6 +529,82 @@ def publish_notification(*, detailed_text, compact_text):
         detailed_text=detailed_text,
         compact_text=compact_text,
     )
+
+
+def _runtime_error_notification_targets() -> tuple[tuple[str, str], ...]:
+    targets: list[tuple[str, str]] = []
+    if TG_TOKEN and TG_CHAT_ID:
+        targets.append((TG_TOKEN, TG_CHAT_ID))
+    crisis_token = os.getenv("CRISIS_ALERT_TELEGRAM_BOT_TOKEN")
+    for chat_id in _split_env_list(os.getenv("CRISIS_ALERT_TELEGRAM_CHAT_IDS")):
+        if crisis_token and chat_id:
+            targets.append((crisis_token, chat_id))
+
+    seen: set[tuple[str, str]] = set()
+    unique_targets: list[tuple[str, str]] = []
+    for target in targets:
+        if target in seen:
+            continue
+        seen.add(target)
+        unique_targets.append(target)
+    return tuple(unique_targets)
+
+
+def _runtime_error_notification_message(exc: Exception, *, route_label: str | None = None) -> str:
+    error_text = f"{type(exc).__name__}: {exc}"
+    if len(error_text) > 1200:
+        error_text = error_text[:1197] + "..."
+    route = route_label or f"{request.method} {request.path}"
+    return "\n".join(
+        (
+            "IBKR strategy run failed",
+            f"service: {SERVICE_NAME or os.getenv('K_SERVICE', 'interactive-brokers-platform')}",
+            f"revision: {os.getenv('K_REVISION') or '<unknown>'}",
+            f"route: {route}",
+            f"strategy: {STRATEGY_PROFILE}",
+            f"account_group: {ACCOUNT_GROUP}",
+            f"error: {error_text}",
+        )
+    )
+
+
+def _notify_runtime_error(exc: Exception, *, route_label: str | None = None) -> bool:
+    targets = _runtime_error_notification_targets()
+    if not targets:
+        print("IBKR runtime error notification skipped: no Telegram target configured.", flush=True)
+        return False
+    message = _runtime_error_notification_message(exc, route_label=route_label)
+    for token, chat_id in targets:
+        send_telegram_message(
+            message,
+            token=token,
+            chat_id=chat_id,
+            requests_module=requests,
+        )
+    return True
+
+
+def _publish_runtime_failure_notification(*, detailed_text: str, compact_text: str, exc: Exception) -> bool:
+    try:
+        publish_notification(detailed_text=detailed_text, compact_text=compact_text)
+        return True
+    except Exception as notification_exc:
+        print(f"IBKR runtime error notification fallback: {notification_exc}", flush=True)
+        return _notify_runtime_error(exc)
+
+
+def _handle_route_runtime_error(exc: Exception, *, route_label: str | None = None):
+    print(f"IBKR route failed before strategy-cycle handling: {type(exc).__name__}: {exc}", flush=True)
+    traceback.print_exc()
+    _notify_runtime_error(exc, route_label=route_label)
+    return "Error", 500
+
+
+def _route_with_runtime_error_fallback(handler, *args, route_label: str | None = None, **kwargs):
+    try:
+        return handler(*args, **kwargs)
+    except Exception as exc:
+        return _handle_route_runtime_error(exc, route_label=route_label)
 
 
 def require_gateway_execution_backend():
@@ -911,7 +995,11 @@ def _handle_request(*, dry_run_only_override: bool | None = None, response_body:
             error_message=str(exc),
         )
         error_msg = f"🚨 【IBKR 连接异常】\n{str(exc)}"
-        publish_notification(detailed_text=error_msg, compact_text=error_msg)
+        _publish_runtime_failure_notification(
+            detailed_text=error_msg,
+            compact_text=error_msg,
+            exc=exc,
+        )
         return "Error", 500
     except Exception as exc:
         append_runtime_report_error(
@@ -930,7 +1018,11 @@ def _handle_request(*, dry_run_only_override: bool | None = None, response_body:
             error_message=str(exc),
         )
         error_msg = f"{t('error_title')}\n{traceback.format_exc()}"
-        publish_notification(detailed_text=error_msg, compact_text=error_msg)
+        _publish_runtime_failure_notification(
+            detailed_text=error_msg,
+            compact_text=error_msg,
+            exc=exc,
+        )
         return "Error", 500
     finally:
         if lock_acquired:
@@ -1009,7 +1101,11 @@ def _handle_probe(*, response_body: str = "Probe OK"):
                 error_message=str(exc),
             )
         error_msg = f"{t('health_probe_title')}\n{t('health_probe_error_prefix')}{traceback.format_exc()}"
-        publish_notification(detailed_text=error_msg, compact_text=error_msg)
+        _publish_runtime_failure_notification(
+            detailed_text=error_msg,
+            compact_text=error_msg,
+            exc=exc,
+        )
         return "Error", 500
     finally:
         if ib is not None and hasattr(ib, "disconnect"):
@@ -1027,17 +1123,21 @@ def _handle_probe(*, response_body: str = "Probe OK"):
 
 @app.route("/", methods=["POST", "GET"])
 def handle_request():
-    return _handle_request()
+    return _route_with_runtime_error_fallback(_handle_request)
 
 
 @app.route("/precheck", methods=["POST", "GET"])
 def handle_precheck():
-    return _handle_request(dry_run_only_override=True, response_body="Precheck OK")
+    return _route_with_runtime_error_fallback(
+        _handle_request,
+        dry_run_only_override=True,
+        response_body="Precheck OK",
+    )
 
 
 @app.route("/probe", methods=["POST", "GET"])
 def handle_probe():
-    return _handle_probe()
+    return _route_with_runtime_error_fallback(_handle_probe)
 
 
 @app.route("/health", methods=["GET"])
