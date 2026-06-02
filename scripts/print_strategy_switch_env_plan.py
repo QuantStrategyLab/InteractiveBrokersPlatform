@@ -81,6 +81,12 @@ HK_BLOCKED_DRY_RUN_ACTIONS = [
 ]
 
 
+def _feature_snapshot_filenames(profile: str, snapshot_contract_version: str | None) -> tuple[str, str]:
+    suffix = "factor_snapshot" if ".factor_snapshot." in str(snapshot_contract_version or "") else "feature_snapshot"
+    snapshot_filename = f"{profile}_{suffix}_latest.csv"
+    return snapshot_filename, f"{snapshot_filename}.manifest.json"
+
+
 def build_switch_plan(
     profile: str,
     *,
@@ -223,10 +229,12 @@ def build_switch_plan(
 
     hints: dict[str, str] = {}
     if requires_feature_snapshot:
-        hints["feature_snapshot_filename"] = f"{definition.profile}_feature_snapshot_latest.csv"
-        hints["feature_snapshot_manifest_filename"] = (
-            f"{definition.profile}_feature_snapshot_latest.csv.manifest.json"
+        snapshot_filename, manifest_filename = _feature_snapshot_filenames(
+            definition.profile,
+            runtime_requirements.get("snapshot_contract_version"),
         )
+        hints["feature_snapshot_filename"] = snapshot_filename
+        hints["feature_snapshot_manifest_filename"] = manifest_filename
     if artifact_paths.bundled_config_path is not None:
         hints["bundled_strategy_config_path"] = str(artifact_paths.bundled_config_path)
 

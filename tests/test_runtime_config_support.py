@@ -63,7 +63,9 @@ EXPECTED_IBKR_ENABLED_PROFILES = frozenset(
         "soxl_soxx_trend_income",
         "tech_communication_pullback_enhancement",
         "tqqq_growth_income",
+        "hk_high_dividend_low_vol_trend",
         "hk_listed_global_etf_rotation",
+        "hk_low_vol_dividend_quality",
     }
 )
 HK_DISABLED_PROFILES = frozenset(
@@ -1056,6 +1058,42 @@ def test_print_strategy_switch_env_plan_for_mega_cap_top50_balanced_profile():
     assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_PATH"] == "<required>"
     assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH"] == "<required>"
     assert plan["hints"]["feature_snapshot_filename"] == "mega_cap_leader_rotation_top50_balanced_feature_snapshot_latest.csv"
+
+
+def test_print_strategy_switch_env_plan_for_hk_low_vol_dividend_quality_profile():
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SWITCH_PLAN_SCRIPT_PATH),
+            "--profile",
+            "hk_low_vol_dividend_quality",
+            "--dry-run-only",
+            "--deployment-selector",
+            "hk-verify",
+            "--account-scope",
+            "HK",
+            "--service-name",
+            "interactive-brokers-hk-verify-service",
+            "--json",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    plan = json.loads(result.stdout)
+    assert plan["canonical_profile"] == "hk_low_vol_dividend_quality"
+    assert plan["enabled"] is True
+    assert plan["profile_group"] == "snapshot_backed"
+    assert plan["input_mode"] == "feature_snapshot"
+    assert plan["snapshot_contract_version"] == "hk_low_vol_dividend_quality.factor_snapshot.v1"
+    assert plan["set_env"]["IBKR_DRY_RUN_ONLY"] == "true"
+    assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_PATH"] == "<required>"
+    assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH"] == "<required>"
+    assert plan["hints"]["feature_snapshot_filename"] == "hk_low_vol_dividend_quality_factor_snapshot_latest.csv"
+    assert plan["hints"]["feature_snapshot_manifest_filename"] == (
+        "hk_low_vol_dividend_quality_factor_snapshot_latest.csv.manifest.json"
+    )
 
 
 @pytest.mark.parametrize("profile", sorted(HK_DISABLED_PROFILES))
