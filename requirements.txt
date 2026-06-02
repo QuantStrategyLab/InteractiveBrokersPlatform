@@ -2,7 +2,7 @@ flask
 gunicorn
 quant-platform-kit @ git+https://github.com/QuantStrategyLab/QuantPlatformKit.git@v0.7.36
 us-equity-strategies @ git+https://github.com/QuantStrategyLab/UsEquityStrategies.git@v0.7.50
-hk-equity-strategies @ git+https://github.com/QuantStrategyLab/HkEquityStrategies.git@623ca96
+hk-equity-strategies @ git+https://github.com/QuantStrategyLab/HkEquityStrategies.git@hk-low-vol-dividend-quality-20260603
 pandas
 numpy
 requests
