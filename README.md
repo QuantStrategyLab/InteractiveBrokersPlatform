@@ -362,6 +362,46 @@ Important:
 - GitHub now authenticates to Google Cloud with OIDC + Workload Identity Federation, so `GCP_SA_KEY` is no longer required for this workflow.
 - GitHub deploy uses the repository Dockerfile and Artifact Registry. The deploy service account needs Artifact Registry writer, Cloud Run admin, and service-account user permissions for the runtime service account.
 
+### Runtime guard alerting
+
+`.github/workflows/runtime-guard.yml` is a second notification layer for failures
+outside the IBKR Flask handler. It reads Cloud Logging for recent Cloud Scheduler
+errors and Cloud Run request/runtime failures, then sends Telegram directly
+through `CRISIS_ALERT_TELEGRAM_BOT_TOKEN` + `CRISIS_ALERT_TELEGRAM_CHAT_IDS` or
+the fallback `TELEGRAM_TOKEN` + `GLOBAL_TELEGRAM_CHAT_ID`.
+
+The guard does not invoke Cloud Run trading routes. It is meant to catch cases
+where Scheduler cannot reach the service, OIDC/IAM/audience is wrong, Cloud Run
+returns 4xx/5xx, or the container fails before app-level Telegram fallback code
+can run.
+
+Required setup:
+
+- keep `CLOUD_RUN_SERVICES`, `CLOUD_RUN_SERVICE`, `CLOUD_RUN_SERVICE_TARGETS_JSON`,
+  or `RUNTIME_GUARD_CLOUD_RUN_SERVICES` populated with the service names to monitor
+- grant the GitHub deploy service account `roles/logging.viewer` on
+  `interactivebrokersquant`
+- keep Telegram chat/token variables or secrets configured in GitHub
+- optionally set `RUNTIME_GUARD_SCHEDULER_JOB_PATTERN` to a regex that limits
+  Scheduler log checks to this deployment's jobs
+
+The scheduled guard runs every 30 minutes. For a missed-run heartbeat, set
+`RUNTIME_GUARD_REQUIRE_SUCCESS=true` and choose
+`RUNTIME_GUARD_LOOKBACK_MINUTES` so the window covers the expected Scheduler run.
+The default leaves the heartbeat check off to avoid false alerts outside the
+active trading window.
+
+`Execution Report Heartbeat` (`.github/workflows/execution-report-heartbeat.yml`)
+is the stricter completion check. It runs on weekdays after the expected market
+window and verifies that a recent runtime report exists under
+`EXECUTION_REPORT_GCS_URI`. It reads the latest report JSON and alerts if no
+recent report exists or the recent reports have rejected statuses such as
+`error`. The deploy service account needs object read/list access on the report
+bucket.
+For slot deployments, `CLOUD_RUN_SERVICE_TARGETS_JSON` is used to require a
+recent acceptable report for each configured service; set
+`RUNTIME_HEARTBEAT_REQUIRED_SERVICES` when only a subset should be monitored.
+
 ### Deployment unit and naming
 
 - `QuantPlatformKit` is only a shared dependency; Cloud Run now deploys `InteractiveBrokersPlatform`.
@@ -616,6 +656,37 @@ IB_GATEWAY_IP_MODE=internal
 - 如果设置了 `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME`，Cloud Run 运行时还需要有对应 Secret 的访问权限。
 - GitHub 现在通过 OIDC + Workload Identity Federation 登录 Google Cloud，这个 workflow 不再需要 `GCP_SA_KEY`。
 - GitHub 部署路径使用仓库里的 Dockerfile 和 Artifact Registry。部署服务账号需要 Artifact Registry 写入、Cloud Run 管理，以及对 runtime service account 的 service-account user 权限。
+
+### Runtime Guard 告警
+
+`.github/workflows/runtime-guard.yml` 是 IBKR Flask handler 之外的第二层通知。它只读取
+Cloud Logging 中最近的 Cloud Scheduler 错误和 Cloud Run 请求/运行失败，然后直接通过
+`CRISIS_ALERT_TELEGRAM_BOT_TOKEN` + `CRISIS_ALERT_TELEGRAM_CHAT_IDS` 或 fallback 的
+`TELEGRAM_TOKEN` + `GLOBAL_TELEGRAM_CHAT_ID` 发 Telegram。
+
+这个 guard 不会调用 Cloud Run 的交易路由，主要覆盖 Scheduler 没打到服务、
+OIDC/IAM/audience 配错、Cloud Run 返回 4xx/5xx、或容器在 app-level Telegram fallback
+执行前就失败的情况。
+
+需要的配置：
+
+- `CLOUD_RUN_SERVICES`、`CLOUD_RUN_SERVICE`、`CLOUD_RUN_SERVICE_TARGETS_JSON` 或
+  `RUNTIME_GUARD_CLOUD_RUN_SERVICES` 中至少有要监控的服务名
+- GitHub deploy service account 需要 `interactivebrokersquant` 项目级 `roles/logging.viewer`
+- GitHub 中继续配置 Telegram chat/token 变量或 secrets
+- 可选设置 `RUNTIME_GUARD_SCHEDULER_JOB_PATTERN`，用正则把 Scheduler 日志限制到本部署的 job
+
+默认计划每 30 分钟检查一次。若要做 missed-run 心跳，设置
+`RUNTIME_GUARD_REQUIRE_SUCCESS=true`，并把 `RUNTIME_GUARD_LOOKBACK_MINUTES` 设成覆盖预期
+Scheduler 运行时间的窗口。默认不强制心跳，避免非交易窗口误报。
+
+更严格的完成检查是 `Execution Report Heartbeat`
+（`.github/workflows/execution-report-heartbeat.yml`）。它会在工作日预期市场窗口后检查
+`EXECUTION_REPORT_GCS_URI` 下最近的 runtime report JSON，读取 `status/stage/errors`，
+如果没有近期 report 或 report 状态为 `error` 等失败状态就发 Telegram。GitHub deploy
+service account 需要对 report bucket 有对象读取/列举权限。
+slot 部署会从 `CLOUD_RUN_SERVICE_TARGETS_JSON` 解析每个 service，并要求每个 service 都有近期
+可接受 report；如果只想监控部分服务，设置 `RUNTIME_HEARTBEAT_REQUIRED_SERVICES`。
 
 ### 部署单元和命名建议
 
