@@ -723,6 +723,43 @@ def _has_signal_snapshot_details(snapshot: dict[str, object]) -> bool:
     )
 
 
+def _count_orders(*candidates) -> int:
+    for candidate in candidates:
+        if isinstance(candidate, (list, tuple)):
+            return len(candidate)
+    return 0
+
+
+def _build_cycle_report_summary(cycle_result, execution_summary, reconciliation_record, *, dry_run: bool) -> dict:
+    orders_submitted_count = _count_orders(
+        execution_summary.get("orders_submitted"),
+        reconciliation_record.get("orders_submitted"),
+    )
+    orders_skipped_count = _count_orders(
+        execution_summary.get("orders_skipped"),
+        reconciliation_record.get("orders_skipped"),
+    )
+    orders_previewed_count = orders_submitted_count if dry_run else 0
+    return {
+        "result": cycle_result.result,
+        "execution_status": execution_summary.get("execution_status") or reconciliation_record.get("execution_status"),
+        "no_op_reason": execution_summary.get("no_op_reason") or reconciliation_record.get("no_op_reason"),
+        "orders_submitted_count": orders_submitted_count,
+        "orders_previewed_count": orders_previewed_count,
+        "orders_skipped_count": orders_skipped_count,
+        "dry_run_order_preview_available": bool(dry_run and orders_previewed_count > 0),
+        "snapshot_price_fallback_used": bool(
+            execution_summary.get("snapshot_price_fallback_used")
+            or reconciliation_record.get("snapshot_price_fallback_used")
+        ),
+        "snapshot_price_fallback_count": int(
+            execution_summary.get("snapshot_price_fallback_count")
+            or reconciliation_record.get("snapshot_price_fallback_count")
+            or 0
+        ),
+    }
+
+
 def publish_strategy_plugin_alerts(signals, *, report=None):
     result = dispatch_strategy_plugin_alerts(
         signals,
@@ -934,30 +971,12 @@ def _handle_request(*, dry_run_only_override: bool | None = None, response_body:
         finalize_runtime_report(
             report,
             status="ok",
-            summary={
-                "result": cycle_result.result,
-                "execution_status": execution_summary.get("execution_status") or reconciliation_record.get("execution_status"),
-                "no_op_reason": execution_summary.get("no_op_reason") or reconciliation_record.get("no_op_reason"),
-                "orders_submitted_count": len(
-                    execution_summary.get("orders_submitted")
-                    or reconciliation_record.get("orders_submitted")
-                    or ()
-                ),
-                "orders_skipped_count": len(
-                    execution_summary.get("orders_skipped")
-                    or reconciliation_record.get("orders_skipped")
-                    or ()
-                ),
-                "snapshot_price_fallback_used": bool(
-                    execution_summary.get("snapshot_price_fallback_used")
-                    or reconciliation_record.get("snapshot_price_fallback_used")
-                ),
-                "snapshot_price_fallback_count": int(
-                    execution_summary.get("snapshot_price_fallback_count")
-                    or reconciliation_record.get("snapshot_price_fallback_count")
-                    or 0
-                ),
-            },
+            summary=_build_cycle_report_summary(
+                cycle_result,
+                execution_summary,
+                reconciliation_record,
+                dry_run=bool(report.get("dry_run")),
+            ),
             diagnostics={
                 "result": cycle_result.result,
                 "price_source_mode": execution_summary.get("price_source_mode") or reconciliation_record.get("price_source_mode"),
