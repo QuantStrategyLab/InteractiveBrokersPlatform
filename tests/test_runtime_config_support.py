@@ -62,9 +62,9 @@ EXPECTED_IBKR_ENABLED_PROFILES = frozenset(
         "russell_1000_multi_factor_defensive",
         "soxl_soxx_trend_income",
         "tqqq_growth_income",
-        "hk_high_dividend_low_vol_trend",
-        "hk_listed_global_etf_rotation",
-        "hk_low_vol_dividend_quality",
+        "hk_dividend_gold_defensive_rotation",
+        "hk_global_etf_tactical_rotation",
+        "hk_low_vol_dividend_quality_snapshot",
     }
 )
 HK_DISABLED_PROFILES = frozenset(
@@ -599,14 +599,14 @@ def test_load_platform_runtime_settings_rejects_disabled_hk_profiles(monkeypatch
 
 
 def test_load_platform_runtime_settings_accepts_runtime_enabled_hk_global_etf_rotation(monkeypatch):
-    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json("hk_listed_global_etf_rotation"))
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json("hk_global_etf_tactical_rotation"))
     monkeypatch.setenv("ACCOUNT_GROUP", "hk-live")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_HK_GROUP_JSON)
 
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
-    assert settings.strategy_profile == "hk_listed_global_etf_rotation"
-    assert settings.strategy_display_name == "HK-listed Global ETF Rotation"
+    assert settings.strategy_profile == "hk_global_etf_tactical_rotation"
+    assert settings.strategy_display_name == "HK Global ETF Tactical Rotation"
     assert settings.strategy_domain == "hk_equity"
     assert settings.strategy_target_mode == "weight"
     assert settings.market == HK_MARKET
@@ -700,9 +700,9 @@ def test_platform_profile_status_matrix_matches_current_ibkr_rollout():
     assert by_profile["nasdaq_sp500_smart_dca"]["display_name"] == "Nasdaq/S&P 500 Smart DCA"
     assert by_profile["nasdaq_sp500_smart_dca"]["eligible"] is True
     assert by_profile["nasdaq_sp500_smart_dca"]["enabled"] is True
-    assert by_profile["hk_listed_global_etf_rotation"] == {
-        "canonical_profile": "hk_listed_global_etf_rotation",
-        "display_name": "HK-listed Global ETF Rotation",
+    assert by_profile["hk_global_etf_tactical_rotation"] == {
+        "canonical_profile": "hk_global_etf_tactical_rotation",
+        "display_name": "HK Global ETF Tactical Rotation",
         "domain": "hk_equity",
         "eligible": True,
         "enabled": True,
@@ -750,7 +750,7 @@ def test_print_strategy_profile_status_json_matches_registry():
     assert by_profile["mega_cap_leader_rotation_top50_balanced"]["requires_strategy_config_path"] is False
     for profile in ("hk_blue_chip_leader_rotation", "hk_index_mean_reversion", "hk_etf_regime_rotation"):
         assert profile not in by_profile
-    for profile in ("hk_listed_global_etf_rotation",):
+    for profile in ("hk_global_etf_tactical_rotation",):
         assert by_profile[profile]["profile_group"] == "direct_runtime_inputs"
         assert by_profile[profile]["input_mode"] == "market_history"
         assert by_profile[profile]["requires_snapshot_artifacts"] is False
@@ -773,10 +773,10 @@ def test_print_strategy_profile_status_table_contains_expected_headers():
     assert "input_mode" in result.stdout
     assert "requires_snapshot_artifacts" in result.stdout
     assert "global_etf_rotation" in result.stdout
-    assert "hk_listed_global_etf_rotation" in result.stdout
+    assert "hk_global_etf_tactical_rotation" in result.stdout
     assert "Mega Cap Leader Rotation Top50 Balanced" in result.stdout
     assert "Tech/Communication Pullback Enhancement" not in result.stdout
-    assert "HK-listed Global ETF Rotation" in result.stdout
+    assert "HK Global ETF Tactical Rotation" in result.stdout
     assert "TQQQ Growth Income" in result.stdout
     assert "hk_blue_chip_leader_rotation" not in result.stdout
     assert "hk_index_mean_reversion" not in result.stdout
@@ -824,7 +824,7 @@ def test_print_strategy_switch_env_plan_for_hk_global_etf_dry_run():
             sys.executable,
             str(SWITCH_PLAN_SCRIPT_PATH),
             "--profile",
-            "hk_listed_global_etf_rotation",
+            "hk_global_etf_tactical_rotation",
             "--dry-run-only",
             "--deployment-selector",
             "hk-verify",
@@ -843,7 +843,7 @@ def test_print_strategy_switch_env_plan_for_hk_global_etf_dry_run():
 
     plan = json.loads(result.stdout)
     assert plan["platform"] == "ibkr"
-    assert plan["canonical_profile"] == "hk_listed_global_etf_rotation"
+    assert plan["canonical_profile"] == "hk_global_etf_tactical_rotation"
     assert plan["domain"] == HK_EQUITY_DOMAIN
     assert plan["runtime_target"]["dry_run_only"] is True
     assert plan["runtime_target"]["execution_mode"] == "paper"
@@ -1055,13 +1055,13 @@ def test_print_strategy_switch_env_plan_for_mega_cap_top50_balanced_profile():
     assert plan["hints"]["feature_snapshot_filename"] == "mega_cap_leader_rotation_top50_balanced_feature_snapshot_latest.csv"
 
 
-def test_print_strategy_switch_env_plan_for_hk_low_vol_dividend_quality_profile():
+def test_print_strategy_switch_env_plan_for_hk_low_vol_dividend_quality_snapshot_profile():
     result = subprocess.run(
         [
             sys.executable,
             str(SWITCH_PLAN_SCRIPT_PATH),
             "--profile",
-            "hk_low_vol_dividend_quality",
+            "hk_low_vol_dividend_quality_snapshot",
             "--dry-run-only",
             "--deployment-selector",
             "hk-verify",
@@ -1077,17 +1077,17 @@ def test_print_strategy_switch_env_plan_for_hk_low_vol_dividend_quality_profile(
     )
 
     plan = json.loads(result.stdout)
-    assert plan["canonical_profile"] == "hk_low_vol_dividend_quality"
+    assert plan["canonical_profile"] == "hk_low_vol_dividend_quality_snapshot"
     assert plan["enabled"] is True
     assert plan["profile_group"] == "snapshot_backed"
     assert plan["input_mode"] == "feature_snapshot"
-    assert plan["snapshot_contract_version"] == "hk_low_vol_dividend_quality.factor_snapshot.v1"
+    assert plan["snapshot_contract_version"] == "hk_low_vol_dividend_quality_snapshot.factor_snapshot.v1"
     assert plan["set_env"]["IBKR_DRY_RUN_ONLY"] == "true"
     assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_PATH"] == "<required>"
     assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH"] == "<required>"
-    assert plan["hints"]["feature_snapshot_filename"] == "hk_low_vol_dividend_quality_factor_snapshot_latest.csv"
+    assert plan["hints"]["feature_snapshot_filename"] == "hk_low_vol_dividend_quality_snapshot_factor_snapshot_latest.csv"
     assert plan["hints"]["feature_snapshot_manifest_filename"] == (
-        "hk_low_vol_dividend_quality_factor_snapshot_latest.csv.manifest.json"
+        "hk_low_vol_dividend_quality_snapshot_factor_snapshot_latest.csv.manifest.json"
     )
 
 

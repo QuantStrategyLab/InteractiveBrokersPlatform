@@ -428,7 +428,7 @@ def test_cycle_report_summary_counts_dry_run_order_previews(strategy_module):
 def test_notification_delivery_log_summary_records_sent_dry_run_without_raw_text(strategy_module):
     payload = strategy_module._build_notification_delivery_log_for_report(
         platform="interactive_brokers",
-        strategy_profile="hk_low_vol_dividend_quality",
+        strategy_profile="hk_low_vol_dividend_quality_snapshot",
         run_id="run-001",
         dry_run=True,
         orders_previewed_count=2,
@@ -446,7 +446,7 @@ def test_notification_delivery_log_summary_records_sent_dry_run_without_raw_text
     assert payload["notification_event_type"] == "hk_snapshot_live_enablement_dry_run"
     assert payload["notification_correlation_id"] == "run-001"
     assert payload["locales"] == ["en", "zh-Hans"]
-    assert payload["profile"] == "hk_low_vol_dividend_quality"
+    assert payload["profile"] == "hk_low_vol_dividend_quality_snapshot"
     assert payload["platform"] == "interactive_brokers"
     assert payload["orders_previewed"] == 2
     assert payload["notification_redacts_sensitive_fields"] is True
@@ -456,7 +456,7 @@ def test_notification_delivery_log_summary_records_sent_dry_run_without_raw_text
 def test_notification_delivery_log_summary_stays_empty_without_sent_event(strategy_module):
     payload = strategy_module._build_notification_delivery_log_for_report(
         platform="interactive_brokers",
-        strategy_profile="hk_low_vol_dividend_quality",
+        strategy_profile="hk_low_vol_dividend_quality_snapshot",
         run_id="run-001",
         dry_run=True,
         orders_previewed_count=2,
