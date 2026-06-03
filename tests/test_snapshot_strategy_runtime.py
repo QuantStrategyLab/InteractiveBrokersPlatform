@@ -87,6 +87,7 @@ def test_compute_signals_uses_feature_snapshot_for_russell_1000(strategy_module_
     assert result[4]["snapshot_guard_decision"] == "proceed"
 
 
+@pytest.mark.skip(reason="Tech/Communication is research-only and no longer an IBKR live profile")
 def test_compute_signals_loads_tech_communication_pullback_enhancement_runtime(strategy_module_factory, monkeypatch, tmp_path):
     pytest.importorskip("pandas")
 
@@ -154,6 +155,7 @@ def test_compute_signals_loads_tech_communication_pullback_enhancement_runtime(s
     assert module.CASH_RESERVE_RATIO == pytest.approx(0.0)
 
 
+@pytest.mark.skip(reason="Tech/Communication is research-only and no longer an IBKR live profile")
 def test_compute_signals_fail_closes_when_snapshot_missing(strategy_module_factory):
     module = strategy_module_factory(
         STRATEGY_PROFILE="tech_communication_pullback_enhancement",
@@ -168,6 +170,7 @@ def test_compute_signals_fail_closes_when_snapshot_missing(strategy_module_facto
     assert "feature_snapshot_missing" in result[4]["fail_reason"]
 
 
+@pytest.mark.skip(reason="Tech/Communication is research-only and no longer an IBKR live profile")
 def test_compute_signals_fail_closes_when_snapshot_is_stale(strategy_module_factory, tmp_path):
     snapshot_path = tmp_path / "stale_snapshot.csv"
     snapshot_path.write_text(
@@ -195,6 +198,7 @@ def test_compute_signals_fail_closes_when_snapshot_is_stale(strategy_module_fact
     assert "feature_snapshot_stale" in result[4]["fail_reason"]
 
 
+@pytest.mark.skip(reason="Tech/Communication is research-only and no longer an IBKR live profile")
 def test_compute_signals_fail_closes_when_manifest_missing(strategy_module_factory, tmp_path):
     snapshot_path = tmp_path / "snapshot.csv"
     config_path = tmp_path / "tech_communication_pullback_enhancement.json"
@@ -266,6 +270,7 @@ def test_platform_reserved_cash_policy_can_raise_strategy_cash_reserve(strategy_
     assert module.CASH_RESERVE_FLOOR_USD == pytest.approx(250.0)
 
 
+@pytest.mark.skip(reason="Tech/Communication is research-only and no longer an IBKR live profile")
 def test_compute_signals_exposes_dry_run_price_fallbacks(strategy_module_factory, tmp_path):
     pytest.importorskip("pandas")
 
