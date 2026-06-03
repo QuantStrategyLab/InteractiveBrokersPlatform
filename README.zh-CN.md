@@ -74,7 +74,7 @@ IBKR 账户
 | `IBKR_CONNECT_ATTEMPTS` | 否 | IBKR 连接失败前最多尝试次数。默认 `3`。 |
 | `IBKR_CONNECT_RETRY_DELAY_SECONDS` | 否 | IBKR 连接重试间隔，单位秒。默认 `5`。 |
 | `IBKR_CLIENT_ID_RETRY_OFFSET` | 否 | 每次重试时加到 `ib_client_id` 上的偏移量，用新的 client id 避开超时握手留下的卡住会话。默认 `100`。 |
-| `STRATEGY_PROFILE` | 是 | 策略档位选择。当前已启用值：`global_etf_rotation`、`russell_1000_multi_factor_defensive`、`tqqq_growth_income`、`soxl_soxx_trend_income`、`tech_communication_pullback_enhancement`、`mega_cap_leader_rotation_top50_balanced`、`nasdaq_sp500_smart_dca`、`hk_listed_global_etf_rotation`。`hk_blue_chip_leader_rotation`、`hk_index_mean_reversion`、`hk_etf_regime_rotation` 不是 runtime-enabled，不会被平台状态/切换工具列为可选；Cloud Run 使用当前服务上配置的取值 |
+| `STRATEGY_PROFILE` | 是 | 策略档位选择。当前已启用值：`global_etf_rotation`、`russell_1000_multi_factor_defensive`、`tqqq_growth_income`、`soxl_soxx_trend_income`、`mega_cap_leader_rotation_top50_balanced`、`nasdaq_sp500_smart_dca`、`hk_listed_global_etf_rotation`。Tech/Communication 和港股 scaffold profiles 不是 runtime-enabled，不会被平台状态/切换工具列为可选；Cloud Run 使用当前服务上配置的取值 |
 | `ACCOUNT_GROUP` | 是 | 账号组选择器，每个部署都要显式设置。 |
 | `IBKR_MARKET` | 否 | 市场范围。`ACCOUNT_GROUP` 包含 `hk` 时默认 `HK`，其他情况默认 `US`。 |
 | `IBKR_MARKET_CALENDAR` | 否 | 市场日历。港股默认 `XHKG`，美股默认 `NYSE`。 |
@@ -82,7 +82,7 @@ IBKR 账户
 | `IBKR_MARKET_EXCHANGE` | 否 | 股票合约交易所。港股默认 `SEHK`，美股默认 `SMART`。 |
 | `IBKR_MARKET_CURRENCY` | 否 | 股票合约币种和组合现金口径。港股默认 `HKD`，美股默认 `USD`。 |
 | `IBKR_MARKET_DATA_SYMBOL_SUFFIX` | 否 | 仅用于 yfinance fallback 的标的后缀。港股默认 `.HK`，美股默认空。 |
-| `IBKR_FEATURE_SNAPSHOT_PATH` | 条件必填 | `russell_1000_multi_factor_defensive`、`tech_communication_pullback_enhancement`、`mega_cap_leader_rotation_top50_balanced` 等已启用快照策略需要；港股架构占位后续启用时也会需要。指向最新特征快照文件（`.csv`、`.json`、`.jsonl`、`.parquet`）。 |
+| `IBKR_FEATURE_SNAPSHOT_PATH` | 条件必填 | `russell_1000_multi_factor_defensive`、`mega_cap_leader_rotation_top50_balanced` 等已启用快照策略需要；港股架构占位后续启用时也会需要。指向最新特征快照文件（`.csv`、`.json`、`.jsonl`、`.parquet`）。 |
 | `IBKR_STRATEGY_PLUGIN_MOUNTS_JSON` | 否 | 可选的 IBKR 侧策略插件挂载 JSON。插件 artifact 自带模式；平台配置不要设置 `mode`。 |
 | `IBKR_MIN_ORDER_NOTIONAL_USD` | 否 | 限价买入的最小名义金额；默认 `50.0`。 |
 | `IBKR_MIN_RESERVED_CASH_USD` | 否 | 平台级最低预留现金 USD。默认 `0`；实际预留取该下限和有效预留现金比例中的最大值。 |

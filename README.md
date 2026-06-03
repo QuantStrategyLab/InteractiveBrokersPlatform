@@ -74,7 +74,6 @@ translation.
 - `russell_1000_multi_factor_defensive`
 - `tqqq_growth_income`
 - `soxl_soxx_trend_income`
-- `tech_communication_pullback_enhancement`
 - `mega_cap_leader_rotation_top50_balanced`
 - `nasdaq_sp500_smart_dca`
 - `hk_blue_chip_leader_rotation` (architecture scaffold only; eligible but disabled)
@@ -91,7 +90,6 @@ translation.
 | `russell_1000_multi_factor_defensive` | Russell 1000 Multi-Factor | Yes | Yes | `us_equity` | defensive stock baseline |
 | `tqqq_growth_income` | TQQQ Growth Income | Yes | Yes | `us_equity` | enabled value-mode alternative |
 | `soxl_soxx_trend_income` | SOXL/SOXX Semiconductor Trend Income | Yes | Yes | `us_equity` | current IBKR live line |
-| `tech_communication_pullback_enhancement` | Tech/Communication Pullback Enhancement | Yes | Yes | `us_equity` | enabled feature-snapshot alternative |
 | `mega_cap_leader_rotation_top50_balanced` | Mega Cap Leader Rotation Top50 Balanced | Yes | Yes | `us_equity` | enabled balanced Top50 leader rotation |
 | `nasdaq_sp500_smart_dca` | Nasdaq/S&P 500 Smart DCA | Yes | Yes | `us_equity` | buy-only cash-deployment profile |
 | `hk_blue_chip_leader_rotation` | HK Blue Chip Leader Rotation | Yes | No | `hk_equity` | architecture scaffold only; not runtime-enabled |
@@ -156,7 +154,7 @@ For IBKR, keep `paper` as a single account-group entry. If you later add live ac
 | `IBKR_CONNECT_ATTEMPTS` | No | Number of IBKR connection attempts before failing the cycle. Defaults to `3`. |
 | `IBKR_CONNECT_RETRY_DELAY_SECONDS` | No | Delay between failed IBKR connection attempts. Defaults to `5`. |
 | `IBKR_CLIENT_ID_RETRY_OFFSET` | No | Offset added to the configured `ib_client_id` on each retry, so a timed-out API handshake can retry with a fresh client id. Defaults to `100`. |
-| `STRATEGY_PROFILE` | Yes | Strategy profile selector. Enabled values: `global_etf_rotation`, `russell_1000_multi_factor_defensive`, `tqqq_growth_income`, `soxl_soxx_trend_income`, `tech_communication_pullback_enhancement`, `mega_cap_leader_rotation_top50_balanced`, `nasdaq_sp500_smart_dca`, `hk_listed_global_etf_rotation`. `hk_blue_chip_leader_rotation`, `hk_index_mean_reversion`, and `hk_etf_regime_rotation` are not runtime-enabled and are not selectable by the platform status/switch tooling. Cloud Run uses the values configured on the selected service. |
+| `STRATEGY_PROFILE` | Yes | Strategy profile selector. Enabled values: `global_etf_rotation`, `russell_1000_multi_factor_defensive`, `tqqq_growth_income`, `soxl_soxx_trend_income`, `mega_cap_leader_rotation_top50_balanced`, `nasdaq_sp500_smart_dca`, `hk_listed_global_etf_rotation`. Tech/Communication and the HK scaffold profiles are not runtime-enabled and are not selectable by the platform status/switch tooling. Cloud Run uses the values configured on the selected service. |
 | `ACCOUNT_GROUP` | Yes | Account-group selector. Set explicitly for each deployment. |
 | `IBKR_MARKET` | No | Market scope. Defaults to `HK` when `ACCOUNT_GROUP` contains `hk`, otherwise `US`. |
 | `IBKR_MARKET_CALENDAR` | No | Market calendar. Defaults to `XHKG` for HK and `NYSE` for US. |
@@ -164,7 +162,7 @@ For IBKR, keep `paper` as a single account-group entry. If you later add live ac
 | `IBKR_MARKET_EXCHANGE` | No | Stock contract exchange. Defaults to `SEHK` for HK and `SMART` for US. |
 | `IBKR_MARKET_CURRENCY` | No | Stock contract currency and portfolio currency scope. Defaults to `HKD` for HK and `USD` for US. |
 | `IBKR_MARKET_DATA_SYMBOL_SUFFIX` | No | Suffix used only for yfinance fallback symbols. Defaults to `.HK` for HK and empty for US. |
-| `IBKR_FEATURE_SNAPSHOT_PATH` | Conditionally required | Required for enabled snapshot-backed profiles such as `russell_1000_multi_factor_defensive`, `tech_communication_pullback_enhancement`, and `mega_cap_leader_rotation_top50_balanced`. The HK scaffold will also require this after promotion. Path to the latest feature snapshot file (`.csv`, `.json`, `.jsonl`, `.parquet`). |
+| `IBKR_FEATURE_SNAPSHOT_PATH` | Conditionally required | Required for enabled snapshot-backed profiles such as `russell_1000_multi_factor_defensive` and `mega_cap_leader_rotation_top50_balanced`. The HK scaffold will also require this after promotion. Path to the latest feature snapshot file (`.csv`, `.json`, `.jsonl`, `.parquet`). |
 | `IBKR_STRATEGY_PLUGIN_MOUNTS_JSON` | No | Optional IBKR-side strategy plugin mount JSON. The plugin artifact controls mode; platform config must not set `mode`. |
 | `IBKR_MIN_ORDER_NOTIONAL_USD` | No | Minimum buy notional for limit buys; defaults to `50.0`. |
 | `IBKR_MIN_RESERVED_CASH_USD` | No | Platform-level minimum cash reserve in USD. Defaults to `0`; the effective reserve is the max of this floor and the effective cash reserve ratio. |
@@ -230,11 +228,11 @@ NOTIFY_LANG=zh
 ```
 
 ```bash
-STRATEGY_PROFILE=tech_communication_pullback_enhancement
+STRATEGY_PROFILE=mega_cap_leader_rotation_top50_balanced
 ACCOUNT_GROUP=paper
 IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=ibkr-account-groups
-IBKR_FEATURE_SNAPSHOT_PATH=/var/data/tech_communication_pullback_enhancement_feature_snapshot_latest.csv
-IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH=/var/manifests/tech_communication_pullback_enhancement_feature_snapshot_latest.csv.manifest.json
+IBKR_FEATURE_SNAPSHOT_PATH=/var/data/mega_cap_leader_rotation_top50_balanced_feature_snapshot_latest.csv
+IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH=/var/manifests/mega_cap_leader_rotation_top50_balanced_feature_snapshot_latest.csv.manifest.json
 # IBKR_STRATEGY_CONFIG_PATH is optional; the bundled canonical default is used when unset.
 IBKR_DRY_RUN_ONLY=true
 # IBKR orders run on whole shares only.

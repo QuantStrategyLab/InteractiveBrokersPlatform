@@ -61,7 +61,6 @@ EXPECTED_IBKR_ENABLED_PROFILES = frozenset(
         "nasdaq_sp500_smart_dca",
         "russell_1000_multi_factor_defensive",
         "soxl_soxx_trend_income",
-        "tech_communication_pullback_enhancement",
         "tqqq_growth_income",
         "hk_high_dividend_low_vol_trend",
         "hk_listed_global_etf_rotation",
@@ -233,7 +232,7 @@ def test_load_platform_runtime_settings_prefers_runtime_target_json(monkeypatch)
     monkeypatch.setenv(
         "RUNTIME_TARGET_JSON",
         runtime_target_json(
-            "tech_communication_pullback_enhancement",
+            "tqqq_growth_income",
             dry_run_only=True,
             account_selector=["U999"],
             service_name="interactive-brokers-paper-service",
@@ -242,8 +241,8 @@ def test_load_platform_runtime_settings_prefers_runtime_target_json(monkeypatch)
 
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
-    assert settings.strategy_profile == "tech_communication_pullback_enhancement"
-    assert settings.runtime_target.strategy_profile == "tech_communication_pullback_enhancement"
+    assert settings.strategy_profile == "tqqq_growth_income"
+    assert settings.runtime_target.strategy_profile == "tqqq_growth_income"
     assert settings.runtime_target.platform_id == "ibkr"
     assert settings.runtime_target.dry_run_only is True
     assert settings.runtime_target.execution_mode == "paper"
@@ -573,20 +572,18 @@ def test_platform_eligible_profiles_are_exposed_by_capability_matrix():
     assert get_eligible_profiles_for_platform(IBKR_PLATFORM) == EXPECTED_IBKR_PROFILES
 
 
-def test_load_platform_runtime_settings_accepts_tech_communication_pullback_enhancement(monkeypatch):
+def test_load_platform_runtime_settings_rejects_research_only_tech_communication_pullback(monkeypatch):
     monkeypatch.setenv(
         "RUNTIME_TARGET_JSON",
         runtime_target_json("tech_communication_pullback_enhancement"),
     )
     monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
-    monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "/tmp/cash-buffer.csv")
+    monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "/tmp/tech.csv")
+    monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH", "/tmp/tech.csv.manifest.json")
 
-    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
-
-    assert settings.strategy_profile == "tech_communication_pullback_enhancement"
-    assert settings.strategy_display_name == "Tech/Communication Pullback Enhancement"
-    assert settings.strategy_target_mode == "weight"
+    with pytest.raises(ValueError, match="Unsupported STRATEGY_PROFILE"):
+        load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
 
 @pytest.mark.parametrize("profile", sorted(HK_DISABLED_PROFILES))
@@ -678,7 +675,7 @@ def test_platform_profile_matrix_exposes_profiles_without_selection_roles():
     by_profile = {row["canonical_profile"]: row for row in rows}
     assert "is_default" not in by_profile["global_etf_rotation"]
     assert "is_rollback" not in by_profile["global_etf_rotation"]
-    assert by_profile["tech_communication_pullback_enhancement"]["display_name"] == "Tech/Communication Pullback Enhancement"
+    assert "tech_communication_pullback_enhancement" not in by_profile
 
 
 def test_platform_profile_status_matrix_matches_current_ibkr_rollout():
@@ -746,10 +743,7 @@ def test_print_strategy_profile_status_json_matches_registry():
     assert by_profile["nasdaq_sp500_smart_dca"]["profile_group"] == "direct_runtime_inputs"
     assert by_profile["nasdaq_sp500_smart_dca"]["input_mode"] == "market_history+portfolio_snapshot"
     assert by_profile["nasdaq_sp500_smart_dca"]["requires_snapshot_artifacts"] is False
-    assert by_profile["tech_communication_pullback_enhancement"]["profile_group"] == "snapshot_backed"
-    assert by_profile["tech_communication_pullback_enhancement"]["input_mode"] == "feature_snapshot"
-    assert by_profile["tech_communication_pullback_enhancement"]["requires_snapshot_artifacts"] is True
-    assert by_profile["tech_communication_pullback_enhancement"]["requires_strategy_config_path"] is True
+    assert "tech_communication_pullback_enhancement" not in by_profile
     assert by_profile["mega_cap_leader_rotation_top50_balanced"]["profile_group"] == "snapshot_backed"
     assert by_profile["mega_cap_leader_rotation_top50_balanced"]["input_mode"] == "feature_snapshot"
     assert by_profile["mega_cap_leader_rotation_top50_balanced"]["requires_snapshot_artifacts"] is True
@@ -780,7 +774,8 @@ def test_print_strategy_profile_status_table_contains_expected_headers():
     assert "requires_snapshot_artifacts" in result.stdout
     assert "global_etf_rotation" in result.stdout
     assert "hk_listed_global_etf_rotation" in result.stdout
-    assert "Tech/Communication Pullback Enhancement" in result.stdout
+    assert "Mega Cap Leader Rotation Top50 Balanced" in result.stdout
+    assert "Tech/Communication Pullback Enhancement" not in result.stdout
     assert "HK-listed Global ETF Rotation" in result.stdout
     assert "TQQQ Growth Income" in result.stdout
     assert "hk_blue_chip_leader_rotation" not in result.stdout
@@ -1110,24 +1105,22 @@ def test_print_strategy_switch_env_plan_rejects_hk_disabled_profiles(profile):
 
 def test_print_strategy_switch_env_plan_for_feature_snapshot_profile():
     result = subprocess.run(
-        [sys.executable, str(SWITCH_PLAN_SCRIPT_PATH), "--profile", "tech_communication_pullback_enhancement", "--json"],
+        [sys.executable, str(SWITCH_PLAN_SCRIPT_PATH), "--profile", "mega_cap_leader_rotation_top50_balanced", "--json"],
         check=True,
         capture_output=True,
         text=True,
     )
 
     plan = json.loads(result.stdout)
-    assert plan["canonical_profile"] == "tech_communication_pullback_enhancement"
+    assert plan["canonical_profile"] == "mega_cap_leader_rotation_top50_balanced"
     assert plan["profile_group"] == "snapshot_backed"
     assert plan["input_mode"] == "feature_snapshot"
     assert plan["requires_snapshot_artifacts"] is True
-    assert plan["requires_strategy_config_path"] is True
-    assert plan["config_source_policy"] == "bundled_or_env"
+    assert plan["requires_strategy_config_path"] is False
     assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_PATH"] == "<required>"
     assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH"] == "<required>"
     assert "IBKR_STRATEGY_CONFIG_PATH" not in plan["set_env"]
     assert "IBKR_STRATEGY_CONFIG_PATH" in plan["remove_if_present"]
-    assert "IBKR_RECONCILIATION_OUTPUT_PATH" in plan["optional_env"]
 
 
 def test_print_strategy_switch_env_plan_uses_manifest_contract_policy():
@@ -1168,7 +1161,7 @@ def test_load_platform_runtime_settings_reads_feature_snapshot_path(monkeypatch)
     assert settings.feature_snapshot_path == "/tmp/r1000-latest.csv"
 
 
-def test_load_platform_runtime_settings_reads_tech_pullback_runtime_config(monkeypatch):
+def test_load_platform_runtime_settings_rejects_tech_pullback_runtime_config(monkeypatch):
     monkeypatch.setenv(
         "RUNTIME_TARGET_JSON",
         runtime_target_json("tech_communication_pullback_enhancement"),
@@ -1179,40 +1172,15 @@ def test_load_platform_runtime_settings_reads_tech_pullback_runtime_config(monke
     monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH", "/tmp/cash-buffer.csv.manifest.json")
     monkeypatch.setenv("IBKR_STRATEGY_CONFIG_PATH", "/tmp/cash-buffer-config.json")
     monkeypatch.setenv("IBKR_RECONCILIATION_OUTPUT_PATH", "/tmp/reconciliation.json")
-    monkeypatch.setenv("IBKR_DRY_RUN_ONLY", "true")
 
-    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
-
-    assert settings.feature_snapshot_path == "/tmp/cash-buffer.csv"
-    assert settings.feature_snapshot_manifest_path == "/tmp/cash-buffer.csv.manifest.json"
-    assert settings.strategy_config_path == "/tmp/cash-buffer-config.json"
-    assert settings.strategy_config_source == "env"
-    assert settings.reconciliation_output_path == "/tmp/reconciliation.json"
-    assert settings.dry_run_only is True
-
-
-def test_load_platform_runtime_settings_uses_bundled_tech_pullback_config_when_env_missing(monkeypatch):
-    monkeypatch.setenv(
-        "RUNTIME_TARGET_JSON",
-        runtime_target_json("tech_communication_pullback_enhancement"),
-    )
-    monkeypatch.setenv("ACCOUNT_GROUP", "paper")
-    monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
-    monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "/tmp/cash-buffer.csv")
-    monkeypatch.delenv("IBKR_STRATEGY_CONFIG_PATH", raising=False)
-    monkeypatch.delenv("STRATEGY_CONFIG_PATH", raising=False)
-
-    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
-
-    assert settings.strategy_config_path is not None
-    assert settings.strategy_config_path.endswith("tech_communication_pullback_enhancement.json")
-    assert settings.strategy_config_source == "bundled_canonical_default"
+    with pytest.raises(ValueError, match="Unsupported STRATEGY_PROFILE"):
+        load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
 
 def test_load_platform_runtime_settings_derives_artifact_paths_from_root(monkeypatch, tmp_path):
     monkeypatch.setenv(
         "RUNTIME_TARGET_JSON",
-        runtime_target_json("tech_communication_pullback_enhancement"),
+        runtime_target_json("mega_cap_leader_rotation_top50_balanced"),
     )
     monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
@@ -1226,21 +1194,22 @@ def test_load_platform_runtime_settings_derives_artifact_paths_from_root(monkeyp
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
     assert settings.strategy_artifact_root == str(tmp_path)
-    assert settings.strategy_artifact_dir == str(tmp_path / "tech_communication_pullback_enhancement")
+    assert settings.strategy_artifact_dir == str(tmp_path / "mega_cap_leader_rotation_top50_balanced")
     assert settings.feature_snapshot_path == str(
-        tmp_path / "tech_communication_pullback_enhancement" / "tech_communication_pullback_enhancement_feature_snapshot_latest.csv"
+        tmp_path
+        / "mega_cap_leader_rotation_top50_balanced"
+        / "mega_cap_leader_rotation_top50_balanced_feature_snapshot_latest.csv"
     )
     assert settings.feature_snapshot_manifest_path == str(
         tmp_path
-        / "tech_communication_pullback_enhancement"
-        / "tech_communication_pullback_enhancement_feature_snapshot_latest.csv.manifest.json"
+        / "mega_cap_leader_rotation_top50_balanced"
+        / "mega_cap_leader_rotation_top50_balanced_feature_snapshot_latest.csv.manifest.json"
     )
     assert settings.reconciliation_output_path == str(
-        tmp_path / "tech_communication_pullback_enhancement" / "reconciliation"
+        tmp_path / "mega_cap_leader_rotation_top50_balanced" / "reconciliation"
     )
-    assert settings.strategy_config_path is not None
-    assert settings.strategy_config_path.endswith("tech_communication_pullback_enhancement.json")
-    assert settings.strategy_config_source == "bundled_canonical_default"
+    assert settings.strategy_config_path is None
+    assert settings.strategy_config_source is None
 
 
 

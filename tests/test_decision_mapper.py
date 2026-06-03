@@ -18,7 +18,7 @@ def test_map_strategy_decision_maps_weight_positions_and_safe_haven():
 
     target_weights, signal_desc, is_emergency, status_desc, metadata = map_strategy_decision(
         decision,
-        strategy_profile="tech_communication_pullback_enhancement",
+        strategy_profile="mega_cap_leader_rotation_top50_balanced",
         runtime_metadata={"status_icon": "🧲", "dry_run_only": True},
     )
 
@@ -49,7 +49,7 @@ def test_map_strategy_decision_returns_noop_when_flagged_no_execute():
 
     target_weights, signal_desc, is_emergency, status_desc, metadata = map_strategy_decision(
         decision,
-        strategy_profile="tech_communication_pullback_enhancement",
+        strategy_profile="mega_cap_leader_rotation_top50_balanced",
         runtime_metadata={
             "status_icon": "🛑",
             "snapshot_guard_decision": "fail_closed",
