@@ -105,3 +105,35 @@ def test_map_strategy_decision_translates_value_targets_for_semiconductor_strate
     assert metadata["allocation"]["target_mode"] == "weight"
     assert metadata["allocation"]["strategy_symbols"] == ("SOXL", "SOXX", "QQQI", "SPYI", "BOXX")
     assert metadata["allocation"]["targets"]["SOXL"] == 0.6
+
+
+def test_map_strategy_decision_no_executes_value_targets_when_total_equity_zero():
+    decision = StrategyDecision(
+        positions=(
+            PositionTarget(symbol="SOXL", target_value=30000.0),
+            PositionTarget(symbol="BOXX", target_value=15000.0, role="safe_haven"),
+        ),
+        diagnostics={
+            "signal_description": "risk on",
+            "status_description": "soxl>ma150",
+        },
+    )
+
+    target_weights, signal_desc, is_emergency, status_desc, metadata = map_strategy_decision(
+        decision,
+        strategy_profile="soxl_soxx_trend_income",
+        runtime_metadata={
+            "portfolio_total_equity": 0.0,
+            "status_icon": "blocked",
+            "managed_symbols": ("SOXL", "BOXX"),
+        },
+    )
+
+    assert target_weights is None
+    assert signal_desc == "risk on"
+    assert is_emergency is False
+    assert status_desc == "soxl>ma150"
+    assert metadata["actionable"] is False
+    assert metadata["risk_flags"] == ("no_execute",)
+    assert metadata["execution_blocked_reason"] == "non_positive_total_equity"
+    assert "allocation" not in metadata
