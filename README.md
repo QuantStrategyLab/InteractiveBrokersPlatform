@@ -2,63 +2,54 @@
 
 [Chinese README](README.zh-CN.md)
 
-> ⚠️ Investing involves risk. This project does not provide investment advice and is for educational and research purposes only.
+> Investing involves risk. This project does not provide investment advice and is for education, research, and engineering review only.
 
-## What this project does
+## What this repository is
 
-InteractiveBrokersPlatform is an **Execution platform** in the QuantStrategyLab ecosystem. It executes QuantStrategyLab US and Hong Kong equity strategies through Interactive Brokers runtime services, including account-group config, region handling, dry-run controls, and SEHK/HKD support.
+InteractiveBrokersPlatform is a QuantStrategyLab Interactive Brokers multi-market execution platform. It runs US and HK equity profiles through IBKR runtime services with dry-run, paper, and live controls.
 
-## Who this is for
+It is an execution layer, not a strategy research repository. Strategy logic comes from `UsEquityStrategies / HkEquityStrategies`; snapshot and validation artifacts come from `UsEquitySnapshotPipelines / HkEquitySnapshotPipelines` when a profile requires them.
 
-- Engineers and researchers who want to inspect, reproduce, or extend this part of the QuantStrategyLab stack.
-- Operators who need a clear entry point before reading the deeper runbooks or workflow files.
-- Reviewers who need to understand the repository purpose, safety boundary, and evidence requirements before enabling automation.
+## Runtime boundary
 
-## Current status
+- Loads only runtime-enabled strategy profiles exposed by the strategy packages.
+- Handles broker/API connectivity, dry-run checks, notifications, and deployment settings.
+- Must keep credentials in GitHub Secrets, cloud secret stores, or the broker-specific secret system, never in Git.
+- Should start with dry-run or paper mode before any live order path is enabled.
 
-Production-oriented broker integration; use paper or dry-run validation before real trading.
+## Direct vs snapshot-backed profiles
+
+Direct runtime profiles can usually run from market history or portfolio state. Snapshot-backed profiles need a current artifact bundle from the matching snapshot pipeline before this platform should execute them. The platform should not invent strategy eligibility; it should consume the status and artifacts published by the strategy and snapshot repositories.
+
+## Deploy safely
+
+1. Configure secrets and runtime variables outside Git.
+2. Run the workflow or service in dry-run mode.
+3. Review generated orders, logs, notifications, and reconciliation output.
+4. Confirm rollback steps and artifact versions.
+5. Enable scheduled or live execution only after the above checks are clear.
 
 ## Repository layout
 
-- `application/`, `entrypoints/`, `notifications/`, `strategy/`: Python package code.
-- `tests/`: unit and contract tests.
-- `docs/`: detailed design notes, runbooks, and evidence docs.
-- `.github/workflows/`: CI, scheduled jobs, and deployment workflows.
+- `tests/`: unit, contract, and regression tests.
+- `docs/`: runbooks, design notes, evidence, and integration contracts.
+- `.github/workflows/`: CI, scheduled jobs, release, or deployment workflows.
 - `scripts/`: operator scripts and local helpers.
+- `research/`: research configs and non-live candidate artifacts.
 
 ## Quick start
-
-From a fresh clone:
 
 ```bash
 python -m pip install -r requirements.txt
 python -m pytest -q
 ```
 
-If a command requires credentials, run it only after reading the relevant workflow or runbook and configuring secrets outside Git.
+## Useful docs
 
-## Deployment and operation
-
-Prepare IBKR connectivity, account identifiers, runtime variables, and strategy source. Run the workflow or service in dry-run mode, verify orders and notifications, then schedule production runs.
-
-Prefer manual or dry-run execution first. Enable schedules or live execution only after logs, artifacts, permissions, and rollback steps are reviewed.
-
-## Strategy performance and evidence
-
-Execution performance is measured by reliability and order correctness. Strategy performance must be reviewed in the strategy/snapshot repositories before routing orders through IBKR.
-
-README files are intentionally not a source of dated performance promises. Re-run the relevant tests, backtests, or pipeline jobs before relying on any result.
-
-## Safety notes
-
-- Never commit API keys, broker credentials, OAuth tokens, cookies, or account identifiers.
-- Run new strategies and platform changes in dry-run or paper mode before any live execution.
-- Review generated orders, artifacts, and logs manually before enabling schedules.
-
-## Contributing
-
-Keep changes small, reproducible, and covered by the narrowest useful tests. For strategy-facing changes, include the evidence artifact or command used to validate behavior.
+- [`docs/hk_equity_runtime.md`](docs/hk_equity_runtime.md)
+- [`docs/ibkr_paper_top50_switch.md`](docs/ibkr_paper_top50_switch.md)
+- [`docs/ibkr_runtime_rollout.md`](docs/ibkr_runtime_rollout.md)
 
 ## License
 
-See [LICENSE](LICENSE) if present in this repository.
+See [LICENSE](LICENSE).
