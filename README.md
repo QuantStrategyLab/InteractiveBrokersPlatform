@@ -1,5 +1,36 @@
 # InteractiveBrokersPlatform
 
+<!-- qsl-doc-overview:start -->
+
+> ⚠️ 投资有风险，不构成投资建议，仅供学习交流用途。
+> ⚠️ Investing involves risk. This project does not provide investment advice and is for educational and research purposes only.
+
+## Open-source overview / 开源项目入口
+
+| Item | Description |
+| --- | --- |
+| Project type | execution platform |
+| What it does | Interactive Brokers execution platform for QuantStrategyLab US/HK equity strategies with Cloud Run dispatch and dry-run controls. |
+| 中文说明 | IBKR 执行平台，负责加载策略、处理账户/市场输入，并通过 Cloud Run/调度执行 dry-run 或实盘路径。 |
+| Current status | Execution platform. Treat all live credentials, account IDs and order paths as production-sensitive. |
+
+### Quick start
+
+- `python -m pip install -e '.[test]'`
+- `python -m pytest -q`
+
+### Deploy / operate safely
+
+Start from dry-run GitHub Actions/Cloud Run deployment, verify secrets and account group config, then enable live execution only per account.
+
+### Strategy performance / evidence boundary
+
+Strategy performance is not owned here; review UsEquityStrategies, HkEquityStrategies and their snapshot pipeline evidence before enabling a profile.
+
+> Detailed runbooks, migration notes, workflow internals, and historical decisions are kept below. Start with this overview before using the lower-level operational sections.
+
+<!-- qsl-doc-overview:end -->
+
 > Risk warning: this project is not investment advice and is provided for study and engineering validation only.
 
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
