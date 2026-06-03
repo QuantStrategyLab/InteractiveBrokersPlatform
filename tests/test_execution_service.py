@@ -276,7 +276,7 @@ def test_execute_rebalance_hk_profile_dry_run_keeps_whole_share_orders_off_broke
         order_intent_cls=OrderIntent,
         translator=translate,
         strategy_symbols=["02834", "03110"],
-        strategy_profile="hk_listed_global_etf_rotation",
+        strategy_profile="hk_global_etf_tactical_rotation",
         account_group="paper-hk",
         service_name="ibkr-hk-paper",
         signal_metadata=_signal_metadata(

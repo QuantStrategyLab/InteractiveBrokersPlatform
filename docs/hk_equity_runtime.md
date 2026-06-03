@@ -14,7 +14,7 @@ QuantStrategyLab 现有平台仓库里，能接入港股股票交易的平台是
 
 ## 运行时设计
 
-本仓库只做券商运行时能力，不把港股策略逻辑硬编码进平台。当前已接入 `HkEquityStrategies` 的港股 profile 元数据，平台可选港股 profile 只暴露 `runtime_enabled` 的 `hk_listed_global_etf_rotation`。`hk_blue_chip_leader_rotation` 是 snapshot 架构占位，`hk_index_mean_reversion`、`hk_etf_regime_rotation` 是 `market_history` 研究候选，均留在研究/快照仓库，不进入平台可选列表。Cloud Run 通过 `RUNTIME_TARGET_JSON` / `STRATEGY_PROFILE` 选择当前运行策略。整体沿用美股策略的架构：
+本仓库只做券商运行时能力，不把港股策略逻辑硬编码进平台。当前已接入 `HkEquityStrategies` 的港股 profile 元数据，平台可选港股 profile 只暴露 `runtime_enabled` 的 `hk_global_etf_tactical_rotation`。`hk_blue_chip_leader_rotation` 是 snapshot 架构占位，`hk_index_mean_reversion`、`hk_etf_regime_rotation` 是 `market_history` 研究候选，均留在研究/快照仓库，不进入平台可选列表。Cloud Run 通过 `RUNTIME_TARGET_JSON` / `STRATEGY_PROFILE` 选择当前运行策略。整体沿用美股策略的架构：
 
 1. [`HkEquityStrategies`](https://github.com/QuantStrategyLab/HkEquityStrategies) 提供非 snapshot `hk_equity` 策略 profile、运行入口和 IBKR runtime adapter。
 2. [`HkEquitySnapshotPipelines`](https://github.com/QuantStrategyLab/HkEquitySnapshotPipelines) 发布 snapshot-backed profile 的 `<profile>_feature_snapshot_latest.csv`、manifest、ranking 和 release summary。
@@ -28,12 +28,12 @@ QuantStrategyLab 现有平台仓库里，能接入港股股票交易的平台是
 
 | Profile | Domain | Inputs | Target mode | Snapshot manifest | Status |
 | --- | --- | --- | --- | --- | --- |
-| `hk_listed_global_etf_rotation` | `hk_equity` | `market_history` | `weight` | not required | runtime-enabled; platform-selectable |
+| `hk_global_etf_tactical_rotation` | `hk_equity` | `market_history` | `weight` | not required | runtime-enabled; platform-selectable |
 | `hk_blue_chip_leader_rotation` | `hk_equity` | `feature_snapshot` | `weight` | required | snapshot scaffold; not platform-selectable |
 | `hk_index_mean_reversion` | `hk_equity` | `market_history` | `weight` | not required | research/backtest only; not platform-selectable |
 | `hk_etf_regime_rotation` | `hk_equity` | `market_history` | `weight` | not required | research/backtest only; not platform-selectable |
 
-`scripts/print_strategy_profile_status.py` 只显示平台可选 profile，因此只会列出 `hk_listed_global_etf_rotation` 这一条港股 profile。其他港股候选继续保留在研究文档和 snapshot pipeline，不应该出现在 Cloud Run switch plan 里。
+`scripts/print_strategy_profile_status.py` 只显示平台可选 profile，因此只会列出 `hk_global_etf_tactical_rotation` 这一条港股 profile。其他港股候选继续保留在研究文档和 snapshot pipeline，不应该出现在 Cloud Run switch plan 里。
 
 未来启用 snapshot-backed profile 后的最小策略配置示例；这些 profile 晋级为 `runtime_enabled` 前不会出现在平台可选列表：
 
@@ -76,7 +76,7 @@ IBKR_MARKET_DATA_SYMBOL_SUFFIX=.HK
 
 ```bash
 python scripts/print_strategy_switch_env_plan.py \
-  --profile hk_listed_global_etf_rotation \
+  --profile hk_global_etf_tactical_rotation \
   --dry-run-only \
   --deployment-selector hk-verify \
   --account-scope hk-verify \
@@ -87,7 +87,7 @@ python scripts/print_strategy_switch_env_plan.py \
 
 这个命令只打印计划。输出会显式包含：
 
-- `RUNTIME_TARGET_JSON`：`strategy_profile=hk_listed_global_etf_rotation`、`dry_run_only=true`、`execution_mode=paper`。
+- `RUNTIME_TARGET_JSON`：`strategy_profile=hk_global_etf_tactical_rotation`、`dry_run_only=true`、`execution_mode=paper`。
 - `IBKR_DRY_RUN_ONLY=true` 和 `IBKR_MARKET=HK` / `XHKG` / `SEHK` / `HKD` / `.HK`。
 - `remove_if_present`：清理 snapshot/config 相关环境变量，因为该 profile 直接使用 `market_history`。
 - `dry_run_plan`：检查 HK 行情权限、SEHK/HKD 映射、整数股和 lot-size、HKD 现金口径、通知和 runtime report。
@@ -99,7 +99,7 @@ python scripts/print_strategy_switch_env_plan.py \
 仓库的 `Deploy Cloud Run` workflow 支持手动 `workflow_dispatch` 目标 `hk-verify`。这个目标会设置或更新独立港股 dry-run 服务：
 
 - `CLOUD_RUN_SERVICE=interactive-brokers-hk-verify-service`（可通过输入改名）
-- `STRATEGY_PROFILE=hk_listed_global_etf_rotation`
+- `STRATEGY_PROFILE=hk_global_etf_tactical_rotation`
 - `ACCOUNT_GROUP=hk-verify`
 - `RUNTIME_TARGET_JSON.execution_mode=paper`、`dry_run_only=true`
 - `IBKR_DRY_RUN_ONLY=true`
@@ -147,5 +147,5 @@ gh workflow run sync-cloud-run-env.yml \
 - IBKR 港股实盘依赖账户权限、行情权限、Gateway 登录账户可见账号和交易许可；平台配置无法替代这些权限。
 - 不同 IBKR 账户或区域对港股 symbol 格式可能有差异，首批上线前需要用 dry-run 和小范围 symbol 做实盘连接验证。
 - `XHKG` 是否可用取决于部署环境里的 `pandas_market_calendars` 版本；如不可用，可用 `IBKR_MARKET_CALENDAR` 临时覆盖。
-- `hk_listed_global_etf_rotation` 已在策略包 `runtime_enabled`，可由 IBKR HK Cloud Run 通过运行时环境选择；`hk_blue_chip_leader_rotation`、`hk_index_mean_reversion`、`hk_etf_regime_rotation` 仍不进入平台可选列表。
+- `hk_global_etf_tactical_rotation` 已在策略包 `runtime_enabled`，可由 IBKR HK Cloud Run 通过运行时环境选择；`hk_blue_chip_leader_rotation`、`hk_index_mean_reversion`、`hk_etf_regime_rotation` 仍不进入平台可选列表。
 - 港股 `market_history` profile 运行后，需要持续用 IBKR HK 行情 feed 对 `02800`、`03033`、`02822`、`02840`、`03110`、`03188`、`02834`、`03175` 做行情、价差、lot-size 和订单预览/执行结果复核。

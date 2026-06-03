@@ -84,12 +84,12 @@ def test_strategy_display_name_translates_new_live_profiles():
     assert en_name("mega_cap_leader_rotation_top50_balanced") == "Mega Cap Leader Rotation Top50 Balanced"
     assert zh_name("nasdaq_sp500_smart_dca") == "纳斯达克 / 标普智能定投"
     assert en_name("nasdaq_sp500_smart_dca") == "Nasdaq/S&P 500 Smart DCA"
-    assert zh_name("hk_listed_global_etf_rotation") == "港股上市全球 ETF 轮动"
-    assert en_name("hk_listed_global_etf_rotation") == "HK-listed Global ETF Rotation"
-    assert zh_name("hk_high_dividend_low_vol_trend") == "港股高股息低波趋势"
-    assert en_name("hk_high_dividend_low_vol_trend") == "HK High Dividend Low-Volatility Trend"
-    assert zh_name("hk_low_vol_dividend_quality") == "港股低波股息质量"
-    assert en_name("hk_low_vol_dividend_quality") == "HK Low-Volatility Dividend Quality"
+    assert zh_name("hk_global_etf_tactical_rotation") == "港股全球 ETF 战术轮动"
+    assert en_name("hk_global_etf_tactical_rotation") == "HK Global ETF Tactical Rotation"
+    assert zh_name("hk_dividend_gold_defensive_rotation") == "港股股息黄金防守轮动"
+    assert en_name("hk_dividend_gold_defensive_rotation") == "HK Dividend-Gold Defensive Rotation"
+    assert zh_name("hk_low_vol_dividend_quality_snapshot") == "港股低波股息质量快照"
+    assert en_name("hk_low_vol_dividend_quality_snapshot") == "HK Low-Vol Dividend Quality Snapshot"
 
 
 def test_supported_strategy_profiles_have_translated_names():

@@ -549,9 +549,9 @@ def test_hk_direct_market_history_runtime_materializes_loader(monkeypatch):
 
     class FakeEntrypoint:
         manifest = StrategyManifest(
-            profile="hk_listed_global_etf_rotation",
+            profile="hk_global_etf_tactical_rotation",
             domain="hk_equity",
-            display_name="HK-listed Global ETF Rotation",
+            display_name="HK Global ETF Tactical Rotation",
             description="test",
             required_inputs=frozenset({"market_history"}),
             default_config={"universe_symbols": ("02800", "02834")},
@@ -578,7 +578,7 @@ def test_hk_direct_market_history_runtime_materializes_loader(monkeypatch):
             status_icon="🇭🇰",
             runtime_policy=StrategyRuntimePolicy(signal_effective_after_trading_days=1),
         ),
-        runtime_settings=_build_runtime_settings(profile="hk_listed_global_etf_rotation"),
+        runtime_settings=_build_runtime_settings(profile="hk_global_etf_tactical_rotation"),
         runtime_config={},
         merged_runtime_config={"universe_symbols": ("02800", "02834")},
         status_icon="🇭🇰",
@@ -587,7 +587,7 @@ def test_hk_direct_market_history_runtime_materializes_loader(monkeypatch):
     monkeypatch.setattr(
         strategy_runtime_module,
         "_requires_materialized_market_history",
-        lambda profile: profile == "hk_listed_global_etf_rotation",
+        lambda profile: profile == "hk_global_etf_tactical_rotation",
     )
 
     runtime.evaluate(

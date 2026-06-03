@@ -200,7 +200,7 @@ jobs:
               json.dumps(
                   {
                       "platform_id": "ibkr",
-                      "strategy_profile": "hk_listed_global_etf_rotation",
+                      "strategy_profile": "hk_global_etf_tactical_rotation",
                       "deployment_selector": os.environ["ACCOUNT_GROUP_VALUE"],
                       "account_scope": os.environ["ACCOUNT_GROUP_VALUE"],
                       "execution_mode": "paper",

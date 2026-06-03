@@ -32,7 +32,7 @@ def _should_add_local_src(candidate: Path) -> bool:
         return _has_catalog_marker(
             candidate,
             "hk_equity_strategies",
-            "hk_listed_global_etf_rotation",
+            "hk_global_etf_tactical_rotation",
         )
     return True
 
