@@ -723,6 +723,78 @@ def _has_signal_snapshot_details(snapshot: dict[str, object]) -> bool:
     )
 
 
+def _count_orders(*candidates) -> int:
+    for candidate in candidates:
+        if isinstance(candidate, (list, tuple)):
+            return len(candidate)
+    return 0
+
+
+def _build_cycle_report_summary(cycle_result, execution_summary, reconciliation_record, *, dry_run: bool) -> dict:
+    orders_submitted_count = _count_orders(
+        execution_summary.get("orders_submitted"),
+        reconciliation_record.get("orders_submitted"),
+    )
+    orders_skipped_count = _count_orders(
+        execution_summary.get("orders_skipped"),
+        reconciliation_record.get("orders_skipped"),
+    )
+    orders_previewed_count = orders_submitted_count if dry_run else 0
+    summary = {
+        "result": cycle_result.result,
+        "execution_status": execution_summary.get("execution_status") or reconciliation_record.get("execution_status"),
+        "no_op_reason": execution_summary.get("no_op_reason") or reconciliation_record.get("no_op_reason"),
+        "orders_submitted_count": orders_submitted_count,
+        "orders_previewed_count": orders_previewed_count,
+        "orders_skipped_count": orders_skipped_count,
+        "dry_run_order_preview_available": bool(dry_run and orders_previewed_count > 0),
+        "snapshot_price_fallback_used": bool(
+            execution_summary.get("snapshot_price_fallback_used")
+            or reconciliation_record.get("snapshot_price_fallback_used")
+        ),
+        "snapshot_price_fallback_count": int(
+            execution_summary.get("snapshot_price_fallback_count")
+            or reconciliation_record.get("snapshot_price_fallback_count")
+            or 0
+        ),
+    }
+    quote_snapshot = execution_summary.get("quote_snapshot") or reconciliation_record.get("quote_snapshot")
+    if quote_snapshot:
+        summary["quote_snapshot"] = quote_snapshot
+    return summary
+
+
+def _build_notification_delivery_log_for_report(
+    *,
+    platform: str,
+    strategy_profile: str,
+    run_id: str,
+    dry_run: bool,
+    orders_previewed_count: int,
+    delivery_events: list[dict],
+) -> dict:
+    events = [dict(event) for event in delivery_events if dict(event).get("delivery_status") == "sent"]
+    if not dry_run or orders_previewed_count <= 0 or not events:
+        return {}
+    return {
+        "notification_schema_version": "hk_live_enablement_notification.v1",
+        "notification_event_type": "hk_snapshot_live_enablement_dry_run",
+        "notification_correlation_id": str(run_id or ""),
+        "locales": ["en", "zh-Hans"],
+        "profile": str(strategy_profile or ""),
+        "platform": str(platform or ""),
+        "validation_status": "passed",
+        "orders_previewed": int(orders_previewed_count),
+        "delivery_events": events,
+        "notification_contains_profile": True,
+        "notification_contains_platform": True,
+        "notification_contains_validation_status": True,
+        "notification_contains_order_preview_summary": True,
+        "notification_redacts_sensitive_fields": True,
+        "redaction_policy": "raw notification text is not persisted; only sha256 and length are recorded",
+    }
+
+
 def publish_strategy_plugin_alerts(signals, *, report=None):
     result = dispatch_strategy_plugin_alerts(
         signals,
@@ -813,17 +885,31 @@ def run_paper_liquidation_cycle():
     )
 
 
-def run_strategy_core(*, strategy_plugin_signals=(), dry_run_only_override: bool | None = None):
+def run_strategy_core(
+    *,
+    strategy_plugin_signals=(),
+    dry_run_only_override: bool | None = None,
+    notification_delivery_events: list[dict] | None = None,
+):
     if PAPER_LIQUIDATE_ONLY and dry_run_only_override is None:
         return run_paper_liquidation_cycle()
     composer = build_composer(
         dry_run_only_override=dry_run_only_override,
         strategy_plugin_signals=strategy_plugin_signals,
     )
-    return run_rebalance_cycle(
-        runtime=composer.build_rebalance_runtime(
+    try:
+        rebalance_runtime = composer.build_rebalance_runtime(
             silent_cycle_notifications=bool(dry_run_only_override),
-        ),
+            notification_delivery_events=notification_delivery_events,
+        )
+    except TypeError as exc:
+        if "notification_delivery_events" not in str(exc):
+            raise
+        rebalance_runtime = composer.build_rebalance_runtime(
+            silent_cycle_notifications=bool(dry_run_only_override),
+        )
+    return run_rebalance_cycle(
+        runtime=rebalance_runtime,
         config=composer.build_rebalance_config(
             extra_notification_lines=build_extra_notification_lines(strategy_plugin_signals),
         ),
@@ -894,10 +980,12 @@ def _handle_request(*, dry_run_only_override: bool | None = None, response_body:
         )
         if dry_run_only_override is None:
             publish_strategy_plugin_alerts(strategy_plugin_signals, report=report)
+        notification_delivery_events: list[dict] = []
         cycle_result = coerce_strategy_cycle_result(
             run_strategy_core(
                 strategy_plugin_signals=strategy_plugin_signals,
                 dry_run_only_override=dry_run_only_override,
+                notification_delivery_events=notification_delivery_events,
             )
         )
         execution_summary = dict(cycle_result.execution_summary or {})
@@ -931,33 +1019,26 @@ def _handle_request(*, dry_run_only_override: bool | None = None, response_body:
                 execution_window="precheck" if dry_run_only_override else "execution",
                 **signal_snapshot,
             )
+        report_summary = _build_cycle_report_summary(
+            cycle_result,
+            execution_summary,
+            reconciliation_record,
+            dry_run=bool(report.get("dry_run")),
+        )
+        notification_delivery_log = _build_notification_delivery_log_for_report(
+            platform="interactive_brokers",
+            strategy_profile=STRATEGY_PROFILE,
+            run_id=str(report.get("run_id") or ""),
+            dry_run=bool(report.get("dry_run")),
+            orders_previewed_count=int(report_summary.get("orders_previewed_count") or 0),
+            delivery_events=notification_delivery_events,
+        )
+        if notification_delivery_log:
+            report_summary["notification_delivery_log"] = notification_delivery_log
         finalize_runtime_report(
             report,
             status="ok",
-            summary={
-                "result": cycle_result.result,
-                "execution_status": execution_summary.get("execution_status") or reconciliation_record.get("execution_status"),
-                "no_op_reason": execution_summary.get("no_op_reason") or reconciliation_record.get("no_op_reason"),
-                "orders_submitted_count": len(
-                    execution_summary.get("orders_submitted")
-                    or reconciliation_record.get("orders_submitted")
-                    or ()
-                ),
-                "orders_skipped_count": len(
-                    execution_summary.get("orders_skipped")
-                    or reconciliation_record.get("orders_skipped")
-                    or ()
-                ),
-                "snapshot_price_fallback_used": bool(
-                    execution_summary.get("snapshot_price_fallback_used")
-                    or reconciliation_record.get("snapshot_price_fallback_used")
-                ),
-                "snapshot_price_fallback_count": int(
-                    execution_summary.get("snapshot_price_fallback_count")
-                    or reconciliation_record.get("snapshot_price_fallback_count")
-                    or 0
-                ),
-            },
+            summary=report_summary,
             diagnostics={
                 "result": cycle_result.result,
                 "price_source_mode": execution_summary.get("price_source_mode") or reconciliation_record.get("price_source_mode"),

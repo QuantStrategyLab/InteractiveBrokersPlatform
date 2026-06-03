@@ -78,6 +78,7 @@ def build_reconciliation_record(
         "current_stock_weight": execution_summary.get("current_stock_weight"),
         "current_safe_haven_weight": execution_summary.get("current_safe_haven_weight"),
         "price_source_mode": execution_summary.get("price_source_mode"),
+        "quote_snapshot": execution_summary.get("quote_snapshot") or {},
         "snapshot_price_fallback_used": execution_summary.get("snapshot_price_fallback_used"),
         "snapshot_price_fallback_count": execution_summary.get("snapshot_price_fallback_count"),
         "snapshot_price_fallback_symbols": execution_summary.get("snapshot_price_fallback_symbols") or [],

@@ -302,6 +302,7 @@ def test_execute_rebalance_hk_profile_dry_run_keeps_whole_share_orders_off_broke
     assert {order["symbol"] for order in summary["orders_submitted"]} == {"02834", "03110"}
     assert all(order["status"] == "dry_run" for order in summary["orders_submitted"])
     assert all(float(order["quantity"]).is_integer() for order in summary["orders_submitted"])
+    assert {quote["symbol"] for quote in summary["quote_snapshot"]["quotes"]} == {"02834", "03110"}
     assert any(log.startswith("DRY_RUN buy 02834") for log in trade_logs)
     assert any(log.startswith("DRY_RUN buy 03110") for log in trade_logs)
 

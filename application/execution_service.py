@@ -215,10 +215,25 @@ def get_market_prices(
     symbols,
     *,
     fetch_quote_snapshots,
+    quote_recorder=None,
 ):
     """Fetch market prices for multiple symbols in one pass."""
     quotes = fetch_quote_snapshots(ib, symbols)
+    if quote_recorder is not None:
+        for symbol, quote in quotes.items():
+            quote_recorder(symbol, quote)
     return {symbol: quote.last_price for symbol, quote in quotes.items()}
+
+
+def _serialize_quote_snapshot(snapshot, *, symbol: str | None = None) -> dict:
+    return {
+        "symbol": str(getattr(snapshot, "symbol", "") or symbol or "").strip().upper(),
+        "as_of": str(getattr(snapshot, "as_of", "") or ""),
+        "last_price": float(getattr(snapshot, "last_price", 0.0) or 0.0),
+        "bid_price": getattr(snapshot, "bid_price", None),
+        "ask_price": getattr(snapshot, "ask_price", None),
+        "currency": str(getattr(snapshot, "currency", "") or "").strip(),
+    }
 
 
 def check_order_submitted(report, *, translator):
@@ -1005,6 +1020,14 @@ def execute_rebalance(
     equity = account_values.get("equity", 0)
     normalized_account_ids = _normalize_account_ids(account_ids)
     order_account_id = _resolve_order_account_id(normalized_account_ids)
+    quote_snapshots_by_symbol: dict[str, dict] = {}
+
+    def record_quote_snapshot(symbol, snapshot) -> None:
+        payload = _serialize_quote_snapshot(snapshot, symbol=symbol)
+        symbol = payload.get("symbol")
+        if symbol:
+            quote_snapshots_by_symbol[symbol] = payload
+
     execution_summary = {
         "mode": "dry_run" if dry_run_only else "paper",
         "strategy_profile": strategy_profile,
@@ -1091,6 +1114,7 @@ def execute_rebalance(
         ib,
         all_symbols,
         fetch_quote_snapshots=fetch_quote_snapshots,
+        quote_recorder=record_quote_snapshot,
     )
     prices, snapshot_price_fallback_symbols = _apply_snapshot_price_fallbacks(
         prices,
@@ -1105,6 +1129,9 @@ def execute_rebalance(
     execution_summary["price_fallback_symbols"] = list(snapshot_price_fallback_symbols)
     execution_summary["price_fallback_count"] = len(snapshot_price_fallback_symbols)
     execution_summary["price_fallback_source"] = price_fallback_source if snapshot_price_fallback_symbols else None
+    execution_summary["quote_snapshot"] = {
+        "quotes": list(quote_snapshots_by_symbol.values()),
+    }
     if snapshot_price_fallback_symbols:
         execution_summary["price_source_mode"] = f"mixed_market_quote_{price_fallback_source}"
 
