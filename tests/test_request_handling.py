@@ -582,6 +582,8 @@ def test_handle_request_runtime_error_fallback_sends_telegram(strategy_module, m
     monkeypatch.setattr(strategy_module, "_handle_request", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
     monkeypatch.setattr(strategy_module, "TG_TOKEN", "token-1")
     monkeypatch.setattr(strategy_module, "TG_CHAT_ID", "chat-1")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN", "plugin-token")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS", "plugin-chat")
     monkeypatch.setattr(strategy_module.requests, "post", fake_post)
 
     with strategy_module.app.test_request_context("/", method="POST"):

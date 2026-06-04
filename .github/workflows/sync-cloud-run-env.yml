@@ -93,36 +93,36 @@ jobs:
       IBKR_MIN_RESERVED_CASH_USD: ${{ vars.IBKR_MIN_RESERVED_CASH_USD }}
       IBKR_RESERVED_CASH_RATIO: ${{ vars.IBKR_RESERVED_CASH_RATIO }}
       IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD: ${{ vars.IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD }}
-      CRISIS_ALERT_CHANNELS: ${{ vars.CRISIS_ALERT_CHANNELS }}
-      CRISIS_ALERT_EMAIL_RECIPIENTS: ${{ vars.CRISIS_ALERT_EMAIL_RECIPIENTS }}
-      CRISIS_ALERT_EMAIL_SENDER_EMAIL: ${{ vars.CRISIS_ALERT_EMAIL_SENDER_EMAIL }}
-      CRISIS_ALERT_EMAIL_SENDER_PASSWORD_SECRET_NAME: ${{ vars.CRISIS_ALERT_EMAIL_SENDER_PASSWORD_SECRET_NAME }}
-      CRISIS_ALERT_EMAIL_SMTP_HOST: ${{ vars.CRISIS_ALERT_EMAIL_SMTP_HOST }}
-      CRISIS_ALERT_EMAIL_SMTP_PORT: ${{ vars.CRISIS_ALERT_EMAIL_SMTP_PORT }}
-      CRISIS_ALERT_EMAIL_SMTP_SECURITY: ${{ vars.CRISIS_ALERT_EMAIL_SMTP_SECURITY }}
-      CRISIS_ALERT_SMS_RECIPIENTS: ${{ vars.CRISIS_ALERT_SMS_RECIPIENTS }}
-      CRISIS_ALERT_SMS_PROVIDER: ${{ vars.CRISIS_ALERT_SMS_PROVIDER }}
-      CRISIS_ALERT_SMS_ACCOUNT_ID: ${{ vars.CRISIS_ALERT_SMS_ACCOUNT_ID }}
-      CRISIS_ALERT_SMS_AUTH_TOKEN_SECRET_NAME: ${{ vars.CRISIS_ALERT_SMS_AUTH_TOKEN_SECRET_NAME }}
-      CRISIS_ALERT_SMS_SENDER: ${{ vars.CRISIS_ALERT_SMS_SENDER }}
-      CRISIS_ALERT_SMS_MESSAGING_SERVICE_ID: ${{ vars.CRISIS_ALERT_SMS_MESSAGING_SERVICE_ID }}
-      CRISIS_ALERT_SMS_API_BASE_URL: ${{ vars.CRISIS_ALERT_SMS_API_BASE_URL }}
-      CRISIS_ALERT_SMS_BODY_MAX_CHARS: ${{ vars.CRISIS_ALERT_SMS_BODY_MAX_CHARS }}
-      CRISIS_ALERT_PUSH_RECIPIENTS: ${{ vars.CRISIS_ALERT_PUSH_RECIPIENTS }}
-      CRISIS_ALERT_PUSH_PROVIDER: ${{ vars.CRISIS_ALERT_PUSH_PROVIDER }}
-      CRISIS_ALERT_PUSH_APP_TOKEN_SECRET_NAME: ${{ vars.CRISIS_ALERT_PUSH_APP_TOKEN_SECRET_NAME }}
-      CRISIS_ALERT_PUSH_ACCESS_TOKEN_SECRET_NAME: ${{ vars.CRISIS_ALERT_PUSH_ACCESS_TOKEN_SECRET_NAME }}
-      CRISIS_ALERT_PUSH_API_BASE_URL: ${{ vars.CRISIS_ALERT_PUSH_API_BASE_URL }}
-      CRISIS_ALERT_PUSH_DEVICE: ${{ vars.CRISIS_ALERT_PUSH_DEVICE }}
-      CRISIS_ALERT_PUSH_PRIORITY: ${{ vars.CRISIS_ALERT_PUSH_PRIORITY }}
-      CRISIS_ALERT_PUSH_TAGS: ${{ vars.CRISIS_ALERT_PUSH_TAGS }}
-      CRISIS_ALERT_PUSH_BODY_MAX_CHARS: ${{ vars.CRISIS_ALERT_PUSH_BODY_MAX_CHARS }}
-      CRISIS_ALERT_TELEGRAM_CHAT_IDS: ${{ vars.CRISIS_ALERT_TELEGRAM_CHAT_IDS }}
-      CRISIS_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME: ${{ vars.CRISIS_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME }}
-      CRISIS_ALERT_TELEGRAM_API_BASE_URL: ${{ vars.CRISIS_ALERT_TELEGRAM_API_BASE_URL }}
-      CRISIS_ALERT_TELEGRAM_PARSE_MODE: ${{ vars.CRISIS_ALERT_TELEGRAM_PARSE_MODE }}
-      CRISIS_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW: ${{ vars.CRISIS_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW }}
-      CRISIS_ALERT_TELEGRAM_BODY_MAX_CHARS: ${{ vars.CRISIS_ALERT_TELEGRAM_BODY_MAX_CHARS }}
+      STRATEGY_PLUGIN_ALERT_CHANNELS: ${{ vars.STRATEGY_PLUGIN_ALERT_CHANNELS }}
+      STRATEGY_PLUGIN_ALERT_EMAIL_RECIPIENTS: ${{ vars.STRATEGY_PLUGIN_ALERT_EMAIL_RECIPIENTS }}
+      STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_EMAIL: ${{ vars.STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_EMAIL }}
+      STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD_SECRET_NAME: ${{ vars.STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD_SECRET_NAME }}
+      STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_HOST: ${{ vars.STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_HOST }}
+      STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_PORT: ${{ vars.STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_PORT }}
+      STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_SECURITY: ${{ vars.STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_SECURITY }}
+      STRATEGY_PLUGIN_ALERT_SMS_RECIPIENTS: ${{ vars.STRATEGY_PLUGIN_ALERT_SMS_RECIPIENTS }}
+      STRATEGY_PLUGIN_ALERT_SMS_PROVIDER: ${{ vars.STRATEGY_PLUGIN_ALERT_SMS_PROVIDER }}
+      STRATEGY_PLUGIN_ALERT_SMS_ACCOUNT_ID: ${{ vars.STRATEGY_PLUGIN_ALERT_SMS_ACCOUNT_ID }}
+      STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN_SECRET_NAME: ${{ vars.STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN_SECRET_NAME }}
+      STRATEGY_PLUGIN_ALERT_SMS_SENDER: ${{ vars.STRATEGY_PLUGIN_ALERT_SMS_SENDER }}
+      STRATEGY_PLUGIN_ALERT_SMS_MESSAGING_SERVICE_ID: ${{ vars.STRATEGY_PLUGIN_ALERT_SMS_MESSAGING_SERVICE_ID }}
+      STRATEGY_PLUGIN_ALERT_SMS_API_BASE_URL: ${{ vars.STRATEGY_PLUGIN_ALERT_SMS_API_BASE_URL }}
+      STRATEGY_PLUGIN_ALERT_SMS_BODY_MAX_CHARS: ${{ vars.STRATEGY_PLUGIN_ALERT_SMS_BODY_MAX_CHARS }}
+      STRATEGY_PLUGIN_ALERT_PUSH_RECIPIENTS: ${{ vars.STRATEGY_PLUGIN_ALERT_PUSH_RECIPIENTS }}
+      STRATEGY_PLUGIN_ALERT_PUSH_PROVIDER: ${{ vars.STRATEGY_PLUGIN_ALERT_PUSH_PROVIDER }}
+      STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN_SECRET_NAME: ${{ vars.STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN_SECRET_NAME }}
+      STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN_SECRET_NAME: ${{ vars.STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN_SECRET_NAME }}
+      STRATEGY_PLUGIN_ALERT_PUSH_API_BASE_URL: ${{ vars.STRATEGY_PLUGIN_ALERT_PUSH_API_BASE_URL }}
+      STRATEGY_PLUGIN_ALERT_PUSH_DEVICE: ${{ vars.STRATEGY_PLUGIN_ALERT_PUSH_DEVICE }}
+      STRATEGY_PLUGIN_ALERT_PUSH_PRIORITY: ${{ vars.STRATEGY_PLUGIN_ALERT_PUSH_PRIORITY }}
+      STRATEGY_PLUGIN_ALERT_PUSH_TAGS: ${{ vars.STRATEGY_PLUGIN_ALERT_PUSH_TAGS }}
+      STRATEGY_PLUGIN_ALERT_PUSH_BODY_MAX_CHARS: ${{ vars.STRATEGY_PLUGIN_ALERT_PUSH_BODY_MAX_CHARS }}
+      STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS: ${{ vars.STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS }}
+      STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME: ${{ vars.STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME }}
+      STRATEGY_PLUGIN_ALERT_TELEGRAM_API_BASE_URL: ${{ vars.STRATEGY_PLUGIN_ALERT_TELEGRAM_API_BASE_URL }}
+      STRATEGY_PLUGIN_ALERT_TELEGRAM_PARSE_MODE: ${{ vars.STRATEGY_PLUGIN_ALERT_TELEGRAM_PARSE_MODE }}
+      STRATEGY_PLUGIN_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW: ${{ vars.STRATEGY_PLUGIN_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW }}
+      STRATEGY_PLUGIN_ALERT_TELEGRAM_BODY_MAX_CHARS: ${{ vars.STRATEGY_PLUGIN_ALERT_TELEGRAM_BODY_MAX_CHARS }}
       # Strategy-owned defaults continue to come from UsEquityStrategies; this workflow only syncs platform/runtime inputs.
       EXECUTION_REPORT_GCS_URI: ${{ vars.EXECUTION_REPORT_GCS_URI }}
       IB_GATEWAY_ZONE: ${{ vars.IB_GATEWAY_ZONE }}
@@ -130,11 +130,11 @@ jobs:
       GLOBAL_TELEGRAM_CHAT_ID: ${{ vars.GLOBAL_TELEGRAM_CHAT_ID }}
       NOTIFY_LANG: ${{ vars.NOTIFY_LANG }}
       TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-      CRISIS_ALERT_EMAIL_SENDER_PASSWORD: ${{ secrets.CRISIS_ALERT_EMAIL_SENDER_PASSWORD }}
-      CRISIS_ALERT_SMS_AUTH_TOKEN: ${{ secrets.CRISIS_ALERT_SMS_AUTH_TOKEN }}
-      CRISIS_ALERT_PUSH_APP_TOKEN: ${{ secrets.CRISIS_ALERT_PUSH_APP_TOKEN }}
-      CRISIS_ALERT_PUSH_ACCESS_TOKEN: ${{ secrets.CRISIS_ALERT_PUSH_ACCESS_TOKEN }}
-      CRISIS_ALERT_TELEGRAM_BOT_TOKEN: ${{ secrets.CRISIS_ALERT_TELEGRAM_BOT_TOKEN }}
+      STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD: ${{ secrets.STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD }}
+      STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN: ${{ secrets.STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN }}
+      STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN: ${{ secrets.STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN }}
+      STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN: ${{ secrets.STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN }}
+      STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN: ${{ secrets.STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN }}
     steps:
       - name: Check whether Cloud Run automation is enabled
         id: config
@@ -569,11 +569,46 @@ jobs:
             "CRISIS_ALERT_SMTP_PASSWORD"
             "CRISIS_ALERT_SMTP_STARTTLS"
             "CRISIS_ALERT_SMTP_SSL"
+            "CRISIS_ALERT_CHANNELS"
+            "CRISIS_ALERT_EMAIL_RECIPIENTS"
+            "CRISIS_ALERT_EMAIL_SENDER_EMAIL"
+            "CRISIS_ALERT_EMAIL_SENDER_PASSWORD"
+            "CRISIS_ALERT_EMAIL_SMTP_HOST"
+            "CRISIS_ALERT_EMAIL_SMTP_PORT"
+            "CRISIS_ALERT_EMAIL_SMTP_SECURITY"
+            "CRISIS_ALERT_SMS_RECIPIENTS"
+            "CRISIS_ALERT_SMS_PROVIDER"
+            "CRISIS_ALERT_SMS_ACCOUNT_ID"
+            "CRISIS_ALERT_SMS_AUTH_TOKEN"
+            "CRISIS_ALERT_SMS_SENDER"
+            "CRISIS_ALERT_SMS_MESSAGING_SERVICE_ID"
+            "CRISIS_ALERT_SMS_API_BASE_URL"
+            "CRISIS_ALERT_SMS_BODY_MAX_CHARS"
+            "CRISIS_ALERT_PUSH_RECIPIENTS"
+            "CRISIS_ALERT_PUSH_PROVIDER"
+            "CRISIS_ALERT_PUSH_APP_TOKEN"
+            "CRISIS_ALERT_PUSH_ACCESS_TOKEN"
+            "CRISIS_ALERT_PUSH_API_BASE_URL"
+            "CRISIS_ALERT_PUSH_DEVICE"
+            "CRISIS_ALERT_PUSH_PRIORITY"
+            "CRISIS_ALERT_PUSH_TAGS"
+            "CRISIS_ALERT_PUSH_BODY_MAX_CHARS"
+            "CRISIS_ALERT_TELEGRAM_CHAT_IDS"
+            "CRISIS_ALERT_TELEGRAM_BOT_TOKEN"
+            "CRISIS_ALERT_TELEGRAM_API_BASE_URL"
+            "CRISIS_ALERT_TELEGRAM_PARSE_MODE"
+            "CRISIS_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW"
+            "CRISIS_ALERT_TELEGRAM_BODY_MAX_CHARS"
           )
           shared_remove_secret_vars=(
             "CRISIS_ALERT_SMTP_PASSWORD"
             "CRISIS_ALERT_GOOGLE_VOICE_GMAIL_APP_PASSWORD"
             "CRISIS_ALERT_GOOGLE_VOICE_SENDER_PASSWORD"
+            "CRISIS_ALERT_EMAIL_SENDER_PASSWORD"
+            "CRISIS_ALERT_SMS_AUTH_TOKEN"
+            "CRISIS_ALERT_PUSH_APP_TOKEN"
+            "CRISIS_ALERT_PUSH_ACCESS_TOKEN"
+            "CRISIS_ALERT_TELEGRAM_BOT_TOKEN"
           )
 
           if [ -n "${TELEGRAM_TOKEN_SECRET_NAME:-}" ]; then
@@ -583,209 +618,209 @@ jobs:
             shared_remove_secret_vars+=("TELEGRAM_TOKEN")
           fi
 
-          if [ -n "${CRISIS_ALERT_EMAIL_SENDER_PASSWORD_SECRET_NAME:-}" ]; then
-            shared_secret_pairs+=("CRISIS_ALERT_EMAIL_SENDER_PASSWORD=${CRISIS_ALERT_EMAIL_SENDER_PASSWORD_SECRET_NAME}:latest")
-            shared_remove_env_vars+=("CRISIS_ALERT_EMAIL_SENDER_PASSWORD")
-          elif [ -n "${CRISIS_ALERT_EMAIL_SENDER_PASSWORD:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_EMAIL_SENDER_PASSWORD=${CRISIS_ALERT_EMAIL_SENDER_PASSWORD}")
-            shared_remove_secret_vars+=("CRISIS_ALERT_EMAIL_SENDER_PASSWORD")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD_SECRET_NAME:-}" ]; then
+            shared_secret_pairs+=("STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD=${STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD_SECRET_NAME}:latest")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD")
+          elif [ -n "${STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD=${STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD}")
+            shared_remove_secret_vars+=("STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_EMAIL_SENDER_PASSWORD")
-            shared_remove_secret_vars+=("CRISIS_ALERT_EMAIL_SENDER_PASSWORD")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD")
+            shared_remove_secret_vars+=("STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD")
           fi
 
-          if [ -n "${CRISIS_ALERT_SMS_AUTH_TOKEN_SECRET_NAME:-}" ]; then
-            shared_secret_pairs+=("CRISIS_ALERT_SMS_AUTH_TOKEN=${CRISIS_ALERT_SMS_AUTH_TOKEN_SECRET_NAME}:latest")
-            shared_remove_env_vars+=("CRISIS_ALERT_SMS_AUTH_TOKEN")
-          elif [ -n "${CRISIS_ALERT_SMS_AUTH_TOKEN:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_SMS_AUTH_TOKEN=${CRISIS_ALERT_SMS_AUTH_TOKEN}")
-            shared_remove_secret_vars+=("CRISIS_ALERT_SMS_AUTH_TOKEN")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN_SECRET_NAME:-}" ]; then
+            shared_secret_pairs+=("STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN=${STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN_SECRET_NAME}:latest")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN")
+          elif [ -n "${STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN=${STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN}")
+            shared_remove_secret_vars+=("STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_SMS_AUTH_TOKEN")
-            shared_remove_secret_vars+=("CRISIS_ALERT_SMS_AUTH_TOKEN")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN")
+            shared_remove_secret_vars+=("STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN")
           fi
 
-          if [ -n "${CRISIS_ALERT_PUSH_APP_TOKEN_SECRET_NAME:-}" ]; then
-            shared_secret_pairs+=("CRISIS_ALERT_PUSH_APP_TOKEN=${CRISIS_ALERT_PUSH_APP_TOKEN_SECRET_NAME}:latest")
-            shared_remove_env_vars+=("CRISIS_ALERT_PUSH_APP_TOKEN")
-          elif [ -n "${CRISIS_ALERT_PUSH_APP_TOKEN:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_PUSH_APP_TOKEN=${CRISIS_ALERT_PUSH_APP_TOKEN}")
-            shared_remove_secret_vars+=("CRISIS_ALERT_PUSH_APP_TOKEN")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN_SECRET_NAME:-}" ]; then
+            shared_secret_pairs+=("STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN=${STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN_SECRET_NAME}:latest")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN")
+          elif [ -n "${STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN=${STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN}")
+            shared_remove_secret_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_PUSH_APP_TOKEN")
-            shared_remove_secret_vars+=("CRISIS_ALERT_PUSH_APP_TOKEN")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN")
+            shared_remove_secret_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN")
           fi
 
-          if [ -n "${CRISIS_ALERT_PUSH_ACCESS_TOKEN_SECRET_NAME:-}" ]; then
-            shared_secret_pairs+=("CRISIS_ALERT_PUSH_ACCESS_TOKEN=${CRISIS_ALERT_PUSH_ACCESS_TOKEN_SECRET_NAME}:latest")
-            shared_remove_env_vars+=("CRISIS_ALERT_PUSH_ACCESS_TOKEN")
-          elif [ -n "${CRISIS_ALERT_PUSH_ACCESS_TOKEN:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_PUSH_ACCESS_TOKEN=${CRISIS_ALERT_PUSH_ACCESS_TOKEN}")
-            shared_remove_secret_vars+=("CRISIS_ALERT_PUSH_ACCESS_TOKEN")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN_SECRET_NAME:-}" ]; then
+            shared_secret_pairs+=("STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN=${STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN_SECRET_NAME}:latest")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN")
+          elif [ -n "${STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN=${STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN}")
+            shared_remove_secret_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_PUSH_ACCESS_TOKEN")
-            shared_remove_secret_vars+=("CRISIS_ALERT_PUSH_ACCESS_TOKEN")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN")
+            shared_remove_secret_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN")
           fi
 
-          if [ -n "${CRISIS_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME:-}" ]; then
-            shared_secret_pairs+=("CRISIS_ALERT_TELEGRAM_BOT_TOKEN=${CRISIS_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME}:latest")
-            shared_remove_env_vars+=("CRISIS_ALERT_TELEGRAM_BOT_TOKEN")
-          elif [ -n "${CRISIS_ALERT_TELEGRAM_BOT_TOKEN:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_TELEGRAM_BOT_TOKEN=${CRISIS_ALERT_TELEGRAM_BOT_TOKEN}")
-            shared_remove_secret_vars+=("CRISIS_ALERT_TELEGRAM_BOT_TOKEN")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME:-}" ]; then
+            shared_secret_pairs+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN=${STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME}:latest")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN")
+          elif [ -n "${STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN=${STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN}")
+            shared_remove_secret_vars+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_TELEGRAM_BOT_TOKEN")
-            shared_remove_secret_vars+=("CRISIS_ALERT_TELEGRAM_BOT_TOKEN")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN")
+            shared_remove_secret_vars+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN")
           fi
 
-          if [ -n "${CRISIS_ALERT_CHANNELS:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_CHANNELS=${CRISIS_ALERT_CHANNELS}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_CHANNELS:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_CHANNELS=${STRATEGY_PLUGIN_ALERT_CHANNELS}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_CHANNELS")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_CHANNELS")
           fi
 
-          if [ -n "${CRISIS_ALERT_EMAIL_RECIPIENTS:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_EMAIL_RECIPIENTS=${CRISIS_ALERT_EMAIL_RECIPIENTS}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_EMAIL_RECIPIENTS:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_EMAIL_RECIPIENTS=${STRATEGY_PLUGIN_ALERT_EMAIL_RECIPIENTS}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_EMAIL_RECIPIENTS")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_EMAIL_RECIPIENTS")
           fi
 
-          if [ -n "${CRISIS_ALERT_EMAIL_SENDER_EMAIL:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_EMAIL_SENDER_EMAIL=${CRISIS_ALERT_EMAIL_SENDER_EMAIL}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_EMAIL:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_EMAIL=${STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_EMAIL}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_EMAIL_SENDER_EMAIL")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_EMAIL")
           fi
 
-          if [ -n "${CRISIS_ALERT_EMAIL_SMTP_HOST:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_EMAIL_SMTP_HOST=${CRISIS_ALERT_EMAIL_SMTP_HOST}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_HOST:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_HOST=${STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_HOST}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_EMAIL_SMTP_HOST")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_HOST")
           fi
 
-          if [ -n "${CRISIS_ALERT_EMAIL_SMTP_PORT:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_EMAIL_SMTP_PORT=${CRISIS_ALERT_EMAIL_SMTP_PORT}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_PORT:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_PORT=${STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_PORT}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_EMAIL_SMTP_PORT")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_PORT")
           fi
 
-          if [ -n "${CRISIS_ALERT_EMAIL_SMTP_SECURITY:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_EMAIL_SMTP_SECURITY=${CRISIS_ALERT_EMAIL_SMTP_SECURITY}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_SECURITY:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_SECURITY=${STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_SECURITY}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_EMAIL_SMTP_SECURITY")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_SECURITY")
           fi
 
-          if [ -n "${CRISIS_ALERT_SMS_RECIPIENTS:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_SMS_RECIPIENTS=${CRISIS_ALERT_SMS_RECIPIENTS}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_SMS_RECIPIENTS:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_SMS_RECIPIENTS=${STRATEGY_PLUGIN_ALERT_SMS_RECIPIENTS}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_SMS_RECIPIENTS")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_SMS_RECIPIENTS")
           fi
 
-          if [ -n "${CRISIS_ALERT_SMS_PROVIDER:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_SMS_PROVIDER=${CRISIS_ALERT_SMS_PROVIDER}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_SMS_PROVIDER:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_SMS_PROVIDER=${STRATEGY_PLUGIN_ALERT_SMS_PROVIDER}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_SMS_PROVIDER")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_SMS_PROVIDER")
           fi
 
-          if [ -n "${CRISIS_ALERT_SMS_ACCOUNT_ID:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_SMS_ACCOUNT_ID=${CRISIS_ALERT_SMS_ACCOUNT_ID}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_SMS_ACCOUNT_ID:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_SMS_ACCOUNT_ID=${STRATEGY_PLUGIN_ALERT_SMS_ACCOUNT_ID}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_SMS_ACCOUNT_ID")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_SMS_ACCOUNT_ID")
           fi
 
-          if [ -n "${CRISIS_ALERT_SMS_SENDER:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_SMS_SENDER=${CRISIS_ALERT_SMS_SENDER}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_SMS_SENDER:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_SMS_SENDER=${STRATEGY_PLUGIN_ALERT_SMS_SENDER}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_SMS_SENDER")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_SMS_SENDER")
           fi
 
-          if [ -n "${CRISIS_ALERT_SMS_MESSAGING_SERVICE_ID:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_SMS_MESSAGING_SERVICE_ID=${CRISIS_ALERT_SMS_MESSAGING_SERVICE_ID}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_SMS_MESSAGING_SERVICE_ID:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_SMS_MESSAGING_SERVICE_ID=${STRATEGY_PLUGIN_ALERT_SMS_MESSAGING_SERVICE_ID}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_SMS_MESSAGING_SERVICE_ID")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_SMS_MESSAGING_SERVICE_ID")
           fi
 
-          if [ -n "${CRISIS_ALERT_SMS_API_BASE_URL:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_SMS_API_BASE_URL=${CRISIS_ALERT_SMS_API_BASE_URL}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_SMS_API_BASE_URL:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_SMS_API_BASE_URL=${STRATEGY_PLUGIN_ALERT_SMS_API_BASE_URL}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_SMS_API_BASE_URL")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_SMS_API_BASE_URL")
           fi
 
-          if [ -n "${CRISIS_ALERT_SMS_BODY_MAX_CHARS:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_SMS_BODY_MAX_CHARS=${CRISIS_ALERT_SMS_BODY_MAX_CHARS}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_SMS_BODY_MAX_CHARS:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_SMS_BODY_MAX_CHARS=${STRATEGY_PLUGIN_ALERT_SMS_BODY_MAX_CHARS}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_SMS_BODY_MAX_CHARS")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_SMS_BODY_MAX_CHARS")
           fi
 
-          if [ -n "${CRISIS_ALERT_PUSH_RECIPIENTS:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_PUSH_RECIPIENTS=${CRISIS_ALERT_PUSH_RECIPIENTS}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_PUSH_RECIPIENTS:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_PUSH_RECIPIENTS=${STRATEGY_PLUGIN_ALERT_PUSH_RECIPIENTS}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_PUSH_RECIPIENTS")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_RECIPIENTS")
           fi
 
-          if [ -n "${CRISIS_ALERT_PUSH_PROVIDER:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_PUSH_PROVIDER=${CRISIS_ALERT_PUSH_PROVIDER}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_PUSH_PROVIDER:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_PUSH_PROVIDER=${STRATEGY_PLUGIN_ALERT_PUSH_PROVIDER}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_PUSH_PROVIDER")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_PROVIDER")
           fi
 
-          if [ -n "${CRISIS_ALERT_PUSH_API_BASE_URL:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_PUSH_API_BASE_URL=${CRISIS_ALERT_PUSH_API_BASE_URL}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_PUSH_API_BASE_URL:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_PUSH_API_BASE_URL=${STRATEGY_PLUGIN_ALERT_PUSH_API_BASE_URL}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_PUSH_API_BASE_URL")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_API_BASE_URL")
           fi
 
-          if [ -n "${CRISIS_ALERT_PUSH_DEVICE:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_PUSH_DEVICE=${CRISIS_ALERT_PUSH_DEVICE}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_PUSH_DEVICE:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_PUSH_DEVICE=${STRATEGY_PLUGIN_ALERT_PUSH_DEVICE}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_PUSH_DEVICE")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_DEVICE")
           fi
 
-          if [ -n "${CRISIS_ALERT_PUSH_PRIORITY:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_PUSH_PRIORITY=${CRISIS_ALERT_PUSH_PRIORITY}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_PUSH_PRIORITY:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_PUSH_PRIORITY=${STRATEGY_PLUGIN_ALERT_PUSH_PRIORITY}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_PUSH_PRIORITY")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_PRIORITY")
           fi
 
-          if [ -n "${CRISIS_ALERT_PUSH_TAGS:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_PUSH_TAGS=${CRISIS_ALERT_PUSH_TAGS}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_PUSH_TAGS:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_PUSH_TAGS=${STRATEGY_PLUGIN_ALERT_PUSH_TAGS}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_PUSH_TAGS")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_TAGS")
           fi
 
-          if [ -n "${CRISIS_ALERT_PUSH_BODY_MAX_CHARS:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_PUSH_BODY_MAX_CHARS=${CRISIS_ALERT_PUSH_BODY_MAX_CHARS}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_PUSH_BODY_MAX_CHARS:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_PUSH_BODY_MAX_CHARS=${STRATEGY_PLUGIN_ALERT_PUSH_BODY_MAX_CHARS}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_PUSH_BODY_MAX_CHARS")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_BODY_MAX_CHARS")
           fi
 
-          if [ -n "${CRISIS_ALERT_TELEGRAM_CHAT_IDS:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_TELEGRAM_CHAT_IDS=${CRISIS_ALERT_TELEGRAM_CHAT_IDS}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS=${STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_TELEGRAM_CHAT_IDS")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS")
           fi
 
-          if [ -n "${CRISIS_ALERT_TELEGRAM_API_BASE_URL:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_TELEGRAM_API_BASE_URL=${CRISIS_ALERT_TELEGRAM_API_BASE_URL}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_TELEGRAM_API_BASE_URL:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_API_BASE_URL=${STRATEGY_PLUGIN_ALERT_TELEGRAM_API_BASE_URL}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_TELEGRAM_API_BASE_URL")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_API_BASE_URL")
           fi
 
-          if [ -n "${CRISIS_ALERT_TELEGRAM_PARSE_MODE:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_TELEGRAM_PARSE_MODE=${CRISIS_ALERT_TELEGRAM_PARSE_MODE}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_TELEGRAM_PARSE_MODE:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_PARSE_MODE=${STRATEGY_PLUGIN_ALERT_TELEGRAM_PARSE_MODE}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_TELEGRAM_PARSE_MODE")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_PARSE_MODE")
           fi
 
-          if [ -n "${CRISIS_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW=${CRISIS_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW=${STRATEGY_PLUGIN_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW")
           fi
 
-          if [ -n "${CRISIS_ALERT_TELEGRAM_BODY_MAX_CHARS:-}" ]; then
-            shared_env_pairs+=("CRISIS_ALERT_TELEGRAM_BODY_MAX_CHARS=${CRISIS_ALERT_TELEGRAM_BODY_MAX_CHARS}")
+          if [ -n "${STRATEGY_PLUGIN_ALERT_TELEGRAM_BODY_MAX_CHARS:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_BODY_MAX_CHARS=${STRATEGY_PLUGIN_ALERT_TELEGRAM_BODY_MAX_CHARS}")
           else
-            shared_remove_env_vars+=("CRISIS_ALERT_TELEGRAM_BODY_MAX_CHARS")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_BODY_MAX_CHARS")
           fi
 
           for target_index in "${!target_services[@]}"; do
