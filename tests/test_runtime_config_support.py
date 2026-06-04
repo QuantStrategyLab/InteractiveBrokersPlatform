@@ -193,36 +193,36 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.quantconnect_version_id is None
     assert settings.quantconnect_credentials_secret_name is None
     assert settings.quantconnect_brokerage_secret_name is None
-    assert settings.crisis_alert_channels == ()
-    assert settings.crisis_alert_email_recipients == ()
-    assert settings.crisis_alert_email_sender_email is None
-    assert settings.crisis_alert_email_sender_password is None
-    assert settings.crisis_alert_email_smtp_host is None
-    assert settings.crisis_alert_email_smtp_port is None
-    assert settings.crisis_alert_email_smtp_security is None
-    assert settings.crisis_alert_sms_recipients == ()
-    assert settings.crisis_alert_sms_provider is None
-    assert settings.crisis_alert_sms_account_id is None
-    assert settings.crisis_alert_sms_auth_token is None
-    assert settings.crisis_alert_sms_sender is None
-    assert settings.crisis_alert_sms_messaging_service_id is None
-    assert settings.crisis_alert_sms_api_base_url is None
-    assert settings.crisis_alert_sms_body_max_chars is None
-    assert settings.crisis_alert_push_recipients == ()
-    assert settings.crisis_alert_push_provider is None
-    assert settings.crisis_alert_push_app_token is None
-    assert settings.crisis_alert_push_access_token is None
-    assert settings.crisis_alert_push_api_base_url is None
-    assert settings.crisis_alert_push_device is None
-    assert settings.crisis_alert_push_priority is None
-    assert settings.crisis_alert_push_tags is None
-    assert settings.crisis_alert_push_body_max_chars is None
-    assert settings.crisis_alert_telegram_chat_ids == ()
-    assert settings.crisis_alert_telegram_bot_token is None
-    assert settings.crisis_alert_telegram_api_base_url is None
-    assert settings.crisis_alert_telegram_parse_mode is None
-    assert settings.crisis_alert_telegram_disable_web_page_preview is None
-    assert settings.crisis_alert_telegram_body_max_chars is None
+    assert settings.strategy_plugin_alert_channels == ()
+    assert settings.strategy_plugin_alert_email_recipients == ()
+    assert settings.strategy_plugin_alert_email_sender_email is None
+    assert settings.strategy_plugin_alert_email_sender_password is None
+    assert settings.strategy_plugin_alert_email_smtp_host is None
+    assert settings.strategy_plugin_alert_email_smtp_port is None
+    assert settings.strategy_plugin_alert_email_smtp_security is None
+    assert settings.strategy_plugin_alert_sms_recipients == ()
+    assert settings.strategy_plugin_alert_sms_provider is None
+    assert settings.strategy_plugin_alert_sms_account_id is None
+    assert settings.strategy_plugin_alert_sms_auth_token is None
+    assert settings.strategy_plugin_alert_sms_sender is None
+    assert settings.strategy_plugin_alert_sms_messaging_service_id is None
+    assert settings.strategy_plugin_alert_sms_api_base_url is None
+    assert settings.strategy_plugin_alert_sms_body_max_chars is None
+    assert settings.strategy_plugin_alert_push_recipients == ()
+    assert settings.strategy_plugin_alert_push_provider is None
+    assert settings.strategy_plugin_alert_push_app_token is None
+    assert settings.strategy_plugin_alert_push_access_token is None
+    assert settings.strategy_plugin_alert_push_api_base_url is None
+    assert settings.strategy_plugin_alert_push_device is None
+    assert settings.strategy_plugin_alert_push_priority is None
+    assert settings.strategy_plugin_alert_push_tags is None
+    assert settings.strategy_plugin_alert_push_body_max_chars is None
+    assert settings.strategy_plugin_alert_telegram_chat_ids == ()
+    assert settings.strategy_plugin_alert_telegram_bot_token is None
+    assert settings.strategy_plugin_alert_telegram_api_base_url is None
+    assert settings.strategy_plugin_alert_telegram_parse_mode is None
+    assert settings.strategy_plugin_alert_telegram_disable_web_page_preview is None
+    assert settings.strategy_plugin_alert_telegram_body_max_chars is None
 
 
 def test_load_platform_runtime_settings_prefers_runtime_target_json(monkeypatch):
@@ -388,91 +388,91 @@ def test_resolve_execution_backend_rejects_unknown_backend():
         resolve_execution_backend("unsupported")
 
 
-def test_load_platform_runtime_settings_reads_crisis_alert_email_config(monkeypatch):
+def test_load_platform_runtime_settings_reads_strategy_plugin_alert_email_config(monkeypatch):
     monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(SAMPLE_STRATEGY_PROFILE))
     monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
-    monkeypatch.setenv("CRISIS_ALERT_EMAIL_RECIPIENTS", "alerts@example.com; voice@example.com")
-    monkeypatch.setenv("CRISIS_ALERT_EMAIL_SENDER_EMAIL", "sender@example.com")
-    monkeypatch.setenv("CRISIS_ALERT_EMAIL_SENDER_PASSWORD", "secret")
-    monkeypatch.setenv("CRISIS_ALERT_EMAIL_SMTP_HOST", "smtp.example.com")
-    monkeypatch.setenv("CRISIS_ALERT_EMAIL_SMTP_PORT", "587")
-    monkeypatch.setenv("CRISIS_ALERT_EMAIL_SMTP_SECURITY", "starttls")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_EMAIL_RECIPIENTS", "alerts@example.com; voice@example.com")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_EMAIL", "sender@example.com")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD", "secret")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_PORT", "587")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_SECURITY", "starttls")
 
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
-    assert settings.crisis_alert_email_recipients == ("alerts@example.com", "voice@example.com")
-    assert settings.crisis_alert_email_sender_email == "sender@example.com"
-    assert settings.crisis_alert_email_sender_password == "secret"
-    assert settings.crisis_alert_email_smtp_host == "smtp.example.com"
-    assert settings.crisis_alert_email_smtp_port == "587"
-    assert settings.crisis_alert_email_smtp_security == "starttls"
+    assert settings.strategy_plugin_alert_email_recipients == ("alerts@example.com", "voice@example.com")
+    assert settings.strategy_plugin_alert_email_sender_email == "sender@example.com"
+    assert settings.strategy_plugin_alert_email_sender_password == "secret"
+    assert settings.strategy_plugin_alert_email_smtp_host == "smtp.example.com"
+    assert settings.strategy_plugin_alert_email_smtp_port == "587"
+    assert settings.strategy_plugin_alert_email_smtp_security == "starttls"
 
 
-def test_load_platform_runtime_settings_reads_crisis_alert_sms_config(monkeypatch):
+def test_load_platform_runtime_settings_reads_strategy_plugin_alert_sms_config(monkeypatch):
     monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(SAMPLE_STRATEGY_PROFILE))
     monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
-    monkeypatch.setenv("CRISIS_ALERT_SMS_RECIPIENTS", "+15165480265;(516) 548-0265")
-    monkeypatch.setenv("CRISIS_ALERT_SMS_PROVIDER", "twilio")
-    monkeypatch.setenv("CRISIS_ALERT_SMS_ACCOUNT_ID", "AC123")
-    monkeypatch.setenv("CRISIS_ALERT_SMS_AUTH_TOKEN", "secret")
-    monkeypatch.setenv("CRISIS_ALERT_SMS_SENDER", "+15551234567")
-    monkeypatch.setenv("CRISIS_ALERT_SMS_MESSAGING_SERVICE_ID", "MG123")
-    monkeypatch.setenv("CRISIS_ALERT_SMS_API_BASE_URL", "https://twilio.example.test")
-    monkeypatch.setenv("CRISIS_ALERT_SMS_BODY_MAX_CHARS", "160")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_SMS_RECIPIENTS", "+15165480265;(516) 548-0265")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_SMS_PROVIDER", "twilio")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_SMS_ACCOUNT_ID", "AC123")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN", "secret")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_SMS_SENDER", "+15551234567")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_SMS_MESSAGING_SERVICE_ID", "MG123")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_SMS_API_BASE_URL", "https://twilio.example.test")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_SMS_BODY_MAX_CHARS", "160")
 
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
-    assert settings.crisis_alert_sms_recipients == ("+15165480265", "(516) 548-0265")
-    assert settings.crisis_alert_sms_provider == "twilio"
-    assert settings.crisis_alert_sms_account_id == "AC123"
-    assert settings.crisis_alert_sms_auth_token == "secret"
-    assert settings.crisis_alert_sms_sender == "+15551234567"
-    assert settings.crisis_alert_sms_messaging_service_id == "MG123"
-    assert settings.crisis_alert_sms_api_base_url == "https://twilio.example.test"
-    assert settings.crisis_alert_sms_body_max_chars == "160"
+    assert settings.strategy_plugin_alert_sms_recipients == ("+15165480265", "(516) 548-0265")
+    assert settings.strategy_plugin_alert_sms_provider == "twilio"
+    assert settings.strategy_plugin_alert_sms_account_id == "AC123"
+    assert settings.strategy_plugin_alert_sms_auth_token == "secret"
+    assert settings.strategy_plugin_alert_sms_sender == "+15551234567"
+    assert settings.strategy_plugin_alert_sms_messaging_service_id == "MG123"
+    assert settings.strategy_plugin_alert_sms_api_base_url == "https://twilio.example.test"
+    assert settings.strategy_plugin_alert_sms_body_max_chars == "160"
 
 
-def test_load_platform_runtime_settings_reads_crisis_alert_channels_and_push_config(monkeypatch):
+def test_load_platform_runtime_settings_reads_strategy_plugin_alert_channels_and_push_config(monkeypatch):
     monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(SAMPLE_STRATEGY_PROFILE))
     monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
-    monkeypatch.setenv("CRISIS_ALERT_CHANNELS", "email;push;telegram")
-    monkeypatch.setenv("CRISIS_ALERT_PUSH_RECIPIENTS", "risk-topic; backup-topic")
-    monkeypatch.setenv("CRISIS_ALERT_PUSH_PROVIDER", "ntfy")
-    monkeypatch.setenv("CRISIS_ALERT_PUSH_APP_TOKEN", "app-token")
-    monkeypatch.setenv("CRISIS_ALERT_PUSH_ACCESS_TOKEN", "access-token")
-    monkeypatch.setenv("CRISIS_ALERT_PUSH_API_BASE_URL", "https://ntfy.example.test")
-    monkeypatch.setenv("CRISIS_ALERT_PUSH_DEVICE", "iphone")
-    monkeypatch.setenv("CRISIS_ALERT_PUSH_PRIORITY", "5")
-    monkeypatch.setenv("CRISIS_ALERT_PUSH_TAGS", "warning")
-    monkeypatch.setenv("CRISIS_ALERT_PUSH_BODY_MAX_CHARS", "300")
-    monkeypatch.setenv("CRISIS_ALERT_TELEGRAM_CHAT_IDS", "12345; @risk_channel")
-    monkeypatch.setenv("CRISIS_ALERT_TELEGRAM_BOT_TOKEN", "telegram-token")
-    monkeypatch.setenv("CRISIS_ALERT_TELEGRAM_API_BASE_URL", "https://telegram.example.test")
-    monkeypatch.setenv("CRISIS_ALERT_TELEGRAM_PARSE_MODE", "HTML")
-    monkeypatch.setenv("CRISIS_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW", "false")
-    monkeypatch.setenv("CRISIS_ALERT_TELEGRAM_BODY_MAX_CHARS", "900")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_CHANNELS", "email;push;telegram")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_PUSH_RECIPIENTS", "risk-topic; backup-topic")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_PUSH_PROVIDER", "ntfy")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN", "app-token")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN", "access-token")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_PUSH_API_BASE_URL", "https://ntfy.example.test")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_PUSH_DEVICE", "iphone")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_PUSH_PRIORITY", "5")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_PUSH_TAGS", "warning")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_PUSH_BODY_MAX_CHARS", "300")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS", "12345; @risk_channel")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN", "telegram-token")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_TELEGRAM_API_BASE_URL", "https://telegram.example.test")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_TELEGRAM_PARSE_MODE", "HTML")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW", "false")
+    monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_TELEGRAM_BODY_MAX_CHARS", "900")
 
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
-    assert settings.crisis_alert_channels == ("email", "push", "telegram")
-    assert settings.crisis_alert_push_recipients == ("risk-topic", "backup-topic")
-    assert settings.crisis_alert_push_provider == "ntfy"
-    assert settings.crisis_alert_push_app_token == "app-token"
-    assert settings.crisis_alert_push_access_token == "access-token"
-    assert settings.crisis_alert_push_api_base_url == "https://ntfy.example.test"
-    assert settings.crisis_alert_push_device == "iphone"
-    assert settings.crisis_alert_push_priority == "5"
-    assert settings.crisis_alert_push_tags == "warning"
-    assert settings.crisis_alert_push_body_max_chars == "300"
-    assert settings.crisis_alert_telegram_chat_ids == ("12345", "@risk_channel")
-    assert settings.crisis_alert_telegram_bot_token == "telegram-token"
-    assert settings.crisis_alert_telegram_api_base_url == "https://telegram.example.test"
-    assert settings.crisis_alert_telegram_parse_mode == "HTML"
-    assert settings.crisis_alert_telegram_disable_web_page_preview == "false"
-    assert settings.crisis_alert_telegram_body_max_chars == "900"
+    assert settings.strategy_plugin_alert_channels == ("email", "push", "telegram")
+    assert settings.strategy_plugin_alert_push_recipients == ("risk-topic", "backup-topic")
+    assert settings.strategy_plugin_alert_push_provider == "ntfy"
+    assert settings.strategy_plugin_alert_push_app_token == "app-token"
+    assert settings.strategy_plugin_alert_push_access_token == "access-token"
+    assert settings.strategy_plugin_alert_push_api_base_url == "https://ntfy.example.test"
+    assert settings.strategy_plugin_alert_push_device == "iphone"
+    assert settings.strategy_plugin_alert_push_priority == "5"
+    assert settings.strategy_plugin_alert_push_tags == "warning"
+    assert settings.strategy_plugin_alert_push_body_max_chars == "300"
+    assert settings.strategy_plugin_alert_telegram_chat_ids == ("12345", "@risk_channel")
+    assert settings.strategy_plugin_alert_telegram_bot_token == "telegram-token"
+    assert settings.strategy_plugin_alert_telegram_api_base_url == "https://telegram.example.test"
+    assert settings.strategy_plugin_alert_telegram_parse_mode == "HTML"
+    assert settings.strategy_plugin_alert_telegram_disable_web_page_preview == "false"
+    assert settings.strategy_plugin_alert_telegram_body_max_chars == "900"
 
 
 def test_load_platform_runtime_settings_uses_whole_share_quantity_step(monkeypatch):
