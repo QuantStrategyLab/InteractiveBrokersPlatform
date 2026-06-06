@@ -14,7 +14,7 @@ def test_build_translator_supports_chinese():
     assert translate("paper_liquidation_only") == "IBKR 模拟账户清仓模式"
     assert translate("paper_liquidation_positions_seen", count=4) == "识别持仓=4"
     assert translate("market_status_blend_gate_risk_on", asset="SOXX+SOXL") == "🚀 风险开启（SOXX+SOXL）"
-    assert translate("market_status_blend_gate_overlay_capped", asset="SOXX") == "🧯 过热降档（SOXX）"
+    assert translate("market_status_blend_gate_overlay_capped", asset="SOXX") == "🧯 风控降档（SOXX）"
     assert (
         translate(
             "signal_blend_gate_risk_on",
