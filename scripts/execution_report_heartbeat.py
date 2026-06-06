@@ -91,9 +91,12 @@ def _base_report_uris() -> list[str]:
 
 
 def _load_required_services() -> list[str]:
+    explicit_services = _split_values(os.environ.get("RUNTIME_HEARTBEAT_REQUIRED_SERVICES"))
+    if explicit_services:
+        return _unique_values(explicit_services)
+
     services = []
     for name in (
-        "RUNTIME_HEARTBEAT_REQUIRED_SERVICES",
         "CLOUD_RUN_SERVICES",
         "CLOUD_RUN_SERVICE",
     ):
@@ -124,12 +127,16 @@ def _load_required_services() -> list[str]:
         except json.JSONDecodeError:
             pass
 
+    return _unique_values(services)
+
+
+def _unique_values(values: list[str]) -> list[str]:
     seen = set()
     unique = []
-    for service in services:
-        if service not in seen:
-            seen.add(service)
-            unique.append(service)
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            unique.append(value)
     return unique
 
 
