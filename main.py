@@ -618,6 +618,10 @@ def connect_ib():
     return build_broker_adapters().connect_ib()
 
 
+def _build_health_probe_connection_error_message(exc: Exception) -> str:
+    return f"{t('health_probe_title')}\n{t('ibkr_connection_error_prefix')}{str(exc)}"
+
+
 def log_runtime_event(log_context, event, **fields):
     return build_composer().build_reporting_adapters().log_event(log_context, event, **fields)
 
@@ -1158,6 +1162,38 @@ def _handle_probe(*, response_body: str = "Probe OK"):
             positions_count=len(positions),
         )
         return response_body, 200
+    except (ConnectionError, TimeoutError) as exc:
+        if report is not None:
+            append_runtime_report_error(
+                report,
+                stage="health_probe",
+                message=str(exc),
+                error_type=type(exc).__name__,
+                failure_category="ibkr_connection",
+            )
+            finalize_runtime_report(
+                report,
+                status="error",
+                diagnostics={"probe_failure_category": "ibkr_connection"},
+            )
+        if log_context is not None:
+            log_runtime_event(
+                log_context,
+                "health_probe_failed",
+                message="Health probe IBKR connection failed",
+                severity="ERROR",
+                execution_window="probe",
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+                failure_category="ibkr_connection",
+            )
+        error_msg = _build_health_probe_connection_error_message(exc)
+        _publish_runtime_failure_notification(
+            detailed_text=error_msg,
+            compact_text=error_msg,
+            exc=exc,
+        )
+        return "Error", 500
     except Exception as exc:
         if report is not None:
             append_runtime_report_error(
