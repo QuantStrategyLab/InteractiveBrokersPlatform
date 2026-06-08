@@ -210,6 +210,58 @@ def test_handle_probe_checks_account_snapshot_without_success_notification(strat
     assert observed["notifications"] == []
 
 
+def test_handle_probe_connect_timeout_sends_concise_connection_notification(strategy_module, monkeypatch):
+    observed = {"events": [], "notifications": []}
+    timeout_message = (
+        "IBKR API handshake timed out after TCP preflight succeeded "
+        "for 172.16.159.2:4001 clientId=231"
+    )
+
+    monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace(run_id="run-001"))
+    monkeypatch.setattr(strategy_module, "build_execution_report", lambda log_context, **_kwargs: {"status": "pending"})
+    monkeypatch.setattr(
+        strategy_module,
+        "persist_execution_report",
+        lambda report, **_kwargs: observed.setdefault("report", dict(report)) or "/tmp/runtime-report.json",
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "log_runtime_event",
+        lambda context, event, **fields: observed["events"].append((event, fields)),
+    )
+    monkeypatch.setattr(strategy_module, "load_strategy_plugin_signals", lambda: ((), None))
+    monkeypatch.setattr(strategy_module, "attach_strategy_plugin_report", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        strategy_module,
+        "connect_ib",
+        lambda: (_ for _ in ()).throw(TimeoutError(timeout_message)),
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "publish_notification",
+        lambda **kwargs: observed["notifications"].append(kwargs),
+    )
+
+    with strategy_module.app.test_request_context("/probe", method="POST"):
+        body, status = strategy_module.handle_probe()
+
+    assert status == 500
+    assert body == "Error"
+    assert observed["report"]["status"] == "error"
+    assert observed["report"]["errors"][0]["stage"] == "health_probe"
+    assert observed["report"]["errors"][0]["failure_category"] == "ibkr_connection"
+    assert [event for event, _fields in observed["events"]] == [
+        "health_probe_received",
+        "health_probe_failed",
+    ]
+    assert observed["events"][1][1]["failure_category"] == "ibkr_connection"
+    assert len(observed["notifications"]) == 1
+    detailed_text = observed["notifications"][0]["detailed_text"]
+    assert "IBKR" in detailed_text
+    assert timeout_message in detailed_text
+    assert "Traceback" not in detailed_text
+
+
 def test_handle_probe_failure_sends_notification(strategy_module, monkeypatch):
     observed = {"events": [], "notifications": []}
 
