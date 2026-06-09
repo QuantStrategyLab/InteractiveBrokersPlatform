@@ -51,7 +51,7 @@ def test_load_strategy_entrypoint_for_profile_resolves_tqqq_growth_income(monkey
     assert entrypoint.manifest.default_config["benchmark_symbol"] == "QQQ"
     assert entrypoint.manifest.default_config["managed_symbols"] == (
         "TQQQ",
-        "QQQ",
+        "QQQM",
         "BOXX",
         "SCHD",
         "DGRO",
