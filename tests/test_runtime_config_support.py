@@ -899,12 +899,14 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
             "IBKR_MARKET_DATA_SYMBOL_SUFFIX": ".HK",
             "IBKR_MARKET_EXCHANGE": "SEHK",
             "IBKR_MARKET_TIMEZONE": "Asia/Hong_Kong",
+            "cloud_scheduler_probe_time": "40 9,15",
             "EXECUTION_REPORT_GCS_URI": "gs://runtime/execution-reports",
         },
         "targets": [
             {
                 "service": "interactive-brokers-live-slot-a-service",
                 "account_group": "live-slot-a",
+                "cloud_scheduler_main_time": "10 16",
                 "runtime_target": json.loads(
                     runtime_target_json(
                         "tqqq_growth_income",
@@ -968,6 +970,12 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
     assert slot_a["env"]["IBKR_MARKET"] == "HK"
     assert slot_a["env"]["IBKR_MARKET_CURRENCY"] == "HKD"
     assert slot_a["env"]["IBKR_MARKET_EXCHANGE"] == "SEHK"
+    assert slot_a["scheduler"] == {
+        "timezone": "Asia/Hong_Kong",
+        "main_time": "10 16",
+        "probe_time": "40 9,15",
+        "precheck_time": "45 9",
+    }
     assert "IBKR_FEATURE_SNAPSHOT_PATH" not in slot_a["env"]
     assert "IBKR_FEATURE_SNAPSHOT_PATH" in slot_a["remove_env_vars"]
     assert "gs://stale-paper/snapshot.csv" not in json.dumps(slot_a)
@@ -977,6 +985,12 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
 
     assert u7654_mega["env"]["ACCOUNT_GROUP"] == "live-u7654-mega"
     assert u7654_mega["env"]["STRATEGY_PROFILE"] == "mega_cap_leader_rotation_top50_balanced"
+    assert u7654_mega["scheduler"] == {
+        "timezone": "Asia/Hong_Kong",
+        "main_time": "45 15",
+        "probe_time": "40 9,15",
+        "precheck_time": "45 9",
+    }
     assert u7654_mega["env"]["IBKR_FEATURE_SNAPSHOT_PATH"] == "gs://runtime/mega/snapshot.csv"
     assert (
         u7654_mega["env"]["IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH"]

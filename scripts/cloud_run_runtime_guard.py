@@ -85,6 +85,19 @@ def _load_services() -> list[str]:
     return unique
 
 
+def _scheduler_job_pattern_for_services(services: list[str]) -> str:
+    candidates: list[str] = []
+    for service in services:
+        service_name = str(service or "").strip()
+        if not service_name:
+            continue
+        candidates.append(service_name)
+        if service_name.endswith("-service"):
+            candidates.append(service_name.removesuffix("-service"))
+    unique = list(dict.fromkeys(candidates))
+    return "|".join(re.escape(candidate) for candidate in unique)
+
+
 def _run_gcloud_logging(project: str, log_filter: str, limit: int) -> list[dict[str, Any]]:
     command = [
         "gcloud",
@@ -214,7 +227,6 @@ def main() -> int:
     require_success = _env_bool("RUNTIME_GUARD_REQUIRE_SUCCESS", False)
     fail_workflow = _env_bool("RUNTIME_GUARD_FAIL_WORKFLOW_ON_ALERT", True)
     check_scheduler = _env_bool("RUNTIME_GUARD_CHECK_SCHEDULER", True)
-    scheduler_pattern = os.environ.get("RUNTIME_GUARD_SCHEDULER_JOB_PATTERN") or ""
 
     since = (
         dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=lookback_minutes)
@@ -230,6 +242,10 @@ def main() -> int:
     except RuntimeError as exc:
         services = []
         issues.append(f"service configuration error: {exc}")
+    scheduler_pattern = (
+        os.environ.get("RUNTIME_GUARD_SCHEDULER_JOB_PATTERN")
+        or _scheduler_job_pattern_for_services(services)
+    )
 
     for service in services:
         log_filter = (
