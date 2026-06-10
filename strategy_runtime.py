@@ -27,6 +27,8 @@ from quant_platform_kit.strategy_contracts import (
     StrategyRuntimeAdapter,
     apply_runtime_policy_to_runtime_config,
     build_execution_timing_metadata,
+    build_account_state_from_portfolio_snapshot,
+    build_portfolio_snapshot_from_account_state,
     build_strategy_context_from_available_inputs,
     build_strategy_evaluation_inputs,
 )
@@ -355,6 +357,47 @@ class LoadedStrategyRuntime:
             )
         )
 
+    def _configured_strategy_symbols(self, *, include_ranking_pool: bool = False) -> tuple[str, ...]:
+        candidates: list[str] = []
+        raw_managed = self.merged_runtime_config.get("managed_symbols", ())
+        if isinstance(raw_managed, str):
+            raw_managed = raw_managed.replace(";", ",").split(",")
+        candidates.extend(str(symbol) for symbol in raw_managed or ())
+        if include_ranking_pool:
+            raw_pool = self.merged_runtime_config.get("ranking_pool", ())
+            if isinstance(raw_pool, str):
+                raw_pool = raw_pool.replace(";", ",").split(",")
+            candidates.extend(str(symbol) for symbol in raw_pool or ())
+        safe_haven_symbol = str(self.merged_runtime_config.get("safe_haven") or "").strip()
+        if safe_haven_symbol and candidates:
+            candidates.append(safe_haven_symbol)
+        return tuple(
+            dict.fromkeys(
+                symbol.strip().upper()
+                for symbol in candidates
+                if symbol.strip()
+            )
+        )
+
+    def _project_portfolio_snapshot(self, portfolio_snapshot: Any | None, strategy_symbols) -> Any | None:
+        if portfolio_snapshot is None or not strategy_symbols:
+            return portfolio_snapshot
+        if not hasattr(portfolio_snapshot, "positions"):
+            return portfolio_snapshot
+        account_state = build_account_state_from_portfolio_snapshot(
+            portfolio_snapshot,
+            strategy_symbols=strategy_symbols,
+        )
+        account_state["total_strategy_equity"] = float(account_state["available_cash"]) + sum(
+            float(value) for value in dict(account_state["market_values"]).values()
+        )
+        return build_portfolio_snapshot_from_account_state(
+            account_state,
+            strategy_symbols=strategy_symbols,
+            as_of=getattr(portfolio_snapshot, "as_of", None),
+            metadata=getattr(portfolio_snapshot, "metadata", {}) or {},
+        )
+
     def _build_market_history_inputs(
         self,
         ib,
@@ -481,6 +524,10 @@ class LoadedStrategyRuntime:
             ib,
             required=requires_portfolio,
         )
+        portfolio_snapshot = self._project_portfolio_snapshot(
+            portfolio_snapshot,
+            self._configured_strategy_symbols(include_ranking_pool=True),
+        )
         portfolio_snapshot = self._attach_strategy_plugin_metadata(portfolio_snapshot, strategy_plugin_signals)
         option_chains = self._fetch_option_chains_for_runtime(ib, runtime_config, portfolio_snapshot)
         if option_chains:
@@ -550,7 +597,9 @@ class LoadedStrategyRuntime:
         runtime_config = dict(self.runtime_config)
         runtime_config.setdefault("translator", translator)
         apply_runtime_policy_to_runtime_config(runtime_config, self.runtime_adapter)
+        managed_symbols = self._configured_strategy_symbols()
         portfolio_snapshot = self._fetch_portfolio_snapshot_for_context(ib, required=True)
+        portfolio_snapshot = self._project_portfolio_snapshot(portfolio_snapshot, managed_symbols)
         portfolio_snapshot = self._attach_strategy_plugin_metadata(portfolio_snapshot, strategy_plugin_signals)
         option_chains = self._fetch_option_chains_for_runtime(ib, runtime_config, portfolio_snapshot)
         if option_chains:
@@ -571,9 +620,6 @@ class LoadedStrategyRuntime:
             ib=ib,
         )
         decision = self.entrypoint.evaluate(ctx)
-        managed_symbols = tuple(
-            str(symbol) for symbol in self.merged_runtime_config.get("managed_symbols", ())
-        )
         safe_haven_symbol = next(
             (position.symbol for position in decision.positions if position.role == "safe_haven"),
             None,
