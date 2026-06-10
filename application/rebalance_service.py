@@ -528,6 +528,32 @@ def _snapshot_to_portfolio_view(snapshot) -> tuple[dict[str, dict[str, float | i
     return positions, account_values
 
 
+def _strategy_portfolio_view(positions, account_values, strategy_symbols):
+    normalized_symbols = {
+        str(symbol).strip().upper()
+        for symbol in strategy_symbols or ()
+        if str(symbol).strip()
+    }
+    if not normalized_symbols:
+        return positions, account_values
+
+    filtered_positions = {
+        symbol: details
+        for symbol, details in dict(positions or {}).items()
+        if str(symbol).strip().upper() in normalized_symbols
+    }
+    strategy_market_value = sum(
+        float(details.get("quantity") or 0.0) * float(details.get("avg_cost") or 0.0)
+        for details in filtered_positions.values()
+    )
+    buying_power = float(dict(account_values or {}).get("buying_power") or 0.0)
+    filtered_account_values = {
+        **dict(account_values or {}),
+        "equity": buying_power + strategy_market_value,
+    }
+    return filtered_positions, filtered_account_values
+
+
 def run_strategy_core(
     *,
     runtime: IBKRRebalanceRuntime | None = None,
@@ -582,6 +608,16 @@ def run_strategy_core(
             signal_metadata = {}
         allocation = _resolve_weight_allocation(signal_metadata, required=target_weights is not None)
         resolved_target_weights = dict(allocation.get("targets") or {}) if target_weights is not None else None
+        strategy_symbols = tuple(
+            allocation.get("strategy_symbols")
+            or signal_metadata.get("managed_symbols")
+            or ()
+        )
+        positions, account_values = _strategy_portfolio_view(
+            positions,
+            account_values,
+            strategy_symbols,
+        )
         signal_metadata = dict(signal_metadata or {})
         signal_metadata["signal_snapshot"] = build_signal_snapshot(
             platform="ibkr",
