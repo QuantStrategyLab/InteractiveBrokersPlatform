@@ -118,6 +118,38 @@ def test_scheduler_aware_required_services_include_monthly_service_when_due(monk
     assert required == ["svc-monthly"]
 
 
+def test_scheduler_aware_required_services_fall_back_to_named_scheduler_describe(monkeypatch):
+    monkeypatch.delenv("RUNTIME_HEARTBEAT_REQUIRED_SERVICES", raising=False)
+    monkeypatch.setenv("CLOUD_RUN_SERVICE", "svc-monthly")
+    monkeypatch.setattr(
+        heartbeat,
+        "_list_scheduler_jobs",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("cloudscheduler.jobs.list denied")),
+    )
+    monkeypatch.setattr(
+        heartbeat,
+        "_describe_scheduler_job",
+        lambda job_name, **_kwargs: {
+            "state": "ENABLED",
+            "schedule": "45 15 26 * *",
+            "timeZone": "America/New_York",
+            "httpTarget": {"uri": "https://svc-monthly.example.run.app/"},
+        }
+        if job_name == "svc-monthly-scheduler"
+        else None,
+    )
+
+    required, skip_reason, scheduler_checked = heartbeat._resolve_required_services(
+        project="project-1",
+        since=dt.datetime(2026, 6, 10, 0, 0, tzinfo=dt.timezone.utc),
+        now=dt.datetime(2026, 6, 10, 2, 0, tzinfo=dt.timezone.utc),
+    )
+
+    assert required == []
+    assert skip_reason and "no configured Cloud Scheduler main job was due" in skip_reason
+    assert scheduler_checked is True
+
+
 def test_main_skips_when_no_scheduler_main_job_is_due(monkeypatch, capsys):
     monkeypatch.delenv("RUNTIME_HEARTBEAT_REQUIRED_SERVICES", raising=False)
     monkeypatch.setenv("GCP_PROJECT_ID", "interactivebrokersquant")

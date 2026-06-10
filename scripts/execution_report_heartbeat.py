@@ -224,6 +224,47 @@ def _list_scheduler_jobs(*, project: str | None) -> list[dict[str, Any]]:
     return payload if isinstance(payload, list) else []
 
 
+def _describe_scheduler_job(job_name: str, *, project: str | None) -> dict[str, Any] | None:
+    command = [
+        "gcloud",
+        "scheduler",
+        "jobs",
+        "describe",
+        job_name,
+        "--location",
+        _scheduler_location(),
+        "--format=json",
+    ]
+    if project:
+        command.extend(["--project", project])
+    result = _run_gcloud(command)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        if "not_found" in detail.lower() or "not found" in detail.lower():
+            return None
+        raise RuntimeError(detail or f"gcloud scheduler jobs describe failed for {job_name}")
+    if not result.stdout.strip():
+        return None
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"gcloud scheduler jobs describe returned invalid JSON for {job_name}: {exc}") from exc
+    return payload if isinstance(payload, dict) else None
+
+
+def _describe_scheduler_jobs_for_services(
+    services: list[str],
+    *,
+    project: str | None,
+) -> list[dict[str, Any]]:
+    jobs = []
+    for service in services:
+        job = _describe_scheduler_job(f"{service}-scheduler", project=project)
+        if job:
+            jobs.append(job)
+    return jobs
+
+
 def _scheduler_job_targets_strategy_run(job: dict[str, Any], service: str) -> bool:
     if str(job.get("state") or "").strip().upper() not in {"", "ENABLED"}:
         return False
@@ -347,7 +388,14 @@ def _filter_scheduler_due_services(
     since: dt.datetime,
     now: dt.datetime,
 ) -> list[str]:
-    jobs = _list_scheduler_jobs(project=project)
+    try:
+        jobs = _list_scheduler_jobs(project=project)
+    except RuntimeError as exc:
+        print(
+            f"Unable to list Cloud Scheduler jobs: {exc}; trying named scheduler job lookup.",
+            file=sys.stderr,
+        )
+        jobs = _describe_scheduler_jobs_for_services(services, project=project)
     due_services = []
     for service in services:
         service_jobs = [
