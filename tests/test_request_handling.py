@@ -3,6 +3,31 @@ import types
 from application.cycle_result import StrategyCycleResult
 
 
+def route_methods(strategy_module):
+    return {
+        rule.rule: sorted(rule.methods - {"HEAD", "OPTIONS"})
+        for rule in strategy_module.app.url_map.iter_rules()
+    }
+
+
+def test_cloud_run_route_contracts_are_registered(strategy_module):
+    assert route_methods(strategy_module) == {
+        "/": ["GET", "POST"],
+        "/precheck": ["GET", "POST"],
+        "/probe": ["GET", "POST"],
+        "/health": ["GET"],
+        "/static/<path:filename>": ["GET"],
+    }
+
+
+def test_health_route_returns_ok(strategy_module):
+    with strategy_module.app.test_request_context("/health", method="GET"):
+        body, status = strategy_module.health()
+
+    assert status == 200
+    assert body == "OK"
+
+
 def test_handle_request_get_returns_safe_message(strategy_module, monkeypatch):
     def fail_if_called():
         raise AssertionError("GET should not execute strategy")
