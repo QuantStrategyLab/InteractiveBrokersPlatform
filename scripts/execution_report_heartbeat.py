@@ -137,15 +137,29 @@ def _load_required_services(
     since: dt.datetime | None = None,
     now: dt.datetime | None = None,
 ) -> list[str]:
+    services, _skip_reason, _scheduler_checked = _resolve_required_services(
+        project=project,
+        since=since,
+        now=now,
+    )
+    return services
+
+
+def _resolve_required_services(
+    *,
+    project: str | None = None,
+    since: dt.datetime | None = None,
+    now: dt.datetime | None = None,
+) -> tuple[list[str], str | None, bool]:
     services, explicit = _load_required_service_candidates()
     if explicit or not services:
-        return services
+        return services, None, False
     if not _env_bool("RUNTIME_HEARTBEAT_SCHEDULER_AWARE", True):
-        return services
+        return services, None, False
     if since is None or now is None:
-        return services
+        return services, None, False
     try:
-        return _filter_scheduler_due_services(
+        due_services = _filter_scheduler_due_services(
             services,
             project=project,
             since=since,
@@ -157,7 +171,14 @@ def _load_required_services(
             "falling back to all configured services.",
             file=sys.stderr,
         )
-        return services
+        return services, None, False
+    if not due_services:
+        return (
+            [],
+            "no configured Cloud Scheduler main job was due in the heartbeat lookback window",
+            True,
+        )
+    return due_services, None, True
 
 
 def _unique_values(values: list[str]) -> list[str]:
@@ -522,7 +543,7 @@ def _send_telegram(message: str) -> bool:
     return ok
 
 
-def main() -> int:
+def main(now: dt.datetime | None = None) -> int:
     project = (
         os.environ.get("RUNTIME_HEARTBEAT_GCP_PROJECT_ID")
         or os.environ.get("GCP_PROJECT_ID")
@@ -533,9 +554,19 @@ def main() -> int:
     max_reports = int(os.environ.get("RUNTIME_HEARTBEAT_MAX_REPORTS_TO_READ") or "20")
     fail_workflow = _env_bool("RUNTIME_HEARTBEAT_FAIL_WORKFLOW_ON_ALERT", True)
 
-    now = dt.datetime.now(dt.timezone.utc)
+    now = now or dt.datetime.now(dt.timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=dt.timezone.utc)
+    now = now.astimezone(dt.timezone.utc)
     since = now - dt.timedelta(hours=lookback_hours)
-    required_services = _load_required_services(project=project, since=since, now=now)
+    required_services, scheduler_skip_reason, _scheduler_checked = _resolve_required_services(
+        project=project,
+        since=since,
+        now=now,
+    )
+    if scheduler_skip_reason:
+        print(f"Execution report heartbeat skipped for {name}: {scheduler_skip_reason}")
+        return 0
     globs = _report_globs(since, now)
     if not globs:
         raise SystemExit("No heartbeat GCS report URI configured")

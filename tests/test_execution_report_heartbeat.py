@@ -3,6 +3,8 @@ from __future__ import annotations
 import datetime as dt
 import json
 
+import pytest
+
 from scripts import execution_report_heartbeat as heartbeat
 
 
@@ -114,3 +116,36 @@ def test_scheduler_aware_required_services_include_monthly_service_when_due(monk
     )
 
     assert required == ["svc-monthly"]
+
+
+def test_main_skips_when_no_scheduler_main_job_is_due(monkeypatch, capsys):
+    monkeypatch.delenv("RUNTIME_HEARTBEAT_REQUIRED_SERVICES", raising=False)
+    monkeypatch.setenv("GCP_PROJECT_ID", "interactivebrokersquant")
+    monkeypatch.setenv("RUNTIME_HEARTBEAT_NAME", "Monthly runtime")
+    monkeypatch.setenv("RUNTIME_HEARTBEAT_REPORT_PLATFORM", "interactive_brokers")
+    monkeypatch.setenv("CLOUD_RUN_SERVICE", "ibkr-monthly-service")
+    monkeypatch.setenv("RUNTIME_HEARTBEAT_GCS_URIS", "gs://bucket/execution-reports")
+    monkeypatch.setattr(
+        heartbeat,
+        "_list_scheduler_jobs",
+        lambda **_kwargs: [
+            {
+                "state": "ENABLED",
+                "schedule": "45 15 26 * *",
+                "timeZone": "America/New_York",
+                "httpTarget": {"uri": "https://ibkr-monthly-service.example.run.app/"},
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        heartbeat,
+        "_list_gcs_objects",
+        lambda *_args, **_kwargs: pytest.fail("GCS should not be queried when no scheduler job is due"),
+    )
+
+    result = heartbeat.main(now=dt.datetime(2026, 6, 10, 1, 35, tzinfo=dt.timezone.utc))
+
+    assert result == 0
+    output = capsys.readouterr().out
+    assert "Execution report heartbeat skipped for Monthly runtime" in output
+    assert "no configured Cloud Scheduler main job was due" in output
