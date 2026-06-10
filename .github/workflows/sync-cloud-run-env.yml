@@ -74,6 +74,9 @@ jobs:
       CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ vars.CLOUD_RUN_SERVICE_TARGETS_JSON }}
       CLOUD_RUN_ENV_SYNC_WAIT_FOR_COMMIT: ${{ vars.CLOUD_RUN_ENV_SYNC_WAIT_FOR_COMMIT }}
       CLOUD_SCHEDULER_LOCATION: ${{ vars.CLOUD_SCHEDULER_LOCATION }}
+      CLOUD_SCHEDULER_MAIN_TIME: ${{ vars.CLOUD_SCHEDULER_MAIN_TIME }}
+      CLOUD_SCHEDULER_PROBE_TIME: ${{ vars.CLOUD_SCHEDULER_PROBE_TIME }}
+      CLOUD_SCHEDULER_PRECHECK_TIME: ${{ vars.CLOUD_SCHEDULER_PRECHECK_TIME }}
       TELEGRAM_TOKEN_SECRET_NAME: ${{ vars.TELEGRAM_TOKEN_SECRET_NAME }}
       RUNTIME_TARGET_JSON: ${{ vars.RUNTIME_TARGET_JSON }}
       ACCOUNT_GROUP: ${{ vars.ACCOUNT_GROUP }}
@@ -853,7 +856,7 @@ jobs:
             gcloud "${gcloud_args[@]}"
           done
 
-      - name: Sync Cloud Scheduler timezone
+      - name: Sync Cloud Scheduler schedule
         if: steps.config.outputs.env_sync_enabled == 'true'
         env:
           SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
@@ -862,13 +865,16 @@ jobs:
 
           scheduler_location="${CLOUD_SCHEDULER_LOCATION:-${CLOUD_RUN_REGION}}"
           if [ -z "${scheduler_location}" ]; then
-            echo "Cloud Scheduler timezone sync requires CLOUD_RUN_REGION or CLOUD_SCHEDULER_LOCATION." >&2
+            echo "Cloud Scheduler schedule sync requires CLOUD_RUN_REGION or CLOUD_SCHEDULER_LOCATION." >&2
             exit 1
           fi
 
           mapfile -t scheduler_updates < <(python - <<'PY'
           import json
           import os
+
+          def configured_time(name: str, default: str) -> str:
+              return os.environ.get(name, "").strip() or default
 
           plan = json.loads(os.environ["SYNC_PLAN_JSON"])
           for target in plan["targets"]:
@@ -878,29 +884,67 @@ jobs:
               market = str(env.get("IBKR_MARKET") or "").strip().upper()
               if not timezone:
                   timezone = "Asia/Hong_Kong" if market == "HK" else "America/New_York"
-              print(f"{service_name}\t{timezone}")
+              print(
+                  "\t".join(
+                      [
+                          service_name,
+                          timezone,
+                          configured_time("CLOUD_SCHEDULER_MAIN_TIME", "45 15"),
+                          configured_time("CLOUD_SCHEDULER_PROBE_TIME", "35 9,15"),
+                          configured_time("CLOUD_SCHEDULER_PRECHECK_TIME", "45 9"),
+                      ]
+                  )
+              )
           PY
           )
 
           for update in "${scheduler_updates[@]}"; do
-            IFS=$'\t' read -r cloud_run_service market_timezone <<< "${update}"
+            IFS=$'\t' read -r cloud_run_service market_timezone main_time probe_time precheck_time <<< "${update}"
             if [ -z "${cloud_run_service}" ] || [ -z "${market_timezone}" ]; then
               continue
             fi
 
             for suffix in scheduler probe-scheduler precheck-scheduler; do
               job_name="${cloud_run_service}-${suffix}"
-              if ! gcloud scheduler jobs describe "${job_name}" \
+              case "${suffix}" in
+                scheduler)
+                  schedule_time="${main_time}"
+                  ;;
+                probe-scheduler)
+                  schedule_time="${probe_time}"
+                  ;;
+                precheck-scheduler)
+                  schedule_time="${precheck_time}"
+                  ;;
+              esac
+
+              current_schedule="$(gcloud scheduler jobs describe "${job_name}" \
                 --project="${GCP_PROJECT_ID}" \
-                --location="${scheduler_location}" >/dev/null 2>&1; then
-                echo "Cloud Scheduler job ${job_name} was not found in ${scheduler_location}; skipping timezone sync."
+                --location="${scheduler_location}" \
+                --format='value(schedule)' 2>/dev/null || true)"
+              if [ -z "${current_schedule}" ]; then
+                echo "Cloud Scheduler job ${job_name} was not found in ${scheduler_location}; skipping schedule sync."
                 continue
               fi
 
-              echo "Updating Cloud Scheduler job ${job_name} timezone to ${market_timezone}."
+              desired_schedule="$(CURRENT_SCHEDULE="${current_schedule}" SCHEDULE_TIME="${schedule_time}" python - <<'PY'
+          import os
+
+          current_fields = os.environ["CURRENT_SCHEDULE"].split()
+          time_fields = os.environ["SCHEDULE_TIME"].split()
+          if len(current_fields) != 5:
+              raise SystemExit(f"Cloud Scheduler schedule must have 5 fields: {os.environ['CURRENT_SCHEDULE']!r}")
+          if len(time_fields) != 2:
+              raise SystemExit(f"Cloud Scheduler time override must have 2 cron fields: {os.environ['SCHEDULE_TIME']!r}")
+          print(" ".join([*time_fields, *current_fields[2:]]))
+          PY
+              )"
+
+              echo "Updating Cloud Scheduler job ${job_name} schedule to ${desired_schedule} and timezone to ${market_timezone}."
               gcloud scheduler jobs update http "${job_name}" \
                 --project="${GCP_PROJECT_ID}" \
                 --location="${scheduler_location}" \
+                --schedule="${desired_schedule}" \
                 --time-zone="${market_timezone}" \
                 --quiet
             done
