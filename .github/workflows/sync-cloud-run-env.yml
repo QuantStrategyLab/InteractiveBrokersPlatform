@@ -905,7 +905,6 @@ jobs:
             fi
 
             for suffix in scheduler probe-scheduler precheck-scheduler; do
-              job_name="${cloud_run_service}-${suffix}"
               case "${suffix}" in
                 scheduler)
                   schedule_time="${main_time}"
@@ -918,12 +917,26 @@ jobs:
                   ;;
               esac
 
-              current_schedule="$(gcloud scheduler jobs describe "${job_name}" \
-                --project="${GCP_PROJECT_ID}" \
-                --location="${scheduler_location}" \
-                --format='value(schedule)' 2>/dev/null || true)"
+              scheduler_job_candidates=("${cloud_run_service}-${suffix}")
+              if [[ "${cloud_run_service}" == *-service ]]; then
+                scheduler_job_candidates+=("${cloud_run_service%-service}-${suffix}")
+              fi
+
+              job_name=""
+              current_schedule=""
+              for candidate_job in "${scheduler_job_candidates[@]}"; do
+                current_schedule="$(gcloud scheduler jobs describe "${candidate_job}" \
+                  --project="${GCP_PROJECT_ID}" \
+                  --location="${scheduler_location}" \
+                  --format='value(schedule)' 2>/dev/null || true)"
+                if [ -n "${current_schedule}" ]; then
+                  job_name="${candidate_job}"
+                  break
+                fi
+              done
+
               if [ -z "${current_schedule}" ]; then
-                echo "Cloud Scheduler job ${job_name} was not found in ${scheduler_location}; skipping schedule sync."
+                echo "Cloud Scheduler job for ${cloud_run_service} ${suffix} was not found in ${scheduler_location}; skipping schedule sync."
                 continue
               fi
 
