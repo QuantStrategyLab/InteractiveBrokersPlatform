@@ -880,7 +880,8 @@ jobs:
           for target in plan["targets"]:
               service_name = str(target["service_name"]).strip()
               env = target.get("env") or {}
-              timezone = str(env.get("IBKR_MARKET_TIMEZONE") or "").strip()
+              scheduler = target.get("scheduler") or {}
+              timezone = str(scheduler.get("timezone") or env.get("IBKR_MARKET_TIMEZONE") or "").strip()
               market = str(env.get("IBKR_MARKET") or "").strip().upper()
               if not timezone:
                   timezone = "Asia/Hong_Kong" if market == "HK" else "America/New_York"
@@ -889,9 +890,9 @@ jobs:
                       [
                           service_name,
                           timezone,
-                          configured_time("CLOUD_SCHEDULER_MAIN_TIME", "45 15"),
-                          configured_time("CLOUD_SCHEDULER_PROBE_TIME", "35 9,15"),
-                          configured_time("CLOUD_SCHEDULER_PRECHECK_TIME", "45 9"),
+                          str(scheduler.get("main_time") or configured_time("CLOUD_SCHEDULER_MAIN_TIME", "45 15")),
+                          str(scheduler.get("probe_time") or configured_time("CLOUD_SCHEDULER_PROBE_TIME", "35 9,15")),
+                          str(scheduler.get("precheck_time") or configured_time("CLOUD_SCHEDULER_PRECHECK_TIME", "45 9")),
                       ]
                   )
               )

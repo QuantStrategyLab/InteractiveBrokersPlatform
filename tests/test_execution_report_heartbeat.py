@@ -150,6 +150,46 @@ def test_scheduler_aware_required_services_fall_back_to_named_scheduler_describe
     assert scheduler_checked is True
 
 
+def test_scheduler_aware_named_fallback_uses_service_alias(monkeypatch):
+    monkeypatch.delenv("RUNTIME_HEARTBEAT_REQUIRED_SERVICES", raising=False)
+    monkeypatch.setenv("CLOUD_RUN_SERVICE", "interactive-brokers-live-u1599-tqqq-service")
+    monkeypatch.setattr(
+        heartbeat,
+        "_list_scheduler_jobs",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("cloudscheduler.jobs.list denied")),
+    )
+    requested_job_names = []
+
+    def fake_describe_scheduler_job(job_name, **_kwargs):
+        requested_job_names.append(job_name)
+        if job_name != "interactive-brokers-live-u1599-tqqq-scheduler":
+            return None
+        return {
+            "state": "ENABLED",
+            "schedule": "45 15 26 * *",
+            "timeZone": "America/New_York",
+            "httpTarget": {
+                "uri": "https://interactive-brokers-live-u1599-tqqq-service.example.run.app/"
+            },
+        }
+
+    monkeypatch.setattr(heartbeat, "_describe_scheduler_job", fake_describe_scheduler_job)
+
+    required, skip_reason, scheduler_checked = heartbeat._resolve_required_services(
+        project="project-1",
+        since=dt.datetime(2026, 6, 10, 0, 0, tzinfo=dt.timezone.utc),
+        now=dt.datetime(2026, 6, 10, 2, 0, tzinfo=dt.timezone.utc),
+    )
+
+    assert requested_job_names == [
+        "interactive-brokers-live-u1599-tqqq-service-scheduler",
+        "interactive-brokers-live-u1599-tqqq-scheduler",
+    ]
+    assert required == []
+    assert skip_reason and "no configured Cloud Scheduler main job was due" in skip_reason
+    assert scheduler_checked is True
+
+
 def test_main_skips_when_no_scheduler_main_job_is_due(monkeypatch, capsys):
     monkeypatch.delenv("RUNTIME_HEARTBEAT_REQUIRED_SERVICES", raising=False)
     monkeypatch.setenv("GCP_PROJECT_ID", "interactivebrokersquant")

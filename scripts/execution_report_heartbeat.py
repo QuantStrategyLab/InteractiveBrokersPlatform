@@ -259,10 +259,22 @@ def _describe_scheduler_jobs_for_services(
 ) -> list[dict[str, Any]]:
     jobs = []
     for service in services:
-        job = _describe_scheduler_job(f"{service}-scheduler", project=project)
-        if job:
-            jobs.append(job)
+        for job_name in _scheduler_job_name_candidates(service):
+            job = _describe_scheduler_job(job_name, project=project)
+            if job:
+                jobs.append(job)
+                break
     return jobs
+
+
+def _scheduler_job_name_candidates(service: str) -> list[str]:
+    service_name = str(service or "").strip()
+    if not service_name:
+        return []
+    candidates = [f"{service_name}-scheduler"]
+    if service_name.endswith("-service"):
+        candidates.append(f"{service_name.removesuffix('-service')}-scheduler")
+    return _unique_values(candidates)
 
 
 def _scheduler_job_targets_strategy_run(job: dict[str, Any], service: str) -> bool:

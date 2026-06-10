@@ -100,6 +100,16 @@ OPTIONAL_TARGET_ENV = (
     "IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD",
     "EXECUTION_REPORT_GCS_URI",
 )
+SCHEDULER_TIME_DEFAULTS = {
+    "main_time": "45 15",
+    "probe_time": "35 9,15",
+    "precheck_time": "45 9",
+}
+SCHEDULER_TIME_ENV = {
+    "main_time": "CLOUD_SCHEDULER_MAIN_TIME",
+    "probe_time": "CLOUD_SCHEDULER_PROBE_TIME",
+    "precheck_time": "CLOUD_SCHEDULER_PRECHECK_TIME",
+}
 
 
 def build_sync_plan(env: Mapping[str, str] = os.environ) -> dict[str, object]:
@@ -270,8 +280,44 @@ def _build_target_plan(
         "service_name": service_name,
         "strategy_profile": canonical_profile,
         "env": env_values,
+        "scheduler": _build_scheduler_plan(
+            target=target,
+            defaults=defaults,
+            env=env,
+            env_values=env_values,
+            per_service_mode=per_service_mode,
+        ),
         "remove_env_vars": sorted(set(remove_env_vars) - set(env_values)),
     }
+
+
+def _build_scheduler_plan(
+    *,
+    target: Mapping[str, object],
+    defaults: Mapping[str, object],
+    env: Mapping[str, str],
+    env_values: Mapping[str, str],
+    per_service_mode: bool,
+) -> dict[str, str]:
+    market = str(env_values.get("IBKR_MARKET") or "").strip().upper()
+    timezone = str(env_values.get("IBKR_MARKET_TIMEZONE") or "").strip()
+    if not timezone:
+        timezone = "Asia/Hong_Kong" if market == "HK" else "America/New_York"
+
+    scheduler = {"timezone": timezone}
+    for key, env_name in SCHEDULER_TIME_ENV.items():
+        scheduler[key] = (
+            _target_env_value(
+                target,
+                defaults,
+                env,
+                env_name,
+                per_service_mode=per_service_mode,
+                allow_shared_fallback=True,
+            )
+            or SCHEDULER_TIME_DEFAULTS[key]
+        )
+    return scheduler
 
 
 def _validate_profile_inputs(
