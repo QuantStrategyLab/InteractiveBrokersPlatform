@@ -14,8 +14,8 @@ This branch is for a paper-account rehearsal only. Do not use it for live IBKR.
 STRATEGY_PROFILE=mega_cap_leader_rotation_top50_balanced
 ACCOUNT_GROUP=default
 IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=ibkr-account-groups
-IBKR_FEATURE_SNAPSHOT_PATH=gs://qsl-runtime-logs-interactivebrokersquant/strategy-artifacts/us_equity/mega_cap_leader_rotation_top50_balanced_staging/mega_cap_leader_rotation_top50_balanced_feature_snapshot_latest.csv
-IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH=gs://qsl-runtime-logs-interactivebrokersquant/strategy-artifacts/us_equity/mega_cap_leader_rotation_top50_balanced_staging/mega_cap_leader_rotation_top50_balanced_feature_snapshot_latest.csv.manifest.json
+IBKR_FEATURE_SNAPSHOT_PATH=gs://qsl-runtime-logs-shared/strategy-artifacts/us_equity/mega_cap_leader_rotation_top50_balanced_staging/mega_cap_leader_rotation_top50_balanced_feature_snapshot_latest.csv
+IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH=gs://qsl-runtime-logs-shared/strategy-artifacts/us_equity/mega_cap_leader_rotation_top50_balanced_staging/mega_cap_leader_rotation_top50_balanced_feature_snapshot_latest.csv.manifest.json
 NOTIFY_LANG=zh
 ```
 
