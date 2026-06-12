@@ -17,6 +17,31 @@ from quant_platform_kit.common.runtime_target import (
     RuntimeTarget,
     resolve_runtime_target_from_env,
 )
+try:
+    from quant_platform_kit.common.broker_costs import (
+        BrokerCostProfile,
+        minimum_economic_order_notional_usd,
+    )
+except ImportError:  # pragma: no cover - compatibility with older pinned shared wheels
+    @dataclass(frozen=True)
+    class BrokerCostProfile:
+        fixed_order_fee_usd: float = 0.0
+        minimum_order_fee_usd: float = 0.0
+        max_fixed_fee_bps: float = 100.0
+        explicit_min_order_notional_usd: float = 0.0
+
+    def minimum_economic_order_notional_usd(profile: BrokerCostProfile | None) -> float:
+        if profile is None:
+            return 0.0
+        explicit_floor = max(0.0, float(profile.explicit_min_order_notional_usd or 0.0))
+        fee_floor = max(
+            max(0.0, float(profile.fixed_order_fee_usd or 0.0)),
+            max(0.0, float(profile.minimum_order_fee_usd or 0.0)),
+        )
+        max_fee_bps = max(0.0, float(profile.max_fixed_fee_bps or 0.0))
+        if fee_floor <= 0.0 or max_fee_bps <= 0.0:
+            return explicit_floor
+        return max(explicit_floor, fee_floor / (max_fee_bps / 10_000.0))
 from strategy_registry import (
     IBKR_PLATFORM,
     STRATEGY_CATALOG,
@@ -39,6 +64,14 @@ HK_MARKET_EXCHANGE = "SEHK"
 HK_MARKET_TIMEZONE = "Asia/Hong_Kong"
 DEFAULT_RESERVED_CASH_FLOOR_USD = 0.0
 DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD = 1000.0
+DEFAULT_IBKR_MIN_ORDER_FEE_USD = 0.35
+DEFAULT_IBKR_MAX_FIXED_FEE_BPS = 50.0
+DEFAULT_IBKR_MIN_ORDER_NOTIONAL_USD = minimum_economic_order_notional_usd(
+    BrokerCostProfile(
+        minimum_order_fee_usd=DEFAULT_IBKR_MIN_ORDER_FEE_USD,
+        max_fixed_fee_bps=DEFAULT_IBKR_MAX_FIXED_FEE_BPS,
+    )
+)
 EXECUTION_BACKEND_GATEWAY = "gateway"
 EXECUTION_BACKEND_QUANTCONNECT = "quantconnect"
 SUPPORTED_EXECUTION_BACKENDS = frozenset(
@@ -135,7 +168,7 @@ class PlatformRuntimeSettings:
     market_exchange: str = DEFAULT_MARKET_EXCHANGE
     market_timezone: str = DEFAULT_MARKET_TIMEZONE
     quantity_step: float = 1.0
-    min_order_notional: float = 50.0
+    min_order_notional: float = DEFAULT_IBKR_MIN_ORDER_NOTIONAL_USD
     reserved_cash_floor_usd: float = DEFAULT_RESERVED_CASH_FLOOR_USD
     reserved_cash_ratio: float | None = None
     safe_haven_cash_substitute_threshold_usd: float = DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD
@@ -322,7 +355,7 @@ def load_platform_runtime_settings(
         min_order_notional=resolve_float_env(
             os.environ,
             "IBKR_MIN_ORDER_NOTIONAL_USD",
-            default=50.0,
+            default=DEFAULT_IBKR_MIN_ORDER_NOTIONAL_USD,
         ),
         reserved_cash_floor_usd=resolve_non_negative_float_env(
             "IBKR_MIN_RESERVED_CASH_USD",

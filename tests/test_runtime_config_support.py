@@ -176,7 +176,7 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.market_exchange == DEFAULT_MARKET_EXCHANGE
     assert settings.market_timezone == DEFAULT_MARKET_TIMEZONE
     assert settings.quantity_step == 1.0
-    assert settings.min_order_notional == 50.0
+    assert settings.min_order_notional == 70.0
     assert settings.reserved_cash_floor_usd == DEFAULT_RESERVED_CASH_FLOOR_USD
     assert settings.reserved_cash_ratio is None
     assert settings.safe_haven_cash_substitute_threshold_usd == DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD
