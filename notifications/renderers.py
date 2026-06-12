@@ -338,6 +338,112 @@ def _build_timing_audit_lines(signal_metadata, *, translator) -> list[str]:
     return [f"{label}: {value}"]
 
 
+def _format_percent(value) -> str:
+    try:
+        return f"{float(value) * 100:.1f}%"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
+def _format_percentile(value) -> str:
+    try:
+        percentile = float(value) * 100
+    except (TypeError, ValueError):
+        return "p?"
+    if float(percentile).is_integer():
+        return f"p{int(percentile)}"
+    return f"p{percentile:.1f}"
+
+
+def _format_sample_count(value) -> str:
+    try:
+        count = float(value)
+    except (TypeError, ValueError):
+        return "n/a"
+    if float(count).is_integer():
+        return str(int(count))
+    return f"{count:.1f}"
+
+
+def _present(value) -> bool:
+    return value not in (None, "")
+
+
+def _is_truthy(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y"}
+
+
+def _effective_volatility_delever_threshold(signal_metadata, *, prefix: str):
+    mode = str(signal_metadata.get(f"{prefix}_threshold_mode") or "").strip().lower()
+    dynamic_threshold = signal_metadata.get(f"{prefix}_dynamic_threshold")
+    if mode == "rolling_percentile" and _present(dynamic_threshold):
+        return dynamic_threshold
+    return signal_metadata.get(f"{prefix}_threshold")
+
+
+def _format_volatility_delever_threshold_detail(signal_metadata, *, prefix: str, translator) -> str:
+    mode = str(signal_metadata.get(f"{prefix}_threshold_mode") or "").strip().lower()
+    fixed_threshold = signal_metadata.get(f"{prefix}_threshold")
+    dynamic_threshold = signal_metadata.get(f"{prefix}_dynamic_threshold")
+    if mode == "rolling_percentile":
+        kwargs = {
+            "percentile": _format_percentile(signal_metadata.get(f"{prefix}_dynamic_percentile")),
+            "lookback": _format_sample_count(signal_metadata.get(f"{prefix}_dynamic_lookback")),
+            "min_periods": _format_sample_count(signal_metadata.get(f"{prefix}_dynamic_min_periods")),
+            "sample_count": _format_sample_count(signal_metadata.get(f"{prefix}_dynamic_sample_count")),
+            "floor": _format_percent(signal_metadata.get(f"{prefix}_dynamic_floor")),
+            "cap": _format_percent(signal_metadata.get(f"{prefix}_dynamic_cap")),
+            "fixed_threshold": _format_percent(fixed_threshold),
+        }
+        if _present(dynamic_threshold):
+            return translator("blend_gate_volatility_threshold_detail_dynamic", **kwargs)
+        return translator("blend_gate_volatility_threshold_detail_dynamic_fallback", **kwargs)
+    return translator(
+        "blend_gate_volatility_threshold_detail_fixed",
+        threshold=_format_percent(fixed_threshold),
+    )
+
+
+def _build_tqqq_risk_control_lines(signal_metadata, *, translator) -> list[str]:
+    prefix = "dual_drive_volatility_delever"
+    if not _is_truthy(signal_metadata.get(f"{prefix}_applied")):
+        return []
+    redirect_symbol = str(signal_metadata.get(f"{prefix}_redirect_symbol") or "QQQ").strip().upper()
+    window = str(signal_metadata.get(f"{prefix}_window") or "5").strip()
+    threshold = _effective_volatility_delever_threshold(signal_metadata, prefix=prefix)
+    threshold_detail = _format_volatility_delever_threshold_detail(
+        signal_metadata,
+        prefix=prefix,
+        translator=translator,
+    )
+    if str(signal_metadata.get(f"{prefix}_trigger_reason") or "").strip() == "hysteresis_hold":
+        return [
+            translator(
+                "risk_control_tqqq_volatility_delever_hysteresis_dynamic",
+                window=window,
+                volatility=_format_percent(signal_metadata.get(f"{prefix}_metric")),
+                exit_threshold=_format_percent(signal_metadata.get(f"{prefix}_exit_threshold")),
+                threshold=_format_percent(threshold),
+                threshold_detail=threshold_detail,
+                source_symbol="TQQQ",
+                redirect_symbol=redirect_symbol or "QQQ",
+            )
+        ]
+    return [
+        translator(
+            "risk_control_tqqq_volatility_delever_applied_dynamic",
+            window=window,
+            volatility=_format_percent(signal_metadata.get(f"{prefix}_metric")),
+            threshold=_format_percent(threshold),
+            threshold_detail=threshold_detail,
+            source_symbol="TQQQ",
+            redirect_symbol=redirect_symbol or "QQQ",
+        )
+    ]
+
+
 def _format_signal_snapshot_line(snapshot, *, translator) -> str:
     if not isinstance(snapshot, Mapping):
         return ""
@@ -367,15 +473,17 @@ def _strategy_dashboard_text(signal_metadata, *, translator) -> str:
     metadata = signal_metadata if isinstance(signal_metadata, Mapping) else {}
     raw_annotations = metadata.get("execution_annotations")
     annotations = raw_annotations if isinstance(raw_annotations, Mapping) else {}
+    risk_source = {**metadata, **annotations}
     dashboard_text = _format_dashboard_text(
         annotations.get("dashboard_text")
         or metadata.get("dashboard_text")
         or metadata.get("dashboard")
         or ""
     )
+    risk_control_lines = _build_tqqq_risk_control_lines(risk_source, translator=translator)
     timing_lines = _build_timing_audit_lines(metadata, translator=translator)
     snapshot_line = _format_signal_snapshot_line(metadata.get("signal_snapshot"), translator=translator)
-    audit_lines = [*timing_lines, *([snapshot_line] if snapshot_line else [])]
+    audit_lines = [*risk_control_lines, *timing_lines, *([snapshot_line] if snapshot_line else [])]
     if not audit_lines:
         return dashboard_text
     if not dashboard_text:
