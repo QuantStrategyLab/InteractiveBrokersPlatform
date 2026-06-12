@@ -1,3 +1,4 @@
+from notifications.renderers import build_dashboard
 from notifications.telegram import build_strategy_display_name, build_translator, send_telegram_message
 from strategy_registry import SUPPORTED_STRATEGY_PROFILES
 
@@ -77,6 +78,45 @@ def test_build_translator_supports_chinese():
     )
     assert (
         translate(
+            "risk_control_tqqq_volatility_delever_applied_dynamic",
+            window=5,
+            volatility="31.2%",
+            threshold="30.0%",
+            threshold_detail=translate(
+                "blend_gate_volatility_threshold_detail_dynamic",
+                percentile="p90",
+                lookback="252",
+                floor="24.0%",
+                cap="36.0%",
+                sample_count="252",
+            ),
+            source_symbol="TQQQ",
+            redirect_symbol="QQQM",
+        )
+        == "🛡️ 风控: QQQ 5 日年化波动率 31.2% 高于实际阈值 30.0%（动态 p90，252日窗口，范围 24.0%-36.0%，样本 252），TQQQ 转向 QQQM"
+    )
+    assert (
+        en_translate(
+            "risk_control_tqqq_volatility_delever_hysteresis_dynamic",
+            window=5,
+            volatility="26.2%",
+            exit_threshold="24.0%",
+            threshold="30.0%",
+            threshold_detail=en_translate(
+                "blend_gate_volatility_threshold_detail_dynamic",
+                percentile="p90",
+                lookback="252",
+                floor="24.0%",
+                cap="36.0%",
+                sample_count="252",
+            ),
+            source_symbol="TQQQ",
+            redirect_symbol="QQQM",
+        )
+        == "🛡️ Risk control: QQQ 5d annualized volatility 26.2% remains above exit threshold 24.0%; entry effective threshold 30.0% (dynamic p90, 252d lookback, bounded 24.0%-36.0%, samples 252); keep TQQQ redirected to QQQM"
+    )
+    assert (
+        translate(
             "strategy_plugin_line",
             plugin=translate("strategy_plugin_name_crisis_response_shadow"),
             mode=translate("strategy_plugin_mode_shadow"),
@@ -138,6 +178,40 @@ def test_supported_strategy_profiles_have_translated_names():
     for profile in SUPPORTED_STRATEGY_PROFILES:
         assert zh_name(profile) != profile
         assert en_name(profile) != profile
+
+
+def test_dashboard_renders_tqqq_volatility_delever_risk_control():
+    dashboard = build_dashboard(
+        positions={},
+        account_values={"equity": 10000.0, "buying_power": 1000.0},
+        signal_desc="Entry signal",
+        status_desc="Entry signal",
+        strategy_profile="tqqq_growth_income",
+        strategy_display_name="TQQQ Growth Income",
+        signal_metadata={
+            "dashboard_text": "📌 Strategy account overview",
+            "dual_drive_volatility_delever_applied": True,
+            "dual_drive_volatility_delever_window": 5,
+            "dual_drive_volatility_delever_metric": 0.312,
+            "dual_drive_volatility_delever_threshold": 0.28,
+            "dual_drive_volatility_delever_threshold_mode": "rolling_percentile",
+            "dual_drive_volatility_delever_dynamic_threshold": 0.30,
+            "dual_drive_volatility_delever_dynamic_sample_count": 252,
+            "dual_drive_volatility_delever_dynamic_lookback": 252,
+            "dual_drive_volatility_delever_dynamic_percentile": 0.90,
+            "dual_drive_volatility_delever_dynamic_min_periods": 126,
+            "dual_drive_volatility_delever_dynamic_floor": 0.24,
+            "dual_drive_volatility_delever_dynamic_cap": 0.36,
+            "dual_drive_volatility_delever_redirect_symbol": "QQQM",
+        },
+        translator=build_translator("en"),
+        separator="━━━━━━━━━━━━━━━━━━",
+    )
+
+    assert (
+        "🛡️ Risk control: QQQ 5d annualized volatility 31.2% is above effective threshold 30.0% "
+        "(dynamic p90, 252d lookback, bounded 24.0%-36.0%, samples 252); TQQQ redirects to QQQM"
+    ) in dashboard
 
 
 def test_send_telegram_message_logs_non_200_response(capsys):
