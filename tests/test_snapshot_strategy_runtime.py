@@ -251,12 +251,12 @@ def test_compute_signals_fail_closes_when_manifest_missing(strategy_module_facto
     assert "feature_snapshot_manifest_missing" in result[4]["fail_reason"]
 
 
-def test_global_etf_rotation_keeps_default_cash_reserve(strategy_module_factory):
+def test_global_etf_rotation_defaults_to_no_cash_reserve(strategy_module_factory):
     module = strategy_module_factory(
         STRATEGY_PROFILE="global_etf_rotation",
     )
 
-    assert module.CASH_RESERVE_RATIO == pytest.approx(0.03)
+    assert module.CASH_RESERVE_RATIO == pytest.approx(0.0)
 
 
 def test_platform_reserved_cash_policy_can_raise_strategy_cash_reserve(strategy_module_factory):
