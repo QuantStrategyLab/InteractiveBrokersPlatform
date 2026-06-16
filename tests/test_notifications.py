@@ -133,7 +133,7 @@ def test_build_translator_supports_chinese():
             route=translate("strategy_plugin_route_taco_rebound"),
             action=translate("strategy_plugin_action_notify_manual_review"),
         )
-        == "🧩 插件：TACO 抄底观察通知 | 状态：TACO 反弹确认 | 提醒：通知人工复核"
+        == "🧩 插件：TACO 反弹观察通知 | 状态：TACO 反弹确认 | 提醒：通知人工复核"
     )
     assert (
         translate(
@@ -244,3 +244,22 @@ def test_send_telegram_message_logs_non_200_response(capsys):
 
     captured = capsys.readouterr()
     assert "Telegram send failed with status 401: unauthorized" in captured.out
+
+
+def test_send_telegram_message_redacts_exception_detail(capsys):
+    class FakeRequests:
+        @staticmethod
+        def post(*args, **kwargs):
+            raise RuntimeError("failed https://api.telegram.org/bottoken/sendMessage")
+
+    send_telegram_message(
+        "hello",
+        token="token",
+        chat_id="chat-id",
+        requests_module=FakeRequests,
+    )
+
+    captured = capsys.readouterr()
+    assert "Telegram send failed: RuntimeError" in captured.out
+    assert "token" not in captured.out
+    assert "api.telegram.org" not in captured.out
