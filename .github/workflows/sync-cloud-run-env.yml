@@ -861,6 +861,15 @@ jobs:
             gcloud "${gcloud_args[@]}"
           done
 
+      - name: Verify strategy plugin mounts
+        if: steps.config.outputs.env_sync_enabled == 'true'
+        env:
+          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
+          STRATEGY_PLUGIN_MOUNT_ENV_NAMES: IBKR_STRATEGY_PLUGIN_MOUNTS_JSON
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_cloud_run_strategy_plugin_mounts.py
+
       - name: Sync Cloud Scheduler schedule
         if: steps.config.outputs.env_sync_enabled == 'true'
         env:
