@@ -146,7 +146,7 @@ def test_build_translator_supports_chinese():
         == "🧩 插件：市场状态控制 | 状态：风险降低 | 提醒：降杠杆"
     )
     assert translate("strategy_plugin_alert_guidance", guidance="小仓位博弈") == "处置建议：小仓位博弈"
-    assert translate("strategy_plugin_alert_scope_note", scope_note="不会自动下单") == "执行范围：不会自动下单"
+    assert translate("strategy_plugin_alert_scope_note", scope_note="不会自动下单") == "自动化边界：不会自动下单"
     assert "降低杠杆" in translate("strategy_plugin_guidance_crisis_response_shadow_true_crisis_defend")
     assert "策略侧已批准" in translate("strategy_plugin_guidance_market_regime_control_risk_reduced_delever")
     assert "小仓位" in translate("strategy_plugin_guidance_taco_rebound_shadow_taco_rebound_notify_manual_review")
