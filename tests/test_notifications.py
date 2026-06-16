@@ -123,7 +123,7 @@ def test_build_translator_supports_chinese():
             route=translate("strategy_plugin_route_no_action"),
             action=translate("strategy_plugin_action_watch_only"),
         )
-        == "🧩 插件：危机观察通知 | 状态：未触发 | 提醒：仅通知"
+        == "🧩 插件：危机观察通知 | 状态：未触发 | 提醒：仅观察，不自动交易"
     )
     assert (
         translate(
@@ -143,7 +143,7 @@ def test_build_translator_supports_chinese():
             route=translate("strategy_plugin_route_risk_reduced"),
             action=translate("strategy_plugin_action_delever"),
         )
-        == "🧩 插件：市场状态控制通知 | 状态：风险降低 | 提醒：降杠杆"
+        == "🧩 插件：市场状态控制 | 状态：风险降低 | 提醒：降杠杆"
     )
     assert translate("strategy_plugin_alert_guidance", guidance="小仓位博弈") == "处置建议：小仓位博弈"
     assert translate("strategy_plugin_alert_scope_note", scope_note="不会自动下单") == "执行范围：不会自动下单"
