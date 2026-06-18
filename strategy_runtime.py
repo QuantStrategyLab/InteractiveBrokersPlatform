@@ -920,8 +920,10 @@ def load_strategy_runtime(
 
 def _build_runtime_overrides(runtime_settings: PlatformRuntimeSettings) -> dict[str, Any]:
     overrides: dict[str, Any] = {}
-    if runtime_settings.income_layer_enabled is not None:
-        overrides["income_layer_enabled"] = runtime_settings.income_layer_enabled
-    if runtime_settings.income_layer_max_ratio is not None:
-        overrides["income_layer_max_ratio"] = runtime_settings.income_layer_max_ratio
+    income_layer_enabled = getattr(runtime_settings, "income_layer_enabled", None)
+    income_layer_max_ratio = getattr(runtime_settings, "income_layer_max_ratio", None)
+    if income_layer_enabled is not None:
+        overrides["income_layer_enabled"] = income_layer_enabled
+    if income_layer_max_ratio is not None:
+        overrides["income_layer_max_ratio"] = income_layer_max_ratio
     return overrides
