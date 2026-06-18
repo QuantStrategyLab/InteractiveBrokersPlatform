@@ -492,7 +492,7 @@ def test_run_strategy_core_prefers_structured_noop_status_in_zh():
         send_tg_message=lambda message: observed["messages"].append(message),
         translator=build_translator("zh"),
         separator="---",
-        strategy_display_name="Mega Cap Top50 平衡龙头轮动",
+        strategy_display_name="美股超大盘50强平衡龙头轮动",
     )
 
     assert result.result == "OK - no-op"

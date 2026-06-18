@@ -171,7 +171,7 @@ I18N = {
         "strategy_name_russell_1000_multi_factor_defensive": "罗素1000多因子",
         "strategy_name_tech_communication_pullback_enhancement": "科技通信回调增强",
         "strategy_name_qqq_tech_enhancement": "科技通信回调增强",
-        "strategy_name_mega_cap_leader_rotation_top50_balanced": "Mega Cap Top50 平衡龙头轮动",
+        "strategy_name_mega_cap_leader_rotation_top50_balanced": "美股超大盘50强平衡龙头轮动",
         "strategy_name_nasdaq_sp500_smart_dca": "纳斯达克 / 标普智能定投",
         "strategy_name_hk_global_etf_tactical_rotation": "港股全球 ETF 战术轮动",
         "strategy_name_hk_dividend_gold_defensive_rotation": "港股股息黄金防守轮动",
