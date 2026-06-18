@@ -61,6 +61,7 @@ EXPECTED_IBKR_ENABLED_PROFILES = frozenset(
         "global_etf_rotation",
         "mega_cap_leader_rotation_top50_balanced",
         "nasdaq_sp500_smart_dca",
+        "ibit_smart_dca",
         "russell_1000_multi_factor_defensive",
         "soxl_soxx_trend_income",
         "tqqq_growth_income",
