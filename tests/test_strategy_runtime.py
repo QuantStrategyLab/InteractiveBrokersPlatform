@@ -31,6 +31,7 @@ def _build_runtime_settings(
     display_name: str = "Tech/Communication Pullback Enhancement",
     target_mode: str = "weight",
     income_layer_enabled: bool | None = None,
+    income_layer_start_usd: float | None = None,
     income_layer_max_ratio: float | None = None,
 ) -> PlatformRuntimeSettings:
     return PlatformRuntimeSettings(
@@ -54,6 +55,7 @@ def _build_runtime_settings(
         reconciliation_output_path=None,
         dry_run_only=True,
         income_layer_enabled=income_layer_enabled,
+        income_layer_start_usd=income_layer_start_usd,
         income_layer_max_ratio=income_layer_max_ratio,
         account_group="default",
         service_name=None,
@@ -276,6 +278,7 @@ def test_load_strategy_runtime_uses_entrypoint_defaults_and_runtime_adapter(monk
         "tech_communication_pullback_enhancement",
         runtime_settings=_build_runtime_settings(
             income_layer_enabled=False,
+            income_layer_start_usd=250000.0,
             income_layer_max_ratio=0.25,
         ),
         logger=lambda _message: None,
@@ -284,10 +287,12 @@ def test_load_strategy_runtime_uses_entrypoint_defaults_and_runtime_adapter(monk
     assert runtime.entrypoint.manifest.profile == "tech_communication_pullback_enhancement"
     assert runtime.runtime_config["benchmark_symbol"] == "SPY"
     assert runtime.runtime_config["income_layer_enabled"] is False
+    assert runtime.runtime_config["income_layer_start_usd"] == 250000.0
     assert runtime.runtime_config["income_layer_max_ratio"] == 0.25
     assert runtime.merged_runtime_config["safe_haven"] == "BOXX"
     assert runtime.merged_runtime_config["benchmark_symbol"] == "SPY"
     assert runtime.merged_runtime_config["income_layer_enabled"] is False
+    assert runtime.merged_runtime_config["income_layer_start_usd"] == 250000.0
     assert runtime.merged_runtime_config["income_layer_max_ratio"] == 0.25
     assert runtime.merged_runtime_config["rebalance_months"] == (1, 4, 7, 10)
     assert runtime.rebalance_threshold_ratio == 0.0
