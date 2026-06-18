@@ -974,9 +974,14 @@ jobs:
           time_fields = os.environ["SCHEDULE_TIME"].split()
           if len(current_fields) != 5:
               raise SystemExit(f"Cloud Scheduler schedule must have 5 fields: {os.environ['CURRENT_SCHEDULE']!r}")
-          if len(time_fields) != 2:
-              raise SystemExit(f"Cloud Scheduler time override must have 2 cron fields: {os.environ['SCHEDULE_TIME']!r}")
-          print(" ".join([*time_fields, *current_fields[2:]]))
+          if len(time_fields) == 5:
+              print(" ".join(time_fields))
+          elif len(time_fields) == 2:
+              print(" ".join([*time_fields, *current_fields[2:]]))
+          else:
+              raise SystemExit(
+                  f"Cloud Scheduler override must have 2 time fields or 5 cron fields: {os.environ['SCHEDULE_TIME']!r}"
+              )
           PY
               )"
 
