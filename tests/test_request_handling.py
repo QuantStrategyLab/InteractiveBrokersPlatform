@@ -332,6 +332,16 @@ def test_build_extra_notification_lines_includes_account_id(strategy_module):
     assert all("plugin-line" not in line for line in lines)
 
 
+def test_build_extra_notification_lines_includes_plugin_error(strategy_module_factory):
+    strategy_module = strategy_module_factory(NOTIFY_LANG="zh")
+    lines = strategy_module.build_extra_notification_lines(
+        (),
+        strategy_plugin_error="ValueError: bad config",
+    )
+    assert any("插件信号未加载" in line for line in lines)
+    assert any("插件配置校验失败" in line for line in lines)
+
+
 def test_handle_request_skips_overlapping_post(strategy_module, monkeypatch):
     observed = {}
 
