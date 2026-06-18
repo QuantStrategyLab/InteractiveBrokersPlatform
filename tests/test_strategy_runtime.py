@@ -33,6 +33,8 @@ def _build_runtime_settings(
     income_layer_enabled: bool | None = None,
     income_layer_start_usd: float | None = None,
     income_layer_max_ratio: float | None = None,
+    dca_mode: str | None = None,
+    dca_base_investment_usd: float | None = None,
 ) -> PlatformRuntimeSettings:
     return PlatformRuntimeSettings(
         project_id=None,
@@ -57,6 +59,8 @@ def _build_runtime_settings(
         income_layer_enabled=income_layer_enabled,
         income_layer_start_usd=income_layer_start_usd,
         income_layer_max_ratio=income_layer_max_ratio,
+        dca_mode=dca_mode,
+        dca_base_investment_usd=dca_base_investment_usd,
         account_group="default",
         service_name=None,
         account_ids=(),
@@ -297,6 +301,32 @@ def test_load_strategy_runtime_uses_entrypoint_defaults_and_runtime_adapter(monk
     assert runtime.merged_runtime_config["rebalance_months"] == (1, 4, 7, 10)
     assert runtime.rebalance_threshold_ratio == 0.0
     assert runtime.status_icon == "🧲"
+
+
+def test_dca_overrides_apply_to_runtime_config():
+    settings = _build_runtime_settings(
+        profile="nasdaq_sp500_smart_dca",
+        display_name="Nasdaq 100 / S&P 500 DCA",
+        target_mode="value",
+        dca_mode="smart",
+        dca_base_investment_usd=500.0,
+    )
+
+    assert strategy_runtime_module._build_runtime_overrides(settings) == {
+        "investment_amount_mode": "fixed",
+        "smart_multiplier_enabled": True,
+        "base_investment_usd": 500.0,
+    }
+
+
+def test_dca_overrides_are_ignored_for_non_dca_profiles():
+    settings = _build_runtime_settings(
+        profile="tqqq_growth_income",
+        dca_mode="smart",
+        dca_base_investment_usd=500.0,
+    )
+
+    assert strategy_runtime_module._build_runtime_overrides(settings) == {}
 
 
 def test_option_chain_fetch_uses_merged_manifest_overlay_defaults(monkeypatch):

@@ -176,6 +176,8 @@ class PlatformRuntimeSettings:
     income_layer_enabled: bool | None = None
     income_layer_start_usd: float | None = None
     income_layer_max_ratio: float | None = None
+    dca_mode: str | None = None
+    dca_base_investment_usd: float | None = None
     account_group: str = DEFAULT_ACCOUNT_GROUP
     service_name: str | None = None
     account_ids: tuple[str, ...] = ()
@@ -378,6 +380,8 @@ def load_platform_runtime_settings(
         income_layer_enabled=resolve_optional_bool_env("INCOME_LAYER_ENABLED"),
         income_layer_start_usd=resolve_optional_non_negative_float_env("INCOME_LAYER_START_USD"),
         income_layer_max_ratio=resolve_optional_ratio_env("INCOME_LAYER_MAX_RATIO"),
+        dca_mode=resolve_optional_dca_mode_env("DCA_MODE"),
+        dca_base_investment_usd=resolve_optional_positive_float_env("DCA_BASE_INVESTMENT_USD"),
         account_group=account_group,
         service_name=group_config.service_name,
         account_ids=group_config.account_ids,
@@ -517,6 +521,33 @@ def resolve_optional_non_negative_float_env(name: str) -> float | None:
     if raw_value is None or str(raw_value).strip() == "":
         return None
     return resolve_non_negative_float_env(name, default=0.0)
+
+
+def resolve_optional_positive_float_env(name: str) -> float | None:
+    raw_value = os.getenv(name)
+    if raw_value is None or str(raw_value).strip() == "":
+        return None
+    value = resolve_non_negative_float_env(name, default=0.0)
+    if value <= 0.0:
+        raise ValueError(f"{name} must be positive, got {value}")
+    return value
+
+
+def resolve_optional_dca_mode_env(name: str) -> str | None:
+    raw_value = os.getenv(name)
+    if raw_value is None or str(raw_value).strip() == "":
+        return None
+    value = str(raw_value).strip().lower()
+    aliases = {
+        "ordinary": "fixed",
+        "ordinary_dca": "fixed",
+        "fixed_dca": "fixed",
+        "smart_dca": "smart",
+    }
+    mode = aliases.get(value, value)
+    if mode not in {"fixed", "smart"}:
+        raise ValueError(f"{name} must be fixed or smart, got {raw_value!r}")
+    return mode
 
 
 def resolve_optional_bool_env(name: str) -> bool | None:
