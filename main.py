@@ -551,6 +551,18 @@ def _runtime_error_notification_message(exc: Exception, *, route_label: str | No
     if len(error_text) > 1200:
         error_text = error_text[:1197] + "..."
     route = route_label or f"{request.method} {request.path}"
+    if str(NOTIFY_LANG or "").strip().lower().startswith("zh"):
+        return "\n".join(
+            (
+                "IBKR 策略运行失败",
+                f"服务: {SERVICE_NAME or os.getenv('K_SERVICE', 'interactive-brokers-platform')}",
+                f"版本: {os.getenv('K_REVISION') or '<unknown>'}",
+                f"路由: {route}",
+                f"策略: {STRATEGY_PROFILE}",
+                f"账户组: {ACCOUNT_GROUP}",
+                f"错误: {error_text}",
+            )
+        )
     return "\n".join(
         (
             "IBKR strategy run failed",
