@@ -879,6 +879,7 @@ def load_strategy_runtime(
     runtime_config: dict[str, Any] = {}
     if _FEATURE_SNAPSHOT_INPUT in frozenset(entrypoint.manifest.required_inputs):
         runtime_config = runtime.load_runtime_parameters()
+    runtime_config.update(_build_runtime_overrides(runtime_settings))
 
     merged_runtime_config = dict(entrypoint.manifest.default_config)
     merged_runtime_config.update(runtime_config)
@@ -915,3 +916,14 @@ def load_strategy_runtime(
         cash_reserve_floor_usd=float(runtime_settings.reserved_cash_floor_usd or 0.0),
         logger=logger,
     )
+
+
+def _build_runtime_overrides(runtime_settings: PlatformRuntimeSettings) -> dict[str, Any]:
+    overrides: dict[str, Any] = {}
+    income_layer_enabled = getattr(runtime_settings, "income_layer_enabled", None)
+    income_layer_max_ratio = getattr(runtime_settings, "income_layer_max_ratio", None)
+    if income_layer_enabled is not None:
+        overrides["income_layer_enabled"] = income_layer_enabled
+    if income_layer_max_ratio is not None:
+        overrides["income_layer_max_ratio"] = income_layer_max_ratio
+    return overrides

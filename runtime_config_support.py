@@ -161,6 +161,7 @@ class PlatformRuntimeSettings:
     strategy_config_source: str | None
     reconciliation_output_path: str | None
     dry_run_only: bool
+    runtime_target_enabled: bool = True
     market: str = DEFAULT_MARKET
     market_calendar: str = DEFAULT_MARKET_CALENDAR
     market_currency: str = DEFAULT_MARKET_CURRENCY
@@ -172,6 +173,8 @@ class PlatformRuntimeSettings:
     reserved_cash_floor_usd: float = DEFAULT_RESERVED_CASH_FLOOR_USD
     reserved_cash_ratio: float | None = None
     safe_haven_cash_substitute_threshold_usd: float = DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD
+    income_layer_enabled: bool | None = None
+    income_layer_max_ratio: float | None = None
     account_group: str = DEFAULT_ACCOUNT_GROUP
     service_name: str | None = None
     account_ids: tuple[str, ...] = ()
@@ -328,6 +331,7 @@ def load_platform_runtime_settings(
         strategy_config_source=runtime_paths.strategy_config_source,
         reconciliation_output_path=runtime_paths.reconciliation_output_path,
         dry_run_only=resolve_bool_value(os.getenv("IBKR_DRY_RUN_ONLY")),
+        runtime_target_enabled=resolve_runtime_target_enabled_env(),
         market=market,
         market_calendar=first_non_empty(
             os.getenv("IBKR_MARKET_CALENDAR"),
@@ -370,6 +374,8 @@ def load_platform_runtime_settings(
                 default=DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD,
             ),
         ),
+        income_layer_enabled=resolve_optional_bool_env("INCOME_LAYER_ENABLED"),
+        income_layer_max_ratio=resolve_optional_ratio_env("INCOME_LAYER_MAX_RATIO"),
         account_group=account_group,
         service_name=group_config.service_name,
         account_ids=group_config.account_ids,
@@ -502,6 +508,23 @@ def resolve_optional_ratio_env(name: str) -> float | None:
     if value > 1.0:
         raise ValueError(f"{name} must be in [0,1], got {value}")
     return value
+
+
+def resolve_optional_bool_env(name: str) -> bool | None:
+    raw_value = os.getenv(name)
+    if raw_value is None or str(raw_value).strip() == "":
+        return None
+    value = str(raw_value).strip().lower()
+    if value in {"1", "true", "yes", "y", "on"}:
+        return True
+    if value in {"0", "false", "no", "n", "off"}:
+        return False
+    raise ValueError(f"{name} must be boolean, got {raw_value!r}")
+
+
+def resolve_runtime_target_enabled_env() -> bool:
+    value = resolve_optional_bool_env("RUNTIME_TARGET_ENABLED")
+    return True if value is None else value
 
 
 def split_env_list(raw_value: str | None) -> tuple[str, ...]:
