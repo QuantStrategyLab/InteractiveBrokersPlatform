@@ -1000,15 +1000,23 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
             {
                 "service": "interactive-brokers-live-u7654-mega-service",
                 "account_group": "live-u7654-mega",
-                "runtime_target": json.loads(
-                    runtime_target_json(
-                        "mega_cap_leader_rotation_top50_balanced",
-                        deployment_selector="live-u7654-mega",
-                        account_selector=["U7654321"],
-                        account_scope="live-u7654-mega",
-                        service_name="interactive-brokers-live-u7654-mega-service",
-                    )
-                ),
+                "runtime_target": {
+                    **json.loads(
+                        runtime_target_json(
+                            "mega_cap_leader_rotation_top50_balanced",
+                            deployment_selector="live-u7654-mega",
+                            account_selector=["U7654321"],
+                            account_scope="live-u7654-mega",
+                            service_name="interactive-brokers-live-u7654-mega-service",
+                        )
+                    ),
+                    "scheduler": {
+                        "timezone": "America/New_York",
+                        "main_time": "45 15 1-7 * *",
+                        "probe_time": "35 9,15 1-7 * *",
+                        "precheck_time": "45 9 1-7 * *",
+                    },
+                },
                 "ibkr_feature_snapshot_path": "gs://runtime/mega/snapshot.csv",
                 "ibkr_feature_snapshot_manifest_path": "gs://runtime/mega/snapshot.csv.manifest.json",
                 "income_layer_enabled": "false",
@@ -1058,10 +1066,10 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
     assert u7654_mega["env"]["ACCOUNT_GROUP"] == "live-u7654-mega"
     assert u7654_mega["env"]["STRATEGY_PROFILE"] == "mega_cap_leader_rotation_top50_balanced"
     assert u7654_mega["scheduler"] == {
-        "timezone": "Asia/Hong_Kong",
-        "main_time": "45 15",
-        "probe_time": "40 9,15",
-        "precheck_time": "45 9",
+        "timezone": "America/New_York",
+        "main_time": "45 15 1-7 * *",
+        "probe_time": "35 9,15 1-7 * *",
+        "precheck_time": "45 9 1-7 * *",
     }
     assert u7654_mega["env"]["IBKR_FEATURE_SNAPSHOT_PATH"] == "gs://runtime/mega/snapshot.csv"
     assert (

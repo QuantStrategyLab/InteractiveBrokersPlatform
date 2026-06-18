@@ -102,6 +102,8 @@ grep -Fq 'for candidate_job in "${scheduler_job_candidates[@]}"; do' "$workflow_
 grep -Fq 'current_schedule="$(gcloud scheduler jobs describe "${candidate_job}"' "$workflow_file"
 grep -Fq 'job_name="${candidate_job}"' "$workflow_file"
 grep -Fq 'desired_schedule="$(CURRENT_SCHEDULE="${current_schedule}" SCHEDULE_TIME="${schedule_time}" python - <<' "$workflow_file"
+grep -Fq 'if len(time_fields) == 5:' "$workflow_file"
+grep -Fq 'print(" ".join(time_fields))' "$workflow_file"
 grep -Fq 'print(" ".join([*time_fields, *current_fields[2:]]))' "$workflow_file"
 grep -Fq 'gcloud scheduler jobs update http "${job_name}"' "$workflow_file"
 grep -Fq -- '--schedule="${desired_schedule}"' "$workflow_file"

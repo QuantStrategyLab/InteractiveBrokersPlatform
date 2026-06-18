@@ -285,6 +285,7 @@ def _build_target_plan(
         "strategy_profile": canonical_profile,
         "env": env_values,
         "scheduler": _build_scheduler_plan(
+            runtime_target=runtime_target,
             target=target,
             defaults=defaults,
             env=env,
@@ -297,30 +298,32 @@ def _build_target_plan(
 
 def _build_scheduler_plan(
     *,
+    runtime_target: Mapping[str, object],
     target: Mapping[str, object],
     defaults: Mapping[str, object],
     env: Mapping[str, str],
     env_values: Mapping[str, str],
     per_service_mode: bool,
 ) -> dict[str, str]:
+    runtime_scheduler = runtime_target.get("scheduler") if isinstance(runtime_target, Mapping) else {}
+    if not isinstance(runtime_scheduler, Mapping):
+        runtime_scheduler = {}
     market = str(env_values.get("IBKR_MARKET") or "").strip().upper()
-    timezone = str(env_values.get("IBKR_MARKET_TIMEZONE") or "").strip()
+    timezone = str(runtime_scheduler.get("timezone") or env_values.get("IBKR_MARKET_TIMEZONE") or "").strip()
     if not timezone:
         timezone = "Asia/Hong_Kong" if market == "HK" else "America/New_York"
 
     scheduler = {"timezone": timezone}
     for key, env_name in SCHEDULER_TIME_ENV.items():
-        scheduler[key] = (
-            _target_env_value(
-                target,
-                defaults,
-                env,
-                env_name,
-                per_service_mode=per_service_mode,
-                allow_shared_fallback=True,
-            )
-            or SCHEDULER_TIME_DEFAULTS[key]
+        configured_value = _target_env_value(
+            target,
+            defaults,
+            env,
+            env_name,
+            per_service_mode=per_service_mode,
+            allow_shared_fallback=True,
         )
+        scheduler[key] = str(runtime_scheduler.get(key) or configured_value or SCHEDULER_TIME_DEFAULTS[key])
     return scheduler
 
 
