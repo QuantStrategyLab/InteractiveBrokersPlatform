@@ -632,7 +632,7 @@ def test_market_history_value_runtime_requires_portfolio_snapshot(monkeypatch):
         manifest = StrategyManifest(
             profile="nasdaq_sp500_smart_dca",
             domain="us_equity",
-            display_name="Nasdaq/S&P 500 Smart DCA",
+            display_name="Nasdaq 100 / S&P 500 Smart DCA",
             description="test",
             required_inputs=frozenset({"market_history", "portfolio_snapshot"}),
             default_config={"managed_symbols": ("QQQM", "SPLG")},
@@ -658,7 +658,7 @@ def test_market_history_value_runtime_requires_portfolio_snapshot(monkeypatch):
         ),
         runtime_settings=_build_runtime_settings(
             profile="nasdaq_sp500_smart_dca",
-            display_name="Nasdaq/S&P 500 Smart DCA",
+            display_name="Nasdaq 100 / S&P 500 Smart DCA",
             target_mode="value",
         ),
         runtime_config={},

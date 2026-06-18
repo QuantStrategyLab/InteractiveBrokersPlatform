@@ -720,7 +720,7 @@ def test_load_platform_runtime_settings_accepts_nasdaq_sp500_smart_dca(monkeypat
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
     assert settings.strategy_profile == "nasdaq_sp500_smart_dca"
-    assert settings.strategy_display_name == "Nasdaq/S&P 500 Smart DCA"
+    assert settings.strategy_display_name == "Nasdaq 100 / S&P 500 Smart DCA"
     assert settings.strategy_target_mode == "value"
 
 
@@ -761,7 +761,7 @@ def test_platform_profile_status_matrix_matches_current_ibkr_rollout():
     assert by_profile["tqqq_growth_income"]["display_name"] == "TQQQ Growth Income"
     assert by_profile["tqqq_growth_income"]["eligible"] is True
     assert by_profile["tqqq_growth_income"]["enabled"] is True
-    assert by_profile["nasdaq_sp500_smart_dca"]["display_name"] == "Nasdaq/S&P 500 Smart DCA"
+    assert by_profile["nasdaq_sp500_smart_dca"]["display_name"] == "Nasdaq 100 / S&P 500 Smart DCA"
     assert by_profile["nasdaq_sp500_smart_dca"]["eligible"] is True
     assert by_profile["nasdaq_sp500_smart_dca"]["enabled"] is True
     assert by_profile["hk_global_etf_tactical_rotation"] == {
