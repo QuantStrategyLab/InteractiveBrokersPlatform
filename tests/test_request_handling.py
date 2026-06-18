@@ -13,7 +13,9 @@ def route_methods(strategy_module):
 def test_cloud_run_route_contracts_are_registered(strategy_module):
     assert route_methods(strategy_module) == {
         "/": ["GET", "POST"],
+        "/run": ["GET", "POST"],
         "/precheck": ["GET", "POST"],
+        "/dry-run": ["GET", "POST"],
         "/probe": ["GET", "POST"],
         "/health": ["GET"],
         "/static/<path:filename>": ["GET"],
@@ -122,6 +124,33 @@ def test_handle_precheck_post_uses_dry_run_override(strategy_module, monkeypatch
     assert observed["events"][0][1]["execution_window"] == "precheck"
 
 
+def test_handle_dry_run_alias_post_uses_dry_run_override(strategy_module, monkeypatch):
+    observed = {"called": False, "dry_run_only_override": None}
+
+    monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace(run_id="run-001"))
+    monkeypatch.setattr(strategy_module, "build_execution_report", lambda log_context, **_kwargs: {"status": "pending"})
+    monkeypatch.setattr(strategy_module, "persist_execution_report", lambda report, **_kwargs: "/tmp/runtime-report.json")
+    monkeypatch.setattr(strategy_module, "emit_runtime_log", lambda *args, **kwargs: None)
+    monkeypatch.setattr(strategy_module, "is_market_open_today", lambda **_kwargs: True)
+    monkeypatch.setattr(strategy_module, "load_strategy_plugin_signals", lambda: ((), None))
+    monkeypatch.setattr(strategy_module, "attach_strategy_plugin_report", lambda *args, **kwargs: None)
+
+    def fake_run_strategy_core(**kwargs):
+        observed["called"] = True
+        observed["dry_run_only_override"] = kwargs.get("dry_run_only_override")
+        return "OK - dry-run"
+
+    monkeypatch.setattr(strategy_module, "run_strategy_core", fake_run_strategy_core)
+
+    with strategy_module.app.test_request_context("/dry-run", method="POST"):
+        body, status = strategy_module.handle_precheck()
+
+    assert status == 200
+    assert body == "Dry Run OK"
+    assert observed["called"] is True
+    assert observed["dry_run_only_override"] is True
+
+
 def test_precheck_composer_wires_dry_run_override_to_order_execution(strategy_module, monkeypatch):
     observed = {}
 
@@ -208,8 +237,16 @@ def test_handle_probe_checks_account_snapshot_without_success_notification(strat
         "log_runtime_event",
         lambda context, event, **fields: observed["events"].append((event, fields)),
     )
-    monkeypatch.setattr(strategy_module, "load_strategy_plugin_signals", lambda: ((), None))
-    monkeypatch.setattr(strategy_module, "attach_strategy_plugin_report", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        strategy_module,
+        "load_strategy_plugin_signals",
+        lambda: (_ for _ in ()).throw(AssertionError("health probe should not load strategy plugins")),
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "attach_strategy_plugin_report",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("health probe should not attach strategy plugin reports")),
+    )
     monkeypatch.setattr(strategy_module, "connect_ib", lambda: FakeIB())
     monkeypatch.setattr(strategy_module, "build_portfolio_snapshot", lambda ib: snapshot)
     monkeypatch.setattr(
@@ -254,8 +291,16 @@ def test_handle_probe_connect_timeout_sends_concise_connection_notification(stra
         "log_runtime_event",
         lambda context, event, **fields: observed["events"].append((event, fields)),
     )
-    monkeypatch.setattr(strategy_module, "load_strategy_plugin_signals", lambda: ((), None))
-    monkeypatch.setattr(strategy_module, "attach_strategy_plugin_report", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        strategy_module,
+        "load_strategy_plugin_signals",
+        lambda: (_ for _ in ()).throw(AssertionError("health probe should not load strategy plugins")),
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "attach_strategy_plugin_report",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("health probe should not attach strategy plugin reports")),
+    )
     monkeypatch.setattr(
         strategy_module,
         "connect_ib",

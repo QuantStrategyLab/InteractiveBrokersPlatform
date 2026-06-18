@@ -941,11 +941,16 @@ def run_strategy_core(
     )
 
 
-def _handle_request(*, dry_run_only_override: bool | None = None, response_body: str = "OK"):
+def _handle_request(
+    *,
+    dry_run_only_override: bool | None = None,
+    response_body: str = "OK",
+    dry_run_label: str = "precheck",
+):
     if request.method == "GET":
         if dry_run_only_override is None:
             return "OK - use POST to execute strategy", 200
-        return f"{response_body} - use POST to run precheck", 200
+        return f"{response_body} - use POST to run {dry_run_label}", 200
 
     log_context = build_request_log_context()
     report = build_execution_report(log_context, dry_run_only_override=dry_run_only_override)
@@ -1151,12 +1156,6 @@ def _handle_probe(*, response_body: str = "Probe OK"):
     try:
         log_context = build_request_log_context()
         report = build_execution_report(log_context, dry_run_only_override=True)
-        strategy_plugin_signals, strategy_plugin_error = load_strategy_plugin_signals()
-        attach_strategy_plugin_report(
-            report,
-            signals=strategy_plugin_signals,
-            error=strategy_plugin_error,
-        )
         log_runtime_event(
             log_context,
             "health_probe_received",
@@ -1261,16 +1260,21 @@ def _handle_probe(*, response_body: str = "Probe OK"):
 
 
 @app.route("/", methods=["POST", "GET"])
+@app.route("/run", methods=["POST", "GET"])
 def handle_request():
     return _route_with_runtime_error_fallback(_handle_request)
 
 
 @app.route("/precheck", methods=["POST", "GET"])
+@app.route("/dry-run", methods=["POST", "GET"])
 def handle_precheck():
+    response_body = "Dry Run OK" if request.path == "/dry-run" else "Precheck OK"
+    dry_run_label = "strategy dry-run" if request.path == "/dry-run" else "precheck"
     return _route_with_runtime_error_fallback(
         _handle_request,
         dry_run_only_override=True,
-        response_body="Precheck OK",
+        response_body=response_body,
+        dry_run_label=dry_run_label,
     )
 
 
