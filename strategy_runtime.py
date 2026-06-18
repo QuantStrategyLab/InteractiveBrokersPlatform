@@ -43,6 +43,7 @@ from strategy_loader import (
 DEFAULT_CASH_RESERVE_RATIO = 0.0
 DEFAULT_REBALANCE_THRESHOLD_RATIO = 0.02
 _FEATURE_SNAPSHOT_INPUT = "feature_snapshot"
+DCA_PROFILES = frozenset({"nasdaq_sp500_smart_dca", "ibit_smart_dca"})
 _MARKET_HISTORY_INPUT = "market_history"
 _BENCHMARK_HISTORY_INPUT = "benchmark_history"
 _DERIVED_INDICATORS_INPUT = "derived_indicators"
@@ -929,4 +930,20 @@ def _build_runtime_overrides(runtime_settings: PlatformRuntimeSettings) -> dict[
         overrides["income_layer_start_usd"] = income_layer_start_usd
     if income_layer_max_ratio is not None:
         overrides["income_layer_max_ratio"] = income_layer_max_ratio
+    _apply_dca_runtime_overrides(runtime_settings, overrides)
     return overrides
+
+
+def _apply_dca_runtime_overrides(
+    runtime_settings: PlatformRuntimeSettings,
+    overrides: dict[str, Any],
+) -> None:
+    if runtime_settings.strategy_profile not in DCA_PROFILES:
+        return
+    dca_mode = getattr(runtime_settings, "dca_mode", None)
+    dca_base_investment_usd = getattr(runtime_settings, "dca_base_investment_usd", None)
+    if dca_mode is not None:
+        overrides["investment_amount_mode"] = "fixed"
+        overrides["smart_multiplier_enabled"] = dca_mode == "smart"
+    if dca_base_investment_usd is not None:
+        overrides["base_investment_usd"] = dca_base_investment_usd
