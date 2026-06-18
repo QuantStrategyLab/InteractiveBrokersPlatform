@@ -12,9 +12,7 @@ def route_methods(strategy_module):
 
 def test_cloud_run_route_contracts_are_registered(strategy_module):
     assert route_methods(strategy_module) == {
-        "/": ["GET", "POST"],
         "/run": ["GET", "POST"],
-        "/precheck": ["GET", "POST"],
         "/dry-run": ["GET", "POST"],
         "/probe": ["GET", "POST"],
         "/health": ["GET"],
@@ -36,7 +34,7 @@ def test_handle_request_get_returns_safe_message(strategy_module, monkeypatch):
 
     monkeypatch.setattr(strategy_module, "run_strategy_core", fail_if_called)
 
-    with strategy_module.app.test_request_context("/", method="GET"):
+    with strategy_module.app.test_request_context("/run", method="GET"):
         body, status = strategy_module.handle_request()
 
     assert status == 200
@@ -53,7 +51,7 @@ def test_handle_request_post_executes_on_market_day(strategy_module, monkeypatch
     monkeypatch.setattr(strategy_module, "is_market_open_today", lambda **_kwargs: True)
     monkeypatch.setattr(strategy_module, "run_strategy_core", fake_run_strategy_core)
 
-    with strategy_module.app.test_request_context("/", method="POST"):
+    with strategy_module.app.test_request_context("/run", method="POST"):
         body, status = strategy_module.handle_request()
 
     assert status == 200
@@ -83,7 +81,7 @@ def test_handle_request_sends_escalated_strategy_plugin_alert(strategy_module, m
     monkeypatch.setattr(strategy_module, "dispatch_strategy_plugin_alerts", fake_dispatch)
     monkeypatch.setattr(strategy_module, "run_strategy_core", lambda **_kwargs: "OK - executed")
 
-    with strategy_module.app.test_request_context("/", method="POST"):
+    with strategy_module.app.test_request_context("/run", method="POST"):
         body, status = strategy_module.handle_request()
 
     assert status == 200
@@ -95,7 +93,7 @@ def test_handle_request_sends_escalated_strategy_plugin_alert(strategy_module, m
     assert observed["alerts"][0][1]["state_settings"] is not None
 
 
-def test_handle_precheck_post_uses_dry_run_override(strategy_module, monkeypatch):
+def test_handle_dry_run_post_uses_dry_run_override(strategy_module, monkeypatch):
     observed = {"called": False, "dry_run_only_override": None, "events": []}
 
     monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace(run_id="run-001"))
@@ -109,49 +107,22 @@ def test_handle_precheck_post_uses_dry_run_override(strategy_module, monkeypatch
     def fake_run_strategy_core(**kwargs):
         observed["called"] = True
         observed["dry_run_only_override"] = kwargs.get("dry_run_only_override")
-        return "OK - precheck"
-
-    monkeypatch.setattr(strategy_module, "run_strategy_core", fake_run_strategy_core)
-
-    with strategy_module.app.test_request_context("/precheck", method="POST"):
-        body, status = strategy_module.handle_precheck()
-
-    assert status == 200
-    assert body == "Precheck OK"
-    assert observed["called"] is True
-    assert observed["dry_run_only_override"] is True
-    assert observed["events"][0][0] == "strategy_cycle_received"
-    assert observed["events"][0][1]["execution_window"] == "precheck"
-
-
-def test_handle_dry_run_alias_post_uses_dry_run_override(strategy_module, monkeypatch):
-    observed = {"called": False, "dry_run_only_override": None}
-
-    monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace(run_id="run-001"))
-    monkeypatch.setattr(strategy_module, "build_execution_report", lambda log_context, **_kwargs: {"status": "pending"})
-    monkeypatch.setattr(strategy_module, "persist_execution_report", lambda report, **_kwargs: "/tmp/runtime-report.json")
-    monkeypatch.setattr(strategy_module, "emit_runtime_log", lambda *args, **kwargs: None)
-    monkeypatch.setattr(strategy_module, "is_market_open_today", lambda **_kwargs: True)
-    monkeypatch.setattr(strategy_module, "load_strategy_plugin_signals", lambda: ((), None))
-    monkeypatch.setattr(strategy_module, "attach_strategy_plugin_report", lambda *args, **kwargs: None)
-
-    def fake_run_strategy_core(**kwargs):
-        observed["called"] = True
-        observed["dry_run_only_override"] = kwargs.get("dry_run_only_override")
         return "OK - dry-run"
 
     monkeypatch.setattr(strategy_module, "run_strategy_core", fake_run_strategy_core)
 
     with strategy_module.app.test_request_context("/dry-run", method="POST"):
-        body, status = strategy_module.handle_precheck()
+        body, status = strategy_module.handle_dry_run()
 
     assert status == 200
     assert body == "Dry Run OK"
     assert observed["called"] is True
     assert observed["dry_run_only_override"] is True
+    assert observed["events"][0][0] == "strategy_cycle_received"
+    assert observed["events"][0][1]["execution_window"] == "dry_run"
 
 
-def test_precheck_composer_wires_dry_run_override_to_order_execution(strategy_module, monkeypatch):
+def test_dry_run_composer_wires_dry_run_override_to_order_execution(strategy_module, monkeypatch):
     observed = {}
 
     class FakeBrokerAdapters:
@@ -172,7 +143,7 @@ def test_precheck_composer_wires_dry_run_override_to_order_execution(strategy_mo
     assert observed["dry_run_only_override"] is True
 
 
-def test_handle_precheck_ignores_paper_liquidate_only(strategy_module, monkeypatch):
+def test_handle_dry_run_ignores_paper_liquidate_only(strategy_module, monkeypatch):
     observed = {"called": False}
 
     monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace(run_id="run-001"))
@@ -187,28 +158,28 @@ def test_handle_precheck_ignores_paper_liquidate_only(strategy_module, monkeypat
     def fake_run_strategy_core(**kwargs):
         observed["called"] = True
         assert kwargs.get("dry_run_only_override") is True
-        return "OK - precheck"
+        return "OK - dry-run"
 
     monkeypatch.setattr(strategy_module, "run_strategy_core", fake_run_strategy_core)
 
-    with strategy_module.app.test_request_context("/precheck", method="POST"):
-        body, status = strategy_module.handle_precheck()
+    with strategy_module.app.test_request_context("/dry-run", method="POST"):
+        body, status = strategy_module.handle_dry_run()
 
     assert status == 200
-    assert body == "Precheck OK"
+    assert body == "Dry Run OK"
     assert observed["called"] is True
 
 
-def test_handle_precheck_get_does_not_execute(strategy_module, monkeypatch):
+def test_handle_dry_run_get_does_not_execute(strategy_module, monkeypatch):
     observed = {"called": False}
 
     monkeypatch.setattr(strategy_module, "run_strategy_core", lambda **_kwargs: observed.__setitem__("called", True))
 
-    with strategy_module.app.test_request_context("/precheck", method="GET"):
-        body, status = strategy_module.handle_precheck()
+    with strategy_module.app.test_request_context("/dry-run", method="GET"):
+        body, status = strategy_module.handle_dry_run()
 
     assert status == 200
-    assert body == "Precheck OK - use POST to run precheck"
+    assert body == "Dry Run OK - use POST to run strategy dry-run"
     assert observed["called"] is False
 
 
@@ -402,7 +373,7 @@ def test_handle_request_skips_overlapping_post(strategy_module, monkeypatch):
 
     strategy_module.STRATEGY_RUN_LOCK.acquire()
     try:
-        with strategy_module.app.test_request_context("/", method="POST"):
+        with strategy_module.app.test_request_context("/run", method="POST"):
             body, status = strategy_module.handle_request()
     finally:
         strategy_module.STRATEGY_RUN_LOCK.release()
@@ -455,7 +426,7 @@ def test_handle_request_persists_machine_readable_report(strategy_module, monkey
         lambda report: observed.setdefault("report", dict(report)) or "/tmp/runtime-report.json",
     )
 
-    with strategy_module.app.test_request_context("/", method="POST"):
+    with strategy_module.app.test_request_context("/run", method="POST"):
         body, status = strategy_module.handle_request()
 
     assert status == 200
@@ -518,7 +489,7 @@ def test_handle_request_enriches_runtime_report_with_cycle_details(strategy_modu
         lambda report: observed.setdefault("report", dict(report)) or "/tmp/runtime-report.json",
     )
 
-    with strategy_module.app.test_request_context("/", method="POST"):
+    with strategy_module.app.test_request_context("/run", method="POST"):
         body, status = strategy_module.handle_request()
 
     assert status == 200
@@ -612,7 +583,7 @@ def test_handle_request_post_returns_market_closed_when_schedule_empty(strategy_
         lambda report: observed.setdefault("report", dict(report)) or "/tmp/runtime-report.json",
     )
 
-    with strategy_module.app.test_request_context("/", method="POST"):
+    with strategy_module.app.test_request_context("/run", method="POST"):
         body, status = strategy_module.handle_request()
 
     assert status == 200
@@ -638,7 +609,7 @@ def test_handle_request_error_persists_machine_readable_report(strategy_module, 
     )
     monkeypatch.setattr(strategy_module, "send_tg_message", lambda message: observed["messages"].append(message))
 
-    with strategy_module.app.test_request_context("/", method="POST"):
+    with strategy_module.app.test_request_context("/run", method="POST"):
         body, status = strategy_module.handle_request()
 
     assert status == 500
@@ -718,7 +689,7 @@ def test_handle_request_runtime_error_fallback_sends_telegram(strategy_module, m
     monkeypatch.setenv("STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS", "plugin-chat")
     monkeypatch.setattr(strategy_module.requests, "post", fake_post)
 
-    with strategy_module.app.test_request_context("/", method="POST"):
+    with strategy_module.app.test_request_context("/run", method="POST"):
         body, status = strategy_module.handle_request()
 
     assert status == 500
@@ -746,7 +717,7 @@ def test_handle_request_runtime_error_fallback_uses_chinese_copy(strategy_module
     monkeypatch.setattr(strategy_module, "TG_CHAT_ID", "chat-1")
     monkeypatch.setattr(strategy_module.requests, "post", fake_post)
 
-    with strategy_module.app.test_request_context("/", method="POST"):
+    with strategy_module.app.test_request_context("/run", method="POST"):
         body, status = strategy_module.handle_request()
 
     assert status == 500

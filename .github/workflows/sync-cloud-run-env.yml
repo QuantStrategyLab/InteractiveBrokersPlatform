@@ -919,16 +919,28 @@ jobs:
               continue
             fi
 
+            service_url="$(gcloud run services describe "${cloud_run_service}" \
+              --project="${GCP_PROJECT_ID}" \
+              --region="${CLOUD_RUN_REGION}" \
+              --format='value(status.url)' 2>/dev/null || true)"
+            if [ -z "${service_url}" ]; then
+              echo "Unable to resolve Cloud Run service URL for ${cloud_run_service}; cannot sync scheduler URI." >&2
+              exit 1
+            fi
+
             for suffix in scheduler probe-scheduler precheck-scheduler; do
               case "${suffix}" in
                 scheduler)
                   schedule_time="${main_time}"
+                  scheduler_path="/run"
                   ;;
                 probe-scheduler)
                   schedule_time="${probe_time}"
+                  scheduler_path="/probe"
                   ;;
                 precheck-scheduler)
                   schedule_time="${precheck_time}"
+                  scheduler_path="/dry-run"
                   ;;
               esac
 
@@ -968,10 +980,12 @@ jobs:
           PY
               )"
 
-              echo "Updating Cloud Scheduler job ${job_name} schedule to ${desired_schedule} and timezone to ${market_timezone}."
+              scheduler_uri="${service_url}${scheduler_path}"
+              echo "Updating Cloud Scheduler job ${job_name} schedule to ${desired_schedule}, timezone to ${market_timezone}, and URI to ${scheduler_uri}."
               gcloud scheduler jobs update http "${job_name}" \
                 --project="${GCP_PROJECT_ID}" \
                 --location="${scheduler_location}" \
+                --uri="${scheduler_uri}" \
                 --schedule="${desired_schedule}" \
                 --time-zone="${market_timezone}" \
                 --quiet

@@ -945,7 +945,7 @@ def _handle_request(
     *,
     dry_run_only_override: bool | None = None,
     response_body: str = "OK",
-    dry_run_label: str = "precheck",
+    dry_run_label: str = "strategy dry-run",
 ):
     if request.method == "GET":
         if dry_run_only_override is None:
@@ -960,14 +960,15 @@ def _handle_request(
         signals=strategy_plugin_signals,
         error=strategy_plugin_error,
     )
+    execution_window = "dry_run" if dry_run_only_override else "execution"
     lock_acquired = STRATEGY_RUN_LOCK.acquire(blocking=False)
     try:
         log_runtime_event(
             log_context,
             "strategy_cycle_received",
-            message="Received strategy precheck request" if dry_run_only_override else "Received strategy execution request",
+            message="Received strategy dry-run request" if dry_run_only_override else "Received strategy execution request",
             http_method=request.method,
-            execution_window="precheck" if dry_run_only_override else "execution",
+            execution_window=execution_window,
         )
         if not lock_acquired:
             log_runtime_event(
@@ -991,7 +992,7 @@ def _handle_request(
                 log_context,
                 "market_closed",
                 message="Market closed; skip strategy execution",
-                execution_window="precheck" if dry_run_only_override else "execution",
+                execution_window=execution_window,
                 market=MARKET,
                 market_calendar=MARKET_CALENDAR,
                 market_timezone=MARKET_TIMEZONE,
@@ -1005,8 +1006,8 @@ def _handle_request(
         log_runtime_event(
             log_context,
             "strategy_cycle_started",
-            message="Starting strategy precheck" if dry_run_only_override else "Starting strategy execution",
-            execution_window="precheck" if dry_run_only_override else "execution",
+            message="Starting strategy dry-run" if dry_run_only_override else "Starting strategy execution",
+            execution_window=execution_window,
         )
         if dry_run_only_override is None:
             publish_strategy_plugin_alerts(strategy_plugin_signals, report=report)
@@ -1047,7 +1048,7 @@ def _handle_request(
                 log_context,
                 "strategy_signal_snapshot",
                 message="Strategy signal snapshot",
-                execution_window="precheck" if dry_run_only_override else "execution",
+                execution_window=execution_window,
                 **signal_snapshot,
             )
         report_summary = _build_cycle_report_summary(
@@ -1085,8 +1086,8 @@ def _handle_request(
         log_runtime_event(
             log_context,
             "strategy_cycle_completed",
-            message="Strategy precheck completed" if dry_run_only_override else "Strategy execution completed",
-            execution_window="precheck" if dry_run_only_override else "execution",
+            message="Strategy dry-run completed" if dry_run_only_override else "Strategy execution completed",
+            execution_window=execution_window,
             result=cycle_result.result,
         )
         return (response_body if dry_run_only_override else cycle_result.result), 200
@@ -1259,22 +1260,18 @@ def _handle_probe(*, response_body: str = "Probe OK"):
             print(f"failed to persist execution report: {persist_exc}", flush=True)
 
 
-@app.route("/", methods=["POST", "GET"])
 @app.route("/run", methods=["POST", "GET"])
 def handle_request():
     return _route_with_runtime_error_fallback(_handle_request)
 
 
-@app.route("/precheck", methods=["POST", "GET"])
 @app.route("/dry-run", methods=["POST", "GET"])
-def handle_precheck():
-    response_body = "Dry Run OK" if request.path == "/dry-run" else "Precheck OK"
-    dry_run_label = "strategy dry-run" if request.path == "/dry-run" else "precheck"
+def handle_dry_run():
     return _route_with_runtime_error_fallback(
         _handle_request,
         dry_run_only_override=True,
-        response_body=response_body,
-        dry_run_label=dry_run_label,
+        response_body="Dry Run OK",
+        dry_run_label="strategy dry-run",
     )
 
 
