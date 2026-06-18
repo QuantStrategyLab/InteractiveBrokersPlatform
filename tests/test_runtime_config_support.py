@@ -727,11 +727,13 @@ def test_print_strategy_profile_status_json_matches_registry():
             for key in (
                 "canonical_profile",
                 "display_name",
+                "display_name_zh",
                 "domain",
                 "eligible",
                 "enabled",
                 "platform",
             )
+            if key in row
         }
         for row in rows
     ] == get_platform_profile_status_matrix()
@@ -745,6 +747,7 @@ def test_print_strategy_profile_status_json_matches_registry():
     assert by_profile["nasdaq_sp500_smart_dca"]["requires_snapshot_artifacts"] is False
     assert "tech_communication_pullback_enhancement" not in by_profile
     assert by_profile["mega_cap_leader_rotation_top50_balanced"]["profile_group"] == "snapshot_backed"
+    assert by_profile["mega_cap_leader_rotation_top50_balanced"]["display_name_zh"] == "美股超大盘50强平衡龙头轮动"
     assert by_profile["mega_cap_leader_rotation_top50_balanced"]["input_mode"] == "feature_snapshot"
     assert by_profile["mega_cap_leader_rotation_top50_balanced"]["requires_snapshot_artifacts"] is True
     assert by_profile["mega_cap_leader_rotation_top50_balanced"]["requires_strategy_config_path"] is False
@@ -769,12 +772,14 @@ def test_print_strategy_profile_status_table_contains_expected_headers():
 
     assert "canonical_profile" in result.stdout
     assert "display_name" in result.stdout
+    assert "display_name_zh" in result.stdout
     assert "profile_group" in result.stdout
     assert "input_mode" in result.stdout
     assert "requires_snapshot_artifacts" in result.stdout
     assert "global_etf_rotation" in result.stdout
     assert "hk_global_etf_tactical_rotation" in result.stdout
     assert "Mega Cap Leader Rotation Top50 Balanced" in result.stdout
+    assert "美股超大盘50强平衡龙头轮动" in result.stdout
     assert "Tech/Communication Pullback Enhancement" not in result.stdout
     assert "HK Global ETF Tactical Rotation" in result.stdout
     assert "TQQQ Growth Income" in result.stdout
