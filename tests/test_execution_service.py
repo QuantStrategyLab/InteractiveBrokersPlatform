@@ -592,6 +592,61 @@ def test_execute_rebalance_zero_target_sell_uses_position_quantity(monkeypatch, 
     assert submitted[0].quantity == 2
 
 
+def test_execute_rebalance_keeps_existing_whole_share_when_positive_target_is_unbuyable(monkeypatch, tmp_path):
+    class FakeIB:
+        def openTrades(self):
+            return []
+
+        def fills(self):
+            return []
+
+        def accountValues(self):
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="500")]
+
+    submitted = []
+
+    def fake_submit_order_intent(_ib, intent):
+        submitted.append(intent)
+        return SimpleNamespace(broker_order_id="1", status="Submitted")
+
+    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+
+    _trade_logs, summary = execute_rebalance(
+        FakeIB(),
+        {"TQQQ": 0.1, "QQQM": 0.6},
+        {"TQQQ": {"quantity": 7}, "QQQM": {"quantity": 0}},
+        {"equity": 540.0, "buying_power": 540.0},
+        fetch_quote_snapshots=lambda *_args, **_kwargs: {
+            "TQQQ": SimpleNamespace(last_price=77.33),
+            "QQQM": SimpleNamespace(last_price=297.19),
+        },
+        submit_order_intent=fake_submit_order_intent,
+        order_intent_cls=OrderIntent,
+        translator=translate,
+        strategy_symbols=["TQQQ", "QQQM"],
+        strategy_profile="tqqq_growth_income",
+        signal_metadata=_signal_metadata(
+            {"TQQQ": 60.94 / 540.0, "QQQM": 320.0 / 540.0},
+            risk_symbols=("TQQQ", "QQQM"),
+            trade_date="2026-06-17",
+        ),
+        dry_run_only=False,
+        cash_reserve_ratio=0.0,
+        rebalance_threshold_ratio=0.02,
+        limit_buy_premium=1.005,
+        quantity_step=1.0,
+        sell_settle_delay_sec=0,
+        execution_lock_dir=tmp_path,
+        return_summary=True,
+    )
+
+    assert summary["small_account_existing_whole_share_retained_symbols"] == ["TQQQ"]
+    sell_orders = [intent for intent in submitted if intent.side == "sell"]
+    assert len(sell_orders) == 1
+    assert sell_orders[0].symbol == "TQQQ"
+    assert sell_orders[0].quantity == 6
+
+
 def test_execute_rebalance_skips_when_pending_orders_exist():
     class FakeIB:
         def openTrades(self):

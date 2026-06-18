@@ -931,6 +931,7 @@ def _sell_order_quantity(
 
 DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD = 1000.0
 SMALL_ACCOUNT_SAFE_HAVEN_CASH_SUBSTITUTE_LIMIT_USD = 2000.0
+SMALL_ACCOUNT_EXISTING_WHOLE_SHARE_RETENTION_SYMBOLS = frozenset({"TQQQ", "SOXL"})
 
 
 def _positive_target_total(targets: dict[str, Any]) -> float:
@@ -1155,6 +1156,18 @@ def execute_rebalance(
             for symbol in target_mv
             if str(symbol or "").strip().upper() not in safe_haven_symbols
         )
+    small_account_retained_symbols = []
+    for symbol in small_account_candidate_symbols:
+        if symbol not in SMALL_ACCOUNT_EXISTING_WHOLE_SHARE_RETENTION_SYMBOLS:
+            continue
+        target_value = max(0.0, float(target_mv.get(symbol, 0.0) or 0.0))
+        price = max(0.0, float(prices.get(symbol, 0.0) or 0.0))
+        held_quantity = max(0.0, float(positions.get(symbol, {}).get("quantity", 0.0) or 0.0))
+        if price > 0.0 and 0.0 < target_value < price and held_quantity >= 1.0:
+            target_mv[symbol] = price
+            if investable > 0.0:
+                target_weights[symbol] = price / investable
+            small_account_retained_symbols.append(symbol)
     small_account_compatibility = apply_small_account_cash_compatibility(
         target_mv,
         prices,
@@ -1184,6 +1197,9 @@ def execute_rebalance(
     )
     execution_summary["small_account_safe_haven_cash_substituted_symbols"] = (
         small_account_safe_haven_cash_substituted_symbols
+    )
+    execution_summary["small_account_existing_whole_share_retained_symbols"] = list(
+        dict.fromkeys(small_account_retained_symbols)
     )
     execution_summary["small_account_whole_share_cash_notes"] = list(
         small_account_compatibility.cash_substitution_notes
