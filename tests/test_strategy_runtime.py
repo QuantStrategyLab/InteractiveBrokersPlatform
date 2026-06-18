@@ -35,6 +35,8 @@ def _build_runtime_settings(
     income_layer_max_ratio: float | None = None,
     dca_mode: str | None = None,
     dca_base_investment_usd: float | None = None,
+    reserved_cash_floor_usd: float = 0.0,
+    reserved_cash_ratio: float | None = None,
 ) -> PlatformRuntimeSettings:
     return PlatformRuntimeSettings(
         project_id=None,
@@ -56,6 +58,8 @@ def _build_runtime_settings(
         strategy_config_source="env",
         reconciliation_output_path=None,
         dry_run_only=True,
+        reserved_cash_floor_usd=reserved_cash_floor_usd,
+        reserved_cash_ratio=reserved_cash_ratio,
         income_layer_enabled=income_layer_enabled,
         income_layer_start_usd=income_layer_start_usd,
         income_layer_max_ratio=income_layer_max_ratio,
@@ -316,6 +320,20 @@ def test_dca_overrides_apply_to_runtime_config():
         "investment_amount_mode": "fixed",
         "smart_multiplier_enabled": True,
         "base_investment_usd": 500.0,
+    }
+
+
+def test_reserved_cash_policy_overrides_apply_to_runtime_config():
+    settings = _build_runtime_settings(
+        profile="soxl_soxx_trend_income",
+        display_name="SOXL/SOXX Semiconductor Trend Income",
+        reserved_cash_floor_usd=150.0,
+        reserved_cash_ratio=0.03,
+    )
+
+    assert strategy_runtime_module._build_runtime_overrides(settings) == {
+        "reserved_cash_floor_usd": 150.0,
+        "reserved_cash_ratio": 0.03,
     }
 
 
