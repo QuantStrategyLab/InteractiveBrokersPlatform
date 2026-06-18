@@ -687,6 +687,10 @@ def build_strategy_plugin_notification_lines(signals) -> tuple[str, ...]:
     return build_strategy_adapters().build_strategy_plugin_notification_lines(signals)
 
 
+def build_strategy_plugin_error_notification_lines(error) -> tuple[str, ...]:
+    return build_strategy_adapters().build_strategy_plugin_error_notification_lines(error)
+
+
 def build_strategy_plugin_alert_messages(signals):
     return build_strategy_adapters().build_strategy_plugin_alert_messages(signals)
 
@@ -817,7 +821,11 @@ def build_account_notification_lines() -> tuple[str, ...]:
     return (t("account_ids_detail", account_ids=", ".join(account_ids)),)
 
 
-def build_extra_notification_lines(strategy_plugin_signals=()) -> tuple[str, ...]:
+def build_extra_notification_lines(
+    strategy_plugin_signals=(),
+    *,
+    strategy_plugin_error: str | None = None,
+) -> tuple[str, ...]:
     return (
         t(
             "market_scope_detail",
@@ -828,6 +836,7 @@ def build_extra_notification_lines(strategy_plugin_signals=()) -> tuple[str, ...
         ),
         *build_account_notification_lines(),
         *build_strategy_plugin_notification_lines(strategy_plugin_signals),
+        *build_strategy_plugin_error_notification_lines(strategy_plugin_error),
     )
 
 
@@ -888,6 +897,7 @@ def run_paper_liquidation_cycle():
 def run_strategy_core(
     *,
     strategy_plugin_signals=(),
+    strategy_plugin_error: str | None = None,
     dry_run_only_override: bool | None = None,
     notification_delivery_events: list[dict] | None = None,
 ):
@@ -911,7 +921,10 @@ def run_strategy_core(
     return run_rebalance_cycle(
         runtime=rebalance_runtime,
         config=composer.build_rebalance_config(
-            extra_notification_lines=build_extra_notification_lines(strategy_plugin_signals),
+            extra_notification_lines=build_extra_notification_lines(
+                strategy_plugin_signals,
+                strategy_plugin_error=strategy_plugin_error,
+            ),
         ),
     )
 
@@ -984,6 +997,7 @@ def _handle_request(*, dry_run_only_override: bool | None = None, response_body:
         cycle_result = coerce_strategy_cycle_result(
             run_strategy_core(
                 strategy_plugin_signals=strategy_plugin_signals,
+                strategy_plugin_error=strategy_plugin_error,
                 dry_run_only_override=dry_run_only_override,
                 notification_delivery_events=notification_delivery_events,
             )
