@@ -682,3 +682,31 @@ def test_handle_request_runtime_error_fallback_sends_telegram(strategy_module, m
     assert sent_payloads[0][0]["chat_id"] == "chat-1"
     assert "IBKR strategy run failed" in sent_payloads[0][0]["text"]
     assert "RuntimeError: boom" in sent_payloads[0][0]["text"]
+
+
+def test_handle_request_runtime_error_fallback_uses_chinese_copy(strategy_module_factory, monkeypatch):
+    strategy_module = strategy_module_factory(NOTIFY_LANG="zh")
+    sent_payloads = []
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+
+    def fake_post(_url, *, json, timeout):
+        sent_payloads.append((json, timeout))
+        return FakeResponse()
+
+    monkeypatch.setattr(strategy_module, "_handle_request", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(strategy_module, "TG_TOKEN", "token-1")
+    monkeypatch.setattr(strategy_module, "TG_CHAT_ID", "chat-1")
+    monkeypatch.setattr(strategy_module.requests, "post", fake_post)
+
+    with strategy_module.app.test_request_context("/", method="POST"):
+        body, status = strategy_module.handle_request()
+
+    assert status == 500
+    assert body == "Error"
+    text = sent_payloads[0][0]["text"]
+    assert "IBKR 策略运行失败" in text
+    assert "账户组:" in text
+    assert "错误: RuntimeError: boom" in text
