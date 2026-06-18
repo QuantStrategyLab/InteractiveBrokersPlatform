@@ -951,6 +951,8 @@ def _handle_request(
         if dry_run_only_override is None:
             return "OK - use POST to execute strategy", 200
         return f"{response_body} - use POST to run {dry_run_label}", 200
+    if dry_run_only_override is None and not RUNTIME_SETTINGS.runtime_target_enabled:
+        return "Runtime Target Disabled", 200
 
     log_context = build_request_log_context()
     report = build_execution_report(log_context, dry_run_only_override=dry_run_only_override)
