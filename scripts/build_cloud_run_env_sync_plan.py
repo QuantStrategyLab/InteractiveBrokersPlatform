@@ -268,12 +268,13 @@ def _build_target_plan(
         else:
             env_values[name] = value
 
-    _validate_profile_inputs(
-        service_name=service_name,
-        env_values=env_values,
-        status=status,
-        missing=missing,
-    )
+    if _runtime_target_enabled(env_values):
+        _validate_profile_inputs(
+            service_name=service_name,
+            env_values=env_values,
+            status=status,
+            missing=missing,
+        )
     if missing:
         raise ValueError(
             "Cloud Run env sync target values are missing:\n"
@@ -352,6 +353,17 @@ def _validate_profile_inputs(
         "IBKR_RECONCILIATION_OUTPUT_PATH"
     ):
         missing.append(f"{service_name}:IBKR_RECONCILIATION_OUTPUT_PATH")
+
+
+def _runtime_target_enabled(env_values: Mapping[str, str]) -> bool:
+    raw = str(env_values.get("RUNTIME_TARGET_ENABLED") or "").strip().lower()
+    if not raw:
+        return True
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError("RUNTIME_TARGET_ENABLED must be true or false")
 
 
 def _resolve_runtime_target(

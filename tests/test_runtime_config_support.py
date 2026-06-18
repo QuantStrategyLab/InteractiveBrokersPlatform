@@ -1122,6 +1122,56 @@ def test_build_cloud_run_env_sync_plan_requires_target_snapshot_in_per_service_m
     assert "gs://stale-paper/snapshot.csv" not in result.stderr
 
 
+def test_build_cloud_run_env_sync_plan_skips_snapshot_requirements_for_disabled_target():
+    payload = {
+        "defaults": {
+            "GLOBAL_TELEGRAM_CHAT_ID": "5992562050",
+            "NOTIFY_LANG": "zh",
+            "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME": "ibkr-account-groups",
+        },
+        "targets": [
+            {
+                "service": "interactive-brokers-live-u7654-mega-service",
+                "account_group": "live-u7654-mega",
+                "runtime_target_enabled": "false",
+                "runtime_target": json.loads(
+                    runtime_target_json(
+                        "mega_cap_leader_rotation_top50_balanced",
+                        deployment_selector="live-u7654-mega",
+                        account_selector=["U7654321"],
+                        account_scope="live-u7654-mega",
+                        service_name="interactive-brokers-live-u7654-mega-service",
+                    )
+                ),
+            }
+        ],
+    }
+    env = {
+        **os.environ,
+        "CLOUD_RUN_SERVICE_TARGETS_JSON": json.dumps(payload),
+        "IBKR_FEATURE_SNAPSHOT_PATH": "gs://stale-paper/snapshot.csv",
+        "IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH": "gs://stale-paper/snapshot.csv.manifest.json",
+    }
+
+    result = subprocess.run(
+        [sys.executable, str(SYNC_PLAN_SCRIPT_PATH), "--json"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    plan = json.loads(result.stdout)
+    target = plan["targets"][0]
+    assert target["service_name"] == "interactive-brokers-live-u7654-mega-service"
+    assert target["env"]["RUNTIME_TARGET_ENABLED"] == "false"
+    assert "IBKR_FEATURE_SNAPSHOT_PATH" not in target["env"]
+    assert "IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH" not in target["env"]
+    assert "IBKR_FEATURE_SNAPSHOT_PATH" in target["remove_env_vars"]
+    assert "IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH" in target["remove_env_vars"]
+    assert "gs://stale-paper/snapshot.csv" not in result.stdout
+
+
 def test_print_strategy_switch_env_plan_rejects_removed_research_profile():
     result = subprocess.run(
         [sys.executable, str(SWITCH_PLAN_SCRIPT_PATH), "--profile", "mega_cap_leader_rotation_dynamic_top20", "--json"],
