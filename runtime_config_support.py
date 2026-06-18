@@ -174,6 +174,7 @@ class PlatformRuntimeSettings:
     reserved_cash_ratio: float | None = None
     safe_haven_cash_substitute_threshold_usd: float = DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD
     income_layer_enabled: bool | None = None
+    income_layer_start_usd: float | None = None
     income_layer_max_ratio: float | None = None
     account_group: str = DEFAULT_ACCOUNT_GROUP
     service_name: str | None = None
@@ -375,6 +376,7 @@ def load_platform_runtime_settings(
             ),
         ),
         income_layer_enabled=resolve_optional_bool_env("INCOME_LAYER_ENABLED"),
+        income_layer_start_usd=resolve_optional_non_negative_float_env("INCOME_LAYER_START_USD"),
         income_layer_max_ratio=resolve_optional_ratio_env("INCOME_LAYER_MAX_RATIO"),
         account_group=account_group,
         service_name=group_config.service_name,
@@ -508,6 +510,13 @@ def resolve_optional_ratio_env(name: str) -> float | None:
     if value > 1.0:
         raise ValueError(f"{name} must be in [0,1], got {value}")
     return value
+
+
+def resolve_optional_non_negative_float_env(name: str) -> float | None:
+    raw_value = os.getenv(name)
+    if raw_value is None or str(raw_value).strip() == "":
+        return None
+    return resolve_non_negative_float_env(name, default=0.0)
 
 
 def resolve_optional_bool_env(name: str) -> bool | None:

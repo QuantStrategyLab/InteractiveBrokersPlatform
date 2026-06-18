@@ -30,6 +30,7 @@ from runtime_config_support import (
     resolve_execution_backend,
     resolve_optional_bool_env,
     resolve_non_negative_float_env,
+    resolve_optional_non_negative_float_env,
     resolve_optional_ratio_env,
 )
 from strategy_registry import (
@@ -182,6 +183,7 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.reserved_cash_ratio is None
     assert settings.safe_haven_cash_substitute_threshold_usd == DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD
     assert settings.income_layer_enabled is None
+    assert settings.income_layer_start_usd is None
     assert settings.income_layer_max_ratio is None
     assert settings.runtime_target_enabled is True
     assert settings.account_group == "paper"
@@ -532,11 +534,13 @@ def test_load_platform_runtime_settings_reads_income_layer_overrides(monkeypatch
     monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
     monkeypatch.setenv("INCOME_LAYER_ENABLED", "false")
+    monkeypatch.setenv("INCOME_LAYER_START_USD", "250000")
     monkeypatch.setenv("INCOME_LAYER_MAX_RATIO", "0.25")
 
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
     assert settings.income_layer_enabled is False
+    assert settings.income_layer_start_usd == 250000.0
     assert settings.income_layer_max_ratio == 0.25
 
 
@@ -552,6 +556,13 @@ def test_load_platform_runtime_settings_rejects_invalid_income_layer_max_ratio(m
 
     with pytest.raises(ValueError, match="INCOME_LAYER_MAX_RATIO"):
         resolve_optional_ratio_env("INCOME_LAYER_MAX_RATIO")
+
+
+def test_load_platform_runtime_settings_rejects_invalid_income_layer_start_usd(monkeypatch):
+    monkeypatch.setenv("INCOME_LAYER_START_USD", "-1")
+
+    with pytest.raises(ValueError, match="INCOME_LAYER_START_USD"):
+        resolve_optional_non_negative_float_env("INCOME_LAYER_START_USD")
 
 
 def test_load_platform_runtime_settings_rejects_invalid_reserved_cash_ratio(monkeypatch):
@@ -1000,6 +1011,7 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
                 "ibkr_feature_snapshot_path": "gs://runtime/mega/snapshot.csv",
                 "ibkr_feature_snapshot_manifest_path": "gs://runtime/mega/snapshot.csv.manifest.json",
                 "income_layer_enabled": "false",
+                "income_layer_start_usd": "300000",
                 "income_layer_max_ratio": "0.25",
             },
         ],
@@ -1056,6 +1068,7 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
         == "gs://runtime/mega/snapshot.csv.manifest.json"
     )
     assert u7654_mega["env"]["INCOME_LAYER_ENABLED"] == "false"
+    assert u7654_mega["env"]["INCOME_LAYER_START_USD"] == "300000"
     assert u7654_mega["env"]["INCOME_LAYER_MAX_RATIO"] == "0.25"
 
 
