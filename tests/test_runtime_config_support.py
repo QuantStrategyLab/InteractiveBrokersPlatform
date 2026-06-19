@@ -59,10 +59,9 @@ SAMPLE_STRATEGY_PROFILE = "global_etf_rotation"
 EXPECTED_IBKR_ENABLED_PROFILES = frozenset(
     {
         "global_etf_rotation",
-        "mega_cap_leader_rotation_top50_balanced",
+        "russell_top50_leader_rotation_aggressive",
         "nasdaq_sp500_smart_dca",
         "ibit_smart_dca",
-        "russell_1000_multi_factor_defensive",
         "soxl_soxx_trend_income",
         "tqqq_growth_income",
         "hk_dividend_gold_defensive_rotation",
@@ -810,11 +809,11 @@ def test_print_strategy_profile_status_json_matches_registry():
     assert by_profile["nasdaq_sp500_smart_dca"]["input_mode"] == "market_history+portfolio_snapshot"
     assert by_profile["nasdaq_sp500_smart_dca"]["requires_snapshot_artifacts"] is False
     assert "tech_communication_pullback_enhancement" not in by_profile
-    assert by_profile["mega_cap_leader_rotation_top50_balanced"]["profile_group"] == "snapshot_backed"
-    assert by_profile["mega_cap_leader_rotation_top50_balanced"]["display_name_zh"] == "美股超大盘50强平衡龙头轮动"
-    assert by_profile["mega_cap_leader_rotation_top50_balanced"]["input_mode"] == "feature_snapshot"
-    assert by_profile["mega_cap_leader_rotation_top50_balanced"]["requires_snapshot_artifacts"] is True
-    assert by_profile["mega_cap_leader_rotation_top50_balanced"]["requires_strategy_config_path"] is False
+    assert by_profile["russell_top50_leader_rotation_aggressive"]["profile_group"] == "snapshot_backed"
+    assert by_profile["russell_top50_leader_rotation_aggressive"]["display_name_zh"] == "罗素 Top50 领涨轮动（激进）"
+    assert by_profile["russell_top50_leader_rotation_aggressive"]["input_mode"] == "feature_snapshot"
+    assert by_profile["russell_top50_leader_rotation_aggressive"]["requires_snapshot_artifacts"] is True
+    assert by_profile["russell_top50_leader_rotation_aggressive"]["requires_strategy_config_path"] is False
     for profile in ("hk_blue_chip_leader_rotation", "hk_index_mean_reversion", "hk_etf_regime_rotation"):
         assert profile not in by_profile
     for profile in ("hk_global_etf_tactical_rotation",):
@@ -823,7 +822,6 @@ def test_print_strategy_profile_status_json_matches_registry():
         assert by_profile[profile]["requires_snapshot_artifacts"] is False
         assert by_profile[profile]["requires_snapshot_manifest_path"] is False
         assert by_profile[profile]["requires_strategy_config_path"] is False
-    assert by_profile["russell_1000_multi_factor_defensive"]["requires_strategy_config_path"] is False
 
 
 def test_print_strategy_profile_status_table_contains_expected_headers():
@@ -842,8 +840,8 @@ def test_print_strategy_profile_status_table_contains_expected_headers():
     assert "requires_snapshot_artifacts" in result.stdout
     assert "global_etf_rotation" in result.stdout
     assert "hk_global_etf_tactical_rotation" in result.stdout
-    assert "Mega Cap Leader Rotation Top50 Balanced" in result.stdout
-    assert "美股超大盘50强平衡龙头轮动" in result.stdout
+    assert "Russell Top50 Leader Rotation Aggressive" in result.stdout
+    assert "罗素 Top50 领涨轮动（激进）" in result.stdout
     assert "Tech/Communication Pullback Enhancement" not in result.stdout
     assert "HK Global ETF Tactical Rotation" in result.stdout
     assert "TQQQ Growth Income" in result.stdout
@@ -1008,7 +1006,7 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
                 "runtime_target": {
                     **json.loads(
                         runtime_target_json(
-                            "mega_cap_leader_rotation_top50_balanced",
+                            "russell_top50_leader_rotation_aggressive",
                             deployment_selector="live-u7654-mega",
                             account_selector=["U7654321"],
                             account_scope="live-u7654-mega",
@@ -1071,7 +1069,7 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
     ] == "tqqq_growth_income"
 
     assert u7654_mega["env"]["ACCOUNT_GROUP"] == "live-u7654-mega"
-    assert u7654_mega["env"]["STRATEGY_PROFILE"] == "mega_cap_leader_rotation_top50_balanced"
+    assert u7654_mega["env"]["STRATEGY_PROFILE"] == "russell_top50_leader_rotation_aggressive"
     assert u7654_mega["scheduler"] == {
         "timezone": "America/New_York",
         "main_time": "45 15 1-7 * *",
@@ -1103,7 +1101,7 @@ def test_build_cloud_run_env_sync_plan_requires_target_snapshot_in_per_service_m
                 "account_group": "live-u7654-mega",
                 "runtime_target": json.loads(
                     runtime_target_json(
-                        "mega_cap_leader_rotation_top50_balanced",
+                        "russell_top50_leader_rotation_aggressive",
                         deployment_selector="live-u7654-mega",
                         account_selector=["U7654321"],
                         account_scope="live-u7654-mega",
@@ -1145,7 +1143,7 @@ def test_build_cloud_run_env_sync_plan_skips_snapshot_requirements_for_disabled_
                 "runtime_target_enabled": "false",
                 "runtime_target": json.loads(
                     runtime_target_json(
-                        "mega_cap_leader_rotation_top50_balanced",
+                        "russell_top50_leader_rotation_aggressive",
                         deployment_selector="live-u7654-mega",
                         account_selector=["U7654321"],
                         account_scope="live-u7654-mega",
@@ -1194,21 +1192,21 @@ def test_print_strategy_switch_env_plan_rejects_removed_research_profile():
 
 def test_print_strategy_switch_env_plan_for_mega_cap_top50_balanced_profile():
     result = subprocess.run(
-        [sys.executable, str(SWITCH_PLAN_SCRIPT_PATH), "--profile", "mega_cap_leader_rotation_top50_balanced", "--json"],
+        [sys.executable, str(SWITCH_PLAN_SCRIPT_PATH), "--profile", "russell_top50_leader_rotation_aggressive", "--json"],
         check=True,
         capture_output=True,
         text=True,
     )
 
     plan = json.loads(result.stdout)
-    assert plan["canonical_profile"] == "mega_cap_leader_rotation_top50_balanced"
+    assert plan["canonical_profile"] == "russell_top50_leader_rotation_aggressive"
     assert plan["profile_group"] == "snapshot_backed"
     assert plan["input_mode"] == "feature_snapshot"
     assert plan["requires_snapshot_artifacts"] is True
     assert plan["requires_strategy_config_path"] is False
     assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_PATH"] == "<required>"
     assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH"] == "<required>"
-    assert plan["hints"]["feature_snapshot_filename"] == "mega_cap_leader_rotation_top50_balanced_feature_snapshot_latest.csv"
+    assert plan["hints"]["feature_snapshot_filename"] == "russell_top50_leader_rotation_aggressive_feature_snapshot_latest.csv"
 
 
 def test_print_strategy_switch_env_plan_for_hk_low_vol_dividend_quality_snapshot_profile():
@@ -1261,14 +1259,14 @@ def test_print_strategy_switch_env_plan_rejects_hk_disabled_profiles(profile):
 
 def test_print_strategy_switch_env_plan_for_feature_snapshot_profile():
     result = subprocess.run(
-        [sys.executable, str(SWITCH_PLAN_SCRIPT_PATH), "--profile", "mega_cap_leader_rotation_top50_balanced", "--json"],
+        [sys.executable, str(SWITCH_PLAN_SCRIPT_PATH), "--profile", "russell_top50_leader_rotation_aggressive", "--json"],
         check=True,
         capture_output=True,
         text=True,
     )
 
     plan = json.loads(result.stdout)
-    assert plan["canonical_profile"] == "mega_cap_leader_rotation_top50_balanced"
+    assert plan["canonical_profile"] == "russell_top50_leader_rotation_aggressive"
     assert plan["profile_group"] == "snapshot_backed"
     assert plan["input_mode"] == "feature_snapshot"
     assert plan["requires_snapshot_artifacts"] is True
@@ -1279,42 +1277,22 @@ def test_print_strategy_switch_env_plan_for_feature_snapshot_profile():
     assert "IBKR_STRATEGY_CONFIG_PATH" in plan["remove_if_present"]
 
 
-def test_print_strategy_switch_env_plan_uses_manifest_contract_policy():
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(SWITCH_PLAN_SCRIPT_PATH),
-            "--profile",
-            "russell_1000_multi_factor_defensive",
-            "--json",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    plan = json.loads(result.stdout)
-    assert plan["canonical_profile"] == "russell_1000_multi_factor_defensive"
-    assert plan["requires_snapshot_artifacts"] is True
-    assert plan["requires_snapshot_manifest_path"] is False
-    assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_PATH"] == "<required>"
-    assert "IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH" in plan["remove_if_present"]
-    assert "IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH" not in plan["set_env"]
-
 
 
 def test_load_platform_runtime_settings_reads_feature_snapshot_path(monkeypatch):
     monkeypatch.setenv(
         "RUNTIME_TARGET_JSON",
-        runtime_target_json("russell_1000_multi_factor_defensive"),
+        runtime_target_json("russell_top50_leader_rotation_aggressive"),
     )
     monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
-    monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "/tmp/r1000-latest.csv")
+    monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_PATH", "/tmp/russell-top50-latest.csv")
+    monkeypatch.setenv("IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH", "/tmp/russell-top50-latest.csv.manifest.json")
 
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
-    assert settings.feature_snapshot_path == "/tmp/r1000-latest.csv"
+    assert settings.feature_snapshot_path == "/tmp/russell-top50-latest.csv"
+    assert settings.feature_snapshot_manifest_path == "/tmp/russell-top50-latest.csv.manifest.json"
 
 
 def test_load_platform_runtime_settings_rejects_tech_pullback_runtime_config(monkeypatch):
@@ -1336,7 +1314,7 @@ def test_load_platform_runtime_settings_rejects_tech_pullback_runtime_config(mon
 def test_load_platform_runtime_settings_derives_artifact_paths_from_root(monkeypatch, tmp_path):
     monkeypatch.setenv(
         "RUNTIME_TARGET_JSON",
-        runtime_target_json("mega_cap_leader_rotation_top50_balanced"),
+        runtime_target_json("russell_top50_leader_rotation_aggressive"),
     )
     monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
@@ -1350,19 +1328,19 @@ def test_load_platform_runtime_settings_derives_artifact_paths_from_root(monkeyp
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
     assert settings.strategy_artifact_root == str(tmp_path)
-    assert settings.strategy_artifact_dir == str(tmp_path / "mega_cap_leader_rotation_top50_balanced")
+    assert settings.strategy_artifact_dir == str(tmp_path / "russell_top50_leader_rotation_aggressive")
     assert settings.feature_snapshot_path == str(
         tmp_path
-        / "mega_cap_leader_rotation_top50_balanced"
-        / "mega_cap_leader_rotation_top50_balanced_feature_snapshot_latest.csv"
+        / "russell_top50_leader_rotation_aggressive"
+        / "russell_top50_leader_rotation_aggressive_feature_snapshot_latest.csv"
     )
     assert settings.feature_snapshot_manifest_path == str(
         tmp_path
-        / "mega_cap_leader_rotation_top50_balanced"
-        / "mega_cap_leader_rotation_top50_balanced_feature_snapshot_latest.csv.manifest.json"
+        / "russell_top50_leader_rotation_aggressive"
+        / "russell_top50_leader_rotation_aggressive_feature_snapshot_latest.csv.manifest.json"
     )
     assert settings.reconciliation_output_path == str(
-        tmp_path / "mega_cap_leader_rotation_top50_balanced" / "reconciliation"
+        tmp_path / "russell_top50_leader_rotation_aggressive" / "reconciliation"
     )
     assert settings.strategy_config_path is None
     assert settings.strategy_config_source is None
