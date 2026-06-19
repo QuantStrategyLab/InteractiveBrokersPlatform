@@ -154,6 +154,11 @@ def build_switch_plan(
         "INCOME_LAYER_MAX_RATIO",
         "DCA_MODE",
         "DCA_BASE_INVESTMENT_USD",
+        "IBKR_MARKET_SIGNAL_HANDOFF_INDEX_URI",
+        "IBKR_MARKET_SIGNAL_HANDOFF_MANIFEST_URI",
+        "IBKR_MARKET_SIGNAL_CONSUMPTION_AUDIT_URI",
+        "IBKR_MARKET_SIGNAL_CACHE_DIR",
+        "IBKR_MARKET_SIGNAL_REQUIRED",
     ]
     remove_if_present: list[str] = []
     notes = [

@@ -33,6 +33,7 @@ from quant_platform_kit.strategy_contracts import (
     build_strategy_evaluation_inputs,
 )
 from runtime_config_support import PlatformRuntimeSettings
+from market_signal_runtime import resolve_external_market_signal_inputs
 from strategy_loader import (
     load_strategy_definition,
     load_strategy_entrypoint_for_profile,
@@ -609,6 +610,7 @@ class LoadedStrategyRuntime:
             ib=ib,
             historical_close_loader=historical_close_loader,
             historical_candle_loader=historical_candle_loader,
+            as_of=run_as_of,
         )
         ctx = build_ibkr_strategy_context(
             entrypoint=self.entrypoint,
@@ -664,8 +666,18 @@ class LoadedStrategyRuntime:
         ib,
         historical_close_loader: Callable[..., Any],
         historical_candle_loader: Callable[..., Any] | None,
+        as_of: pd.Timestamp,
     ) -> dict[str, Any]:
         if _DERIVED_INDICATORS_INPUT in self.required_inputs:
+            external_market_inputs = resolve_external_market_signal_inputs(
+                strategy_profile=self.profile,
+                available_inputs=self.required_inputs,
+                runtime_settings=self.runtime_settings,
+                as_of=as_of,
+                logger=self.logger,
+            )
+            if external_market_inputs:
+                return external_market_inputs
             return build_semiconductor_rotation_inputs(
                 ib,
                 historical_close_loader,
