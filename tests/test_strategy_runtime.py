@@ -35,6 +35,12 @@ def _build_runtime_settings(
     income_layer_max_ratio: float | None = None,
     dca_mode: str | None = None,
     dca_base_investment_usd: float | None = None,
+    ibit_zscore_exit_enabled: bool | None = None,
+    ibit_zscore_exit_mode: str | None = None,
+    ibit_zscore_exit_parking_symbol: str | None = None,
+    ibit_zscore_exit_risk_reduced_exposure: float | None = None,
+    ibit_zscore_exit_risk_off_exposure: float | None = None,
+    ibit_zscore_exit_allow_outside_execution_window: bool | None = None,
     reserved_cash_floor_usd: float = 0.0,
     reserved_cash_ratio: float | None = None,
 ) -> PlatformRuntimeSettings:
@@ -65,6 +71,14 @@ def _build_runtime_settings(
         income_layer_max_ratio=income_layer_max_ratio,
         dca_mode=dca_mode,
         dca_base_investment_usd=dca_base_investment_usd,
+        ibit_zscore_exit_enabled=ibit_zscore_exit_enabled,
+        ibit_zscore_exit_mode=ibit_zscore_exit_mode,
+        ibit_zscore_exit_parking_symbol=ibit_zscore_exit_parking_symbol,
+        ibit_zscore_exit_risk_reduced_exposure=ibit_zscore_exit_risk_reduced_exposure,
+        ibit_zscore_exit_risk_off_exposure=ibit_zscore_exit_risk_off_exposure,
+        ibit_zscore_exit_allow_outside_execution_window=(
+            ibit_zscore_exit_allow_outside_execution_window
+        ),
         account_group="default",
         service_name=None,
         account_ids=(),
@@ -320,6 +334,29 @@ def test_dca_overrides_apply_to_runtime_config():
         "investment_amount_mode": "fixed",
         "smart_multiplier_enabled": True,
         "base_investment_usd": 500.0,
+    }
+
+
+def test_ibit_zscore_exit_overrides_apply_to_runtime_config():
+    settings = _build_runtime_settings(
+        profile="ibit_smart_dca",
+        display_name="IBIT Bitcoin ETF DCA",
+        target_mode="value",
+        ibit_zscore_exit_enabled=True,
+        ibit_zscore_exit_mode="live",
+        ibit_zscore_exit_parking_symbol="BOXX",
+        ibit_zscore_exit_risk_reduced_exposure=0.5,
+        ibit_zscore_exit_risk_off_exposure=0.25,
+        ibit_zscore_exit_allow_outside_execution_window=True,
+    )
+
+    assert strategy_runtime_module._build_runtime_overrides(settings) == {
+        "ibit_zscore_exit_enabled": True,
+        "ibit_zscore_exit_mode": "live",
+        "ibit_zscore_exit_parking_symbol": "BOXX",
+        "ibit_zscore_exit_risk_reduced_exposure": 0.5,
+        "ibit_zscore_exit_risk_off_exposure": 0.25,
+        "ibit_zscore_exit_allow_outside_execution_window": True,
     }
 
 

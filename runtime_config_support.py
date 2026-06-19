@@ -181,6 +181,12 @@ class PlatformRuntimeSettings:
     income_layer_max_ratio: float | None = None
     dca_mode: str | None = None
     dca_base_investment_usd: float | None = None
+    ibit_zscore_exit_enabled: bool | None = None
+    ibit_zscore_exit_mode: str | None = None
+    ibit_zscore_exit_parking_symbol: str | None = None
+    ibit_zscore_exit_risk_reduced_exposure: float | None = None
+    ibit_zscore_exit_risk_off_exposure: float | None = None
+    ibit_zscore_exit_allow_outside_execution_window: bool | None = None
     market_signal_handoff_index_uri: str | None = None
     market_signal_handoff_manifest_uri: str | None = None
     market_signal_consumption_audit_uri: str | None = None
@@ -408,6 +414,18 @@ def load_platform_runtime_settings(
         income_layer_max_ratio=resolve_optional_ratio_env("INCOME_LAYER_MAX_RATIO"),
         dca_mode=resolve_optional_dca_mode_env("DCA_MODE"),
         dca_base_investment_usd=resolve_optional_positive_float_env("DCA_BASE_INVESTMENT_USD"),
+        ibit_zscore_exit_enabled=resolve_optional_bool_env("IBIT_ZSCORE_EXIT_ENABLED"),
+        ibit_zscore_exit_mode=resolve_optional_ibit_zscore_exit_mode_env("IBIT_ZSCORE_EXIT_MODE"),
+        ibit_zscore_exit_parking_symbol=resolve_optional_symbol_env("IBIT_ZSCORE_EXIT_PARKING_SYMBOL"),
+        ibit_zscore_exit_risk_reduced_exposure=resolve_optional_ratio_env(
+            "IBIT_ZSCORE_EXIT_RISK_REDUCED_EXPOSURE"
+        ),
+        ibit_zscore_exit_risk_off_exposure=resolve_optional_ratio_env(
+            "IBIT_ZSCORE_EXIT_RISK_OFF_EXPOSURE"
+        ),
+        ibit_zscore_exit_allow_outside_execution_window=resolve_optional_bool_env(
+            "IBIT_ZSCORE_EXIT_ALLOW_OUTSIDE_EXECUTION_WINDOW"
+        ),
         market_signal_handoff_index_uri=first_non_empty(
             os.getenv("IBKR_MARKET_SIGNAL_HANDOFF_INDEX_URI"),
             os.getenv("MARKET_SIGNAL_HANDOFF_INDEX_URI"),
@@ -609,6 +627,37 @@ def resolve_optional_dca_mode_env(name: str) -> str | None:
     if mode not in {"fixed", "smart"}:
         raise ValueError(f"{name} must be fixed or smart, got {raw_value!r}")
     return mode
+
+
+def resolve_optional_ibit_zscore_exit_mode_env(name: str) -> str | None:
+    raw_value = os.getenv(name)
+    if raw_value is None or str(raw_value).strip() == "":
+        return None
+    value = str(raw_value).strip().lower()
+    aliases = {
+        "off": "disabled",
+        "none": "disabled",
+        "false": "disabled",
+        "disable": "disabled",
+        "enabled": "live",
+        "shadow": "paper",
+        "dry_run": "paper",
+        "dry-run": "paper",
+    }
+    mode = aliases.get(value, value)
+    if mode not in {"disabled", "paper", "live"}:
+        raise ValueError(f"{name} must be disabled, paper, or live, got {raw_value!r}")
+    return mode
+
+
+def resolve_optional_symbol_env(name: str) -> str | None:
+    raw_value = os.getenv(name)
+    if raw_value is None or str(raw_value).strip() == "":
+        return None
+    value = str(raw_value).strip().upper()
+    if len(value) > 16 or not value.replace(".", "").replace("-", "").isalnum():
+        raise ValueError(f"{name} must be a symbol")
+    return value
 
 
 def resolve_optional_bool_env(name: str) -> bool | None:
