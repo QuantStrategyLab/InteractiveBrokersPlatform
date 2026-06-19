@@ -878,6 +878,11 @@ def test_print_strategy_switch_env_plan_for_tqqq_growth_income():
     assert "IBKR_MIN_RESERVED_CASH_USD" in plan["optional_env"]
     assert "IBKR_RESERVED_CASH_RATIO" in plan["optional_env"]
     assert "IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD" in plan["optional_env"]
+    assert "INCOME_LAYER_ENABLED" in plan["optional_env"]
+    assert "INCOME_LAYER_START_USD" in plan["optional_env"]
+    assert "INCOME_LAYER_MAX_RATIO" in plan["optional_env"]
+    assert "DCA_MODE" in plan["optional_env"]
+    assert "DCA_BASE_INVESTMENT_USD" in plan["optional_env"]
     assert "IBKR_MARKET" in plan["optional_env"]
     assert "IBKR_MARKET_CALENDAR" in plan["optional_env"]
     assert "IBKR_MARKET_CURRENCY" in plan["optional_env"]
@@ -1022,6 +1027,8 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
                 "income_layer_enabled": "false",
                 "income_layer_start_usd": "300000",
                 "income_layer_max_ratio": "0.25",
+                "dca_mode": "smart",
+                "dca_base_investment_usd": "500",
             },
         ],
     }
@@ -1079,6 +1086,8 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
     assert u7654_mega["env"]["INCOME_LAYER_ENABLED"] == "false"
     assert u7654_mega["env"]["INCOME_LAYER_START_USD"] == "300000"
     assert u7654_mega["env"]["INCOME_LAYER_MAX_RATIO"] == "0.25"
+    assert u7654_mega["env"]["DCA_MODE"] == "smart"
+    assert u7654_mega["env"]["DCA_BASE_INVESTMENT_USD"] == "500"
 
 
 def test_build_cloud_run_env_sync_plan_requires_target_snapshot_in_per_service_mode():
