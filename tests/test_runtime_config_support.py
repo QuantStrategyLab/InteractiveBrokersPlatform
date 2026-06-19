@@ -800,9 +800,9 @@ def test_print_strategy_profile_status_json_matches_registry():
         for row in rows
     ] == get_platform_profile_status_matrix()
     by_profile = {row["canonical_profile"]: row for row in rows}
-    assert by_profile["global_etf_rotation"]["profile_group"] == "direct_runtime_inputs"
-    assert by_profile["global_etf_rotation"]["input_mode"] == "market_history"
-    assert by_profile["global_etf_rotation"]["requires_snapshot_artifacts"] is False
+    assert by_profile["global_etf_rotation"]["profile_group"] == "snapshot_backed"
+    assert by_profile["global_etf_rotation"]["input_mode"] == "feature_snapshot"
+    assert by_profile["global_etf_rotation"]["requires_snapshot_artifacts"] is True
     assert by_profile["global_etf_rotation"]["requires_strategy_config_path"] is False
     assert by_profile["nasdaq_sp500_smart_dca"]["profile_group"] == "direct_runtime_inputs"
     assert by_profile["nasdaq_sp500_smart_dca"]["input_mode"] == "market_history+portfolio_snapshot"
