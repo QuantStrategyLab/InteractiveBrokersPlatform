@@ -17,7 +17,7 @@ def test_load_strategy_entrypoint_for_profile_resolves_global_etf_rotation(monke
     entrypoint = load_strategy_entrypoint_for_profile("global_etf_rotation")
 
     assert entrypoint.manifest.profile == "global_etf_rotation"
-    assert "market_history" in entrypoint.manifest.required_inputs
+    assert "feature_snapshot" in entrypoint.manifest.required_inputs
 
 
 def test_load_strategy_entrypoint_for_profile_rejects_research_only_tech_communication_pullback(monkeypatch):
@@ -125,7 +125,7 @@ def test_load_strategy_runtime_adapter_for_profile_resolves_global_etf_rotation_
 
     adapter = load_strategy_runtime_adapter_for_profile("global_etf_rotation")
 
-    assert adapter.available_inputs == frozenset({"market_history"})
+    assert adapter.available_inputs == frozenset({"feature_snapshot"})
     assert adapter.available_capabilities == frozenset({"broker_client"})
 
 
