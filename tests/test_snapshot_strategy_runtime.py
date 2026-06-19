@@ -131,7 +131,7 @@ def test_compute_signals_uses_feature_snapshot_for_russell_top50(strategy_module
     pytest.importorskip("pandas")
 
     module = strategy_module_factory(
-        STRATEGY_PROFILE="russell_top50_leader_rotation_aggressive",
+        STRATEGY_PROFILE="russell_top50_leader_rotation",
         IBKR_FEATURE_SNAPSHOT_PATH="/tmp/russell-top50.csv",
         IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH="/tmp/russell-top50.csv.manifest.json",
         IBKR_RUN_AS_OF_DATE="2026-04-01",
@@ -160,7 +160,7 @@ def test_compute_signals_uses_feature_snapshot_for_russell_top50(strategy_module
     result = module.compute_signals(None, {"AAA"})
 
     assert observed["path"] == "/tmp/russell-top50.csv"
-    assert result[4]["strategy_profile"] == "russell_top50_leader_rotation_aggressive"
+    assert result[4]["strategy_profile"] == "russell_top50_leader_rotation"
     assert result[4]["status_icon"] == "👑"
     assert result[4]["snapshot_guard_decision"] == "proceed"
 

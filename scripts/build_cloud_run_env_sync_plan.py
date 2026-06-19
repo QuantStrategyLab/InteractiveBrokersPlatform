@@ -28,7 +28,7 @@ def _should_add_local_src(candidate: Path) -> bool:
         return _has_catalog_marker(
             candidate,
             "us_equity_strategies",
-            "russell_top50_leader_rotation_aggressive",
+            "russell_top50_leader_rotation",
         )
     if candidate == HES_SRC:
         return _has_catalog_marker(
