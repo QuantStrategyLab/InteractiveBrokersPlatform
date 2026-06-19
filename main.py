@@ -54,6 +54,13 @@ from quant_platform_kit.ibkr import (
     fetch_quote_snapshots,
 )
 from application.ibkr_order_execution import submit_order_intent
+from application.monitor_dispatcher import (
+    dispatch_due_monitor_targets,
+    load_monitor_targets,
+    lookback_minutes_from_env,
+    max_workers_from_env,
+    timeout_seconds_from_env,
+)
 from application.ibkr_portfolio import fetch_portfolio_snapshot
 from application.execution_service import (
     check_order_submitted as application_check_order_submitted,
@@ -1262,6 +1269,30 @@ def _handle_probe(*, response_body: str = "Probe OK"):
             print(f"failed to persist execution report: {persist_exc}", flush=True)
 
 
+def _handle_monitor_dispatch():
+    if request.method == "GET":
+        return "Monitor Dispatch OK - use POST to dispatch due monitor checks", 200
+
+    log_context = build_request_log_context()
+    targets = load_monitor_targets()
+    result = dispatch_due_monitor_targets(
+        targets,
+        lookback_minutes=lookback_minutes_from_env(),
+        timeout_seconds=timeout_seconds_from_env(),
+        max_workers=max_workers_from_env(),
+    )
+    log_runtime_event(
+        log_context,
+        "monitor_dispatch_completed",
+        message="Monitor dispatch completed",
+        monitor_targets_count=len(targets),
+        dispatches_due=result.get("dispatches_due"),
+        dispatches_sent=result.get("dispatches_sent"),
+        dispatch_results=result.get("results") or [],
+    )
+    return result, 200
+
+
 @app.route("/run", methods=["POST", "GET"])
 def handle_request():
     return _route_with_runtime_error_fallback(_handle_request)
@@ -1280,6 +1311,14 @@ def handle_dry_run():
 @app.route("/probe", methods=["POST", "GET"])
 def handle_probe():
     return _route_with_runtime_error_fallback(_handle_probe)
+
+
+@app.route("/monitor-dispatch", methods=["POST", "GET"])
+def handle_monitor_dispatch():
+    return _route_with_runtime_error_fallback(
+        _handle_monitor_dispatch,
+        route_label="monitor-dispatch",
+    )
 
 
 @app.route("/health", methods=["GET"])

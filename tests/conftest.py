@@ -89,20 +89,29 @@ def strategy_module_factory(monkeypatch):
         google_auth_transport_module.__path__ = []
         google_auth_transport_requests_module = types.ModuleType("google.auth.transport.requests")
         google_auth_transport_requests_module.AuthorizedSession = type("AuthorizedSession", (), {})
+        google_auth_transport_requests_module.Request = type("Request", (), {})
+        google_oauth2_module = types.ModuleType("google.oauth2")
+        google_oauth2_module.__path__ = []
+        google_oauth2_id_token_module = types.ModuleType("google.oauth2.id_token")
+        google_oauth2_id_token_module.fetch_id_token = lambda *_args, **_kwargs: "test-token"
 
         google_cloud_module = types.ModuleType("google.cloud")
         google_cloud_module.__path__ = []
         compute_v1_module = types.ModuleType("google.cloud.compute_v1")
 
         google_module.auth = google_auth_module
+        google_module.oauth2 = google_oauth2_module
         google_auth_module.transport = google_auth_transport_module
         google_auth_transport_module.requests = google_auth_transport_requests_module
+        google_oauth2_module.id_token = google_oauth2_id_token_module
         google_cloud_module.compute_v1 = compute_v1_module
 
         monkeypatch.setitem(sys.modules, "google", google_module)
         monkeypatch.setitem(sys.modules, "google.auth", google_auth_module)
         monkeypatch.setitem(sys.modules, "google.auth.transport", google_auth_transport_module)
         monkeypatch.setitem(sys.modules, "google.auth.transport.requests", google_auth_transport_requests_module)
+        monkeypatch.setitem(sys.modules, "google.oauth2", google_oauth2_module)
+        monkeypatch.setitem(sys.modules, "google.oauth2.id_token", google_oauth2_id_token_module)
         monkeypatch.setitem(sys.modules, "google.cloud", google_cloud_module)
         monkeypatch.setitem(sys.modules, "google.cloud.compute_v1", compute_v1_module)
 
