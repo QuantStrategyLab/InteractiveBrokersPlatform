@@ -161,6 +161,9 @@ class PlatformRuntimeSettings:
     strategy_config_source: str | None
     reconciliation_output_path: str | None
     dry_run_only: bool
+    feature_snapshot_fallback_mode: str | None = None
+    feature_snapshot_fallback_cache_dir: str | None = None
+    feature_snapshot_fallback_max_stale_days: int | None = None
     runtime_target_enabled: bool = True
     market: str = DEFAULT_MARKET
     market_calendar: str = DEFAULT_MARKET_CALENDAR
@@ -183,6 +186,8 @@ class PlatformRuntimeSettings:
     market_signal_consumption_audit_uri: str | None = None
     market_signal_cache_dir: str | None = None
     market_signal_required: bool = False
+    market_signal_fallback_mode: str | None = None
+    market_signal_max_stale_days: int | None = None
     account_group: str = DEFAULT_ACCOUNT_GROUP
     service_name: str | None = None
     account_ids: tuple[str, ...] = ()
@@ -339,6 +344,22 @@ def load_platform_runtime_settings(
         strategy_config_source=runtime_paths.strategy_config_source,
         reconciliation_output_path=runtime_paths.reconciliation_output_path,
         dry_run_only=resolve_bool_value(os.getenv("IBKR_DRY_RUN_ONLY")),
+        feature_snapshot_fallback_mode=first_non_empty(
+            os.getenv("IBKR_FEATURE_SNAPSHOT_FALLBACK_MODE"),
+            os.getenv("FEATURE_SNAPSHOT_FALLBACK_MODE"),
+        ),
+        feature_snapshot_fallback_cache_dir=first_non_empty(
+            os.getenv("IBKR_FEATURE_SNAPSHOT_FALLBACK_CACHE_DIR"),
+            os.getenv("FEATURE_SNAPSHOT_FALLBACK_CACHE_DIR"),
+        ),
+        feature_snapshot_fallback_max_stale_days=parse_optional_int(
+            first_non_empty(
+                os.getenv("IBKR_FEATURE_SNAPSHOT_MAX_STALE_DAYS"),
+                os.getenv("IBKR_FEATURE_SNAPSHOT_FALLBACK_MAX_STALE_DAYS"),
+                os.getenv("FEATURE_SNAPSHOT_MAX_STALE_DAYS"),
+                os.getenv("FEATURE_SNAPSHOT_FALLBACK_MAX_STALE_DAYS"),
+            )
+        ),
         runtime_target_enabled=resolve_runtime_target_enabled_env(),
         market=market,
         market_calendar=first_non_empty(
@@ -408,6 +429,18 @@ def load_platform_runtime_settings(
                 os.getenv("IBKR_MARKET_SIGNAL_REQUIRED"),
                 os.getenv("MARKET_SIGNAL_REQUIRED"),
                 "false",
+            )
+        ),
+        market_signal_fallback_mode=first_non_empty(
+            os.getenv("IBKR_MARKET_SIGNAL_FALLBACK_MODE"),
+            os.getenv("MARKET_SIGNAL_FALLBACK_MODE"),
+        ),
+        market_signal_max_stale_days=parse_optional_int(
+            first_non_empty(
+                os.getenv("IBKR_MARKET_SIGNAL_MAX_STALE_DAYS"),
+                os.getenv("IBKR_MARKET_SIGNAL_FALLBACK_MAX_STALE_DAYS"),
+                os.getenv("MARKET_SIGNAL_MAX_STALE_DAYS"),
+                os.getenv("MARKET_SIGNAL_FALLBACK_MAX_STALE_DAYS"),
             )
         ),
         account_group=account_group,
