@@ -15,6 +15,7 @@ def test_cloud_run_route_contracts_are_registered(strategy_module):
         "/run": ["GET", "POST"],
         "/dry-run": ["GET", "POST"],
         "/probe": ["GET", "POST"],
+        "/monitor-dispatch": ["GET", "POST"],
         "/health": ["GET"],
         "/static/<path:filename>": ["GET"],
     }
@@ -181,6 +182,33 @@ def test_handle_dry_run_get_does_not_execute(strategy_module, monkeypatch):
     assert status == 200
     assert body == "Dry Run OK - use POST to run strategy dry-run"
     assert observed["called"] is False
+
+
+def test_handle_monitor_dispatch_post_dispatches_due_targets(strategy_module, monkeypatch):
+    observed = {"events": []}
+
+    monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace(run_id="run-001"))
+    monkeypatch.setattr(strategy_module, "load_monitor_targets", lambda: [{"service_name": "svc"}])
+
+    def fake_dispatch(targets, **kwargs):
+        observed["targets"] = targets
+        observed["kwargs"] = kwargs
+        return {"dispatches_due": 1, "dispatches_sent": 1, "results": [{"service_name": "svc"}]}
+
+    monkeypatch.setattr(strategy_module, "dispatch_due_monitor_targets", fake_dispatch)
+    monkeypatch.setattr(
+        strategy_module,
+        "log_runtime_event",
+        lambda context, event, **fields: observed["events"].append((event, fields)),
+    )
+
+    with strategy_module.app.test_request_context("/monitor-dispatch", method="POST"):
+        body, status = strategy_module.handle_monitor_dispatch()
+
+    assert status == 200
+    assert body["dispatches_sent"] == 1
+    assert observed["targets"] == [{"service_name": "svc"}]
+    assert observed["events"][0][0] == "monitor_dispatch_completed"
 
 
 def test_handle_probe_checks_account_snapshot_without_success_notification(strategy_module, monkeypatch):
