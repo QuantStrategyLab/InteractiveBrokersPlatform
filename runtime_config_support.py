@@ -178,6 +178,11 @@ class PlatformRuntimeSettings:
     income_layer_max_ratio: float | None = None
     dca_mode: str | None = None
     dca_base_investment_usd: float | None = None
+    market_signal_handoff_index_uri: str | None = None
+    market_signal_handoff_manifest_uri: str | None = None
+    market_signal_consumption_audit_uri: str | None = None
+    market_signal_cache_dir: str | None = None
+    market_signal_required: bool = False
     account_group: str = DEFAULT_ACCOUNT_GROUP
     service_name: str | None = None
     account_ids: tuple[str, ...] = ()
@@ -382,6 +387,29 @@ def load_platform_runtime_settings(
         income_layer_max_ratio=resolve_optional_ratio_env("INCOME_LAYER_MAX_RATIO"),
         dca_mode=resolve_optional_dca_mode_env("DCA_MODE"),
         dca_base_investment_usd=resolve_optional_positive_float_env("DCA_BASE_INVESTMENT_USD"),
+        market_signal_handoff_index_uri=first_non_empty(
+            os.getenv("IBKR_MARKET_SIGNAL_HANDOFF_INDEX_URI"),
+            os.getenv("MARKET_SIGNAL_HANDOFF_INDEX_URI"),
+        ),
+        market_signal_handoff_manifest_uri=first_non_empty(
+            os.getenv("IBKR_MARKET_SIGNAL_HANDOFF_MANIFEST_URI"),
+            os.getenv("MARKET_SIGNAL_HANDOFF_MANIFEST_URI"),
+        ),
+        market_signal_consumption_audit_uri=first_non_empty(
+            os.getenv("IBKR_MARKET_SIGNAL_CONSUMPTION_AUDIT_URI"),
+            os.getenv("MARKET_SIGNAL_CONSUMPTION_AUDIT_URI"),
+        ),
+        market_signal_cache_dir=first_non_empty(
+            os.getenv("IBKR_MARKET_SIGNAL_CACHE_DIR"),
+            os.getenv("MARKET_SIGNAL_CACHE_DIR"),
+        ),
+        market_signal_required=resolve_bool_value(
+            first_non_empty(
+                os.getenv("IBKR_MARKET_SIGNAL_REQUIRED"),
+                os.getenv("MARKET_SIGNAL_REQUIRED"),
+                "false",
+            )
+        ),
         account_group=account_group,
         service_name=group_config.service_name,
         account_ids=group_config.account_ids,
