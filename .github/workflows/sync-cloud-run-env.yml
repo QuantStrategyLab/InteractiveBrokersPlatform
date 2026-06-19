@@ -445,6 +445,9 @@ jobs:
               --memory=512Mi \
               --cpu=1 \
               --timeout=300s \
+              --network=default \
+              --subnet=default \
+              --vpc-egress=private-ranges-only \
               --labels="managed-by=github-actions,commit-sha=${GITHUB_SHA},github-run-id=${GITHUB_RUN_ID}" \
               --quiet
           done
@@ -955,6 +958,12 @@ jobs:
               echo "Unable to resolve Cloud Run service URL for ${cloud_run_service}; cannot sync scheduler URI." >&2
               exit 1
             fi
+            gcloud run services add-iam-policy-binding "${cloud_run_service}" \
+              --project="${GCP_PROJECT_ID}" \
+              --region="${CLOUD_RUN_REGION}" \
+              --member="serviceAccount:${GCP_SCHEDULER_SERVICE_ACCOUNT}" \
+              --role="roles/run.invoker" \
+              --quiet
 
             for suffix in scheduler probe-scheduler precheck-scheduler; do
               case "${suffix}" in
