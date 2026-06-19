@@ -11,17 +11,17 @@ This branch is for a paper-account rehearsal only. Do not use it for live IBKR.
 ## Required Runtime Env
 
 ```text
-STRATEGY_PROFILE=mega_cap_leader_rotation_top50_balanced
+STRATEGY_PROFILE=russell_top50_leader_rotation
 ACCOUNT_GROUP=default
 IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=ibkr-account-groups
-IBKR_FEATURE_SNAPSHOT_PATH=gs://qsl-runtime-logs-shared/strategy-artifacts/us_equity/mega_cap_leader_rotation_top50_balanced_staging/mega_cap_leader_rotation_top50_balanced_feature_snapshot_latest.csv
-IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH=gs://qsl-runtime-logs-shared/strategy-artifacts/us_equity/mega_cap_leader_rotation_top50_balanced_staging/mega_cap_leader_rotation_top50_balanced_feature_snapshot_latest.csv.manifest.json
+IBKR_FEATURE_SNAPSHOT_PATH=gs://qsl-runtime-logs-shared/strategy-artifacts/us_equity/russell_top50_leader_rotation_staging/russell_top50_leader_rotation_feature_snapshot_latest.csv
+IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH=gs://qsl-runtime-logs-shared/strategy-artifacts/us_equity/russell_top50_leader_rotation_staging/russell_top50_leader_rotation_feature_snapshot_latest.csv.manifest.json
 NOTIFY_LANG=zh
 ```
 
 ## Rehearsal Sequence
 
-1. Publish a fresh `mega_cap_leader_rotation_top50_balanced` snapshot/manifest/ranking/release summary to the GCS prefix above.
+1. Publish a fresh `russell_top50_leader_rotation` snapshot/manifest/ranking/release summary to the GCS prefix above.
 2. Deploy this branch to `interactive-brokers-quant-service`.
 3. Set `IBKR_DRY_RUN_ONLY=true` and invoke once. Confirm the notification is Chinese and the target list is sensible.
 4. Set `IBKR_PAPER_LIQUIDATE_ONLY=true` and keep `IBKR_DRY_RUN_ONLY=true`; invoke once to preview paper liquidation orders.
