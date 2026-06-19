@@ -64,7 +64,6 @@ EXPECTED_IBKR_ENABLED_PROFILES = frozenset(
         "ibit_smart_dca",
         "soxl_soxx_trend_income",
         "tqqq_growth_income",
-        "hk_dividend_gold_defensive_rotation",
         "hk_global_etf_tactical_rotation",
         "hk_low_vol_dividend_quality_snapshot",
     }

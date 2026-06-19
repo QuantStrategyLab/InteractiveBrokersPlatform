@@ -188,8 +188,6 @@ def test_strategy_display_name_translates_new_live_profiles():
     assert en_name("nasdaq_sp500_smart_dca") == "Nasdaq 100 / S&P 500 Smart DCA"
     assert zh_name("hk_global_etf_tactical_rotation") == "港股全球 ETF 战术轮动"
     assert en_name("hk_global_etf_tactical_rotation") == "HK Global ETF Tactical Rotation"
-    assert zh_name("hk_dividend_gold_defensive_rotation") == "港股股息黄金防守轮动"
-    assert en_name("hk_dividend_gold_defensive_rotation") == "HK Dividend-Gold Defensive Rotation"
     assert zh_name("hk_low_vol_dividend_quality_snapshot") == "港股低波股息质量快照"
     assert en_name("hk_low_vol_dividend_quality_snapshot") == "HK Low-Vol Dividend Quality Snapshot"
 
