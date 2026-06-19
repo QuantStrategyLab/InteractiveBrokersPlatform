@@ -182,8 +182,8 @@ def test_strategy_display_name_translates_new_live_profiles():
 
     assert zh_name("global_etf_confidence_vol_gate") == "全球 ETF 置信波动门控"
     assert en_name("global_etf_confidence_vol_gate") == "Global ETF Confidence Vol Gate"
-    assert zh_name("mega_cap_leader_rotation_top50_balanced") == "美股超大盘50强平衡龙头轮动"
-    assert en_name("mega_cap_leader_rotation_top50_balanced") == "Mega Cap Leader Rotation Top50 Balanced"
+    assert zh_name("russell_top50_leader_rotation_aggressive") == "罗素 Top50 领涨轮动（激进）"
+    assert en_name("russell_top50_leader_rotation_aggressive") == "Russell Top50 Leader Rotation Aggressive"
     assert zh_name("nasdaq_sp500_smart_dca") == "纳指100 / 标普500 智能定投"
     assert en_name("nasdaq_sp500_smart_dca") == "Nasdaq 100 / S&P 500 Smart DCA"
     assert zh_name("hk_global_etf_tactical_rotation") == "港股全球 ETF 战术轮动"

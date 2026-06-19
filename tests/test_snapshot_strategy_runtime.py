@@ -39,12 +39,102 @@ def _write_cash_buffer_manifest(snapshot_path: Path, config_path: Path, *, snaps
     return manifest_path
 
 
-def test_compute_signals_uses_feature_snapshot_for_russell_1000(strategy_module_factory, monkeypatch):
+def _russell_top50_snapshot_rows() -> list[dict[str, object]]:
+    base = [
+        {
+            "as_of": "2026-03-31",
+            "symbol": "QQQ",
+            "sector": "benchmark",
+            "close": 500.0,
+            "adv20_usd": 1_000_000_000.0,
+            "history_days": 400,
+            "mom_3m": 0.12,
+            "mom_6m": 0.20,
+            "mom_12_1": 0.30,
+            "rel_mom_6m_vs_benchmark": 0.0,
+            "rel_mom_6m_vs_broad_benchmark": 0.05,
+            "high_252_gap": -0.01,
+            "sma200_gap": 0.08,
+            "vol_63": 0.20,
+            "maxdd_126": -0.10,
+            "eligible": False,
+        },
+        {
+            "as_of": "2026-03-31",
+            "symbol": "SPY",
+            "sector": "benchmark",
+            "close": 450.0,
+            "adv20_usd": 1_000_000_000.0,
+            "history_days": 400,
+            "mom_3m": 0.08,
+            "mom_6m": 0.15,
+            "mom_12_1": 0.22,
+            "rel_mom_6m_vs_benchmark": -0.05,
+            "rel_mom_6m_vs_broad_benchmark": 0.0,
+            "high_252_gap": -0.02,
+            "sma200_gap": 0.05,
+            "vol_63": 0.16,
+            "maxdd_126": -0.08,
+            "eligible": False,
+        },
+        {
+            "as_of": "2026-03-31",
+            "symbol": "BOXX",
+            "sector": "cash",
+            "close": 101.0,
+            "adv20_usd": 30_000_000.0,
+            "history_days": 400,
+            "mom_3m": 0.01,
+            "mom_6m": 0.02,
+            "mom_12_1": 0.04,
+            "rel_mom_6m_vs_benchmark": -0.18,
+            "rel_mom_6m_vs_broad_benchmark": -0.13,
+            "high_252_gap": 0.0,
+            "sma200_gap": 0.01,
+            "vol_63": 0.03,
+            "maxdd_126": -0.01,
+            "eligible": False,
+        },
+    ]
+    leaders = (
+        ("NVDA", "Information Technology", 0.30, 0.55, 0.45, 0.10, 0.15, -0.01, 0.35, -0.08),
+        ("META", "Communication Services", 0.22, 0.38, 0.30, 0.02, 0.09, -0.03, 0.24, -0.09),
+        ("MSFT", "Information Technology", 0.18, 0.32, 0.25, -0.01, 0.08, -0.02, 0.20, -0.07),
+        ("AAPL", "Information Technology", 0.15, 0.28, 0.21, -0.03, 0.06, -0.04, 0.18, -0.10),
+        ("AMZN", "Consumer Discretionary", 0.14, 0.26, 0.19, -0.04, 0.05, -0.06, 0.22, -0.11),
+    )
+    for symbol, sector, mom3, mom6, mom12, rel_qqq, rel_spy, high_gap, vol, maxdd in leaders:
+        base.append(
+            {
+                "as_of": "2026-03-31",
+                "symbol": symbol,
+                "sector": sector,
+                "close": 100.0,
+                "adv20_usd": 100_000_000.0,
+                "history_days": 400,
+                "mom_3m": mom3,
+                "mom_6m": mom6,
+                "mom_12_1": mom12,
+                "rel_mom_6m_vs_benchmark": rel_qqq,
+                "rel_mom_6m_vs_broad_benchmark": rel_spy,
+                "high_252_gap": high_gap,
+                "sma200_gap": 0.08,
+                "vol_63": vol,
+                "maxdd_126": maxdd,
+                "eligible": True,
+            }
+        )
+    return base
+
+
+def test_compute_signals_uses_feature_snapshot_for_russell_top50(strategy_module_factory, monkeypatch):
     pytest.importorskip("pandas")
 
     module = strategy_module_factory(
-        STRATEGY_PROFILE="russell_1000_multi_factor_defensive",
-        IBKR_FEATURE_SNAPSHOT_PATH="/tmp/r1000.csv",
+        STRATEGY_PROFILE="russell_top50_leader_rotation_aggressive",
+        IBKR_FEATURE_SNAPSHOT_PATH="/tmp/russell-top50.csv",
+        IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH="/tmp/russell-top50.csv.manifest.json",
+        IBKR_RUN_AS_OF_DATE="2026-04-01",
     )
 
     observed = {}
@@ -52,19 +142,7 @@ def test_compute_signals_uses_feature_snapshot_for_russell_1000(strategy_module_
     def fake_load_feature_snapshot_guarded(path, **_kwargs):
         observed["path"] = path
         return SimpleNamespace(
-            frame=[
-                {
-                    "as_of": "2026-03-31",
-                    "symbol": "SPY",
-                    "sector": "benchmark",
-                    "mom_6_1": 0.1,
-                    "mom_12_1": 0.1,
-                    "sma200_gap": 0.1,
-                    "vol_63": 0.1,
-                    "maxdd_126": 0.1,
-                    "eligible": False,
-                }
-            ],
+            frame=_russell_top50_snapshot_rows(),
             metadata={
                 "snapshot_guard_decision": "proceed",
                 "snapshot_as_of": "2026-03-31",
@@ -81,9 +159,9 @@ def test_compute_signals_uses_feature_snapshot_for_russell_1000(strategy_module_
 
     result = module.compute_signals(None, {"AAA"})
 
-    assert observed["path"] == "/tmp/r1000.csv"
-    assert result[0] == {"BOXX": 1.0}
-    assert result[4]["status_icon"] == "📏"
+    assert observed["path"] == "/tmp/russell-top50.csv"
+    assert result[4]["strategy_profile"] == "russell_top50_leader_rotation_aggressive"
+    assert result[4]["status_icon"] == "👑"
     assert result[4]["snapshot_guard_decision"] == "proceed"
 
 

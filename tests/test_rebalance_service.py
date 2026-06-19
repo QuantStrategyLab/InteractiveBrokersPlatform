@@ -469,7 +469,7 @@ def test_run_strategy_core_prefers_structured_noop_status_in_zh():
             False,
             "no-op | reason=outside_monthly_execution_window",
             {
-                "strategy_profile": "mega_cap_leader_rotation_top50_balanced",
+                "strategy_profile": "russell_top50_leader_rotation_aggressive",
                 "trade_date": "2026-04-22",
                 "snapshot_as_of": "2026-04-16",
                 "snapshot_guard_decision": "proceed",
@@ -492,7 +492,7 @@ def test_run_strategy_core_prefers_structured_noop_status_in_zh():
         send_tg_message=lambda message: observed["messages"].append(message),
         translator=build_translator("zh"),
         separator="---",
-        strategy_display_name="美股超大盘50强平衡龙头轮动",
+        strategy_display_name="罗素 Top50 领涨轮动（激进）",
     )
 
     assert result.result == "OK - no-op"
