@@ -47,6 +47,7 @@ env:
   GCP_WORKLOAD_IDENTITY_PROVIDER: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
   GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com
   GCP_RUNTIME_SERVICE_ACCOUNT: ibkr-platform-runtime@interactivebrokersquant.iam.gserviceaccount.com
+  GCP_SCHEDULER_SERVICE_ACCOUNT: ibkr-platform-scheduler@interactivebrokersquant.iam.gserviceaccount.com
   GCP_ARTIFACT_REGISTRY_REPOSITORY: cloud-run-source-deploy
 
 concurrency:
@@ -541,6 +542,19 @@ jobs:
           PY
           }
 
+          emit_target_label_pairs() {
+            local target_index="$1"
+            SYNC_TARGET_INDEX="${target_index}" python - <<'PY'
+          import json
+          import os
+          plan = json.loads(os.environ["SYNC_PLAN_JSON"])
+          target = plan["targets"][int(os.environ["SYNC_TARGET_INDEX"])]
+          strategy_profile = str(target.get("strategy_profile") or "").strip()
+          if strategy_profile:
+              print(f"strategy={strategy_profile}")
+          PY
+          }
+
           join_by_delimiter() {
             local delimiter="$1"
             shift
@@ -841,6 +855,7 @@ jobs:
             cloud_run_service="${target_services[${target_index}]}"
             mapfile -t target_env_pairs < <(emit_target_env_pairs "${target_index}")
             mapfile -t target_remove_env_vars < <(emit_target_remove_env_vars "${target_index}")
+            mapfile -t target_label_pairs < <(emit_target_label_pairs "${target_index}")
             env_pairs=("${target_env_pairs[@]}" "${shared_env_pairs[@]}")
             remove_env_vars=("${target_remove_env_vars[@]}" "${shared_remove_env_vars[@]}")
             secret_pairs=("${shared_secret_pairs[@]}")
@@ -861,6 +876,10 @@ jobs:
 
             if [ "${#secret_pairs[@]}" -gt 0 ]; then
               gcloud_args+=(--update-secrets "$(IFS=,; echo "${secret_pairs[*]}")")
+            fi
+
+            if [ "${#target_label_pairs[@]}" -gt 0 ]; then
+              gcloud_args+=(--update-labels "$(IFS=,; echo "${target_label_pairs[*]}")")
             fi
 
             gcloud "${gcloud_args[@]}"
@@ -885,6 +904,10 @@ jobs:
           scheduler_location="${CLOUD_SCHEDULER_LOCATION:-${CLOUD_RUN_REGION}}"
           if [ -z "${scheduler_location}" ]; then
             echo "Cloud Scheduler schedule sync requires CLOUD_RUN_REGION or CLOUD_SCHEDULER_LOCATION." >&2
+            exit 1
+          fi
+          if [ -z "${GCP_SCHEDULER_SERVICE_ACCOUNT:-}" ]; then
+            echo "Cloud Scheduler schedule sync requires GCP_SCHEDULER_SERVICE_ACCOUNT." >&2
             exit 1
           fi
 
@@ -949,13 +972,15 @@ jobs:
                   ;;
               esac
 
-              scheduler_job_candidates=("${cloud_run_service}-${suffix}")
+              scheduler_job_candidates=()
               if [[ "${cloud_run_service}" == *-service ]]; then
                 scheduler_job_candidates+=("${cloud_run_service%-service}-${suffix}")
               fi
+              scheduler_job_candidates+=("${cloud_run_service}-${suffix}")
 
               job_name=""
               current_schedule=""
+              job_exists="false"
               for candidate_job in "${scheduler_job_candidates[@]}"; do
                 current_schedule="$(gcloud scheduler jobs describe "${candidate_job}" \
                   --project="${GCP_PROJECT_ID}" \
@@ -963,13 +988,14 @@ jobs:
                   --format='value(schedule)' 2>/dev/null || true)"
                 if [ -n "${current_schedule}" ]; then
                   job_name="${candidate_job}"
+                  job_exists="true"
                   break
                 fi
               done
 
               if [ -z "${current_schedule}" ]; then
-                echo "Cloud Scheduler job for ${cloud_run_service} ${suffix} was not found in ${scheduler_location}; skipping schedule sync."
-                continue
+                job_name="${scheduler_job_candidates[0]}"
+                current_schedule="0 0 * * *"
               fi
 
               desired_schedule="$(CURRENT_SCHEDULE="${current_schedule}" SCHEDULE_TIME="${schedule_time}" python - <<'PY'
@@ -991,14 +1017,28 @@ jobs:
               )"
 
               scheduler_uri="${service_url}${scheduler_path}"
-              echo "Updating Cloud Scheduler job ${job_name} schedule to ${desired_schedule}, timezone to ${market_timezone}, and URI to ${scheduler_uri}."
-              gcloud scheduler jobs update http "${job_name}" \
-                --project="${GCP_PROJECT_ID}" \
-                --location="${scheduler_location}" \
-                --uri="${scheduler_uri}" \
-                --schedule="${desired_schedule}" \
-                --time-zone="${market_timezone}" \
-                --quiet
+              if [ "${job_exists}" = "true" ]; then
+                echo "Updating Cloud Scheduler job ${job_name} schedule to ${desired_schedule}, timezone to ${market_timezone}, and URI to ${scheduler_uri}."
+                gcloud scheduler jobs update http "${job_name}" \
+                  --project="${GCP_PROJECT_ID}" \
+                  --location="${scheduler_location}" \
+                  --uri="${scheduler_uri}" \
+                  --schedule="${desired_schedule}" \
+                  --time-zone="${market_timezone}" \
+                  --quiet
+              else
+                echo "Creating Cloud Scheduler job ${job_name} schedule ${desired_schedule}, timezone ${market_timezone}, and URI ${scheduler_uri}."
+                gcloud scheduler jobs create http "${job_name}" \
+                  --project="${GCP_PROJECT_ID}" \
+                  --location="${scheduler_location}" \
+                  --uri="${scheduler_uri}" \
+                  --schedule="${desired_schedule}" \
+                  --time-zone="${market_timezone}" \
+                  --http-method=POST \
+                  --oidc-service-account-email="${GCP_SCHEDULER_SERVICE_ACCOUNT}" \
+                  --oidc-token-audience="${service_url}" \
+                  --quiet
+              fi
             done
           done
 
