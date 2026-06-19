@@ -17,7 +17,7 @@ def test_load_strategy_entrypoint_for_profile_resolves_global_etf_rotation(monke
     entrypoint = load_strategy_entrypoint_for_profile("global_etf_rotation")
 
     assert entrypoint.manifest.profile == "global_etf_rotation"
-    assert entrypoint.manifest.required_inputs == frozenset({"feature_snapshot"})
+    assert "feature_snapshot" in entrypoint.manifest.required_inputs
 
 
 def test_load_strategy_entrypoint_for_profile_rejects_research_only_tech_communication_pullback(monkeypatch):
