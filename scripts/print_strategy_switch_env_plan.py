@@ -149,6 +149,11 @@ def build_switch_plan(
         "IBKR_MIN_RESERVED_CASH_USD",
         "IBKR_RESERVED_CASH_RATIO",
         "IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD",
+        "INCOME_LAYER_ENABLED",
+        "INCOME_LAYER_START_USD",
+        "INCOME_LAYER_MAX_RATIO",
+        "DCA_MODE",
+        "DCA_BASE_INVESTMENT_USD",
     ]
     remove_if_present: list[str] = []
     notes = [
