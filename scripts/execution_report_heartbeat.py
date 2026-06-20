@@ -43,6 +43,67 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return value in {"1", "true", "yes", "y", "on"}
 
 
+def _enabled_value(value: Any, *, default: bool = True) -> bool:
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if not text:
+        return default
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    return True
+
+
+def _target_runtime_target(target: dict[str, Any]) -> dict[str, Any]:
+    runtime_target = target.get("runtime_target") or target.get("runtime_target_json")
+    if isinstance(runtime_target, str):
+        try:
+            runtime_target = json.loads(runtime_target)
+        except json.JSONDecodeError:
+            runtime_target = {}
+    return runtime_target if isinstance(runtime_target, dict) else {}
+
+
+def _target_account_scope(target: dict[str, Any], runtime_target: dict[str, Any]) -> str:
+    for source in (target, runtime_target):
+        for key in (
+            "account_scope",
+            "account_group",
+            "account_region",
+            "ACCOUNT_GROUP",
+            "ACCOUNT_REGION",
+        ):
+            value = source.get(key)
+            if value:
+                return str(value).strip()
+    return ""
+
+
+def _target_matches_expected_scope(target: dict[str, Any], runtime_target: dict[str, Any]) -> bool:
+    expected_scope = (os.environ.get("RUNTIME_HEARTBEAT_ACCOUNT_SCOPE") or "").strip().lower()
+    if not expected_scope:
+        return True
+    target_scope = _target_account_scope(target, runtime_target).lower()
+    return not target_scope or target_scope == expected_scope
+
+
+def _target_enabled(target: dict[str, Any], runtime_target: dict[str, Any]) -> bool:
+    value = target.get("runtime_target_enabled")
+    if value is None:
+        value = target.get("RUNTIME_TARGET_ENABLED")
+    if value is None:
+        value = runtime_target.get("runtime_target_enabled")
+    return _enabled_value(value, default=True)
+
+
+def _target_service_values(target: dict[str, Any], runtime_target: dict[str, Any]) -> list[str]:
+    for key in ("service", "service_name", "cloud_run_service"):
+        value = target.get(key) or runtime_target.get(key)
+        if value:
+            return _split_values(str(value))
+    return []
+
+
 def _parse_timestamp(value: Any) -> dt.datetime | None:
     if not value:
         return None
@@ -91,10 +152,56 @@ def _base_report_uris() -> list[str]:
     return unique
 
 
+def _load_target_service_candidates() -> tuple[list[str], list[str]]:
+    disabled_target_services: list[str] = []
+    enabled_target_services: list[str] = []
+    raw_targets = (os.environ.get("CLOUD_RUN_SERVICE_TARGETS_JSON") or "").strip()
+    if not raw_targets:
+        return enabled_target_services, disabled_target_services
+    try:
+        payload = json.loads(raw_targets)
+        targets = payload.get("targets") if isinstance(payload, dict) else payload
+        if isinstance(targets, list):
+            for target in targets:
+                if not isinstance(target, dict):
+                    continue
+                runtime_target = _target_runtime_target(target)
+                if not _target_matches_expected_scope(target, runtime_target):
+                    continue
+                target_services = _target_service_values(target, runtime_target)
+                if not target_services:
+                    continue
+                if _target_enabled(target, runtime_target):
+                    enabled_target_services.extend(target_services)
+                else:
+                    disabled_target_services.extend(target_services)
+    except json.JSONDecodeError:
+        pass
+    return _unique_values(enabled_target_services), _unique_values(disabled_target_services)
+
+
+def _filter_disabled_services(
+    services: list[str],
+    enabled_services: list[str],
+    disabled_services: list[str],
+) -> list[str]:
+    if not disabled_services:
+        return services
+    enabled_service_set = set(enabled_services)
+    disabled_service_set = set(disabled_services) - enabled_service_set
+    return [service for service in services if service not in disabled_service_set]
+
+
 def _load_required_service_candidates() -> tuple[list[str], bool]:
+    enabled_target_services, disabled_target_services = _load_target_service_candidates()
     explicit_services = _split_values(os.environ.get("RUNTIME_HEARTBEAT_REQUIRED_SERVICES"))
     if explicit_services:
-        return _unique_values(explicit_services), True
+        services = _filter_disabled_services(
+            explicit_services,
+            enabled_target_services,
+            disabled_target_services,
+        )
+        return _unique_values(services), True
 
     services = []
     for name in (
@@ -103,30 +210,12 @@ def _load_required_service_candidates() -> tuple[list[str], bool]:
     ):
         services.extend(_split_values(os.environ.get(name)))
 
-    raw_targets = (os.environ.get("CLOUD_RUN_SERVICE_TARGETS_JSON") or "").strip()
-    if raw_targets:
-        try:
-            payload = json.loads(raw_targets)
-            targets = payload.get("targets") if isinstance(payload, dict) else payload
-            if isinstance(targets, list):
-                for target in targets:
-                    if not isinstance(target, dict):
-                        continue
-                    runtime_target = target.get("runtime_target") or target.get("runtime_target_json")
-                    if isinstance(runtime_target, str):
-                        try:
-                            runtime_target = json.loads(runtime_target)
-                        except json.JSONDecodeError:
-                            runtime_target = {}
-                    for key in ("service", "service_name", "cloud_run_service"):
-                        value = target.get(key) or (
-                            runtime_target.get(key) if isinstance(runtime_target, dict) else None
-                        )
-                        if value:
-                            services.extend(_split_values(str(value)))
-                            break
-        except json.JSONDecodeError:
-            pass
+    services = _filter_disabled_services(
+        services,
+        enabled_target_services,
+        disabled_target_services,
+    )
+    services.extend(enabled_target_services)
 
     return _unique_values(services), False
 
@@ -152,6 +241,8 @@ def _resolve_required_services(
     now: dt.datetime | None = None,
 ) -> tuple[list[str], str | None, bool]:
     services, explicit = _load_required_service_candidates()
+    if explicit and not services:
+        return [], "all explicitly required heartbeat services are disabled", False
     if explicit or not services:
         return services, None, False
     if not _env_bool("RUNTIME_HEARTBEAT_SCHEDULER_AWARE", True):
@@ -610,6 +701,9 @@ def main(now: dt.datetime | None = None) -> int:
         or os.environ.get("GOOGLE_CLOUD_PROJECT")
     )
     name = os.environ.get("RUNTIME_HEARTBEAT_NAME") or os.environ.get("GITHUB_REPOSITORY") or "runtime"
+    if not _env_bool("RUNTIME_TARGET_ENABLED", True):
+        print(f"Execution report heartbeat skipped for {name}: runtime target is disabled")
+        return 0
     lookback_hours = float(os.environ.get("RUNTIME_HEARTBEAT_LOOKBACK_HOURS") or "36")
     max_reports = int(os.environ.get("RUNTIME_HEARTBEAT_MAX_REPORTS_TO_READ") or "20")
     fail_workflow = _env_bool("RUNTIME_HEARTBEAT_FAIL_WORKFLOW_ON_ALERT", True)

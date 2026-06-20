@@ -43,6 +43,100 @@ def test_required_services_fall_back_to_cloud_run_targets(monkeypatch):
     assert heartbeat._load_required_services() == ["svc-a", "svc-b"]
 
 
+def test_target_derived_required_services_skip_disabled_targets(monkeypatch):
+    monkeypatch.delenv("RUNTIME_HEARTBEAT_REQUIRED_SERVICES", raising=False)
+    monkeypatch.delenv("CLOUD_RUN_SERVICE", raising=False)
+    monkeypatch.delenv("CLOUD_RUN_SERVICES", raising=False)
+    monkeypatch.delenv("RUNTIME_HEARTBEAT_ACCOUNT_SCOPE", raising=False)
+    monkeypatch.setenv(
+        "CLOUD_RUN_SERVICE_TARGETS_JSON",
+        json.dumps(
+            {
+                "targets": [
+                    {
+                        "service": "interactive-brokers-quant-disabled-service",
+                        "RUNTIME_TARGET_ENABLED": "false",
+                    },
+                    {
+                        "service": "interactive-brokers-quant-enabled-service",
+                        "runtime_target": {
+                            "service_name": "interactive-brokers-quant-enabled-service"
+                        },
+                    },
+                    {
+                        "service": "interactive-brokers-quant-disabled-nested-service",
+                        "runtime_target": {
+                            "runtime_target_enabled": "false",
+                        },
+                    },
+                ]
+            }
+        ),
+    )
+
+    assert heartbeat._load_required_services() == [
+        "interactive-brokers-quant-enabled-service"
+    ]
+
+
+def test_explicit_required_services_skip_disabled_targets(monkeypatch):
+    monkeypatch.setenv(
+        "RUNTIME_HEARTBEAT_REQUIRED_SERVICES",
+        "interactive-brokers-enabled-service,interactive-brokers-disabled-service",
+    )
+    monkeypatch.setenv(
+        "CLOUD_RUN_SERVICE_TARGETS_JSON",
+        json.dumps(
+            {
+                "targets": [
+                    {
+                        "service": "interactive-brokers-enabled-service",
+                        "RUNTIME_TARGET_ENABLED": "true",
+                    },
+                    {
+                        "service": "interactive-brokers-disabled-service",
+                        "RUNTIME_TARGET_ENABLED": "false",
+                    },
+                ]
+            }
+        ),
+    )
+
+    assert heartbeat._load_required_services() == [
+        "interactive-brokers-enabled-service"
+    ]
+
+
+def test_all_explicit_required_services_disabled_skips(monkeypatch):
+    monkeypatch.setenv(
+        "RUNTIME_HEARTBEAT_REQUIRED_SERVICES",
+        "interactive-brokers-disabled-service",
+    )
+    monkeypatch.setenv(
+        "CLOUD_RUN_SERVICE_TARGETS_JSON",
+        json.dumps(
+            {
+                "targets": [
+                    {
+                        "service": "interactive-brokers-disabled-service",
+                        "RUNTIME_TARGET_ENABLED": "false",
+                    }
+                ]
+            }
+        ),
+    )
+
+    required, skip_reason, scheduler_checked = heartbeat._resolve_required_services(
+        project="project-1",
+        since=dt.datetime(2026, 6, 20, 0, 0, tzinfo=dt.timezone.utc),
+        now=dt.datetime(2026, 6, 20, 1, 0, tzinfo=dt.timezone.utc),
+    )
+
+    assert required == []
+    assert skip_reason == "all explicitly required heartbeat services are disabled"
+    assert scheduler_checked is False
+
+
 def test_scheduler_aware_required_services_only_include_due_main_schedulers(monkeypatch):
     monkeypatch.delenv("RUNTIME_HEARTBEAT_REQUIRED_SERVICES", raising=False)
     monkeypatch.setenv(
@@ -221,3 +315,20 @@ def test_main_skips_when_no_scheduler_main_job_is_due(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "Execution report heartbeat skipped for Monthly runtime" in output
     assert "no configured Cloud Scheduler main job was due" in output
+
+
+def test_main_skips_when_runtime_target_is_disabled(monkeypatch, capsys):
+    monkeypatch.setenv("RUNTIME_HEARTBEAT_NAME", "Disabled runtime")
+    monkeypatch.setenv("RUNTIME_TARGET_ENABLED", "false")
+    monkeypatch.setattr(
+        heartbeat,
+        "_list_gcs_objects",
+        lambda *_args, **_kwargs: pytest.fail("GCS should not be queried for disabled targets"),
+    )
+
+    result = heartbeat.main(now=dt.datetime(2026, 6, 20, 1, 35, tzinfo=dt.timezone.utc))
+
+    assert result == 0
+    output = capsys.readouterr().out
+    assert "Execution report heartbeat skipped for Disabled runtime" in output
+    assert "runtime target is disabled" in output
