@@ -666,9 +666,45 @@ def _is_accepted_report(payload: dict[str, Any]) -> tuple[bool, str]:
     return False, f"unaccepted status={status or '-'} stage={stage or '-'}"
 
 
+
+
+def _telegram_secret_project() -> str | None:
+    return (
+        os.environ.get("RUNTIME_HEARTBEAT_GCP_PROJECT_ID")
+        or os.environ.get("RUNTIME_GUARD_GCP_PROJECT_ID")
+        or os.environ.get("GCP_PROJECT_ID")
+        or os.environ.get("GOOGLE_CLOUD_PROJECT")
+    )
+
+
+def _load_telegram_token_from_secret() -> str:
+    secret_name = (os.environ.get("TELEGRAM_TOKEN_SECRET_NAME") or "").strip()
+    if not secret_name:
+        return ""
+    command = ["gcloud", "secrets", "versions", "access", "latest", "--secret", secret_name]
+    project = _telegram_secret_project()
+    if project:
+        command.extend(["--project", project])
+    result = _run_gcloud(command)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        print(
+            f"Unable to read Telegram token from Secret Manager: {detail or 'gcloud failed'}",
+            file=sys.stderr,
+        )
+        return ""
+    return result.stdout.strip()
+
+
+def _telegram_token() -> str:
+    direct_token = (os.environ.get("TELEGRAM_TOKEN") or os.environ.get("TG_TOKEN") or "").strip()
+    if direct_token:
+        return direct_token
+    return _load_telegram_token_from_secret()
+
 def _send_telegram(message: str) -> bool:
     targets: list[tuple[str, str]] = []
-    token = os.environ.get("TELEGRAM_TOKEN") or os.environ.get("TG_TOKEN")
+    token = _telegram_token()
     for chat_id in _split_values(os.environ.get("GLOBAL_TELEGRAM_CHAT_ID")):
         if token:
             targets.append((token, chat_id))

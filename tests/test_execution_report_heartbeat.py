@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import datetime as dt
 import json
 
@@ -332,3 +333,30 @@ def test_main_skips_when_runtime_target_is_disabled(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "Execution report heartbeat skipped for Disabled runtime" in output
     assert "runtime target is disabled" in output
+
+def test_telegram_token_falls_back_to_secret_manager(monkeypatch):
+    monkeypatch.delenv("TELEGRAM_TOKEN", raising=False)
+    monkeypatch.delenv("TG_TOKEN", raising=False)
+    monkeypatch.setenv("TELEGRAM_TOKEN_SECRET_NAME", "platform-telegram-token")
+    monkeypatch.setenv("GCP_PROJECT_ID", "interactivebrokersquant")
+    observed = {}
+
+    def fake_run_gcloud(command):
+        observed["command"] = command
+        return subprocess.CompletedProcess(command, 0, stdout="secret-token\n", stderr="")
+
+    monkeypatch.setattr(heartbeat, "_run_gcloud", fake_run_gcloud)
+
+    assert heartbeat._telegram_token() == "secret-token"
+    assert observed["command"] == [
+        "gcloud",
+        "secrets",
+        "versions",
+        "access",
+        "latest",
+        "--secret",
+        "platform-telegram-token",
+        "--project",
+        "interactivebrokersquant",
+    ]
+
