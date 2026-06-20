@@ -12,7 +12,7 @@ import sys
 import urllib.parse
 import urllib.request
 from typing import Any
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 DEFAULT_ACCEPT_STATUSES = {"ok", "skipped", "success", "completed", "no_action"}
@@ -102,6 +102,160 @@ def _target_service_values(target: dict[str, Any], runtime_target: dict[str, Any
         if value:
             return _split_values(str(value))
     return []
+
+
+def _parse_schedule_day_of_month_field(raw: str) -> set[int] | None:
+    text = str(raw or "").strip()
+    if not text or text in {"*", "?"}:
+        return None
+    days: set[int] = set()
+    for part in text.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        step = 1
+        if "/" in part:
+            part, step_text = part.split("/", 1)
+            try:
+                step = max(1, int(step_text))
+            except ValueError:
+                return None
+        if "-" in part:
+            start_text, end_text = part.split("-", 1)
+            try:
+                start = int(start_text)
+                end = int(end_text)
+            except ValueError:
+                return None
+            if start > end:
+                return None
+            days.update(day for day in range(start, end + 1, step) if 1 <= day <= 31)
+            continue
+        try:
+            day = int(part)
+        except ValueError:
+            return None
+        if 1 <= day <= 31:
+            days.add(day)
+    return days or None
+
+
+def _scheduler_window_status(
+    scheduler: dict[str, Any],
+    *,
+    since: dt.datetime,
+    now: dt.datetime,
+) -> tuple[bool, str] | None:
+    cron = str(scheduler.get("main_time") or "").strip()
+    fields = cron.split()
+    if len(fields) != 5:
+        return None
+    expected_days = _parse_schedule_day_of_month_field(fields[2])
+    if not expected_days:
+        return None
+    timezone_name = str(scheduler.get("timezone") or "UTC").strip() or "UTC"
+    try:
+        timezone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        timezone = dt.timezone.utc
+        timezone_name = "UTC"
+    local_since_date = since.astimezone(timezone).date()
+    local_now_date = now.astimezone(timezone).date()
+    cursor = local_since_date
+    due = False
+    while cursor <= local_now_date:
+        if cursor.day in expected_days:
+            due = True
+            break
+        cursor += dt.timedelta(days=1)
+    day_text = ",".join(str(day) for day in sorted(expected_days))
+    reason = (
+        f"{timezone_name} date_window={local_since_date.isoformat()}.."
+        f"{local_now_date.isoformat()}; expected day(s)={day_text}"
+    )
+    return due, reason
+
+
+def _target_scheduler(target: dict[str, Any], runtime_target: dict[str, Any]) -> dict[str, Any]:
+    for source in (runtime_target, target):
+        scheduler = source.get("scheduler") if isinstance(source, dict) else None
+        if isinstance(scheduler, dict):
+            return scheduler
+    return {}
+
+
+def _runtime_target_payload() -> dict[str, Any]:
+    raw_runtime_target = (os.environ.get("RUNTIME_TARGET_JSON") or "").strip()
+    if not raw_runtime_target:
+        return {}
+    try:
+        runtime_target = json.loads(raw_runtime_target)
+    except json.JSONDecodeError:
+        return {}
+    return runtime_target if isinstance(runtime_target, dict) else {}
+
+
+def _runtime_target_enabled() -> bool:
+    value: Any = os.environ.get("RUNTIME_TARGET_ENABLED")
+    if value is None:
+        value = _runtime_target_payload().get("runtime_target_enabled")
+    return _enabled_value(value, default=True)
+
+
+def _runtime_target_schedule_candidates() -> list[tuple[str, dict[str, Any]]]:
+    candidates: list[tuple[str, dict[str, Any]]] = []
+    raw_targets = (os.environ.get("CLOUD_RUN_SERVICE_TARGETS_JSON") or "").strip()
+    if raw_targets:
+        try:
+            payload = json.loads(raw_targets)
+        except json.JSONDecodeError:
+            payload = {}
+        targets = payload.get("targets") if isinstance(payload, dict) else payload
+        if isinstance(targets, list):
+            for target in targets:
+                if not isinstance(target, dict):
+                    continue
+                runtime_target = _target_runtime_target(target)
+                if not _target_matches_expected_scope(target, runtime_target):
+                    continue
+                if not _target_enabled(target, runtime_target):
+                    continue
+                scheduler = _target_scheduler(target, runtime_target)
+                if not scheduler:
+                    continue
+                services = _target_service_values(target, runtime_target) or [
+                    str(runtime_target.get("service_name") or "runtime_target")
+                ]
+                candidates.extend((service, scheduler) for service in services)
+        if isinstance(targets, list):
+            return candidates
+
+    runtime_target = _runtime_target_payload()
+    if not runtime_target:
+        return []
+    scheduler = _target_scheduler(runtime_target, runtime_target)
+    if not scheduler:
+        return []
+    service = str(runtime_target.get("service_name") or "runtime_target")
+    return [(service, scheduler)]
+
+
+def _runtime_target_scheduler_skip_reason(since: dt.datetime, now: dt.datetime) -> str | None:
+    candidates = _runtime_target_schedule_candidates()
+    if not candidates:
+        return None
+    reasons: list[str] = []
+    for service, scheduler in candidates:
+        status = _scheduler_window_status(scheduler, since=since, now=now)
+        if status is None:
+            return None
+        due, reason = status
+        if due:
+            return None
+        reasons.append(f"{service}: {reason}")
+    if not reasons:
+        return None
+    return "runtime target scheduler main_time is not due today (" + "; ".join(reasons) + ")"
 
 
 def _parse_timestamp(value: Any) -> dt.datetime | None:
@@ -737,7 +891,7 @@ def main(now: dt.datetime | None = None) -> int:
         or os.environ.get("GOOGLE_CLOUD_PROJECT")
     )
     name = os.environ.get("RUNTIME_HEARTBEAT_NAME") or os.environ.get("GITHUB_REPOSITORY") or "runtime"
-    if not _env_bool("RUNTIME_TARGET_ENABLED", True):
+    if not _runtime_target_enabled():
         print(f"Execution report heartbeat skipped for {name}: runtime target is disabled")
         return 0
     lookback_hours = float(os.environ.get("RUNTIME_HEARTBEAT_LOOKBACK_HOURS") or "36")
@@ -749,6 +903,11 @@ def main(now: dt.datetime | None = None) -> int:
         now = now.replace(tzinfo=dt.timezone.utc)
     now = now.astimezone(dt.timezone.utc)
     since = now - dt.timedelta(hours=lookback_hours)
+    runtime_target_skip_reason = _runtime_target_scheduler_skip_reason(since, now)
+    if runtime_target_skip_reason:
+        print(f"Execution report heartbeat skipped for {name}: {runtime_target_skip_reason}")
+        return 0
+
     required_services, scheduler_skip_reason, _scheduler_checked = _resolve_required_services(
         project=project,
         since=since,
