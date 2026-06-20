@@ -182,9 +182,6 @@ def _summarize(entry: dict[str, Any]) -> str:
     suffix = f" {text}" if text else ""
     return f"- {timestamp} {target or '<unknown>'} severity={severity}{status_text}{suffix}"
 
-
-
-
 def _telegram_secret_project() -> str | None:
     return (
         os.environ.get("RUNTIME_HEARTBEAT_GCP_PROJECT_ID")
@@ -194,11 +191,19 @@ def _telegram_secret_project() -> str | None:
     )
 
 
-def _load_telegram_token_from_secret() -> str:
-    secret_name = (os.environ.get("TELEGRAM_TOKEN_SECRET_NAME") or "").strip()
+def _load_telegram_token_from_secret(secret_env_name: str) -> str:
+    secret_name = (os.environ.get(secret_env_name) or "").strip()
     if not secret_name:
         return ""
-    command = ["gcloud", "secrets", "versions", "access", "latest", "--secret", secret_name]
+    command = [
+        "gcloud",
+        "secrets",
+        "versions",
+        "access",
+        "latest",
+        "--secret",
+        secret_name,
+    ]
     project = _telegram_secret_project()
     if project:
         command.extend(["--project", project])
@@ -206,30 +211,56 @@ def _load_telegram_token_from_secret() -> str:
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         print(
-            f"Unable to read Telegram token from Secret Manager: {detail or 'gcloud failed'}",
+            f"Unable to read Telegram token from {secret_env_name}: "
+            f"{detail or 'gcloud failed'}",
             file=sys.stderr,
         )
         return ""
     return result.stdout.strip()
 
 
-def _telegram_token() -> str:
-    direct_token = (os.environ.get("TELEGRAM_TOKEN") or os.environ.get("TG_TOKEN") or "").strip()
-    if direct_token:
-        return direct_token
-    return _load_telegram_token_from_secret()
+def _first_env_value(*names: str) -> str:
+    for name in names:
+        value = (os.environ.get(name) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _telegram_targets() -> list[tuple[str, str]]:
+    strategy_chat_ids = _split_values(
+        os.environ.get("STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS")
+    )
+    if strategy_chat_ids:
+        strategy_token = _first_env_value("STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN")
+        if not strategy_token:
+            strategy_token = _load_telegram_token_from_secret(
+                "STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME"
+            )
+        if strategy_token:
+            return list(
+                dict.fromkeys((strategy_token, chat_id) for chat_id in strategy_chat_ids)
+            )
+        return []
+
+    token = _first_env_value("TELEGRAM_TOKEN", "TG_TOKEN")
+    if not token:
+        token = _load_telegram_token_from_secret("TELEGRAM_TOKEN_SECRET_NAME")
+    targets = [
+        (token, chat_id)
+        for chat_id in _split_values(os.environ.get("GLOBAL_TELEGRAM_CHAT_ID"))
+        if token
+    ]
+    return list(dict.fromkeys(targets))
+
 
 def _send_telegram(message: str) -> bool:
-    targets: list[tuple[str, str]] = []
-
-    token = _telegram_token()
-    for chat_id in _split_values(os.environ.get("GLOBAL_TELEGRAM_CHAT_ID")):
-        if token:
-            targets.append((token, chat_id))
-
-    unique_targets = list(dict.fromkeys(targets))
+    unique_targets = _telegram_targets()
     if not unique_targets:
-        print("No Telegram token/chat configured; unable to send runtime guard alert.", file=sys.stderr)
+        print(
+            "No Telegram token/chat configured; unable to send runtime guard alert.",
+            file=sys.stderr,
+        )
         return False
 
     ok = True
