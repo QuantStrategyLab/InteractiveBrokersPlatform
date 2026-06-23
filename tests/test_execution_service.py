@@ -549,7 +549,7 @@ def test_execute_rebalance_routes_order_to_single_account_id(monkeypatch, tmp_pa
 
     monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
 
-    _trade_logs, summary = execute_rebalance(
+    trade_logs, summary = execute_rebalance(
         FakeIB(),
         {"TQQQ": 1.0},
         {},
