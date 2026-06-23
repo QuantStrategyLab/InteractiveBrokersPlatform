@@ -1,6 +1,7 @@
 import json
 
-from application.rebalance_service import run_strategy_core
+from application.rebalance_service import _resolve_reconciliation_mode, run_strategy_core
+from application.runtime_dependencies import IBKRRebalanceConfig
 from notifications.renderers import (
     _build_notification_trade_lines,
     build_dashboard,
@@ -59,6 +60,8 @@ def _build_test_translator():
         "filled_sell_batch": "filled_sell_batch count={count} details={details}",
         "partial_buy_batch": "partial_buy_batch count={count} details={details}",
         "partial_sell_batch": "partial_sell_batch count={count} details={details}",
+        "skipped_buy_batch": "skipped_buy_batch count={count} details={details}",
+        "skipped_sell_batch": "skipped_sell_batch count={count} details={details}",
     }
 
     def translate(key, **kwargs):
@@ -102,6 +105,20 @@ def test_build_dashboard_localizes_strategy_details():
     assert "快照路径" not in dashboard
     assert "配置来源" not in dashboard
     assert "快照账龄" not in dashboard
+
+
+def test_reconciliation_mode_uses_execution_summary_live_mode():
+    config = IBKRRebalanceConfig(
+        translator=_build_test_translator(),
+        separator="---",
+        execution_mode="paper",
+    )
+
+    assert _resolve_reconciliation_mode(
+        config,
+        signal_metadata={"dry_run_only": False},
+        execution_summary={"mode": "live"},
+    ) == "live"
 
 
 def test_build_dashboard_localizes_snapshot_guard_text_for_zh():
@@ -392,7 +409,7 @@ def test_trade_notification_keeps_detailed_logs_out_of_compact_message():
         strategy_display_name="TQQQ Growth Income",
         extra_notification_lines=(
             "🆔 Account: U1234567",
-            "🧩 Plugin: Crisis Watch Notice | status: no crisis detected | notice: no action",
+            "🧩 Plugin: Crisis Watch Notice | enabled: yes | status: no crisis detected | notice: no action",
         ),
     )
 
@@ -402,6 +419,40 @@ def test_trade_notification_keeps_detailed_logs_out_of_compact_message():
     assert "⏱ Timing: 2026-04-01 -> 2026-04-02 (next trading day)" in notification.compact_text
     assert "no_order_plan_reason reason=min_notional:QQQ,TQQQ" in notification.compact_text
     assert notification.compact_text.index("🆔 Account: U1234567") < notification.compact_text.index("🧩 Plugin:")
+
+
+def test_trade_notification_includes_abnormal_order_batch():
+    notification = render_trade_notification(
+        dashboard="dashboard",
+        strategy_dashboard="dashboard",
+        trade_logs=(),
+        execution_summary={
+            "mode": "paper",
+            "execution_status": "executed",
+            "orders_submitted": [],
+            "orders_filled": [],
+            "orders_partially_filled": [],
+            "orders_skipped": [
+                {
+                    "symbol": "SOXL",
+                    "side": "buy",
+                    "quantity": 1,
+                    "status": "Cancelled",
+                    "reason": "Cancelled",
+                },
+            ],
+            "target_vs_current": [],
+        },
+        signal_desc="signal",
+        status_desc="status",
+        status_icon="🐤",
+        translator=_build_test_translator(),
+        separator="---",
+        strategy_display_name="SOXL/SOXX Semiconductor Trend Income",
+        extra_notification_lines=(),
+    )
+
+    assert "skipped_buy_batch count=1 details=SOXL 1" in notification.compact_text
 
 
 def test_run_strategy_core_writes_reconciliation_record_under_strategy_dir(tmp_path):

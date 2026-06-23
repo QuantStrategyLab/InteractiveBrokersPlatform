@@ -68,3 +68,29 @@ def test_fetch_portfolio_snapshot_filters_account_and_market_currency():
     assert snapshot.metadata["currency"] == "HKD"
     assert snapshot.metadata["account_ids"] == ("UHK123",)
     assert snapshot.metadata["option_positions"][0]["currency"] == "HKD"
+
+
+def test_fetch_portfolio_snapshot_prefers_market_currency_cash_balance():
+    class MultiCurrencyIB(FakeIB):
+        def positions(self):
+            return []
+
+        def accountValues(self):
+            return [
+                SimpleNamespace(account="U16608560", currency="USD", tag="NetLiquidation", value="1130"),
+                SimpleNamespace(account="U16608560", currency="USD", tag="AvailableFunds", value="885.99"),
+                SimpleNamespace(account="U16608560", currency="USD", tag="CashBalance", value="477.10"),
+                SimpleNamespace(account="U16608560", currency="HKD", tag="CashBalance", value="408.98"),
+            ]
+
+    snapshot = fetch_portfolio_snapshot(
+        MultiCurrencyIB(),
+        account_ids=("U16608560",),
+        wait_seconds=0,
+        currency="USD",
+    )
+
+    assert snapshot.total_equity == 1130.0
+    assert snapshot.buying_power == 477.10
+    assert snapshot.metadata["market_currency_cash"] == 477.10
+    assert snapshot.metadata["available_funds"] == 885.99

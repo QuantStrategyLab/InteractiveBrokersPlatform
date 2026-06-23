@@ -223,4 +223,5 @@ def test_strategy_plugin_load_error_is_non_blocking():
     assert report["diagnostics"]["strategy_plugin_error"] == "ValueError: bad config"
     assert adapters.build_strategy_plugin_error_notification_lines(error) == (
         "Plugin signal failed to load: ValueError: bad config; this run falls back to built-in strategy rules",
+        "Plugin consumption: no plugin signal consumed",
     )
