@@ -421,7 +421,7 @@ def test_execute_rebalance_projects_unbuyable_weight_target_to_zero(tmp_path, mo
     prices = {"SOXL": 191.15, "SOXX": 536.88, "BOXX": 100.0}
     monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
 
-    _trade_logs, summary = execute_rebalance(
+    trade_logs, summary = execute_rebalance(
         FakeIB(),
         {},
         {"SOXX": {"quantity": 1}},
