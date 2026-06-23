@@ -789,7 +789,7 @@ def test_execute_rebalance_bootstraps_close_to_one_share_core_target(monkeypatch
     prices = {"SOXL": 229.73, "SOXX": 603.00, "BOXX": 100.0}
     monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
 
-    _trade_logs, summary = execute_rebalance(
+    trade_logs, summary = execute_rebalance(
         FakeIB(),
         {},
         {"SOXL": {"quantity": 0}, "SOXX": {"quantity": 0}, "BOXX": {"quantity": 0}},
