@@ -5,7 +5,7 @@ import pytest
 from application.runtime_broker_adapters import build_runtime_broker_adapters
 
 
-def _build_adapters(*, account_ids=("U1234567",)):
+def _build_adapters(*, account_ids=("U1234567",), execution_mode="paper"):
     return build_runtime_broker_adapters(
         host_resolver=lambda: "127.0.0.1",
         ib_port=4001,
@@ -28,6 +28,7 @@ def _build_adapters(*, account_ids=("U1234567",)):
         account_group="live-slot-a",
         service_name="interactive-brokers-live-slot-a-service",
         account_ids=account_ids,
+        execution_mode=execution_mode,
         dry_run_only=False,
         cash_reserve_ratio=0.0,
         cash_reserve_floor_usd=0.0,
@@ -75,3 +76,26 @@ def test_connect_ib_rejects_configured_account_not_visible_to_gateway_username()
 
     assert observed["disconnects"] == 1
 
+
+def test_connect_ib_rejects_live_mode_without_configured_account_ids():
+    observed = {"disconnects": 0}
+
+    class FakeIB:
+        def managedAccounts(self):
+            return ["U1234567"]
+
+        def disconnect(self):
+            observed["disconnects"] += 1
+
+    adapters = _build_adapters(account_ids=(), execution_mode="live")
+    adapters = adapters.__class__(
+        **{
+            **adapters.__dict__,
+            "connect_ib_fn": lambda *_args, **_kwargs: FakeIB(),
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="IBKR live execution requires configured account_ids"):
+        adapters.connect_ib()
+
+    assert observed["disconnects"] == 1

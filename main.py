@@ -1,5 +1,6 @@
 """IBKR strategy runner for shared us_equity strategy profiles."""
 
+import json
 import os
 import threading
 import time
@@ -277,9 +278,43 @@ CASH_RESERVE_RATIO = STRATEGY_RUNTIME.cash_reserve_ratio
 CASH_RESERVE_FLOOR_USD = getattr(STRATEGY_RUNTIME, "cash_reserve_floor_usd", 0.0)
 REBALANCE_THRESHOLD_RATIO = STRATEGY_RUNTIME.rebalance_threshold_ratio
 LIMIT_BUY_PREMIUM = 1.005
+DEFAULT_LIMIT_BUY_PREMIUM_BY_SYMBOL = {"SOXL": 1.015, "TQQQ": 1.010}
 SELL_SETTLE_DELAY_SEC = 3
 HIST_DATA_PACING_SEC = 0.5
 SEPARATOR = "━━━━━━━━━━━━━━━━━━"
+
+
+def _load_limit_buy_premium_by_symbol(*env_names: str) -> dict[str, float]:
+    raw_value = ""
+    for env_name in env_names:
+        value = os.getenv(env_name)
+        if value and value.strip():
+            raw_value = value.strip()
+            break
+    if not raw_value:
+        return dict(DEFAULT_LIMIT_BUY_PREMIUM_BY_SYMBOL)
+    try:
+        payload = json.loads(raw_value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid limit buy premium map JSON: {raw_value!r}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Limit buy premium map must be a JSON object keyed by symbol.")
+    parsed: dict[str, float] = {}
+    for symbol, premium in payload.items():
+        symbol_text = str(symbol or "").strip().upper()
+        if not symbol_text:
+            continue
+        premium_value = float(premium)
+        if premium_value <= 0.0:
+            raise ValueError(f"Limit buy premium for {symbol_text} must be positive.")
+        parsed[symbol_text] = premium_value
+    return parsed
+
+
+LIMIT_BUY_PREMIUM_BY_SYMBOL = _load_limit_buy_premium_by_symbol(
+    "IBKR_LIMIT_BUY_PREMIUM_BY_SYMBOL_JSON",
+    "LIMIT_BUY_PREMIUM_BY_SYMBOL_JSON",
+)
 
 
 def t(key, **kwargs):
@@ -433,6 +468,7 @@ def build_broker_adapters(*, dry_run_only_override: bool | None = None):
         cash_reserve_floor_usd=CASH_RESERVE_FLOOR_USD,
         rebalance_threshold_ratio=REBALANCE_THRESHOLD_RATIO,
         limit_buy_premium=LIMIT_BUY_PREMIUM,
+        limit_buy_premium_by_symbol=LIMIT_BUY_PREMIUM_BY_SYMBOL,
         quantity_step=RUNTIME_SETTINGS.quantity_step,
         min_order_notional=RUNTIME_SETTINGS.min_order_notional,
         safe_haven_cash_substitute_threshold_usd=RUNTIME_SETTINGS.safe_haven_cash_substitute_threshold_usd,
@@ -441,6 +477,7 @@ def build_broker_adapters(*, dry_run_only_override: bool | None = None):
         strategy_display_name=strategy_display_name,
         sleep_fn=time.sleep,
         market_currency=MARKET_CURRENCY,
+        execution_mode="dry_run" if effective_dry_run_only else RUNTIME_SETTINGS.ib_gateway_mode,
         printer=print,
     )
 

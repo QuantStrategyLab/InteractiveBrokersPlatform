@@ -24,6 +24,7 @@ I18N = {
         "market_scope_detail": "🌏 市场: {market} | 交易币种: {currency} | 交易所: {exchange} | 日历: {calendar}",
         "equity": "净值",
         "buying_power": "购买力",
+        "buying_power_currency": "{currency} 可用现金",
         "reserved_cash": "预留现金",
         "investable_cash": "可投资现金",
         "cash_label": "现金",
@@ -52,6 +53,7 @@ I18N = {
         "no_order_plan_reason": "未下单: {reason}",
         "buy_deferred": "ℹ️ [买入说明] {detail}",
         "buy_deferred_small_account_cash_substitution": "{symbol} 目标金额 ${diff} 低于 1 股价格 ${price}；为避免超过目标仓位，小账户本轮保留现金，不回补 {cash_symbols}",
+        "buy_lifted_small_account_whole_share": "ℹ️ [买入说明] {symbols} 目标金额接近 1 股；小账户整数股兼容，本轮允许按 1 股下单",
         "trade_date_detail": "交易日={value}",
         "target_diff": "目标差异 {symbol}: 当前={current} 目标={target} 变化={delta}",
         "pending_orders_detected": "检测到未完成订单: 策略={profile} 标的={symbols}",
@@ -67,6 +69,8 @@ I18N = {
         "filled_sell_batch": "✅ 卖单成交 {count}个标的: {details}",
         "partial_buy_batch": "⚠️ 买单部分成交 {count}个标的: {details}",
         "partial_sell_batch": "⚠️ 卖单部分成交 {count}个标的: {details}",
+        "skipped_buy_batch": "❌ 买单未执行/异常 {count}个标的: {details}",
+        "skipped_sell_batch": "❌ 卖单未执行/异常 {count}个标的: {details}",
         "no_equity": "❌ 无净值",
         "signal_label": "信号",
         "signal_monthly_snapshot_waiting": "月度快照节奏 | 等待进入执行窗口",
@@ -105,7 +109,15 @@ I18N = {
         "blend_gate_volatility_threshold_detail_dynamic": "动态 {percentile}，{lookback}日窗口，范围 {floor}-{cap}，样本 {sample_count}",
         "blend_gate_volatility_threshold_detail_dynamic_fallback": "动态样本不足，回退固定 {fixed_threshold}（样本 {sample_count}/{min_periods}，{percentile}）",
         "blend_gate_volatility_threshold_detail_fixed": "固定阈值 {threshold}",
-        "strategy_plugin_line": "🧩 插件：{plugin} | 状态：{route} | 提醒：{action}",
+        "strategy_plugin_line": "🧩 插件：{plugin} | 启用：{enabled} | 状态：{route} | 提醒：{action}",
+        "strategy_plugin_enabled_true": "是",
+        "strategy_plugin_enabled_false": "否",
+        "strategy_plugin_consumption_auto": "🧩 插件消费：已按策略规则参与本轮仓位计算",
+        "strategy_plugin_consumption_auto_defend": "🧩 插件消费：已按策略规则参与本轮仓位计算；风险仓位按防守规则处理",
+        "strategy_plugin_consumption_auto_delever": "🧩 插件消费：已按策略规则参与本轮仓位计算；杠杆仓位按降档规则缩放",
+        "strategy_plugin_consumption_loaded_not_applied": "🧩 插件消费：已加载但未改写仓位；当前策略未启用该状态的自动消费",
+        "strategy_plugin_consumption_review_only": "🧩 插件消费：仅通知复核，未参与自动仓位计算",
+        "strategy_plugin_consumption_unavailable": "🧩 插件消费：未消费插件信号",
         "strategy_plugin_alert_subject": "🚨 策略插件告警：{plugin} | {route}",
         "strategy_plugin_alert_title": "🚨 【策略插件告警】",
         "strategy_plugin_alert_context": "运行环境：{context}",
@@ -120,7 +132,7 @@ I18N = {
         "strategy_plugin_alert_scope": "仅作人工复核提醒；插件不会自动下单或改仓位",
         "strategy_plugin_name_crisis_response_shadow": "危机观察通知",
         "strategy_plugin_name_macro_risk_governor": "宏观风险控制通知",
-        "strategy_plugin_name_market_regime_control": "市场状态控制通知",
+        "strategy_plugin_name_market_regime_control": "市场状态控制",
         "strategy_plugin_name_panic_reversal_shadow": "恐慌反转观察通知",
         "strategy_plugin_name_taco_rebound_shadow": "TACO 反弹观察通知",
         "strategy_plugin_mode_shadow": "影子观察",
@@ -160,7 +172,7 @@ I18N = {
         "hold": "💎 持仓不变",
         "market_sell": "📉 [市价卖出] {symbol}: {qty}股",
         "limit_buy": "📈 [限价买入] {symbol}: {qty}股 @ ${price}",
-        "submitted": "已下发（订单号: {order_id}）",
+        "submitted": "已下发，尚未确认成交；DAY 限价单若收盘未成交会自动取消（订单号: {order_id}）",
         "failed": "失败: {reason}",
         "order_filled": "✅ 订单成交 | {symbol} {side} {qty}股 均价 ${price}（订单号: {order_id}）",
         "order_partial": "⚠️ 部分成交 | {symbol} {side} {executed}/{qty}股 均价 ${price}（订单号: {order_id}）",
@@ -200,6 +212,7 @@ I18N = {
         "market_scope_detail": "🌏 Market: {market} | trading currency: {currency} | exchange: {exchange} | calendar: {calendar}",
         "equity": "Equity",
         "buying_power": "Buying Power",
+        "buying_power_currency": "{currency} Available Cash",
         "reserved_cash": "Reserved Cash",
         "investable_cash": "Investable Cash",
         "cash_label": "Cash",
@@ -228,6 +241,7 @@ I18N = {
         "no_order_plan_reason": "No order submitted: {reason}",
         "buy_deferred": "ℹ️ [Buy note] {detail}",
         "buy_deferred_small_account_cash_substitution": "{symbol} target ${diff} is below the 1-share price ${price}; to avoid exceeding the target allocation, this small account keeps cash this cycle and does not rebuy {cash_symbols}",
+        "buy_lifted_small_account_whole_share": "ℹ️ [Buy note] {symbols} target is close to one share; small-account whole-share compatibility allows a 1-share order this cycle",
         "trade_date_detail": "trade_date={value}",
         "target_diff": "target_diff {symbol}: current={current} target={target} delta={delta}",
         "pending_orders_detected": "pending_orders_detected profile={profile} symbols={symbols}",
@@ -243,6 +257,8 @@ I18N = {
         "filled_sell_batch": "✅ Filled sell orders for {count} symbols: {details}",
         "partial_buy_batch": "⚠️ Partial buy fills for {count} symbols: {details}",
         "partial_sell_batch": "⚠️ Partial sell fills for {count} symbols: {details}",
+        "skipped_buy_batch": "❌ Buy orders not executed / abnormal for {count} symbols: {details}",
+        "skipped_sell_batch": "❌ Sell orders not executed / abnormal for {count} symbols: {details}",
         "no_equity": "❌ No equity",
         "signal_label": "Signal",
         "signal_monthly_snapshot_waiting": "monthly snapshot cadence | waiting inside execution window",
@@ -281,7 +297,15 @@ I18N = {
         "blend_gate_volatility_threshold_detail_dynamic": "dynamic {percentile}, {lookback}d lookback, bounded {floor}-{cap}, samples {sample_count}",
         "blend_gate_volatility_threshold_detail_dynamic_fallback": "dynamic warm-up, fallback fixed {fixed_threshold} (samples {sample_count}/{min_periods}, {percentile})",
         "blend_gate_volatility_threshold_detail_fixed": "fixed threshold {threshold}",
-        "strategy_plugin_line": "🧩 Plugin: {plugin} | status: {route} | notice: {action}",
+        "strategy_plugin_line": "🧩 Plugin: {plugin} | enabled: {enabled} | status: {route} | notice: {action}",
+        "strategy_plugin_enabled_true": "yes",
+        "strategy_plugin_enabled_false": "no",
+        "strategy_plugin_consumption_auto": "🧩 Plugin consumption: included in this cycle's position calculation under strategy rules",
+        "strategy_plugin_consumption_auto_defend": "🧩 Plugin consumption: included in this cycle's position calculation; risk exposure follows defensive rules",
+        "strategy_plugin_consumption_auto_delever": "🧩 Plugin consumption: included in this cycle's position calculation; leveraged exposure follows de-risking rules",
+        "strategy_plugin_consumption_loaded_not_applied": "🧩 Plugin consumption: loaded but did not rewrite positions; this strategy does not enable automatic consumption for this state",
+        "strategy_plugin_consumption_review_only": "🧩 Plugin consumption: review-only notice, not used for automatic position calculation",
+        "strategy_plugin_consumption_unavailable": "🧩 Plugin consumption: no plugin signal consumed",
         "strategy_plugin_alert_subject": "🚨 Strategy plugin alert: {plugin} | {route}",
         "strategy_plugin_alert_title": "🚨 【Strategy Plugin Alert】",
         "strategy_plugin_alert_context": "Context: {context}",
@@ -296,7 +320,7 @@ I18N = {
         "strategy_plugin_alert_scope": "Manual review notice only; the plugin does not place orders or change allocations",
         "strategy_plugin_name_crisis_response_shadow": "Crisis Watch Notice",
         "strategy_plugin_name_macro_risk_governor": "Macro Risk Governor Notice",
-        "strategy_plugin_name_market_regime_control": "Market Regime Control Notice",
+        "strategy_plugin_name_market_regime_control": "Market Regime Control",
         "strategy_plugin_name_panic_reversal_shadow": "Panic Reversal Watch Notice",
         "strategy_plugin_name_taco_rebound_shadow": "TACO Rebound Watch Notice",
         "strategy_plugin_mode_shadow": "shadow",
@@ -336,7 +360,7 @@ I18N = {
         "hold": "💎 Hold positions",
         "market_sell": "📉 [Market sell] {symbol}: {qty} shares",
         "limit_buy": "📈 [Limit buy] {symbol}: {qty} shares @ ${price}",
-        "submitted": "submitted (ID: {order_id})",
+        "submitted": "submitted, fill not confirmed; a DAY limit order may auto-cancel if unfilled at close (ID: {order_id})",
         "failed": "failed: {reason}",
         "order_filled": "✅ Filled | {symbol} {side} {qty} shares avg ${price} (ID: {order_id})",
         "order_partial": "⚠️ Partial | {symbol} {side} {executed}/{qty} shares avg ${price} (ID: {order_id})",
@@ -366,7 +390,13 @@ I18N = {
 }
 
 if _merge_strategy_plugin_i18n is not None:
-    I18N = _merge_strategy_plugin_i18n(I18N)
+    _PLATFORM_I18N = {locale: dict(values) for locale, values in I18N.items()}
+    try:
+        I18N = _merge_strategy_plugin_i18n(I18N, shared_wins=False)
+    except TypeError:
+        I18N = _merge_strategy_plugin_i18n(I18N)
+        for locale, values in _PLATFORM_I18N.items():
+            I18N.setdefault(locale, {}).update(values)
 
 
 def build_translator(lang):

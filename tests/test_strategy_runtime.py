@@ -415,6 +415,11 @@ def test_option_chain_fetch_uses_merged_manifest_overlay_defaults(monkeypatch):
         observed["kwargs"] = kwargs
         return {"underlier": underlier, "contracts": ()}
 
+    monkeypatch.setattr(
+        strategy_runtime_module.LoadedStrategyRuntime,
+        "_option_overlay_recipe_live_allowed",
+        staticmethod(lambda _recipe: True),
+    )
     monkeypatch.setattr(strategy_runtime_module, "fetch_option_chain_snapshot", fake_fetch_option_chain_snapshot)
     chains = runtime._fetch_option_chains_for_runtime(
         object(),
@@ -425,6 +430,47 @@ def test_option_chain_fetch_uses_merged_manifest_overlay_defaults(monkeypatch):
     assert observed["underlier"] == "TQQQ"
     assert observed["kwargs"]["rights"] == ("C",)
     assert chains["TQQQ"]["underlier"] == "TQQQ"
+
+
+def test_option_chain_fetch_skips_research_only_overlay_defaults(monkeypatch):
+    observed = {}
+
+    class FakeEntrypoint:
+        manifest = StrategyManifest(
+            profile="tqqq_growth_income",
+            domain="us_equity",
+            display_name="TQQQ",
+            description="test",
+            required_inputs=frozenset({"benchmark_history", "portfolio_snapshot"}),
+            default_config={},
+        )
+
+    runtime = strategy_runtime_module.LoadedStrategyRuntime(
+        entrypoint=FakeEntrypoint(),
+        runtime_adapter=StrategyRuntimeAdapter(),
+        runtime_settings=_build_runtime_settings(profile="tqqq_growth_income"),
+        runtime_config={},
+        merged_runtime_config={
+            "option_growth_overlay_enabled": True,
+            "option_growth_overlay_recipe": "tqqq_leaps_growth_v1",
+            "option_growth_overlay_start_usd": 250000.0,
+        },
+        logger=lambda _message: None,
+    )
+
+    def fake_fetch_option_chain_snapshot(_ib, underlier, **kwargs):
+        observed["underlier"] = underlier
+        observed["kwargs"] = kwargs
+        return {"underlier": underlier, "contracts": ()}
+
+    monkeypatch.setattr(strategy_runtime_module, "fetch_option_chain_snapshot", fake_fetch_option_chain_snapshot)
+
+    assert runtime._fetch_option_chains_for_runtime(
+        object(),
+        {},
+        SimpleNamespace(total_equity=300000.0),
+    ) == {}
+    assert observed == {}
 
 
 def test_feature_snapshot_runtime_prefers_unified_runtime_adapter_metadata(monkeypatch):

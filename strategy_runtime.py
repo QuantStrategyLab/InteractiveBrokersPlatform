@@ -263,6 +263,20 @@ class LoadedStrategyRuntime:
                 return False
         return bool(value)
 
+    @staticmethod
+    def _option_overlay_recipe_live_allowed(recipe: str) -> bool:
+        try:
+            from us_equity_strategies.option_overlay import OPTION_OVERLAY_RESEARCH_CANDIDATES
+        except Exception:
+            return False
+        candidate = OPTION_OVERLAY_RESEARCH_CANDIDATES.get(str(recipe or "").strip())
+        if not isinstance(candidate, Mapping):
+            return False
+        return (
+            str(candidate.get("status") or "").strip().lower() == "live"
+            and candidate.get("promotion_evidence") is True
+        )
+
     def _active_option_overlay_recipes(
         self,
         runtime_config: Mapping[str, Any],
@@ -276,6 +290,8 @@ class LoadedStrategyRuntime:
                 continue
             recipe = str(runtime_config.get(f"{prefix}_recipe") or "").strip()
             if recipe not in _OPTION_CHAIN_FETCH_RULES:
+                continue
+            if not self._option_overlay_recipe_live_allowed(recipe):
                 continue
             start_usd = float(runtime_config.get(f"{prefix}_start_usd") or 0.0)
             if portfolio_snapshot is None or total_equity < max(0.0, start_usd):

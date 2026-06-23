@@ -181,6 +181,7 @@ def _build_order_batch_lines(execution_summary, *, translator) -> list[str]:
         ("orders_submitted", "dry_run" if mode == "dry_run" else "submitted"),
         ("orders_filled", "filled"),
         ("orders_partially_filled", "partial"),
+        ("orders_skipped", "skipped"),
     ]
     lines: list[str] = []
     for field_name, prefix in order_groups:
@@ -724,7 +725,21 @@ def render_trade_notification(
     extra_notification_lines=(),
 ) -> RenderedNotification:
     extra_lines = _extra_notification_lines(extra_notification_lines)
-    if trade_logs:
+    execution_summary = dict(execution_summary or {})
+    has_order_events = any(
+        execution_summary.get(field_name)
+        for field_name in (
+            "orders_submitted",
+            "orders_filled",
+            "orders_partially_filled",
+            "orders_skipped",
+            "option_orders_submitted",
+            "option_orders_filled",
+            "option_orders_partially_filled",
+            "option_orders_skipped",
+        )
+    )
+    if trade_logs or has_order_events:
         notification_trade_lines = _build_notification_trade_lines(
             trade_logs,
             execution_summary=execution_summary,

@@ -96,6 +96,29 @@ def _should_suppress_noop_notification(signal_metadata: Mapping[str, object] | N
     }
 
 
+def _normalize_reconciliation_mode(value: object, *, fallback: str = "") -> str:
+    normalized = str(value or "").strip().lower().replace("-", "_")
+    if normalized in {"dry_run", "paper", "live"}:
+        return normalized
+    return fallback
+
+
+def _resolve_reconciliation_mode(
+    config: IBKRRebalanceConfig,
+    *,
+    signal_metadata: Mapping[str, object] | None = None,
+    execution_summary: Mapping[str, object] | None = None,
+) -> str:
+    metadata = signal_metadata if isinstance(signal_metadata, Mapping) else {}
+    if metadata.get("dry_run_only"):
+        return "dry_run"
+    summary = execution_summary if isinstance(execution_summary, Mapping) else {}
+    summary_mode = _normalize_reconciliation_mode(summary.get("mode"))
+    if summary_mode:
+        return summary_mode
+    return _normalize_reconciliation_mode(getattr(config, "execution_mode", None), fallback="paper")
+
+
 def _translate_snapshot_guard_decision(decision: object, *, translator) -> str:
     value = str(decision or "").strip()
     if not value:
@@ -216,6 +239,7 @@ def _build_order_batch_lines(execution_summary, *, translator) -> list[str]:
         ("orders_submitted", "dry_run" if mode == "dry_run" else "submitted"),
         ("orders_filled", "filled"),
         ("orders_partially_filled", "partial"),
+        ("orders_skipped", "skipped"),
     ]
     lines: list[str] = []
     for field_name, prefix in order_groups:
@@ -392,6 +416,12 @@ def build_dashboard(
         return strategy_dashboard
     equity = account_values.get("equity", 0)
     buying_power = account_values.get("buying_power", 0)
+    buying_power_currency = str(account_values.get("currency") or "").strip().upper()
+    buying_power_label = translator("buying_power")
+    if buying_power_currency:
+        translated_label = translator("buying_power_currency", currency=buying_power_currency)
+        if translated_label != "buying_power_currency":
+            buying_power_label = translated_label
     position_lines = []
     for symbol in sorted(positions.keys()):
         qty = positions[symbol]["quantity"]
@@ -442,7 +472,7 @@ def build_dashboard(
     return (
         f"{translator('account_summary_title')}\n"
         f"  - {translator('equity')}: ${equity:,.2f}\n"
-        f"  - {translator('buying_power')}: ${buying_power:,.2f}\n"
+        f"  - {buying_power_label}: ${buying_power:,.2f}\n"
         f"{separator}\n"
         f"{translator('positions_title')}\n"
         f"{position_text}\n"
@@ -521,9 +551,14 @@ def _snapshot_to_portfolio_view(snapshot) -> tuple[dict[str, dict[str, float | i
             "quantity": float(position.quantity),
             "avg_cost": float(position.average_cost or 0.0),
         }
+    metadata = getattr(snapshot, "metadata", {}) or {}
     account_values = {
         "equity": float(getattr(snapshot, "total_equity", 0.0) or 0.0),
         "buying_power": float(getattr(snapshot, "buying_power", 0.0) or 0.0),
+        "currency": str(metadata.get("currency") or "").strip(),
+        "market_currency_cash": metadata.get("market_currency_cash"),
+        "available_funds": metadata.get("available_funds"),
+        "cash_balances": metadata.get("cash_balances") or (),
     }
     return positions, account_values
 
@@ -684,7 +719,7 @@ def run_strategy_core(
             no_op_text = "\n".join(_split_labeled_text(no_op_text))
             record = build_reconciliation_record(
                 strategy_profile=signal_metadata.get("strategy_profile"),
-                mode="dry_run" if signal_metadata.get("dry_run_only") else "paper",
+                mode=_resolve_reconciliation_mode(config, signal_metadata=signal_metadata),
                 trade_date=signal_metadata.get("trade_date"),
                 snapshot_as_of=signal_metadata.get("snapshot_as_of"),
                 signal_metadata=signal_metadata,
@@ -750,7 +785,11 @@ def run_strategy_core(
             execution_summary = None
         record = build_reconciliation_record(
             strategy_profile=signal_metadata.get("strategy_profile"),
-            mode="dry_run" if execution_summary and execution_summary.get("mode") == "dry_run" else "paper",
+            mode=_resolve_reconciliation_mode(
+                config,
+                signal_metadata=signal_metadata,
+                execution_summary=execution_summary,
+            ),
             trade_date=signal_metadata.get("trade_date"),
             snapshot_as_of=signal_metadata.get("snapshot_as_of"),
             signal_metadata=signal_metadata,

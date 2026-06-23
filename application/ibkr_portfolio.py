@@ -8,6 +8,8 @@ from typing import Any
 
 from quant_platform_kit.common.models import PortfolioSnapshot, Position
 
+MARKET_CURRENCY_CASH_TAG_PRIORITY = ("CashBalance", "TotalCashBalance", "SettledCash")
+
 
 def _normalize_account_ids(account_ids: Iterable[str] | str | None) -> tuple[str, ...]:
     if account_ids is None:
@@ -28,6 +30,33 @@ def _matches_account(account_id: str | None, selected_account_ids: tuple[str, ..
     if not selected_account_ids:
         return True
     return str(account_id or "").strip() in selected_account_ids
+
+
+def _as_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _cash_value_for_currency(
+    values_by_account_currency: dict[tuple[str | None, str], dict[str, float]],
+    *,
+    currency: str,
+    tag_priority: tuple[str, ...] = MARKET_CURRENCY_CASH_TAG_PRIORITY,
+) -> float | None:
+    total = 0.0
+    matched = False
+    market_currency = str(currency or "").strip().upper()
+    for (_account_id, value_currency), tag_values in values_by_account_currency.items():
+        if value_currency != market_currency:
+            continue
+        for tag in tag_priority:
+            if tag in tag_values:
+                total += float(tag_values[tag])
+                matched = True
+                break
+    return total if matched else None
 
 
 def fetch_portfolio_snapshot(
@@ -95,18 +124,31 @@ def fetch_portfolio_snapshot(
         )
 
     total_equity = 0.0
-    buying_power = None
+    available_funds = None
+    values_by_account_currency: dict[tuple[str | None, str], dict[str, float]] = {}
     for account_value in ib.accountValues():
         account_id = str(getattr(account_value, "account", "") or "").strip() or None
         if not _matches_account(account_id, selected_account_ids):
             continue
-        if str(getattr(account_value, "currency", "") or "").strip().upper() != market_currency:
+        value_currency = str(getattr(account_value, "currency", "") or "").strip().upper()
+        if value_currency:
+            tag_values = values_by_account_currency.setdefault((account_id, value_currency), {})
+            numeric_value = _as_float(getattr(account_value, "value", None))
+            if numeric_value is not None:
+                tag_values[str(getattr(account_value, "tag", "") or "").strip()] = numeric_value
+        if value_currency != market_currency:
             continue
         if account_value.tag == "NetLiquidation":
             total_equity += float(account_value.value)
         elif account_value.tag == "AvailableFunds":
             value = float(account_value.value)
-            buying_power = value if buying_power is None else buying_power + value
+            available_funds = value if available_funds is None else available_funds + value
+
+    market_currency_cash = _cash_value_for_currency(
+        values_by_account_currency,
+        currency=market_currency,
+    )
+    buying_power = market_currency_cash if market_currency_cash is not None else available_funds
 
     return PortfolioSnapshot(
         as_of=datetime.now(timezone.utc),
@@ -117,5 +159,18 @@ def fetch_portfolio_snapshot(
             "account_ids": selected_account_ids,
             "option_positions": tuple(option_positions),
             "currency": market_currency,
+            "market_currency_cash": market_currency_cash,
+            "available_funds": available_funds,
+            "cash_balances": tuple(
+                {
+                    "account_id": account_id,
+                    "currency": currency,
+                    **tag_values,
+                }
+                for (account_id, currency), tag_values in sorted(
+                    values_by_account_currency.items(),
+                    key=lambda item: ((item[0][0] or ""), item[0][1]),
+                )
+            ),
         },
     )

@@ -47,10 +47,17 @@ class IBKRRuntimeBrokerAdapters:
     strategy_display_name: str
     sleep_fn: Any
     market_currency: str = "USD"
+    execution_mode: str = "paper"
+    limit_buy_premium_by_symbol: dict[str, float] | None = None
     printer: Any = print
 
     def validate_configured_accounts(self, ib):
         if not self.account_ids:
+            if str(self.execution_mode or "").strip().lower() == "live":
+                raise RuntimeError(
+                    "IBKR live execution requires configured account_ids "
+                    f"for account_group={self.account_group!r}."
+                )
             return
         managed_accounts_fn = getattr(ib, "managedAccounts", None)
         if not callable(managed_accounts_fn):
@@ -185,13 +192,16 @@ class IBKRRuntimeBrokerAdapters:
             service_name=self.service_name,
             account_ids=self.account_ids,
             dry_run_only=self.dry_run_only,
+            execution_mode=self.execution_mode,
             cash_reserve_ratio=self.cash_reserve_ratio,
             cash_reserve_floor_usd=self.cash_reserve_floor_usd,
             rebalance_threshold_ratio=self.rebalance_threshold_ratio,
             limit_buy_premium=self.limit_buy_premium,
+            limit_buy_premium_by_symbol=self.limit_buy_premium_by_symbol or {},
             quantity_step=self.quantity_step,
             min_order_notional=self.min_order_notional,
             safe_haven_cash_substitute_threshold_usd=self.safe_haven_cash_substitute_threshold_usd,
+            market_currency=self.market_currency,
             sell_settle_delay_sec=self.sell_settle_delay_sec,
             return_summary=True,
         )
@@ -284,6 +294,8 @@ def build_runtime_broker_adapters(
     strategy_display_name: str,
     sleep_fn,
     market_currency: str = "USD",
+    execution_mode: str = "paper",
+    limit_buy_premium_by_symbol: dict[str, float] | None = None,
     printer=print,
 ) -> IBKRRuntimeBrokerAdapters:
     return IBKRRuntimeBrokerAdapters(
@@ -314,6 +326,7 @@ def build_runtime_broker_adapters(
         cash_reserve_floor_usd=float(cash_reserve_floor_usd),
         rebalance_threshold_ratio=float(rebalance_threshold_ratio),
         limit_buy_premium=float(limit_buy_premium),
+        limit_buy_premium_by_symbol=dict(limit_buy_premium_by_symbol or {}),
         quantity_step=float(quantity_step),
         min_order_notional=float(min_order_notional),
         safe_haven_cash_substitute_threshold_usd=float(safe_haven_cash_substitute_threshold_usd),
@@ -322,5 +335,6 @@ def build_runtime_broker_adapters(
         strategy_display_name=str(strategy_display_name or ""),
         sleep_fn=sleep_fn,
         market_currency=str(market_currency or "USD").upper(),
+        execution_mode=str(execution_mode or "paper").strip().lower().replace("-", "_"),
         printer=printer,
     )

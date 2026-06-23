@@ -131,34 +131,37 @@ def test_build_translator_supports_chinese():
         translate(
             "strategy_plugin_line",
             plugin=translate("strategy_plugin_name_crisis_response_shadow"),
+            enabled=translate("strategy_plugin_enabled_true"),
             mode=translate("strategy_plugin_mode_shadow"),
             route=translate("strategy_plugin_route_no_action"),
             action=translate("strategy_plugin_action_watch_only"),
         )
-        == "🧩 插件：危机观察通知 | 状态：未触发 | 提醒：仅观察，不自动交易"
+        == "🧩 插件：危机观察通知 | 启用：是 | 状态：未触发 | 提醒：仅通知"
     )
     assert (
         translate(
             "strategy_plugin_line",
             plugin=translate("strategy_plugin_name_taco_rebound_shadow"),
+            enabled=translate("strategy_plugin_enabled_true"),
             mode=translate("strategy_plugin_mode_shadow"),
             route=translate("strategy_plugin_route_taco_rebound"),
             action=translate("strategy_plugin_action_notify_manual_review"),
         )
-        == "🧩 插件：TACO 反弹观察通知 | 状态：TACO 反弹确认 | 提醒：通知人工复核"
+        == "🧩 插件：TACO 反弹观察通知 | 启用：是 | 状态：TACO 反弹确认 | 提醒：通知人工复核"
     )
     assert (
         translate(
             "strategy_plugin_line",
             plugin=translate("strategy_plugin_name_market_regime_control"),
+            enabled=translate("strategy_plugin_enabled_true"),
             mode=translate("strategy_plugin_mode_shadow"),
             route=translate("strategy_plugin_route_risk_reduced"),
             action=translate("strategy_plugin_action_delever"),
         )
-        == "🧩 插件：市场状态控制 | 状态：风险降低 | 提醒：降杠杆"
+        == "🧩 插件：市场状态控制 | 启用：是 | 状态：风险降低 | 提醒：降杠杆"
     )
     assert translate("strategy_plugin_alert_guidance", guidance="小仓位博弈") == "处置建议：小仓位博弈"
-    assert translate("strategy_plugin_alert_scope_note", scope_note="不会自动下单") == "自动化边界：不会自动下单"
+    assert translate("strategy_plugin_alert_scope_note", scope_note="不会自动下单") == "执行范围：不会自动下单"
     assert "降低杠杆" in translate("strategy_plugin_guidance_crisis_response_shadow_true_crisis_defend")
     assert "策略侧已批准" in translate("strategy_plugin_guidance_market_regime_control_risk_reduced_delever")
     assert "小仓位" in translate("strategy_plugin_guidance_taco_rebound_shadow_taco_rebound_notify_manual_review")
