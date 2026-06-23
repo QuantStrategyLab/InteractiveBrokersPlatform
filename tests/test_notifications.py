@@ -136,7 +136,7 @@ def test_build_translator_supports_chinese():
             route=translate("strategy_plugin_route_no_action"),
             action=translate("strategy_plugin_action_watch_only"),
         )
-        == "🧩 插件：危机观察通知 | 启用：是 | 状态：未触发 | 提醒：仅观察，不自动交易"
+        == "🧩 插件：危机观察通知 | 启用：是 | 状态：未触发 | 提醒：仅通知"
     )
     assert (
         translate(
