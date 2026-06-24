@@ -62,6 +62,10 @@ def translate(key, **kwargs):
             "{symbol} 目标金额 ${diff} 低于 1 股价格 ${price}；"
             "为避免超过目标仓位，小账户本轮保留现金，不回补 {cash_symbols}"
         ),
+        "small_account_allocation_drift": "📏 整数股偏离：若本轮订单全部成交，{details}",
+        "small_account_allocation_drift_detail": (
+            "{symbol} 预计 {projected_weight} vs 目标 {target_weight}（{drift_weight}）"
+        ),
     }
     template = templates[key]
     return template.format(**kwargs) if kwargs else template
@@ -825,6 +829,8 @@ def test_execute_rebalance_bootstraps_close_to_one_share_core_target(monkeypatch
 
     assert summary["small_account_whole_share_bootstrap_symbols"] == ["SOXL"]
     assert summary["small_account_whole_share_substituted_symbols"] == ["SOXX"]
+    assert summary["small_account_allocation_drift_notes"][0]["symbol"] == "SOXX"
+    assert any("整数股偏离" in log and "SOXX.US 预计 0.0%" in log for log in trade_logs)
     assert any("SOXL.US" in log and "1 股" in log for log in trade_logs)
     assert {
         "symbol": "SOXL",
