@@ -45,6 +45,8 @@ except ImportError:  # pragma: no cover - compatibility with older pinned shared
 try:
     from quant_platform_kit.common.small_account_compatibility import (
         apply_small_account_cash_compatibility,
+        build_small_account_allocation_drift_notes,
+        format_small_account_allocation_drift_notes,
         format_small_account_cash_substitution_notes,
     )
 except ImportError:  # pragma: no cover - compatibility with older pinned shared wheels
@@ -203,6 +205,12 @@ except ImportError:  # pragma: no cover - compatibility with older pinned shared
             )
             messages.append(translator(wrapper_key, detail=detail))
         return tuple(messages)
+
+    def build_small_account_allocation_drift_notes(**_kwargs):
+        return ()
+
+    def format_small_account_allocation_drift_notes(_notes, *, translator, **_kwargs):
+        return ()
 from quant_platform_kit.common.quantity import (
     floor_to_quantity_step,
     format_quantity,
@@ -1241,6 +1249,7 @@ def execute_rebalance(
         "small_account_whole_share_substituted_symbols": [],
         "small_account_safe_haven_cash_substituted_symbols": [],
         "small_account_whole_share_cash_notes": [],
+        "small_account_allocation_drift_notes": [],
         "residual_cash_estimate": float(account_values.get("buying_power", 0.0) or 0.0),
         "current_stock_weight": 0.0,
         "current_safe_haven_weight": 0.0,
@@ -1317,8 +1326,28 @@ def execute_rebalance(
         qty = positions.get(symbol, {}).get("quantity", 0)
         price = prices.get(symbol, 0)
         current_mv[symbol] = qty * price
+    current_quantities = {
+        symbol: float(positions.get(symbol, {}).get("quantity", 0.0) or 0.0)
+        for symbol in all_symbols
+    }
 
     target_mv = {symbol: investable * weight for symbol, weight in target_weights.items()}
+    drift_target_symbols = tuple(
+        dict.fromkeys(
+            str(symbol or "").strip().upper()
+            for symbol in tuple(allocation["risk_symbols"]) + tuple(allocation["income_symbols"])
+            if str(symbol or "").strip()
+        )
+    )
+    if not drift_target_symbols:
+        drift_target_symbols = tuple(
+            symbol for symbol in target_mv if str(symbol or "").strip().upper() not in safe_haven_symbols
+        )
+    small_account_reference_target_mv = {
+        symbol: target_mv.get(symbol, 0.0)
+        for symbol in drift_target_symbols
+        if symbol in target_mv
+    }
     small_account_candidate_symbols = tuple(
         dict.fromkeys(
             str(symbol or "").strip().upper()
@@ -1415,6 +1444,29 @@ def execute_rebalance(
             translator=translator,
         )
     )
+
+    def append_small_account_allocation_drift_notes():
+        if execution_summary.get("execution_status") == "blocked":
+            return
+        if execution_summary.get("small_account_allocation_drift_notes"):
+            return
+        submitted_orders = tuple(execution_summary.get("orders_submitted") or ()) + tuple(
+            execution_summary.get("orders_filled") or ()
+        ) + tuple(execution_summary.get("orders_partially_filled") or ())
+        notes = build_small_account_allocation_drift_notes(
+            target_values=small_account_reference_target_mv,
+            current_values=current_mv,
+            current_quantities=current_quantities,
+            prices=prices,
+            submitted_orders=submitted_orders,
+            total_value=float(equity or 0.0),
+            cash_value=float(account_values.get("buying_power", 0.0) or 0.0),
+        )
+        if not notes:
+            return
+        execution_summary["small_account_allocation_drift_notes"] = list(notes)
+        trade_logs.extend(format_small_account_allocation_drift_notes(notes, translator=translator))
+
     target_hash = _build_target_hash(target_weights)
     execution_summary["target_vs_current"] = _build_target_diff_rows(target_weights, current_mv, equity)
     if equity > 0:
@@ -1631,6 +1683,7 @@ def execute_rebalance(
             if status == "blocked":
                 trade_logs.append(translator("failed", reason=reason))
         if not (reason == "target_diff_below_threshold" and has_executable_option_plan):
+            append_small_account_allocation_drift_notes()
             return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
 
     same_day_filled_symbols = _collect_same_day_filled_symbols(
@@ -1899,4 +1952,5 @@ def execute_rebalance(
     if execution_summary["execution_status"] == "executed":
         execution_summary["no_op_reason"] = None
     execution_summary["residual_cash_estimate"] = float(max(buying_power, 0.0))
+    append_small_account_allocation_drift_notes()
     return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
