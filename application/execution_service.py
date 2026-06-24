@@ -1446,6 +1446,8 @@ def execute_rebalance(
     )
 
     def append_small_account_allocation_drift_notes():
+        if execution_summary.get("execution_status") == "blocked":
+            return
         if execution_summary.get("small_account_allocation_drift_notes"):
             return
         submitted_orders = tuple(execution_summary.get("orders_submitted") or ()) + tuple(
