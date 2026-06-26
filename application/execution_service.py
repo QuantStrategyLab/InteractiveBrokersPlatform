@@ -351,6 +351,7 @@ def _cash_value_for_currency(account_values, *, currency: str, account_ids=None)
 
 
 def get_available_buying_power(ib, fallback_buying_power, *, account_ids=None, currency="USD"):
+    del fallback_buying_power
     selected_account_ids = _normalize_account_ids(account_ids)
     account_values = list(ib.accountValues() or ())
     currency_cash = _cash_value_for_currency(
@@ -359,16 +360,8 @@ def get_available_buying_power(ib, fallback_buying_power, *, account_ids=None, c
         account_ids=selected_account_ids,
     )
     if currency_cash is not None:
-        return currency_cash
-    buying_power = fallback_buying_power
-    market_currency = str(currency or "USD").strip().upper()
-    for account_value in account_values:
-        account_id = str(getattr(account_value, "account", "") or "").strip() or None
-        if not _matches_account(account_id, selected_account_ids):
-            continue
-        if account_value.tag == "AvailableFunds" and str(account_value.currency).strip().upper() == market_currency:
-            buying_power = float(account_value.value)
-    return buying_power
+        return max(0.0, float(currency_cash))
+    return 0.0
 
 
 def _iter_open_orders(ib) -> list[Any]:
@@ -980,6 +973,71 @@ def _floor_order_quantity(quantity, *, quantity_step):
 
 def _investable_buying_power(buying_power: float, reserved_cash: float) -> float:
     return max(0.0, float(buying_power or 0.0) - max(0.0, float(reserved_cash or 0.0)))
+
+
+def _estimated_buy_order_cost(
+    *,
+    buy_symbols,
+    current_mv,
+    target_mv,
+    threshold,
+    investable_buying_power,
+    prices,
+    limit_buy_premium,
+    limit_buy_premium_by_symbol,
+    quantity_step,
+    minimum_order_notional,
+) -> float:
+    total_cost = 0.0
+    for symbol in buy_symbols:
+        current = float(current_mv.get(symbol, 0.0) or 0.0)
+        target = float(target_mv.get(symbol, 0.0) or 0.0)
+        if current >= target - threshold:
+            continue
+        buy_value = min(target - current, investable_buying_power)
+        price = prices.get(symbol)
+        if not price or buy_value < minimum_order_notional:
+            continue
+        limit_price = _limit_buy_price(symbol, price, limit_buy_premium, limit_buy_premium_by_symbol)
+        qty = _floor_order_quantity(
+            buy_value / limit_price,
+            quantity_step=quantity_step,
+        )
+        if qty <= 0:
+            continue
+        total_cost += float(qty) * float(limit_price)
+    return total_cost
+
+
+def _rotation_guard_should_block_buys(
+    *,
+    pending_sell_release_symbols,
+    buy_needed_symbols,
+    current_mv,
+    target_mv,
+    threshold,
+    investable_buying_power,
+    prices,
+    limit_buy_premium,
+    limit_buy_premium_by_symbol,
+    quantity_step,
+    minimum_order_notional,
+) -> bool:
+    if not pending_sell_release_symbols or not buy_needed_symbols:
+        return False
+    estimated_cost = _estimated_buy_order_cost(
+        buy_symbols=buy_needed_symbols,
+        current_mv=current_mv,
+        target_mv=target_mv,
+        threshold=threshold,
+        investable_buying_power=investable_buying_power,
+        prices=prices,
+        limit_buy_premium=limit_buy_premium,
+        limit_buy_premium_by_symbol=limit_buy_premium_by_symbol,
+        quantity_step=quantity_step,
+        minimum_order_notional=minimum_order_notional,
+    )
+    return estimated_cost > investable_buying_power
 
 
 def _sell_order_quantity(
@@ -1770,6 +1828,7 @@ def execute_rebalance(
     execution_summary["execution_status"] = "executing"
 
     sell_executed = False
+    pending_sell_release_symbols: list[str] = []
     for symbol in all_symbols:
         current = current_mv.get(symbol, 0)
         target = target_mv.get(symbol, 0)
@@ -1788,6 +1847,8 @@ def execute_rebalance(
             )
             qty = max(int(cash_sweep_quantity), int(regular_qty))
             if qty <= 0:
+                if current > target + threshold:
+                    pending_sell_release_symbols.append(symbol)
                 execution_summary["orders_skipped"].append({"symbol": symbol, "side": "sell", "reason": "quantity_zero"})
                 continue
         elif current > target + threshold:
@@ -1803,6 +1864,7 @@ def execute_rebalance(
                 quantity_step=order_quantity_step,
             )
             if qty <= 0:
+                pending_sell_release_symbols.append(symbol)
                 execution_summary["orders_skipped"].append({"symbol": symbol, "side": "sell", "reason": "quantity_zero"})
                 continue
         else:
@@ -1860,8 +1922,62 @@ def execute_rebalance(
         else:
             buying_power = anticipated_buying_power
     investable_buying_power = _investable_buying_power(buying_power, reserved)
+    pending_sell_release_symbols = list(dict.fromkeys(pending_sell_release_symbols))
+    buy_needed_symbols = [
+        symbol
+        for symbol, target in target_mv.items()
+        if current_mv.get(symbol, 0.0) < float(target or 0.0) - threshold
+    ]
+    buys_blocked_reason = None
+    if pending_sell_release_symbols and buy_needed_symbols:
+        if _rotation_guard_should_block_buys(
+            pending_sell_release_symbols=pending_sell_release_symbols,
+            buy_needed_symbols=buy_needed_symbols,
+            current_mv=current_mv,
+            target_mv=target_mv,
+            threshold=threshold,
+            investable_buying_power=investable_buying_power,
+            prices=prices,
+            limit_buy_premium=limit_buy_premium,
+            limit_buy_premium_by_symbol=limit_buy_premium_by_symbol,
+            quantity_step=order_quantity_step,
+            minimum_order_notional=minimum_order_notional,
+        ):
+            buys_blocked_reason = "pending_sell_release"
+            release_symbols = _format_symbol_preview(tuple(pending_sell_release_symbols))
+            execution_summary["pending_sell_release_symbols"] = list(pending_sell_release_symbols)
+            execution_summary["skipped_reasons"].append(
+                f"pending_sell_release:{','.join(pending_sell_release_symbols)}"
+            )
+            trade_logs.append(
+                translator(
+                    "buy_deferred_pending_sell_release",
+                    symbols=release_symbols,
+                )
+            )
+    if buys_blocked_reason is None:
+        raw_cash = _cash_value_for_currency(
+            list(ib.accountValues() or ()),
+            currency=market_currency,
+            account_ids=normalized_account_ids,
+        )
+        if raw_cash is not None and float(raw_cash) < 0.0 and buy_needed_symbols:
+            buys_blocked_reason = "negative_cash"
+            execution_summary["skipped_reasons"].append(f"negative_cash:{float(raw_cash):.2f}")
+            trade_logs.append(
+                translator(
+                    "buy_deferred_negative_cash",
+                    cash=f"{float(raw_cash):,.2f}",
+                )
+            )
 
     for symbol, target in target_mv.items():
+        if buys_blocked_reason:
+            if symbol in buy_needed_symbols:
+                execution_summary["orders_skipped"].append(
+                    {"symbol": symbol, "side": "buy", "reason": buys_blocked_reason}
+                )
+            continue
         current = current_mv.get(symbol, 0)
         if current < target - threshold:
             buy_value = min(target - current, investable_buying_power * 0.95)
@@ -1881,6 +1997,20 @@ def execute_rebalance(
             )
             if qty <= 0:
                 execution_summary["orders_skipped"].append({"symbol": symbol, "side": "buy", "reason": "quantity_zero"})
+                continue
+
+            order_cost = float(qty) * float(limit_price)
+            if order_cost > investable_buying_power:
+                qty = _floor_order_quantity(
+                    investable_buying_power / limit_price,
+                    quantity_step=order_quantity_step,
+                )
+                order_cost = float(qty) * float(limit_price)
+            if qty <= 0 or order_cost > investable_buying_power:
+                execution_summary["orders_skipped"].append(
+                    {"symbol": symbol, "side": "buy", "reason": "insufficient_buying_power"}
+                )
+                execution_summary["skipped_reasons"].append(f"insufficient_buying_power:{symbol}")
                 continue
 
             if dry_run_only:

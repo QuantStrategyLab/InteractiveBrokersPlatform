@@ -403,12 +403,18 @@ class LoadedStrategyRuntime:
             return portfolio_snapshot
         if not hasattr(portfolio_snapshot, "positions"):
             return portfolio_snapshot
+        from us_equity_strategies.cash_only_equity import (
+            apply_cash_only_account_state,
+            resolve_raw_cash_from_snapshot,
+        )
+
         account_state = build_account_state_from_portfolio_snapshot(
             portfolio_snapshot,
             strategy_symbols=strategy_symbols,
         )
-        account_state["total_strategy_equity"] = float(account_state["available_cash"]) + sum(
-            float(value) for value in dict(account_state["market_values"]).values()
+        account_state = apply_cash_only_account_state(
+            account_state,
+            raw_cash=resolve_raw_cash_from_snapshot(portfolio_snapshot),
         )
         return build_portfolio_snapshot_from_account_state(
             account_state,

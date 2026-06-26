@@ -16,6 +16,7 @@ from application.reconciliation_service import (
 from application.signal_snapshot import build_signal_snapshot
 from notifications.events import NotificationPublisher
 from notifications import renderers as notification_renderers
+from notifications.renderers import _build_order_batch_lines
 from quant_platform_kit.common.models import PortfolioSnapshot, Position
 from quant_platform_kit.common.quantity import format_quantity
 from quant_platform_kit.common.notification_localization import (
@@ -231,40 +232,6 @@ def _summarize_orders(orders, *, limit: int = 3) -> str:
     if remaining > 0:
         preview.append(f"+{remaining}")
     return ", ".join(preview)
-
-
-def _build_order_batch_lines(execution_summary, *, translator) -> list[str]:
-    mode = str(execution_summary.get("mode") or "").strip().lower()
-    order_groups = [
-        ("orders_submitted", "dry_run" if mode == "dry_run" else "submitted"),
-        ("orders_filled", "filled"),
-        ("orders_partially_filled", "partial"),
-        ("orders_skipped", "skipped"),
-    ]
-    lines: list[str] = []
-    for field_name, prefix in order_groups:
-        orders = list(execution_summary.get(field_name) or [])
-        if not orders:
-            continue
-        buy_orders = [order for order in orders if str(order.get("side") or "").strip().lower() == "buy"]
-        sell_orders = [order for order in orders if str(order.get("side") or "").strip().lower() == "sell"]
-        if buy_orders:
-            lines.append(
-                translator(
-                    f"{prefix}_buy_batch",
-                    count=len(buy_orders),
-                    details=_summarize_orders(buy_orders),
-                )
-            )
-        if sell_orders:
-            lines.append(
-                translator(
-                    f"{prefix}_sell_batch",
-                    count=len(sell_orders),
-                    details=_summarize_orders(sell_orders),
-                )
-            )
-    return lines
 
 
 def _build_notification_trade_lines(

@@ -61,7 +61,7 @@ def test_fetch_portfolio_snapshot_filters_account_and_market_currency():
 
     assert ib.req_positions_called == 1
     assert snapshot.total_equity == 100000.0
-    assert snapshot.buying_power == 80000.0
+    assert snapshot.buying_power == 0.0
     assert len(snapshot.positions) == 1
     assert snapshot.positions[0].symbol == "00700"
     assert snapshot.positions[0].currency == "HKD"
@@ -94,3 +94,26 @@ def test_fetch_portfolio_snapshot_prefers_market_currency_cash_balance():
     assert snapshot.buying_power == 477.10
     assert snapshot.metadata["market_currency_cash"] == 477.10
     assert snapshot.metadata["available_funds"] == 885.99
+
+
+def test_fetch_portfolio_snapshot_allows_negative_cash_balance():
+    class NegativeCashIB(FakeIB):
+        def positions(self):
+            return []
+
+        def accountValues(self):
+            return [
+                SimpleNamespace(account="U16608560", currency="USD", tag="NetLiquidation", value="2160"),
+                SimpleNamespace(account="U16608560", currency="USD", tag="AvailableFunds", value="1588.89"),
+                SimpleNamespace(account="U16608560", currency="USD", tag="CashBalance", value="-284.0"),
+            ]
+
+    snapshot = fetch_portfolio_snapshot(
+        NegativeCashIB(),
+        account_ids=("U16608560",),
+        wait_seconds=0,
+        currency="USD",
+    )
+
+    assert snapshot.buying_power == -284.0
+    assert snapshot.metadata["market_currency_cash"] == -284.0
