@@ -262,6 +262,30 @@ def test_send_telegram_message_logs_non_200_response(capsys):
     assert "Telegram send failed with status 401: unauthorized" in captured.out
 
 
+def test_send_telegram_message_breaks_market_symbol_auto_links():
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+        text = ""
+
+    class FakeRequests:
+        @staticmethod
+        def post(*args, **kwargs):
+            calls.append((args, kwargs))
+            return FakeResponse()
+
+    send_telegram_message(
+        "SOXL.US 预计；00700.HK 持仓；https://example.com 保持原样",
+        token="token",
+        chat_id="chat-id",
+        requests_module=FakeRequests,
+    )
+
+    payload = calls[0][1]["json"]
+    assert payload["text"] == "SOXL.\u2060US 预计；00700.\u2060HK 持仓；https://example.com 保持原样"
+
+
 def test_send_telegram_message_redacts_exception_detail(capsys):
     class FakeRequests:
         @staticmethod
