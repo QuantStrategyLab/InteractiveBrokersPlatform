@@ -1243,7 +1243,7 @@ def test_execute_rebalance_sells_cash_sweep_symbol_when_buying_power_is_short(mo
             return [
                 SimpleNamespace(
                     account="DU123",
-                    tag="AvailableFunds",
+                    tag="CashBalance",
                     currency="USD",
                     value=buying_power,
                 )
