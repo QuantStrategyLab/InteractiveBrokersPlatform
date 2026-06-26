@@ -978,6 +978,10 @@ def _floor_order_quantity(quantity, *, quantity_step):
     return normalize_order_quantity(floor_to_quantity_step(quantity, quantity_step))
 
 
+def _investable_buying_power(buying_power: float, reserved_cash: float) -> float:
+    return max(0.0, float(buying_power or 0.0) - max(0.0, float(reserved_cash or 0.0)))
+
+
 def _sell_order_quantity(
     *,
     current_value,
@@ -1460,7 +1464,10 @@ def execute_rebalance(
             prices=prices,
             submitted_orders=submitted_orders,
             total_value=float(equity or 0.0),
-            cash_value=float(account_values.get("buying_power", 0.0) or 0.0),
+            cash_value=_investable_buying_power(
+                float(account_values.get("buying_power", 0.0) or 0.0),
+                reserved,
+            ),
         )
         if not notes:
             return
@@ -1549,6 +1556,7 @@ def execute_rebalance(
         account_ids=normalized_account_ids,
         currency=market_currency,
     )
+    investable_anticipated_buying_power = _investable_buying_power(anticipated_buying_power, reserved)
     cash_sweep_quantity = 0
     cash_sweep_price = float(prices.get(safe_haven_symbol, 0.0) or 0.0) if safe_haven_symbol else 0.0
     dry_run_sale_proceeds = 0.0
@@ -1556,7 +1564,7 @@ def execute_rebalance(
     def cash_sweep_sale_quantity_to_fund_buy(max_quantity: int, candidate_symbols: tuple[str, ...]) -> int:
         if max_quantity <= 0 or not safe_haven_symbol or cash_sweep_price <= 0.0:
             return 0
-        base_buying_power = max(0.0, float(anticipated_buying_power))
+        base_buying_power = max(0.0, float(investable_anticipated_buying_power))
         funding_needs = []
         for symbol in candidate_symbols:
             underweight_value = target_mv[symbol] - current_mv.get(symbol, 0.0)
@@ -1632,7 +1640,7 @@ def execute_rebalance(
         if not price:
             missing_price_symbols.append(symbol)
             continue
-        buy_value = min(target - current, anticipated_buying_power * 0.95)
+        buy_value = min(target - current, investable_anticipated_buying_power * 0.95)
         if buy_value <= 0:
             insufficient_buying_power_symbols.append(symbol)
             continue
@@ -1851,11 +1859,12 @@ def execute_rebalance(
             )
         else:
             buying_power = anticipated_buying_power
+    investable_buying_power = _investable_buying_power(buying_power, reserved)
 
     for symbol, target in target_mv.items():
         current = current_mv.get(symbol, 0)
         if current < target - threshold:
-            buy_value = min(target - current, buying_power * 0.95)
+            buy_value = min(target - current, investable_buying_power * 0.95)
             price = prices.get(symbol)
             if not price:
                 execution_summary["orders_skipped"].append({"symbol": symbol, "side": "buy", "reason": "missing_price"})
@@ -1885,7 +1894,7 @@ def execute_rebalance(
                     }
                 )
                 trade_logs.append(f"DRY_RUN buy {symbol} {format_quantity(qty)} @{limit_price:.2f}")
-                buying_power -= qty * limit_price
+                investable_buying_power -= qty * limit_price
                 continue
             report = submit_order_intent(
                 ib,
@@ -1922,7 +1931,7 @@ def execute_rebalance(
                 translator("limit_buy", symbol=symbol, qty=format_quantity(qty), price=f"{limit_price:.2f}") + f" {status_msg}"
             )
             if ok:
-                buying_power -= qty * limit_price
+                investable_buying_power -= qty * limit_price
 
     buying_power = _execute_option_order_intents(
         ib,

@@ -411,6 +411,63 @@ def test_execute_rebalance_uses_reserved_cash_floor_when_higher(tmp_path):
     assert summary["cash_reserve_dollars"] == 250.0
 
 
+def test_execute_rebalance_caps_buy_budget_by_reserved_cash_after_sell(tmp_path, monkeypatch):
+    class FakeIB:
+        def openTrades(self):
+            return []
+
+        def fills(self):
+            return []
+
+        def accountValues(self):
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1412.12")]
+
+    prices = {"SOXL": 225.19, "SOXX": 600.71}
+    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+
+    _trade_logs, summary = execute_rebalance(
+        FakeIB(),
+        {},
+        {
+            "SOXL": {"quantity": 3},
+            "SOXX": {"quantity": 2},
+        },
+        {"equity": 3289.13, "buying_power": 1412.12},
+        fetch_quote_snapshots=lambda _ib, symbols: {
+            symbol: SimpleNamespace(last_price=prices[symbol]) for symbol in symbols
+        },
+        submit_order_intent=lambda *_args, **_kwargs: SimpleNamespace(
+            broker_order_id="dry-run",
+            status="Submitted",
+        ),
+        order_intent_cls=OrderIntent,
+        translator=translate,
+        strategy_symbols=["SOXL", "SOXX"],
+        strategy_profile="soxl_soxx_trend_income",
+        signal_metadata=_signal_metadata(
+            {"SOXL": 0.0, "SOXX": 0.90},
+            risk_symbols=("SOXL", "SOXX"),
+            trade_date="2026-06-26",
+        ),
+        dry_run_only=True,
+        cash_reserve_ratio=0.0,
+        cash_reserve_floor_usd=150.0,
+        rebalance_threshold_ratio=0.01,
+        limit_buy_premium=1.005,
+        quantity_step=1.0,
+        sell_settle_delay_sec=0,
+        execution_lock_dir=tmp_path,
+        return_summary=True,
+    )
+
+    buy_orders = [order for order in summary["orders_submitted"] if order["side"] == "buy"]
+    assert buy_orders
+    buy_notional = sum(float(order["quantity"]) * prices[order["symbol"]] for order in buy_orders)
+    # 1412.12 + 3*225.19 sale proceeds, minus 150 reserved, times 0.95 buffer
+    max_investable = max(0.0, (1412.12 + (3 * 225.19)) - 150.0) * 0.95
+    assert buy_notional <= max_investable + 1.0
+
+
 def test_execute_rebalance_projects_unbuyable_weight_target_to_zero(tmp_path, monkeypatch):
     class FakeIB:
         def openTrades(self):
