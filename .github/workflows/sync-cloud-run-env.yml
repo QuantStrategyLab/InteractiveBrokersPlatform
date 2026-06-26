@@ -172,13 +172,18 @@ jobs:
         run: |
           set -euo pipefail
 
+          write_github_output() {
+            printf '%s\n' "$@" >> "$GITHUB_OUTPUT"
+          }
+
           deploy_enabled=false
           env_sync_enabled=false
 
           if [ "${GITHUB_EVENT_NAME:-}" = "push" ] && [ "${ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION:-}" != "true" ]; then
-            echo "deploy_enabled=false" >> "$GITHUB_OUTPUT"
-            echo "env_sync_enabled=false" >> "$GITHUB_OUTPUT"
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            write_github_output \
+              "deploy_enabled=false" \
+              "env_sync_enabled=false" \
+              "enabled=false"
             echo "Skipping Cloud Run automation on push because ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION is not true." >&2
             exit 0
           fi
@@ -200,16 +205,17 @@ jobs:
             fi
           fi
 
-          echo "deploy_enabled=${deploy_enabled}" >> "$GITHUB_OUTPUT"
-          echo "env_sync_enabled=${env_sync_enabled}" >> "$GITHUB_OUTPUT"
+          write_github_output \
+            "deploy_enabled=${deploy_enabled}" \
+            "env_sync_enabled=${env_sync_enabled}"
 
           if [ "${deploy_enabled}" != "true" ] && [ "${env_sync_enabled}" != "true" ]; then
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            write_github_output "enabled=false"
             echo "Skipping Cloud Run automation because ENABLE_GITHUB_CLOUD_RUN_DEPLOY and ENABLE_GITHUB_ENV_SYNC are not true." >&2
             exit 0
           fi
 
-          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          write_github_output "enabled=true"
 
       - name: Checkout repository
         if: steps.config.outputs.enabled == 'true'

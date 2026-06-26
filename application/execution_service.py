@@ -45,6 +45,8 @@ except ImportError:  # pragma: no cover - compatibility with older pinned shared
 try:
     from quant_platform_kit.common.small_account_compatibility import (
         apply_small_account_cash_compatibility,
+        build_small_account_allocation_drift_notes,
+        format_small_account_allocation_drift_notes,
         format_small_account_cash_substitution_notes,
     )
 except ImportError:  # pragma: no cover - compatibility with older pinned shared wheels
@@ -203,6 +205,12 @@ except ImportError:  # pragma: no cover - compatibility with older pinned shared
             )
             messages.append(translator(wrapper_key, detail=detail))
         return tuple(messages)
+
+    def build_small_account_allocation_drift_notes(**_kwargs):
+        return ()
+
+    def format_small_account_allocation_drift_notes(_notes, *, translator, **_kwargs):
+        return ()
 from quant_platform_kit.common.quantity import (
     floor_to_quantity_step,
     format_quantity,
@@ -302,14 +310,63 @@ def _resolve_order_account_id(account_ids=None) -> str | None:
     return normalized[0] if normalized else None
 
 
-def get_available_buying_power(ib, fallback_buying_power, *, account_ids=None):
+MARKET_CURRENCY_CASH_TAG_PRIORITY = ("CashBalance", "TotalCashBalance", "SettledCash")
+
+
+def _coerce_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _cash_value_for_currency(account_values, *, currency: str, account_ids=None) -> float | None:
     selected_account_ids = _normalize_account_ids(account_ids)
-    buying_power = fallback_buying_power
-    for account_value in ib.accountValues():
+    market_currency = str(currency or "USD").strip().upper()
+    values_by_account_currency: dict[tuple[str | None, str], dict[str, float]] = {}
+    for account_value in account_values or ():
         account_id = str(getattr(account_value, "account", "") or "").strip() or None
         if not _matches_account(account_id, selected_account_ids):
             continue
-        if account_value.tag == "AvailableFunds" and account_value.currency == "USD":
+        value_currency = str(getattr(account_value, "currency", "") or "").strip().upper()
+        if not value_currency:
+            continue
+        value = _coerce_float(getattr(account_value, "value", None))
+        if value is None:
+            continue
+        tag = str(getattr(account_value, "tag", "") or "").strip()
+        values_by_account_currency.setdefault((account_id, value_currency), {})[tag] = value
+
+    total = 0.0
+    matched = False
+    for (_account_id, value_currency), tag_values in values_by_account_currency.items():
+        if value_currency != market_currency:
+            continue
+        for tag in MARKET_CURRENCY_CASH_TAG_PRIORITY:
+            if tag in tag_values:
+                total += float(tag_values[tag])
+                matched = True
+                break
+    return total if matched else None
+
+
+def get_available_buying_power(ib, fallback_buying_power, *, account_ids=None, currency="USD"):
+    selected_account_ids = _normalize_account_ids(account_ids)
+    account_values = list(ib.accountValues() or ())
+    currency_cash = _cash_value_for_currency(
+        account_values,
+        currency=currency,
+        account_ids=selected_account_ids,
+    )
+    if currency_cash is not None:
+        return currency_cash
+    buying_power = fallback_buying_power
+    market_currency = str(currency or "USD").strip().upper()
+    for account_value in account_values:
+        account_id = str(getattr(account_value, "account", "") or "").strip() or None
+        if not _matches_account(account_id, selected_account_ids):
+            continue
+        if account_value.tag == "AvailableFunds" and str(account_value.currency).strip().upper() == market_currency:
             buying_power = float(account_value.value)
     return buying_power
 
@@ -786,6 +843,24 @@ def _format_symbol_preview(symbols: tuple[str, ...], *, limit: int = 3) -> str:
     return ",".join(shown)
 
 
+def _resolve_execution_mode(*, dry_run_only: bool, execution_mode: str | None = None) -> str:
+    if dry_run_only:
+        return "dry_run"
+    normalized = str(execution_mode or "paper").strip().lower().replace("-", "_")
+    aliases = {
+        "dryrun": "dry_run",
+        "dry_run_only": "dry_run",
+        "paper_trading": "paper",
+        "live_trading": "live",
+    }
+    normalized = aliases.get(normalized, normalized)
+    if normalized == "dry_run":
+        raise ValueError("execution_mode=dry_run requires dry_run_only=True")
+    if normalized not in {"paper", "live"}:
+        raise ValueError("execution_mode must be paper or live")
+    return normalized
+
+
 def _resolve_execution_lock_path(
     *,
     strategy_profile: str | None,
@@ -793,17 +868,16 @@ def _resolve_execution_lock_path(
     service_name: str | None,
     trade_date: str | None,
     snapshot_date: str | None,
-    dry_run_only: bool,
+    execution_mode: str,
     execution_lock_dir: str | Path | None,
 ) -> Path:
     lock_dir = Path(execution_lock_dir) if execution_lock_dir else Path(tempfile.gettempdir()) / "ibkr_execution_locks"
-    mode = "dry_run" if dry_run_only else "paper"
     scope = "__".join(
         [
             _sanitize_token(account_group or "default"),
             _sanitize_token(service_name or "service"),
             _sanitize_token(strategy_profile or "unknown"),
-            _sanitize_token(mode),
+            _sanitize_token(execution_mode),
             _sanitize_token(trade_date),
             _sanitize_token(snapshot_date or "no_snapshot"),
         ]
@@ -836,7 +910,7 @@ def _build_execution_lock_payload(
     trade_date: str | None,
     snapshot_date: str | None,
     target_hash: str,
-    dry_run_only: bool,
+    execution_mode: str,
 ) -> dict[str, Any]:
     return {
         "strategy_profile": strategy_profile,
@@ -845,7 +919,7 @@ def _build_execution_lock_payload(
         "account_ids": list(account_ids or ()),
         "trade_date": trade_date,
         "snapshot_date": snapshot_date,
-        "mode": "dry_run" if dry_run_only else "paper",
+        "mode": execution_mode,
         "target_hash": target_hash,
         "created_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
     }
@@ -904,6 +978,10 @@ def _floor_order_quantity(quantity, *, quantity_step):
     return normalize_order_quantity(floor_to_quantity_step(quantity, quantity_step))
 
 
+def _investable_buying_power(buying_power: float, reserved_cash: float) -> float:
+    return max(0.0, float(buying_power or 0.0) - max(0.0, float(reserved_cash or 0.0)))
+
+
 def _sell_order_quantity(
     *,
     current_value,
@@ -929,9 +1007,42 @@ def _sell_order_quantity(
     )
 
 
+def _limit_buy_premium_for_symbol(symbol, default_premium, premium_by_symbol=None) -> float:
+    normalized_symbol = str(symbol or "").strip().upper()
+    try:
+        fallback = float(default_premium)
+    except (TypeError, ValueError):
+        fallback = 1.005
+    if not isinstance(premium_by_symbol, dict):
+        return fallback
+    raw_value = premium_by_symbol.get(normalized_symbol)
+    if raw_value is None:
+        return fallback
+    try:
+        premium = float(raw_value)
+    except (TypeError, ValueError):
+        return fallback
+    return premium if premium > 0.0 else fallback
+
+
+def _limit_buy_price(symbol, price, default_premium, premium_by_symbol=None) -> float:
+    return round(
+        float(price) * _limit_buy_premium_for_symbol(symbol, default_premium, premium_by_symbol),
+        2,
+    )
+
+
 DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD = 1000.0
 SMALL_ACCOUNT_SAFE_HAVEN_CASH_SUBSTITUTE_LIMIT_USD = 2000.0
 SMALL_ACCOUNT_EXISTING_WHOLE_SHARE_RETENTION_SYMBOLS = frozenset({"TQQQ", "SOXL"})
+SMALL_ACCOUNT_EXISTING_WHOLE_SHARE_RETENTION_MIN_TARGET_SHARE_RATIO_BY_SYMBOL = {
+    "SOXX": 0.90,
+}
+SMALL_ACCOUNT_WHOLE_SHARE_BOOTSTRAP_MIN_TARGET_SHARE_RATIO_BY_SYMBOL = {
+    "TQQQ": 0.90,
+    "SOXL": 0.90,
+    "SOXX": 0.90,
+}
 
 
 def _positive_target_total(targets: dict[str, Any]) -> float:
@@ -971,6 +1082,75 @@ def _apply_safe_haven_cash_substitution_to_weights(
     return adjusted, tuple(dict.fromkeys(substituted))
 
 
+def _should_retain_existing_whole_share(symbol, *, target_value, price) -> bool:
+    normalized_symbol = str(symbol or "").strip().upper()
+    if normalized_symbol in SMALL_ACCOUNT_EXISTING_WHOLE_SHARE_RETENTION_SYMBOLS:
+        return True
+
+    min_target_share_ratio = (
+        SMALL_ACCOUNT_EXISTING_WHOLE_SHARE_RETENTION_MIN_TARGET_SHARE_RATIO_BY_SYMBOL.get(normalized_symbol)
+    )
+    if min_target_share_ratio is None:
+        return False
+    quote_price = max(0.0, float(price or 0.0))
+    if quote_price <= 0.0:
+        return False
+    return max(0.0, float(target_value or 0.0)) >= quote_price * float(min_target_share_ratio)
+
+
+def _should_bootstrap_whole_share_buy(symbol, *, target_value, limit_price) -> bool:
+    normalized_symbol = str(symbol or "").strip().upper()
+    min_target_share_ratio = (
+        SMALL_ACCOUNT_WHOLE_SHARE_BOOTSTRAP_MIN_TARGET_SHARE_RATIO_BY_SYMBOL.get(normalized_symbol)
+    )
+    if min_target_share_ratio is None:
+        return False
+    effective_limit_price = max(0.0, float(limit_price or 0.0))
+    if effective_limit_price <= 0.0:
+        return False
+    return max(0.0, float(target_value or 0.0)) >= effective_limit_price * float(min_target_share_ratio)
+
+
+def _format_symbol_with_suffix(symbol, *, suffix=".US") -> str:
+    normalized = str(symbol or "").strip().upper()
+    if not normalized:
+        return normalized
+    if "." in normalized:
+        return normalized
+    normalized_suffix = str(suffix or "").strip().upper()
+    return f"{normalized}{normalized_suffix}" if normalized_suffix else normalized
+
+
+def _format_small_account_whole_share_bootstrap_notes(
+    symbols,
+    *,
+    translator,
+    symbol_suffix=".US",
+) -> tuple[str, ...]:
+    normalized_symbols = tuple(
+        dict.fromkeys(
+            _format_symbol_with_suffix(symbol, suffix=symbol_suffix)
+            for symbol in tuple(symbols or ())
+            if str(symbol or "").strip()
+        )
+    )
+    if not normalized_symbols:
+        return ()
+    try:
+        message = translator(
+            "buy_lifted_small_account_whole_share",
+            symbols=", ".join(normalized_symbols),
+        )
+    except Exception:
+        message = ""
+    if not message or message == "buy_lifted_small_account_whole_share":
+        message = (
+            f"ℹ️ [买入说明] {', '.join(normalized_symbols)} 目标金额接近 1 股；"
+            "小账户整数股兼容，本轮允许按 1 股下单"
+        )
+    return (message,)
+
+
 def _finalize_result(trade_logs, execution_summary, *, return_summary: bool):
     if return_summary:
         return trade_logs, execution_summary
@@ -994,6 +1174,7 @@ def execute_rebalance(
     service_name=None,
     account_ids=None,
     dry_run_only=False,
+    execution_mode=None,
     cash_reserve_ratio,
     rebalance_threshold_ratio,
     limit_buy_premium,
@@ -1002,6 +1183,8 @@ def execute_rebalance(
     quantity_step=1.0,
     min_order_notional=50.0,
     safe_haven_cash_substitute_threshold_usd=DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD,
+    market_currency="USD",
+    limit_buy_premium_by_symbol=None,
     execution_lock_dir=None,
     return_summary=False,
 ):
@@ -1016,6 +1199,10 @@ def execute_rebalance(
     strategy_symbols = tuple(allocation["strategy_symbols"])
     trade_date = str(signal_metadata.get("trade_date") or "").strip() or None
     snapshot_date = _normalize_date_like(signal_metadata.get("snapshot_as_of"))
+    resolved_execution_mode = _resolve_execution_mode(
+        dry_run_only=dry_run_only,
+        execution_mode=execution_mode,
+    )
     safe_haven_symbols = tuple(allocation["safe_haven_symbols"])
     safe_haven_symbol = safe_haven_symbols[0] if safe_haven_symbols else None
     equity = account_values.get("equity", 0)
@@ -1030,7 +1217,7 @@ def execute_rebalance(
             quote_snapshots_by_symbol[symbol] = payload
 
     execution_summary = {
-        "mode": "dry_run" if dry_run_only else "paper",
+        "mode": resolved_execution_mode,
         "strategy_profile": strategy_profile,
         "account_group": account_group,
         "account_ids": list(normalized_account_ids),
@@ -1039,6 +1226,7 @@ def execute_rebalance(
         "trade_date": trade_date,
         "snapshot_as_of": snapshot_date,
         "safe_haven_symbol": safe_haven_symbol,
+        "market_currency": str(market_currency or "USD").strip().upper(),
         "target_stock_weight": signal_metadata.get("target_stock_weight"),
         "realized_stock_weight": signal_metadata.get("realized_stock_weight"),
         "target_safe_haven_weight": signal_metadata.get("safe_haven_weight"),
@@ -1065,6 +1253,7 @@ def execute_rebalance(
         "small_account_whole_share_substituted_symbols": [],
         "small_account_safe_haven_cash_substituted_symbols": [],
         "small_account_whole_share_cash_notes": [],
+        "small_account_allocation_drift_notes": [],
         "residual_cash_estimate": float(account_values.get("buying_power", 0.0) or 0.0),
         "current_stock_weight": 0.0,
         "current_safe_haven_weight": 0.0,
@@ -1141,8 +1330,28 @@ def execute_rebalance(
         qty = positions.get(symbol, {}).get("quantity", 0)
         price = prices.get(symbol, 0)
         current_mv[symbol] = qty * price
+    current_quantities = {
+        symbol: float(positions.get(symbol, {}).get("quantity", 0.0) or 0.0)
+        for symbol in all_symbols
+    }
 
     target_mv = {symbol: investable * weight for symbol, weight in target_weights.items()}
+    drift_target_symbols = tuple(
+        dict.fromkeys(
+            str(symbol or "").strip().upper()
+            for symbol in tuple(allocation["risk_symbols"]) + tuple(allocation["income_symbols"])
+            if str(symbol or "").strip()
+        )
+    )
+    if not drift_target_symbols:
+        drift_target_symbols = tuple(
+            symbol for symbol in target_mv if str(symbol or "").strip().upper() not in safe_haven_symbols
+        )
+    small_account_reference_target_mv = {
+        symbol: target_mv.get(symbol, 0.0)
+        for symbol in drift_target_symbols
+        if symbol in target_mv
+    }
     small_account_candidate_symbols = tuple(
         dict.fromkeys(
             str(symbol or "").strip().upper()
@@ -1157,17 +1366,36 @@ def execute_rebalance(
             if str(symbol or "").strip().upper() not in safe_haven_symbols
         )
     small_account_retained_symbols = []
+    small_account_bootstrap_symbols = []
     for symbol in small_account_candidate_symbols:
-        if symbol not in SMALL_ACCOUNT_EXISTING_WHOLE_SHARE_RETENTION_SYMBOLS:
-            continue
         target_value = max(0.0, float(target_mv.get(symbol, 0.0) or 0.0))
         price = max(0.0, float(prices.get(symbol, 0.0) or 0.0))
+        limit_price = (
+            _limit_buy_price(symbol, price, limit_buy_premium, limit_buy_premium_by_symbol)
+            if price > 0.0
+            else 0.0
+        )
         held_quantity = max(0.0, float(positions.get(symbol, {}).get("quantity", 0.0) or 0.0))
-        if price > 0.0 and 0.0 < target_value < price and held_quantity >= 1.0:
+        if (
+            _should_retain_existing_whole_share(symbol, target_value=target_value, price=price)
+            and price > 0.0
+            and 0.0 < target_value < price
+            and held_quantity >= 1.0
+        ):
             target_mv[symbol] = price
             if investable > 0.0:
                 target_weights[symbol] = price / investable
             small_account_retained_symbols.append(symbol)
+            continue
+        if (
+            held_quantity <= 0.0
+            and 0.0 < target_value < limit_price
+            and _should_bootstrap_whole_share_buy(symbol, target_value=target_value, limit_price=limit_price)
+        ):
+            target_mv[symbol] = limit_price
+            if investable > 0.0:
+                target_weights[symbol] = limit_price / investable
+            small_account_bootstrap_symbols.append(symbol)
     small_account_compatibility = apply_small_account_cash_compatibility(
         target_mv,
         prices,
@@ -1201,6 +1429,9 @@ def execute_rebalance(
     execution_summary["small_account_existing_whole_share_retained_symbols"] = list(
         dict.fromkeys(small_account_retained_symbols)
     )
+    execution_summary["small_account_whole_share_bootstrap_symbols"] = list(
+        dict.fromkeys(small_account_bootstrap_symbols)
+    )
     execution_summary["small_account_whole_share_cash_notes"] = list(
         small_account_compatibility.cash_substitution_notes
     )
@@ -1211,6 +1442,38 @@ def execute_rebalance(
             translator=translator,
         )
     )
+    trade_logs.extend(
+        _format_small_account_whole_share_bootstrap_notes(
+            execution_summary["small_account_whole_share_bootstrap_symbols"],
+            translator=translator,
+        )
+    )
+
+    def append_small_account_allocation_drift_notes():
+        if execution_summary.get("execution_status") == "blocked":
+            return
+        if execution_summary.get("small_account_allocation_drift_notes"):
+            return
+        submitted_orders = tuple(execution_summary.get("orders_submitted") or ()) + tuple(
+            execution_summary.get("orders_filled") or ()
+        ) + tuple(execution_summary.get("orders_partially_filled") or ())
+        notes = build_small_account_allocation_drift_notes(
+            target_values=small_account_reference_target_mv,
+            current_values=current_mv,
+            current_quantities=current_quantities,
+            prices=prices,
+            submitted_orders=submitted_orders,
+            total_value=float(equity or 0.0),
+            cash_value=_investable_buying_power(
+                float(account_values.get("buying_power", 0.0) or 0.0),
+                reserved,
+            ),
+        )
+        if not notes:
+            return
+        execution_summary["small_account_allocation_drift_notes"] = list(notes)
+        trade_logs.extend(format_small_account_allocation_drift_notes(notes, translator=translator))
+
     target_hash = _build_target_hash(target_weights)
     execution_summary["target_vs_current"] = _build_target_diff_rows(target_weights, current_mv, equity)
     if equity > 0:
@@ -1291,7 +1554,9 @@ def execute_rebalance(
         ib,
         account_values.get("buying_power", 0),
         account_ids=normalized_account_ids,
+        currency=market_currency,
     )
+    investable_anticipated_buying_power = _investable_buying_power(anticipated_buying_power, reserved)
     cash_sweep_quantity = 0
     cash_sweep_price = float(prices.get(safe_haven_symbol, 0.0) or 0.0) if safe_haven_symbol else 0.0
     dry_run_sale_proceeds = 0.0
@@ -1299,7 +1564,7 @@ def execute_rebalance(
     def cash_sweep_sale_quantity_to_fund_buy(max_quantity: int, candidate_symbols: tuple[str, ...]) -> int:
         if max_quantity <= 0 or not safe_haven_symbol or cash_sweep_price <= 0.0:
             return 0
-        base_buying_power = max(0.0, float(anticipated_buying_power))
+        base_buying_power = max(0.0, float(investable_anticipated_buying_power))
         funding_needs = []
         for symbol in candidate_symbols:
             underweight_value = target_mv[symbol] - current_mv.get(symbol, 0.0)
@@ -1311,7 +1576,7 @@ def execute_rebalance(
             funding_needs.append(
                 (
                     underweight_value,
-                    round(ask * limit_buy_premium, 2),
+                    _limit_buy_price(symbol, ask, limit_buy_premium, limit_buy_premium_by_symbol),
                 )
             )
         if should_sell_cash_sweep_to_fund_whole_share_buy(
@@ -1375,14 +1640,14 @@ def execute_rebalance(
         if not price:
             missing_price_symbols.append(symbol)
             continue
-        buy_value = min(target - current, anticipated_buying_power * 0.95)
+        buy_value = min(target - current, investable_anticipated_buying_power * 0.95)
         if buy_value <= 0:
             insufficient_buying_power_symbols.append(symbol)
             continue
         if buy_value < minimum_order_notional:
             min_notional_symbols.append(symbol)
             continue
-        limit_price = round(price * limit_buy_premium, 2)
+        limit_price = _limit_buy_price(symbol, price, limit_buy_premium, limit_buy_premium_by_symbol)
         qty = (
             _floor_order_quantity(buy_value / limit_price, quantity_step=order_quantity_step)
             if limit_price > 0
@@ -1426,6 +1691,7 @@ def execute_rebalance(
             if status == "blocked":
                 trade_logs.append(translator("failed", reason=reason))
         if not (reason == "target_diff_below_threshold" and has_executable_option_plan):
+            append_small_account_allocation_drift_notes()
             return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
 
     same_day_filled_symbols = _collect_same_day_filled_symbols(
@@ -1443,7 +1709,7 @@ def execute_rebalance(
             translator(
                 "same_day_fills_detected",
                 profile=_display_text(strategy_profile, fallback="<unknown>"),
-                mode="dry_run" if dry_run_only else "paper",
+                mode=resolved_execution_mode,
                 symbols=",".join(same_day_filled_symbols),
                 trade_date=_display_text(trade_date, fallback="<none>"),
             )
@@ -1456,7 +1722,7 @@ def execute_rebalance(
         service_name=service_name,
         trade_date=trade_date,
         snapshot_date=snapshot_date,
-        dry_run_only=dry_run_only,
+        execution_mode=resolved_execution_mode,
         execution_lock_dir=execution_lock_dir,
     )
     lock_payload = _build_execution_lock_payload(
@@ -1467,12 +1733,12 @@ def execute_rebalance(
         trade_date=trade_date,
         snapshot_date=snapshot_date,
         target_hash=target_hash,
-        dry_run_only=dry_run_only,
+        execution_mode=resolved_execution_mode,
     )
     if not _try_create_execution_lock(lock_path, lock_payload):
         existing = _read_execution_lock(lock_path) or {}
         reason = (
-            f"same_day_execution_locked:mode={'dry_run' if dry_run_only else 'paper'}:"
+            f"same_day_execution_locked:mode={resolved_execution_mode}:"
             f"target_hash={existing.get('target_hash', '<unknown>')}"
         )
         execution_summary["execution_status"] = "blocked"
@@ -1483,7 +1749,7 @@ def execute_rebalance(
             translator(
                 "same_day_execution_locked",
                 profile=_display_text(strategy_profile, fallback="<unknown>"),
-                mode="dry_run" if dry_run_only else "paper",
+                mode=resolved_execution_mode,
                 trade_date=_display_text(trade_date, fallback="<none>"),
                 snapshot_date=_display_text(snapshot_date, fallback="<none>"),
                 target_hash=_display_text(existing.get("target_hash"), fallback="<unknown>"),
@@ -1495,7 +1761,7 @@ def execute_rebalance(
     trade_logs.append(
         translator(
             "execution_lock_acquired",
-            mode="dry_run" if dry_run_only else "paper",
+            mode=resolved_execution_mode,
             trade_date=_display_text(trade_date, fallback="<none>"),
             snapshot_date=_display_text(snapshot_date, fallback="<none>"),
             lock_path=str(lock_path),
@@ -1589,14 +1855,16 @@ def execute_rebalance(
                 ib,
                 account_values.get("buying_power", 0),
                 account_ids=normalized_account_ids,
+                currency=market_currency,
             )
         else:
             buying_power = anticipated_buying_power
+    investable_buying_power = _investable_buying_power(buying_power, reserved)
 
     for symbol, target in target_mv.items():
         current = current_mv.get(symbol, 0)
         if current < target - threshold:
-            buy_value = min(target - current, buying_power * 0.95)
+            buy_value = min(target - current, investable_buying_power * 0.95)
             price = prices.get(symbol)
             if not price:
                 execution_summary["orders_skipped"].append({"symbol": symbol, "side": "buy", "reason": "missing_price"})
@@ -1606,7 +1874,7 @@ def execute_rebalance(
                 execution_summary["orders_skipped"].append({"symbol": symbol, "side": "buy", "reason": "min_notional"})
                 continue
 
-            limit_price = round(price * limit_buy_premium, 2)
+            limit_price = _limit_buy_price(symbol, price, limit_buy_premium, limit_buy_premium_by_symbol)
             qty = _floor_order_quantity(
                 buy_value / limit_price,
                 quantity_step=order_quantity_step,
@@ -1626,7 +1894,7 @@ def execute_rebalance(
                     }
                 )
                 trade_logs.append(f"DRY_RUN buy {symbol} {format_quantity(qty)} @{limit_price:.2f}")
-                buying_power -= qty * limit_price
+                investable_buying_power -= qty * limit_price
                 continue
             report = submit_order_intent(
                 ib,
@@ -1663,7 +1931,7 @@ def execute_rebalance(
                 translator("limit_buy", symbol=symbol, qty=format_quantity(qty), price=f"{limit_price:.2f}") + f" {status_msg}"
             )
             if ok:
-                buying_power -= qty * limit_price
+                investable_buying_power -= qty * limit_price
 
     buying_power = _execute_option_order_intents(
         ib,
@@ -1693,4 +1961,5 @@ def execute_rebalance(
     if execution_summary["execution_status"] == "executed":
         execution_summary["no_op_reason"] = None
     execution_summary["residual_cash_estimate"] = float(max(buying_power, 0.0))
+    append_small_account_allocation_drift_notes()
     return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
