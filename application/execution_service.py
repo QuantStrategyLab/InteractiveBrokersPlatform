@@ -361,7 +361,7 @@ def get_available_buying_power(ib, fallback_buying_power, *, account_ids=None, c
     )
     if currency_cash is not None:
         return max(0.0, float(currency_cash))
-    return 0.0
+    return max(0.0, float(fallback_buying_power or 0.0))
 
 
 def _iter_open_orders(ib) -> list[Any]:
