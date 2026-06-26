@@ -351,7 +351,6 @@ def _cash_value_for_currency(account_values, *, currency: str, account_ids=None)
 
 
 def get_available_buying_power(ib, fallback_buying_power, *, account_ids=None, currency="USD"):
-    del fallback_buying_power
     selected_account_ids = _normalize_account_ids(account_ids)
     account_values = list(ib.accountValues() or ())
     currency_cash = _cash_value_for_currency(
