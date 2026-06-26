@@ -621,6 +621,7 @@ def run_strategy_core(
             strategy_symbols,
         )
         signal_metadata = dict(signal_metadata or {})
+        signal_metadata["cash_only_execution"] = bool(getattr(config, "cash_only_execution", True))
         signal_metadata["signal_snapshot"] = build_signal_snapshot(
             platform="ibkr",
             strategy_profile=signal_metadata.get("strategy_profile"),

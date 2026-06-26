@@ -147,7 +147,7 @@ class IBKRRuntimeComposer:
             notifications=notifications,
         )
 
-    def build_rebalance_config(self, *, extra_notification_lines=()):
+    def build_rebalance_config(self, *, extra_notification_lines=(), cash_only_execution=True):
         execution_mode = "dry_run" if self.dry_run_only else str(
             self.ib_gateway_mode or "paper"
         ).strip().lower().replace("-", "_")
@@ -157,6 +157,7 @@ class IBKRRuntimeComposer:
             strategy_display_name=self.strategy_display_name_localized,
             reconciliation_output_path=self.reconciliation_output_path,
             extra_notification_lines=tuple(extra_notification_lines or ()),
+            cash_only_execution=bool(cash_only_execution),
             execution_mode=execution_mode,
         )
 

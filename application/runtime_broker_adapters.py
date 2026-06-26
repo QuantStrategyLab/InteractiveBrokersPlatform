@@ -35,6 +35,7 @@ class IBKRRuntimeBrokerAdapters:
     service_name: str | None
     account_ids: tuple[str, ...]
     dry_run_only: bool
+    cash_only_execution: bool = True
     cash_reserve_ratio: float
     cash_reserve_floor_usd: float
     rebalance_threshold_ratio: float
@@ -204,6 +205,7 @@ class IBKRRuntimeBrokerAdapters:
             market_currency=self.market_currency,
             sell_settle_delay_sec=self.sell_settle_delay_sec,
             return_summary=True,
+            cash_only_execution=self.cash_only_execution,
         )
 
     def format_liquidation_orders(self, orders) -> str:
@@ -282,6 +284,7 @@ def build_runtime_broker_adapters(
     service_name: str | None,
     account_ids: tuple[str, ...],
     dry_run_only: bool,
+    cash_only_execution: bool = True,
     cash_reserve_ratio: float,
     cash_reserve_floor_usd: float,
     rebalance_threshold_ratio: float,
@@ -322,6 +325,7 @@ def build_runtime_broker_adapters(
         service_name=service_name,
         account_ids=tuple(account_ids),
         dry_run_only=bool(dry_run_only),
+        cash_only_execution=bool(cash_only_execution),
         cash_reserve_ratio=float(cash_reserve_ratio),
         cash_reserve_floor_usd=float(cash_reserve_floor_usd),
         rebalance_threshold_ratio=float(rebalance_threshold_ratio),

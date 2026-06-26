@@ -17,6 +17,7 @@ class IBKRRebalanceConfig:
     strategy_display_name: str | None = None
     reconciliation_output_path: str | Path | None = None
     extra_notification_lines: tuple[str, ...] = ()
+    cash_only_execution: bool = True
     execution_mode: str = "paper"
 
 

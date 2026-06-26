@@ -677,6 +677,8 @@ def build_dashboard(
         return strategy_dashboard
     equity = account_values.get("equity", 0)
     buying_power = account_values.get("buying_power", 0)
+    cash_only_execution = signal_metadata.get("cash_only_execution", True)
+    buying_power_label = "buying_power" if cash_only_execution else "buying_power_margin"
     position_lines = []
     for symbol in sorted(positions.keys()):
         qty = positions[symbol]["quantity"]
@@ -728,7 +730,7 @@ def build_dashboard(
     return (
         f"{translator('account_summary_title')}\n"
         f"  - {translator('equity')}: ${equity:,.2f}\n"
-        f"  - {translator('buying_power')}: ${buying_power:,.2f}\n"
+        f"  - {translator(buying_power_label)}: ${buying_power:,.2f}\n"
         f"{separator}\n"
         f"{translator('positions_title')}\n"
         f"{position_text}\n"

@@ -350,9 +350,45 @@ def _cash_value_for_currency(account_values, *, currency: str, account_ids=None)
     return total if matched else None
 
 
-def get_available_buying_power(ib, fallback_buying_power, *, account_ids=None, currency="USD"):
+def _available_funds_for_currency(account_values, *, currency: str, account_ids=None) -> float | None:
+    selected_account_ids = _normalize_account_ids(account_ids)
+    market_currency = str(currency or "USD").strip().upper()
+    total = 0.0
+    matched = False
+    for account_value in account_values or ():
+        account_id = str(getattr(account_value, "account", "") or "").strip() or None
+        if not _matches_account(account_id, selected_account_ids):
+            continue
+        value_currency = str(getattr(account_value, "currency", "") or "").strip().upper()
+        if value_currency != market_currency:
+            continue
+        if str(getattr(account_value, "tag", "") or "").strip() == "AvailableFunds":
+            value = _coerce_float(getattr(account_value, "value", None))
+            if value is not None:
+                total += float(value)
+                matched = True
+    return total if matched else None
+
+
+def get_available_buying_power(
+    ib,
+    fallback_buying_power,
+    *,
+    account_ids=None,
+    currency="USD",
+    cash_only_execution=True,
+):
     selected_account_ids = _normalize_account_ids(account_ids)
     account_values = list(ib.accountValues() or ())
+    if not cash_only_execution:
+        available_funds = _available_funds_for_currency(
+            account_values,
+            currency=currency,
+            account_ids=selected_account_ids,
+        )
+        if available_funds is not None:
+            return max(0.0, float(available_funds))
+        return max(0.0, float(fallback_buying_power or 0.0))
     currency_cash = _cash_value_for_currency(
         account_values,
         currency=currency,
@@ -1244,6 +1280,7 @@ def execute_rebalance(
     limit_buy_premium_by_symbol=None,
     execution_lock_dir=None,
     return_summary=False,
+    cash_only_execution=True,
 ):
     """Execute trades to reach target weights."""
     del target_weights
@@ -1612,6 +1649,7 @@ def execute_rebalance(
         account_values.get("buying_power", 0),
         account_ids=normalized_account_ids,
         currency=market_currency,
+        cash_only_execution=cash_only_execution,
     )
     investable_anticipated_buying_power = _investable_buying_power(anticipated_buying_power, reserved)
     cash_sweep_quantity = 0
@@ -1917,6 +1955,7 @@ def execute_rebalance(
                 account_values.get("buying_power", 0),
                 account_ids=normalized_account_ids,
                 currency=market_currency,
+                cash_only_execution=cash_only_execution,
             )
         else:
             buying_power = anticipated_buying_power
@@ -1928,7 +1967,7 @@ def execute_rebalance(
         if current_mv.get(symbol, 0.0) < float(target or 0.0) - threshold
     ]
     buys_blocked_reason = None
-    if pending_sell_release_symbols and buy_needed_symbols:
+    if cash_only_execution and pending_sell_release_symbols and buy_needed_symbols:
         if _rotation_guard_should_block_buys(
             pending_sell_release_symbols=pending_sell_release_symbols,
             buy_needed_symbols=buy_needed_symbols,
@@ -1954,7 +1993,7 @@ def execute_rebalance(
                     symbols=release_symbols,
                 )
             )
-    if buys_blocked_reason is None:
+    if buys_blocked_reason is None and cash_only_execution:
         raw_cash = _cash_value_for_currency(
             list(ib.accountValues() or ()),
             currency=market_currency,
