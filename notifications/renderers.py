@@ -175,13 +175,137 @@ def _summarize_orders(orders, *, limit: int = 3) -> str:
     return ", ".join(preview)
 
 
+_SOFT_ORDER_SKIP_REASONS = frozenset(
+    {
+        "quantity_zero",
+        "min_notional",
+        "below_trade_threshold",
+        "target_diff_below_threshold",
+        "pending_sell_release",
+        "negative_cash",
+        "insufficient_buying_power",
+    }
+)
+_HARD_ORDER_SKIP_STATUS = frozenset(
+    {
+        "cancelled",
+        "canceled",
+        "rejected",
+        "inactive",
+        "api cancelled",
+        "error",
+    }
+)
+
+
+def _normalize_order_skip_reason(order) -> str:
+    reason = str(order.get("reason") or "").strip().lower()
+    status = str(order.get("status") or "").strip()
+    if reason and reason not in {"submit_failed", "unknown"}:
+        return reason
+    if status:
+        normalized_status = status.lower()
+        if normalized_status in _HARD_ORDER_SKIP_STATUS:
+            return normalized_status
+        if normalized_status not in {"", "submitted", "pendingsubmit", "presubmitted", "filled"}:
+            return normalized_status
+    return reason or "submit_failed"
+
+
+def _is_soft_order_skip(order) -> bool:
+    return _normalize_order_skip_reason(order) in _SOFT_ORDER_SKIP_REASONS
+
+
+def _skip_reason_i18n_key(reason: str) -> str:
+    normalized = str(reason or "").strip().lower().replace(" ", "_")
+    return f"skip_reason_{normalized}"
+
+
+def _localize_order_skip_reason(order, *, translator) -> str:
+    reason = _normalize_order_skip_reason(order)
+    key = _skip_reason_i18n_key(reason)
+    localized = translator(key)
+    if localized != key:
+        return localized
+    fallback = _localize_notification_text(f"reason={reason}", translator=translator)
+    if fallback.startswith("reason="):
+        return reason.replace("_", " ")
+    return fallback
+
+
+def _format_skip_order_detail(*, symbol, reason_text, quantity=None, translator) -> str:
+    if quantity and float(quantity) > 0:
+        return translator(
+            "skip_order_detail_with_qty",
+            symbol=symbol,
+            quantity=format_quantity(quantity),
+            reason=reason_text,
+        )
+    return translator(
+        "skip_order_detail",
+        symbol=symbol,
+        reason=reason_text,
+    )
+
+
+def _summarize_skipped_orders(orders, *, translator, limit: int = 3) -> str:
+    preview = []
+    for order in orders[:limit]:
+        symbol = str(order.get("symbol") or "").strip().upper()
+        if not symbol:
+            continue
+        quantity = float(order.get("quantity") or 0.0)
+        reason_text = _localize_order_skip_reason(order, translator=translator)
+        preview.append(
+            _format_skip_order_detail(
+                symbol=symbol,
+                reason_text=reason_text,
+                quantity=quantity if quantity > 0 else None,
+                translator=translator,
+            )
+        )
+    remaining = len(orders) - len(preview)
+    if remaining > 0:
+        preview.append(f"+{remaining}")
+    return ", ".join(preview)
+
+
+def _append_skipped_order_batch_lines(lines, skipped_orders, *, translator) -> None:
+    if not skipped_orders:
+        return
+    buy_orders = [
+        order for order in skipped_orders if str(order.get("side") or "").strip().lower() == "buy"
+    ]
+    sell_orders = [
+        order for order in skipped_orders if str(order.get("side") or "").strip().lower() == "sell"
+    ]
+    for side, orders in (("buy", buy_orders), ("sell", sell_orders)):
+        if not orders:
+            continue
+        soft_orders = [order for order in orders if _is_soft_order_skip(order)]
+        hard_orders = [order for order in orders if not _is_soft_order_skip(order)]
+        if soft_orders:
+            lines.append(
+                translator(
+                    f"deferred_{side}_batch",
+                    details=_summarize_skipped_orders(soft_orders, translator=translator),
+                )
+            )
+        if hard_orders:
+            lines.append(
+                translator(
+                    f"failed_{side}_batch",
+                    details=_summarize_skipped_orders(hard_orders, translator=translator),
+                )
+            )
+
+
 def _build_order_batch_lines(execution_summary, *, translator) -> list[str]:
     mode = str(execution_summary.get("mode") or "").strip().lower()
     order_groups = [
         ("orders_submitted", "dry_run" if mode == "dry_run" else "submitted"),
         ("orders_filled", "filled"),
         ("orders_partially_filled", "partial"),
-        ("orders_skipped", "skipped"),
     ]
     lines: list[str] = []
     for field_name, prefix in order_groups:
@@ -206,6 +330,11 @@ def _build_order_batch_lines(execution_summary, *, translator) -> list[str]:
                     details=_summarize_orders(sell_orders),
                 )
             )
+    _append_skipped_order_batch_lines(
+        lines,
+        list(execution_summary.get("orders_skipped") or ()),
+        translator=translator,
+    )
     return lines
 
 

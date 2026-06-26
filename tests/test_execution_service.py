@@ -836,6 +836,68 @@ def test_execute_rebalance_retains_existing_soxx_when_delever_target_nearly_one_
     } in summary["orders_submitted"]
 
 
+def test_execute_rebalance_caps_buy_to_cash_when_overweight_sell_rounds_to_zero(
+    monkeypatch, tmp_path
+):
+    """Reproduce SOXL/SOXX rotation: SOXX trim rounds to 0 shares; buys must not exceed cash."""
+    class FakeIB:
+        def openTrades(self):
+            return []
+
+        def fills(self):
+            return []
+
+        def accountValues(self):
+            return [
+                SimpleNamespace(tag="AvailableFunds", currency="USD", value="2000.00"),
+                SimpleNamespace(tag="CashBalance", currency="USD", value="400.00"),
+            ]
+
+    prices = {"SOXL": 219.80, "SOXX": 611.00, "BOXX": 100.0}
+    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+
+    _trade_logs, summary = execute_rebalance(
+        FakeIB(),
+        {},
+        {"SOXL": {"quantity": 0}, "SOXX": {"quantity": 4}, "BOXX": {"quantity": 0}},
+        {"equity": 4032.0, "buying_power": 400.0},
+        fetch_quote_snapshots=lambda _ib, symbols: {
+            symbol: SimpleNamespace(last_price=prices[symbol]) for symbol in symbols
+        },
+        submit_order_intent=lambda *_args, **_kwargs: SimpleNamespace(
+            broker_order_id="dry-run",
+            status="Submitted",
+        ),
+        order_intent_cls=OrderIntent,
+        translator=build_translator("zh"),
+        strategy_symbols=["SOXL", "SOXX", "BOXX"],
+        strategy_profile="soxl_soxx_trend_income",
+        signal_metadata=_signal_metadata(
+            {"SOXL": 0.35, "SOXX": 0.55, "BOXX": 0.10},
+            risk_symbols=("SOXL", "SOXX"),
+            safe_haven_symbols=("BOXX",),
+            trade_date="2026-06-29",
+        ),
+        dry_run_only=True,
+        cash_reserve_ratio=0.0,
+        cash_reserve_floor_usd=0.0,
+        rebalance_threshold_ratio=0.01,
+        limit_buy_premium=1.005,
+        quantity_step=1.0,
+        sell_settle_delay_sec=0,
+        execution_lock_dir=tmp_path,
+        return_summary=True,
+    )
+
+    buy_orders = [order for order in summary["orders_submitted"] if order["side"] == "buy"]
+    assert len(buy_orders) == 1
+    assert buy_orders[0]["symbol"] == "SOXL"
+    assert buy_orders[0]["quantity"] == 1
+    assert buy_orders[0]["quantity"] * buy_orders[0]["limit_price"] <= 400.0
+    assert {"symbol": "SOXX", "side": "sell", "reason": "quantity_zero"} in summary["orders_skipped"]
+    assert not [order for order in summary["orders_submitted"] if order["side"] == "sell"]
+
+
 def test_execute_rebalance_bootstraps_close_to_one_share_core_target(monkeypatch, tmp_path):
     class FakeIB:
         def openTrades(self):

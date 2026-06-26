@@ -60,8 +60,15 @@ def _build_test_translator():
         "filled_sell_batch": "filled_sell_batch count={count} details={details}",
         "partial_buy_batch": "partial_buy_batch count={count} details={details}",
         "partial_sell_batch": "partial_sell_batch count={count} details={details}",
-        "skipped_buy_batch": "skipped_buy_batch count={count} details={details}",
-        "skipped_sell_batch": "skipped_sell_batch count={count} details={details}",
+        "deferred_buy_batch": "deferred_buy_batch details={details}",
+        "deferred_sell_batch": "deferred_sell_batch details={details}",
+        "failed_buy_batch": "failed_buy_batch details={details}",
+        "failed_sell_batch": "failed_sell_batch details={details}",
+        "skip_reason_quantity_zero": "quantity_zero",
+        "skip_reason_cancelled": "order cancelled",
+        "skip_reason_submit_failed": "submit_failed",
+        "skip_order_detail": "{symbol} ({reason})",
+        "skip_order_detail_with_qty": "{symbol} {quantity} ({reason})",
     }
 
     def translate(key, **kwargs):
@@ -452,7 +459,38 @@ def test_trade_notification_includes_abnormal_order_batch():
         extra_notification_lines=(),
     )
 
-    assert "skipped_buy_batch count=1 details=SOXL 1" in notification.compact_text
+    assert "failed_buy_batch details=SOXL 1 (order cancelled)" in notification.compact_text
+
+
+def test_trade_notification_uses_deferred_batch_for_quantity_zero_skip():
+    notification = render_trade_notification(
+        dashboard="dashboard",
+        strategy_dashboard="dashboard",
+        trade_logs=(),
+        execution_summary={
+            "mode": "paper",
+            "execution_status": "executed",
+            "orders_submitted": [
+                {"symbol": "SOXL", "side": "buy", "quantity": 6, "status": "Submitted"},
+            ],
+            "orders_filled": [],
+            "orders_partially_filled": [],
+            "orders_skipped": [
+                {"symbol": "SOXX", "side": "sell", "reason": "quantity_zero"},
+            ],
+            "target_vs_current": [],
+        },
+        signal_desc="signal",
+        status_desc="status",
+        status_icon="🐤",
+        translator=_build_test_translator(),
+        separator="---",
+        strategy_display_name="SOXL/SOXX Semiconductor Trend Income",
+        extra_notification_lines=(),
+    )
+
+    assert "deferred_sell_batch details=SOXX (quantity_zero)" in notification.compact_text
+    assert "failed_sell_batch" not in notification.compact_text
 
 
 def test_run_strategy_core_writes_reconciliation_record_under_strategy_dir(tmp_path):

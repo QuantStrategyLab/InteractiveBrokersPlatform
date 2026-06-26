@@ -148,7 +148,8 @@ def fetch_portfolio_snapshot(
         values_by_account_currency,
         currency=market_currency,
     )
-    buying_power = market_currency_cash if market_currency_cash is not None else available_funds
+    # Cash-only: expose actual CashBalance (may be negative on margin accounts).
+    buying_power = float(market_currency_cash or 0.0) if market_currency_cash is not None else 0.0
 
     return PortfolioSnapshot(
         as_of=datetime.now(timezone.utc),

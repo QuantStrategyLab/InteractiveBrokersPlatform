@@ -1,4 +1,4 @@
-from notifications.renderers import build_dashboard
+from notifications.renderers import _summarize_skipped_orders, build_dashboard
 from notifications.telegram import build_strategy_display_name, build_translator, send_telegram_message
 from strategy_registry import SUPPORTED_STRATEGY_PROFILES
 
@@ -176,6 +176,27 @@ def test_build_translator_supports_chinese():
             ),
         )
         == "小账户提示：净值 $0 低于建议 $1,000；整数股和最小仓位限制可能导致实盘无法完全复现回测"
+    )
+
+
+def test_skip_order_batch_templates_stay_locale_pure():
+    zh = build_translator("zh")
+    en = build_translator("en")
+    skipped = [{"symbol": "SOXX", "side": "sell", "reason": "quantity_zero"}]
+
+    zh_details = _summarize_skipped_orders(skipped, translator=zh)
+    en_details = _summarize_skipped_orders(skipped, translator=en)
+
+    assert zh_details == "SOXX（整数股不足 1 股，无需下单）"
+    assert en_details == "SOXX (whole-share quantity rounds to 0; no order needed)"
+    assert "（" in zh_details
+    assert "(" in en_details
+    assert "（" not in en_details
+    assert zh("deferred_sell_batch", details=zh_details) == f"ℹ️ [卖出跳过] {zh_details}"
+    assert en("deferred_sell_batch", details=en_details) == f"ℹ️ [Sell skipped] {en_details}"
+    assert (
+        en("failed_sell_batch", details=en("skip_order_detail_with_qty", symbol="SOXL", quantity="1", reason="order cancelled"))
+        == "❌ [Sell failed] SOXL 1 (order cancelled)"
     )
 
 
