@@ -35,7 +35,6 @@ class IBKRRuntimeBrokerAdapters:
     service_name: str | None
     account_ids: tuple[str, ...]
     dry_run_only: bool
-    cash_only_execution: bool = True
     cash_reserve_ratio: float
     cash_reserve_floor_usd: float
     rebalance_threshold_ratio: float
@@ -47,6 +46,7 @@ class IBKRRuntimeBrokerAdapters:
     separator: str
     strategy_display_name: str
     sleep_fn: Any
+    cash_only_execution: bool = True
     market_currency: str = "USD"
     execution_mode: str = "paper"
     limit_buy_premium_by_symbol: dict[str, float] | None = None
