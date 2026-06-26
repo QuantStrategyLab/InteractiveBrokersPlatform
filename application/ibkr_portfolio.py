@@ -65,6 +65,7 @@ def fetch_portfolio_snapshot(
     account_ids: Iterable[str] | str | None = None,
     wait_seconds: float = 1.0,
     currency: str = "USD",
+    cash_only_execution: bool = True,
 ) -> PortfolioSnapshot:
     """Fetch stock positions and account values for the configured trading currency.
 
@@ -148,8 +149,12 @@ def fetch_portfolio_snapshot(
         values_by_account_currency,
         currency=market_currency,
     )
-    # Cash-only: expose actual CashBalance (may be negative on margin accounts).
-    buying_power = float(market_currency_cash or 0.0) if market_currency_cash is not None else 0.0
+    if cash_only_execution:
+        buying_power = float(market_currency_cash or 0.0) if market_currency_cash is not None else 0.0
+    else:
+        buying_power = float(available_funds or 0.0) if available_funds is not None else (
+            float(market_currency_cash or 0.0) if market_currency_cash is not None else 0.0
+        )
 
     return PortfolioSnapshot(
         as_of=datetime.now(timezone.utc),
@@ -162,6 +167,7 @@ def fetch_portfolio_snapshot(
             "currency": market_currency,
             "market_currency_cash": market_currency_cash,
             "available_funds": available_funds,
+            "cash_only_execution": cash_only_execution,
             "cash_balances": tuple(
                 {
                     "account_id": account_id,

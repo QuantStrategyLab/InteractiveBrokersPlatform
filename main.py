@@ -275,6 +275,7 @@ TG_CHAT_ID = RUNTIME_SETTINGS.tg_chat_id
 NOTIFY_LANG = RUNTIME_SETTINGS.notify_lang
 
 CASH_RESERVE_RATIO = STRATEGY_RUNTIME.cash_reserve_ratio
+CASH_ONLY_EXECUTION = RUNTIME_SETTINGS.cash_only_execution
 CASH_RESERVE_FLOOR_USD = getattr(STRATEGY_RUNTIME, "cash_reserve_floor_usd", 0.0)
 REBALANCE_THRESHOLD_RATIO = STRATEGY_RUNTIME.rebalance_threshold_ratio
 LIMIT_BUY_PREMIUM = 1.005
@@ -436,7 +437,12 @@ def submit_market_order_intent(ib, order_intent, **kwargs):
 
 
 def fetch_market_portfolio_snapshot(ib, **kwargs):
-    return fetch_portfolio_snapshot(ib, currency=MARKET_CURRENCY, **kwargs)
+    return fetch_portfolio_snapshot(
+        ib,
+        currency=MARKET_CURRENCY,
+        cash_only_execution=CASH_ONLY_EXECUTION,
+        **kwargs,
+    )
 
 
 def build_broker_adapters(*, dry_run_only_override: bool | None = None):
@@ -464,6 +470,7 @@ def build_broker_adapters(*, dry_run_only_override: bool | None = None):
         service_name=SERVICE_NAME,
         account_ids=tuple(ACCOUNT_IDS),
         dry_run_only=effective_dry_run_only,
+        cash_only_execution=CASH_ONLY_EXECUTION,
         cash_reserve_ratio=CASH_RESERVE_RATIO,
         cash_reserve_floor_usd=CASH_RESERVE_FLOOR_USD,
         rebalance_threshold_ratio=REBALANCE_THRESHOLD_RATIO,
@@ -981,6 +988,7 @@ def run_strategy_core(
                 strategy_plugin_signals,
                 strategy_plugin_error=strategy_plugin_error,
             ),
+            cash_only_execution=CASH_ONLY_EXECUTION,
         ),
     )
 
