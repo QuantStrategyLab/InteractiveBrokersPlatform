@@ -13,8 +13,8 @@ if str(QPK_SRC) not in sys.path:
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from quant_platform_kit.common.execution_capabilities import FRACTIONAL_SHARE_EXECUTION_CAPABILITY
-from quant_platform_kit.common.strategies import PlatformCapabilityMatrix, StrategyCatalog, StrategyDefinition
+from quant_platform_kit.common.execution_capabilities import FRACTIONAL_SHARE_EXECUTION_CAPABILITY  # noqa: E402
+from quant_platform_kit.common.strategies import PlatformCapabilityMatrix, StrategyCatalog, StrategyDefinition  # noqa: E402
 
 _DCA_DEFINITION = StrategyDefinition(
     profile="nasdaq_sp500_smart_dca",
