@@ -169,7 +169,7 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.strategy_config_path is None
     assert settings.strategy_config_source is None
     assert settings.reconciliation_output_path is None
-    assert settings.dry_run_only is False
+    assert settings.dry_run_only is True
     assert settings.market == DEFAULT_MARKET
     assert settings.market_calendar == DEFAULT_MARKET_CALENDAR
     assert settings.market_currency == DEFAULT_MARKET_CURRENCY

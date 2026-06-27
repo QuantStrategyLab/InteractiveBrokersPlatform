@@ -10,6 +10,7 @@ from typing import Any, Callable
 from quant_platform_kit.common.runtime_config import (
     first_non_empty,
     resolve_bool_value,
+    resolve_dry_run_env,
     resolve_float_env,
     resolve_strategy_runtime_path_settings,
 )
@@ -350,7 +351,7 @@ def load_platform_runtime_settings(
         strategy_config_path=runtime_paths.strategy_config_path,
         strategy_config_source=runtime_paths.strategy_config_source,
         reconciliation_output_path=runtime_paths.reconciliation_output_path,
-        dry_run_only=resolve_bool_value(os.getenv("IBKR_DRY_RUN_ONLY")),
+        dry_run_only=resolve_dry_run_env(os.environ, "IBKR_DRY_RUN_ONLY"),
         feature_snapshot_fallback_mode=first_non_empty(
             os.getenv("IBKR_FEATURE_SNAPSHOT_FALLBACK_MODE"),
             os.getenv("FEATURE_SNAPSHOT_FALLBACK_MODE"),

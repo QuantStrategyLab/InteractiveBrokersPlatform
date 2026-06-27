@@ -9,6 +9,10 @@ from typing import Any, Mapping
 from application.runtime_dependencies import IBKRRebalanceConfig, IBKRRebalanceRuntime
 from application.runtime_notification_adapters import build_runtime_notification_adapters
 from application.runtime_reporting_adapters import build_runtime_reporting_adapters
+from quant_platform_kit.common.execution_state import (
+    build_execution_marker_store_from_env,
+    resolve_execution_dedup_enabled,
+)
 from quant_platform_kit.common.runtime_assembly import build_runtime_assembly
 from quant_platform_kit.common.runtime_target import build_runtime_context_fields
 from quant_platform_kit.common.port_adapters import CallableNotificationPort, CallablePortfolioPort
@@ -151,6 +155,9 @@ class IBKRRuntimeComposer:
         execution_mode = "dry_run" if self.dry_run_only else str(
             self.ib_gateway_mode or "paper"
         ).strip().lower().replace("-", "_")
+        execution_state_account_scope = (
+            "PAPER" if self.dry_run_only else str(self.account_group or "LIVE").strip().upper()
+        )
         return IBKRRebalanceConfig(
             translator=self.translator,
             separator=self.separator,
@@ -159,6 +166,20 @@ class IBKRRuntimeComposer:
             extra_notification_lines=tuple(extra_notification_lines or ()),
             cash_only_execution=bool(cash_only_execution),
             execution_mode=execution_mode,
+            strategy_profile=self.strategy_profile,
+            dry_run_only=self.dry_run_only,
+            execution_dedup_enabled=resolve_execution_dedup_enabled(
+                platform_env_prefix="IBKR",
+                env_reader=self.env_reader,
+                dry_run_only=self.dry_run_only,
+                account_scope=execution_state_account_scope,
+            ),
+            execution_state_store=build_execution_marker_store_from_env(
+                platform_env_prefix="IBKR",
+                env_reader=self.env_reader,
+                gcp_project_id=self.project_id,
+            ),
+            execution_state_account_scope=execution_state_account_scope,
         )
 
 
