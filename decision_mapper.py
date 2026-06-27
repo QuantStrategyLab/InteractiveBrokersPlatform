@@ -7,7 +7,6 @@ from quant_platform_kit.strategy_contracts import (
     StrategyDecision,
     build_allocation_intent,
     build_allocation_payload,
-    resolve_decision_target_mode,
     translate_decision_to_target_mode,
 )
 from strategy_registry import IBKR_PLATFORM, resolve_strategy_definition
@@ -144,7 +143,6 @@ def map_strategy_decision(
     diagnostics = dict(decision.diagnostics)
     risk_flags = tuple(str(flag) for flag in decision.risk_flags)
     no_execute = bool(_NO_EXECUTE_FLAGS & set(risk_flags))
-    target_mode = resolve_decision_target_mode(decision)
     total_equity_value = runtime_metadata.get("portfolio_total_equity")
     cash_only_execution = bool(runtime_metadata.get("cash_only_execution", True))
     if not no_execute and total_equity_value is not None:
