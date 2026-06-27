@@ -51,29 +51,33 @@ _FAKE_CAPABILITY_MATRIX = PlatformCapabilityMatrix(
 _fake_registry = types.ModuleType("strategy_registry")
 _fake_registry.PLATFORM_CAPABILITY_MATRIX = _FAKE_CAPABILITY_MATRIX
 _fake_registry.STRATEGY_CATALOG = _FAKE_CATALOG
-sys.modules["strategy_registry"] = _fake_registry
-
-runtime_execution_policy = importlib.import_module("runtime_execution_policy")
-runtime_execution_policy = importlib.reload(runtime_execution_policy)
-
-IBKR_FRACTIONAL_EQUITY_API_UNSUPPORTED_SKIP_REASON = (
-    runtime_execution_policy.IBKR_FRACTIONAL_EQUITY_API_UNSUPPORTED_SKIP_REASON
-)
-dca_execution_unsupported_reason = runtime_execution_policy.dca_execution_unsupported_reason
-notional_buy_execution_enabled = runtime_execution_policy.notional_buy_execution_enabled
 
 
 class RuntimeExecutionPolicyTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._original_registry = sys.modules.get("strategy_registry")
+        sys.modules["strategy_registry"] = _fake_registry
+        policy = importlib.import_module("runtime_execution_policy")
+        cls._policy = importlib.reload(policy)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if cls._original_registry is None:
+            sys.modules.pop("strategy_registry", None)
+        else:
+            sys.modules["strategy_registry"] = cls._original_registry
+
     def test_dca_profiles_are_blocked_on_ibkr(self) -> None:
         for profile in ("nasdaq_sp500_smart_dca", "ibit_smart_dca"):
             self.assertEqual(
-                dca_execution_unsupported_reason(profile),
-                IBKR_FRACTIONAL_EQUITY_API_UNSUPPORTED_SKIP_REASON,
+                self._policy.dca_execution_unsupported_reason(profile),
+                self._policy.IBKR_FRACTIONAL_EQUITY_API_UNSUPPORTED_SKIP_REASON,
             )
-            self.assertFalse(notional_buy_execution_enabled(profile))
+            self.assertFalse(self._policy.notional_buy_execution_enabled(profile))
 
     def test_rotation_profile_does_not_enable_notional_buy(self) -> None:
-        self.assertFalse(notional_buy_execution_enabled("global_etf_rotation"))
+        self.assertFalse(self._policy.notional_buy_execution_enabled("global_etf_rotation"))
 
 
 if __name__ == "__main__":
