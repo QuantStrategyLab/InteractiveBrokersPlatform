@@ -19,6 +19,11 @@ class IBKRRebalanceConfig:
     extra_notification_lines: tuple[str, ...] = ()
     cash_only_execution: bool = True
     execution_mode: str = "paper"
+    strategy_profile: str = ""
+    dry_run_only: bool = False
+    execution_dedup_enabled: bool = False
+    execution_state_store: Any = None
+    execution_state_account_scope: str = ""
 
 
 @dataclass(frozen=True)

@@ -17,6 +17,7 @@ from application.signal_snapshot import build_signal_snapshot
 from notifications.events import NotificationPublisher
 from notifications import renderers as notification_renderers
 from notifications.renderers import _build_order_batch_lines
+from quant_platform_kit.common.execution_state import build_execution_marker_key
 from quant_platform_kit.common.models import PortfolioSnapshot, Position
 from quant_platform_kit.common.quantity import format_quantity
 from quant_platform_kit.common.notification_localization import (
@@ -556,6 +557,87 @@ def _strategy_portfolio_view(positions, account_values, strategy_symbols):
     return filtered_positions, filtered_account_values
 
 
+def _resolve_execution_account_scope(*, config: IBKRRebalanceConfig) -> str:
+    configured_scope = str(getattr(config, "execution_state_account_scope", "") or "").strip()
+    if configured_scope:
+        return configured_scope
+    return "PAPER" if bool(getattr(config, "dry_run_only", False)) else "LIVE"
+
+
+def _build_execution_marker_key(*, config: IBKRRebalanceConfig, signal_metadata: dict) -> str:
+    if not getattr(config, "execution_dedup_enabled", False):
+        return ""
+    execution_mode = "paper" if bool(getattr(config, "dry_run_only", False)) else "live"
+    return build_execution_marker_key(
+        platform="ibkr",
+        strategy_profile=(
+            signal_metadata.get("strategy_profile")
+            or getattr(config, "strategy_profile", "")
+            or "unknown"
+        ),
+        account_scope=_resolve_execution_account_scope(config=config),
+        execution_mode=execution_mode,
+        signal_date=signal_metadata.get("trade_date") or signal_metadata.get("effective_date"),
+        effective_date=signal_metadata.get("effective_date") or signal_metadata.get("trade_date"),
+        execution_timing_contract=signal_metadata.get("execution_timing_contract"),
+    )
+
+
+def _execution_already_recorded_message(*, config: IBKRRebalanceConfig, signal_metadata: dict) -> str:
+    message = config.translator(
+        "execution_already_recorded",
+        signal_date=str(signal_metadata.get("trade_date") or signal_metadata.get("effective_date") or ""),
+        effective_date=str(signal_metadata.get("effective_date") or signal_metadata.get("trade_date") or ""),
+    )
+    if not message or message == "execution_already_recorded":
+        message = (
+            f"Execution already recorded for signal={signal_metadata.get('trade_date')} "
+            f"effective={signal_metadata.get('effective_date')}"
+        )
+    return message
+
+
+def _should_record_execution_marker(*, trade_logs, execution_summary, config: IBKRRebalanceConfig) -> bool:
+    if not getattr(config, "execution_dedup_enabled", False):
+        return False
+    if tuple(trade_logs or ()):
+        return True
+    summary = dict(execution_summary or {})
+    return bool(summary.get("action_done")) or int(summary.get("orders_previewed_count") or 0) > 0
+
+
+def _record_execution_marker(
+    *,
+    config: IBKRRebalanceConfig,
+    marker_key: str,
+    signal_metadata: dict,
+    trade_logs,
+    execution_summary,
+) -> None:
+    store = getattr(config, "execution_state_store", None)
+    if not store or not marker_key:
+        return
+    summary = dict(execution_summary or {})
+    try:
+        store.record_marker(
+            marker_key,
+            metadata={
+                "strategy_profile": signal_metadata.get("strategy_profile") or getattr(config, "strategy_profile", ""),
+                "account_scope": _resolve_execution_account_scope(config=config),
+                "dry_run_only": bool(getattr(config, "dry_run_only", False)),
+                "trade_logs_count": len(tuple(trade_logs or ())),
+                "signal_date": str(signal_metadata.get("trade_date") or ""),
+                "effective_date": str(signal_metadata.get("effective_date") or ""),
+                "action_done": bool(summary.get("action_done")),
+            },
+        )
+    except Exception as exc:
+        print(
+            f"Execution marker write failed\nMarker: {marker_key}\n{type(exc).__name__}: {exc}",
+            flush=True,
+        )
+
+
 def run_strategy_core(
     *,
     runtime: IBKRRebalanceRuntime | None = None,
@@ -738,6 +820,76 @@ def run_strategy_core(
                 reconciliation_record_path=str(record_path),
             )
 
+        execution_marker_key = _build_execution_marker_key(config=config, signal_metadata=signal_metadata)
+        execution_state_store = getattr(config, "execution_state_store", None)
+        execution_already_recorded = False
+        if execution_marker_key and execution_state_store:
+            try:
+                execution_already_recorded = bool(execution_state_store.has_marker(execution_marker_key))
+            except Exception as exc:
+                print(
+                    f"Execution marker read failed\nMarker: {execution_marker_key}\n{type(exc).__name__}: {exc}",
+                    flush=True,
+                )
+            if not execution_already_recorded and hasattr(execution_state_store, "has_prior_execution_report"):
+                try:
+                    execution_already_recorded = bool(
+                        execution_state_store.has_prior_execution_report(
+                            platform="ibkr",
+                            strategy_profile=(
+                                signal_metadata.get("strategy_profile")
+                                or getattr(config, "strategy_profile", "")
+                                or "unknown"
+                            ),
+                            account_scope=_resolve_execution_account_scope(config=config),
+                            signal_date=signal_metadata.get("trade_date") or signal_metadata.get("effective_date"),
+                            effective_date=signal_metadata.get("effective_date") or signal_metadata.get("trade_date"),
+                            dry_run_only=bool(getattr(config, "dry_run_only", False)),
+                        )
+                    )
+                except Exception as exc:
+                    print(
+                        f"Execution report dedup read failed\nMarker: {execution_marker_key}\n{type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
+
+        if execution_already_recorded:
+            message = _execution_already_recorded_message(config=config, signal_metadata=signal_metadata)
+            print(message, flush=True)
+            record = build_reconciliation_record(
+                strategy_profile=signal_metadata.get("strategy_profile"),
+                mode=_resolve_reconciliation_mode(config, signal_metadata=signal_metadata),
+                trade_date=signal_metadata.get("trade_date"),
+                snapshot_as_of=signal_metadata.get("snapshot_as_of"),
+                signal_metadata=signal_metadata,
+                target_weights=resolved_target_weights,
+                execution_summary={"action_done": False, "no_op_reason": "execution_already_recorded"},
+                no_op_reason="execution_already_recorded",
+            )
+            record_path = write_reconciliation_record(record, output_path=config.reconciliation_output_path)
+            notification_publisher.publish(
+                notification_renderers.render_heartbeat_notification(
+                    dashboard=dashboard,
+                    strategy_dashboard=strategy_dashboard,
+                    no_op_text=config.translator("no_trades"),
+                    signal_desc=signal_desc,
+                    status_desc=status_desc,
+                    status_icon=signal_metadata.get("status_icon", "🐤"),
+                    translator=config.translator,
+                    separator=config.separator,
+                    strategy_display_name=config.strategy_display_name,
+                    extra_notification_lines=config.extra_notification_lines,
+                )
+            )
+            return StrategyCycleResult(
+                result="OK - heartbeat",
+                signal_metadata=dict(signal_metadata or {}),
+                target_weights=dict(resolved_target_weights or {}),
+                execution_summary={"action_done": False, "no_op_reason": "execution_already_recorded"},
+                reconciliation_record=dict(record),
+                reconciliation_record_path=str(record_path),
+            )
+
         execution_result = runtime.execute_rebalance(
             ib,
             resolved_target_weights,
@@ -751,6 +903,18 @@ def run_strategy_core(
         else:
             trade_logs = execution_result
             execution_summary = None
+        if _should_record_execution_marker(
+            trade_logs=trade_logs,
+            execution_summary=execution_summary,
+            config=config,
+        ):
+            _record_execution_marker(
+                config=config,
+                marker_key=execution_marker_key,
+                signal_metadata=signal_metadata,
+                trade_logs=trade_logs,
+                execution_summary=execution_summary,
+            )
         record = build_reconciliation_record(
             strategy_profile=signal_metadata.get("strategy_profile"),
             mode=_resolve_reconciliation_mode(
