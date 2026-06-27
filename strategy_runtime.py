@@ -33,7 +33,7 @@ from quant_platform_kit.strategy_contracts import (
     build_strategy_evaluation_inputs,
 )
 from runtime_config_support import PlatformRuntimeSettings
-from market_signal_runtime import resolve_external_market_signal_inputs
+from us_equity_strategies.signals import resolve_external_market_signal_inputs
 from strategy_loader import (
     load_strategy_definition,
     load_strategy_entrypoint_for_profile,
