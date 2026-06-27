@@ -192,7 +192,7 @@ class IBRKConnectTimeoutAlertTests(unittest.TestCase):
             module = importlib.import_module("main")
             observed = {"messages": []}
 
-            module.is_market_open_today = lambda **_kwargs: True
+            module.is_market_open_now = lambda **_kwargs: True
             module.run_strategy_core = lambda **_kwargs: (_ for _ in ()).throw(
                 TimeoutError("IBKR API handshake timed out")
             )

@@ -49,7 +49,7 @@ def test_handle_request_post_executes_on_market_day(strategy_module, monkeypatch
         observed["called"] = True
         return "OK - executed"
 
-    monkeypatch.setattr(strategy_module, "is_market_open_today", lambda **_kwargs: True)
+    monkeypatch.setattr(strategy_module, "is_market_open_now", lambda **_kwargs: True)
     monkeypatch.setattr(strategy_module, "run_strategy_core", fake_run_strategy_core)
 
     with strategy_module.app.test_request_context("/run", method="POST"):
@@ -71,7 +71,7 @@ def test_handle_request_sends_escalated_strategy_plugin_alert(strategy_module, m
     )
     observed = {"alerts": []}
 
-    monkeypatch.setattr(strategy_module, "is_market_open_today", lambda **_kwargs: True)
+    monkeypatch.setattr(strategy_module, "is_market_open_now", lambda **_kwargs: True)
     monkeypatch.setattr(strategy_module, "load_strategy_plugin_signals", lambda: ((signal,), None))
     monkeypatch.setattr(strategy_module, "attach_strategy_plugin_report", lambda *args, **kwargs: None)
 
@@ -101,7 +101,7 @@ def test_handle_dry_run_post_uses_dry_run_override(strategy_module, monkeypatch)
     monkeypatch.setattr(strategy_module, "build_execution_report", lambda log_context, **_kwargs: {"status": "pending"})
     monkeypatch.setattr(strategy_module, "persist_execution_report", lambda report, **_kwargs: observed.setdefault("report", dict(report)) or "/tmp/runtime-report.json")
     monkeypatch.setattr(strategy_module, "emit_runtime_log", lambda context, event, **fields: observed["events"].append((event, fields)))
-    monkeypatch.setattr(strategy_module, "is_market_open_today", lambda **_kwargs: True)
+    monkeypatch.setattr(strategy_module, "is_market_open_now", lambda **_kwargs: True)
     monkeypatch.setattr(strategy_module, "load_strategy_plugin_signals", lambda: ((), None))
     monkeypatch.setattr(strategy_module, "attach_strategy_plugin_report", lambda *args, **kwargs: None)
 
@@ -151,7 +151,7 @@ def test_handle_dry_run_ignores_paper_liquidate_only(strategy_module, monkeypatc
     monkeypatch.setattr(strategy_module, "build_execution_report", lambda log_context, **_kwargs: {"status": "pending"})
     monkeypatch.setattr(strategy_module, "persist_execution_report", lambda report, **_kwargs: "/tmp/runtime-report.json")
     monkeypatch.setattr(strategy_module, "emit_runtime_log", lambda *args, **kwargs: None)
-    monkeypatch.setattr(strategy_module, "is_market_open_today", lambda **_kwargs: True)
+    monkeypatch.setattr(strategy_module, "is_market_open_now", lambda **_kwargs: True)
     monkeypatch.setattr(strategy_module, "load_strategy_plugin_signals", lambda: ((), None))
     monkeypatch.setattr(strategy_module, "attach_strategy_plugin_report", lambda *args, **kwargs: None)
     monkeypatch.setattr(strategy_module, "PAPER_LIQUIDATE_ONLY", True)
@@ -421,7 +421,7 @@ def test_handle_request_emits_structured_runtime_events(strategy_module, monkeyp
         "emit_runtime_log",
         lambda context, event, **fields: observed.append((context.run_id, event, fields)),
     )
-    monkeypatch.setattr(strategy_module, "is_market_open_today", lambda **_kwargs: True)
+    monkeypatch.setattr(strategy_module, "is_market_open_now", lambda **_kwargs: True)
     monkeypatch.setattr(strategy_module, "run_strategy_core", lambda **_kwargs: "OK - executed")
 
     with strategy_module.app.test_request_context(
@@ -446,7 +446,7 @@ def test_handle_request_persists_machine_readable_report(strategy_module, monkey
     observed = {}
 
     monkeypatch.setattr(strategy_module, "build_run_id", lambda: "run-001")
-    monkeypatch.setattr(strategy_module, "is_market_open_today", lambda **_kwargs: True)
+    monkeypatch.setattr(strategy_module, "is_market_open_now", lambda **_kwargs: True)
     monkeypatch.setattr(strategy_module, "run_strategy_core", lambda **_kwargs: "OK - executed")
     monkeypatch.setattr(
         strategy_module,
@@ -494,7 +494,7 @@ def test_handle_request_enriches_runtime_report_with_cycle_details(strategy_modu
     observed = {}
 
     monkeypatch.setattr(strategy_module, "build_run_id", lambda: "run-001")
-    monkeypatch.setattr(strategy_module, "is_market_open_today", lambda **_kwargs: True)
+    monkeypatch.setattr(strategy_module, "is_market_open_now", lambda **_kwargs: True)
 
     def fake_run_strategy_core(**_kwargs):
         return StrategyCycleResult(
@@ -604,7 +604,7 @@ def test_handle_request_post_returns_market_closed_when_schedule_empty(strategy_
     def fail_if_called():
         raise AssertionError("Closed market should not execute strategy")
 
-    monkeypatch.setattr(strategy_module, "is_market_open_today", lambda **_kwargs: False)
+    monkeypatch.setattr(strategy_module, "is_market_open_now", lambda **_kwargs: False)
     monkeypatch.setattr(strategy_module, "run_strategy_core", fail_if_called)
     monkeypatch.setattr(
         strategy_module,
@@ -625,7 +625,7 @@ def test_handle_request_error_persists_machine_readable_report(strategy_module, 
     observed = {"messages": []}
 
     monkeypatch.setattr(strategy_module, "build_run_id", lambda: "run-001")
-    monkeypatch.setattr(strategy_module, "is_market_open_today", lambda **_kwargs: True)
+    monkeypatch.setattr(strategy_module, "is_market_open_now", lambda **_kwargs: True)
     monkeypatch.setattr(
         strategy_module,
         "run_strategy_core",
