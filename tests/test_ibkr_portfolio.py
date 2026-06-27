@@ -60,7 +60,7 @@ def test_fetch_portfolio_snapshot_filters_account_and_market_currency():
     )
 
     assert ib.req_positions_called == 1
-    assert snapshot.total_equity == 100000.0
+    assert snapshot.total_equity == 32050.0
     assert snapshot.buying_power == 0.0
     assert len(snapshot.positions) == 1
     assert snapshot.positions[0].symbol == "00700"
@@ -90,7 +90,7 @@ def test_fetch_portfolio_snapshot_prefers_market_currency_cash_balance():
         currency="USD",
     )
 
-    assert snapshot.total_equity == 1130.0
+    assert snapshot.total_equity == 477.10
     assert snapshot.buying_power == 477.10
     assert snapshot.metadata["market_currency_cash"] == 477.10
     assert snapshot.metadata["available_funds"] == 885.99

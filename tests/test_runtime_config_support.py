@@ -723,16 +723,13 @@ def test_load_platform_runtime_settings_accepts_tqqq_growth_income(monkeypatch):
     assert settings.strategy_target_mode == "value"
 
 
-def test_load_platform_runtime_settings_accepts_nasdaq_sp500_smart_dca(monkeypatch):
+def test_load_platform_runtime_settings_rejects_nasdaq_sp500_smart_dca(monkeypatch):
     monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json("nasdaq_sp500_smart_dca"))
     monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
 
-    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
-
-    assert settings.strategy_profile == "nasdaq_sp500_smart_dca"
-    assert settings.strategy_display_name == "Nasdaq 100 / S&P 500 Smart DCA"
-    assert settings.strategy_target_mode == "value"
+    with pytest.raises(ValueError, match="Unsupported STRATEGY_PROFILE='nasdaq_sp500_smart_dca'"):
+        load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
 
 def test_load_platform_runtime_settings_rejects_legacy_qqq_tech_alias(monkeypatch):
