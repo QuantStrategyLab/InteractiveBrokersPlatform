@@ -912,6 +912,7 @@ def test_print_strategy_switch_env_plan_for_tqqq_growth_income():
     assert "IBKR_MARKET_SIGNAL_REQUIRED" in plan["optional_env"]
     assert "IBKR_MARKET_SIGNAL_FALLBACK_MODE" in plan["optional_env"]
     assert "IBKR_MARKET_SIGNAL_MAX_STALE_DAYS" in plan["optional_env"]
+    assert "CASH_ONLY_EXECUTION" in plan["optional_env"]
     assert "IBKR_MARKET" in plan["optional_env"]
     assert "IBKR_MARKET_CALENDAR" in plan["optional_env"]
     assert "IBKR_MARKET_CURRENCY" in plan["optional_env"]
