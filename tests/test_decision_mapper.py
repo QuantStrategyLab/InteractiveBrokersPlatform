@@ -137,3 +137,33 @@ def test_map_strategy_decision_no_executes_value_targets_when_total_equity_zero(
     assert metadata["risk_flags"] == ("no_execute",)
     assert metadata["execution_blocked_reason"] == "non_positive_total_equity"
     assert "allocation" not in metadata
+
+
+def test_map_strategy_decision_allows_deleverage_when_cash_only_net_equity_negative():
+    decision = StrategyDecision(
+        positions=(
+            PositionTarget(symbol="SOXL", target_weight=0.6),
+            PositionTarget(symbol="BOXX", target_weight=0.4, role="safe_haven"),
+        ),
+        diagnostics={
+            "signal_description": "risk on",
+            "status_description": "soxl>ma150",
+        },
+    )
+
+    target_weights, signal_desc, is_emergency, status_desc, metadata = map_strategy_decision(
+        decision,
+        strategy_profile="soxl_soxx_trend_income",
+        runtime_metadata={
+            "portfolio_total_equity": -500.0,
+            "liquid_cash": -3000.0,
+            "market_values": {"SOXL": 2000.0, "BOXX": 500.0},
+            "cash_only_execution": True,
+            "managed_symbols": ("SOXL", "BOXX"),
+        },
+    )
+
+    assert target_weights is not None
+    assert metadata["actionable"] is True
+    assert metadata["cash_only_deleverage_mode"] is True
+    assert metadata["portfolio_total_equity"] == 2500.0

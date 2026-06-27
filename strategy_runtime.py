@@ -423,6 +423,28 @@ class LoadedStrategyRuntime:
             metadata=getattr(portfolio_snapshot, "metadata", {}) or {},
         )
 
+    def _enrich_portfolio_metadata(
+        self,
+        metadata: dict[str, Any],
+        portfolio_snapshot: Any | None,
+    ) -> dict[str, Any]:
+        if portfolio_snapshot is None:
+            return metadata
+        from us_equity_strategies.cash_only_equity import resolve_raw_cash_from_snapshot
+
+        enriched = dict(metadata)
+        enriched["cash_only_execution"] = bool(getattr(self.runtime_settings, "cash_only_execution", True))
+        enriched["portfolio_total_equity"] = float(getattr(portfolio_snapshot, "total_equity", 0.0) or 0.0)
+        enriched["liquid_cash"] = resolve_raw_cash_from_snapshot(portfolio_snapshot)
+        enriched["market_values"] = {
+            str(getattr(position, "symbol", "") or "").strip().upper(): float(
+                getattr(position, "market_value", 0.0) or 0.0
+            )
+            for position in getattr(portfolio_snapshot, "positions", ()) or ()
+            if str(getattr(position, "symbol", "") or "").strip()
+        }
+        return enriched
+
     def _build_market_history_inputs(
         self,
         ib,
@@ -598,7 +620,7 @@ class LoadedStrategyRuntime:
             ),
         }
         if portfolio_snapshot is not None:
-            metadata["portfolio_total_equity"] = float(getattr(portfolio_snapshot, "total_equity", 0.0) or 0.0)
+            metadata = self._enrich_portfolio_metadata(metadata, portfolio_snapshot)
         if safe_haven_symbol:
             metadata["safe_haven_symbol"] = safe_haven_symbol
         if price_fallbacks:
@@ -659,19 +681,21 @@ class LoadedStrategyRuntime:
                 current_holdings=current_holdings,
             ),
         )
-        metadata = {
+        metadata = self._enrich_portfolio_metadata(
+            {
             "strategy_profile": self.profile,
             "managed_symbols": managed_symbols,
             "status_icon": self.status_icon,
             "dry_run_only": self.runtime_settings.dry_run_only,
-            "portfolio_total_equity": float(portfolio_snapshot.total_equity),
             **build_execution_timing_metadata(
                 signal_date=run_as_of,
                 signal_effective_after_trading_days=(
                     self.runtime_adapter.runtime_policy.signal_effective_after_trading_days
                 ),
             ),
-        }
+            },
+            portfolio_snapshot,
+        )
         if safe_haven_symbol:
             metadata["safe_haven_symbol"] = str(safe_haven_symbol)
         benchmark_symbol = market_inputs.get("benchmark_symbol")
