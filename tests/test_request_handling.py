@@ -489,7 +489,8 @@ def test_execution_report_prefers_configured_managed_symbols_without_ranking_poo
     assert report["summary"]["execution_timing_contract"] == "next_trading_day"
 
 
-def test_handle_request_enriches_runtime_report_with_cycle_details(strategy_module, monkeypatch):
+def test_handle_request_enriches_runtime_report_with_cycle_details(strategy_module_factory, monkeypatch):
+    strategy_module = strategy_module_factory(IBKR_DRY_RUN_ONLY="false")
     observed = {}
 
     monkeypatch.setattr(strategy_module, "build_run_id", lambda: "run-001")
