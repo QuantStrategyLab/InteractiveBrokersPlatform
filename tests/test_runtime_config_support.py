@@ -541,7 +541,7 @@ def test_load_platform_runtime_settings_reads_income_layer_overrides(monkeypatch
     assert settings.income_layer_max_ratio == 0.25
 
 
-def test_load_platform_runtime_settings_reads_ibit_zscore_exit_overrides(monkeypatch):
+def test_ibit_smart_dca_profile_is_rejected_on_ibkr(monkeypatch):
     monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json("ibit_smart_dca"))
     monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
@@ -552,14 +552,8 @@ def test_load_platform_runtime_settings_reads_ibit_zscore_exit_overrides(monkeyp
     monkeypatch.setenv("IBIT_ZSCORE_EXIT_RISK_OFF_EXPOSURE", "0.25")
     monkeypatch.setenv("IBIT_ZSCORE_EXIT_ALLOW_OUTSIDE_EXECUTION_WINDOW", "true")
 
-    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
-
-    assert settings.ibit_zscore_exit_enabled is True
-    assert settings.ibit_zscore_exit_mode == "live"
-    assert settings.ibit_zscore_exit_parking_symbol == "BOXX"
-    assert settings.ibit_zscore_exit_risk_reduced_exposure == 0.5
-    assert settings.ibit_zscore_exit_risk_off_exposure == 0.25
-    assert settings.ibit_zscore_exit_allow_outside_execution_window is True
+    with pytest.raises(ValueError, match="Unsupported STRATEGY_PROFILE='ibit_smart_dca'"):
+        load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
 
 def test_load_platform_runtime_settings_rejects_invalid_income_layer_enabled(monkeypatch):
