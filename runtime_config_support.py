@@ -10,6 +10,7 @@ from typing import Any, Callable
 from quant_platform_kit.common.runtime_config import (
     first_non_empty,
     resolve_bool_value,
+    resolve_cash_only_execution_env,
     resolve_dry_run_env,
     resolve_float_env,
     resolve_strategy_runtime_path_settings,
@@ -411,7 +412,10 @@ def load_platform_runtime_settings(
                 default=DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD,
             ),
         ),
-        cash_only_execution=resolve_cash_only_execution_env(),
+        cash_only_execution=resolve_cash_only_execution_env(
+            os.environ,
+            platform_env_prefix="IBKR",
+        ),
         income_layer_enabled=resolve_optional_bool_env("INCOME_LAYER_ENABLED"),
         income_layer_start_usd=resolve_optional_non_negative_float_env("INCOME_LAYER_START_USD"),
         income_layer_max_ratio=resolve_optional_ratio_env("INCOME_LAYER_MAX_RATIO"),
@@ -677,11 +681,6 @@ def resolve_optional_bool_env(name: str) -> bool | None:
 
 def resolve_runtime_target_enabled_env() -> bool:
     value = resolve_optional_bool_env("RUNTIME_TARGET_ENABLED")
-    return True if value is None else value
-
-
-def resolve_cash_only_execution_env(name: str = "CASH_ONLY_EXECUTION") -> bool:
-    value = resolve_optional_bool_env(name)
     return True if value is None else value
 
 

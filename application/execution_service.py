@@ -1357,10 +1357,21 @@ def execute_rebalance(
         "snapshot_price_fallback_count": 0,
         "lock_path": None,
     }
+    equity = float(account_values.get("equity", 0) or 0.0)
+    cash_only_deleverage_mode = bool(signal_metadata.get("cash_only_deleverage_mode"))
     if equity <= 0:
-        execution_summary["execution_status"] = "blocked"
-        execution_summary["no_op_reason"] = "no_equity"
-        return _finalize_result([translator("no_equity")], execution_summary, return_summary=return_summary)
+        gross_positions = sum(
+            float(details.get("quantity") or 0.0) * float(details.get("avg_cost") or 0.0)
+            for details in dict(positions or {}).values()
+        )
+        if cash_only_execution and gross_positions > 0.0:
+            equity = gross_positions
+            cash_only_deleverage_mode = True
+        else:
+            execution_summary["execution_status"] = "blocked"
+            execution_summary["no_op_reason"] = "no_equity"
+            return _finalize_result([translator("no_equity")], execution_summary, return_summary=return_summary)
+    execution_summary["cash_only_deleverage_mode"] = cash_only_deleverage_mode
 
     reserved = max(
         float(equity) * float(cash_reserve_ratio or 0.0),

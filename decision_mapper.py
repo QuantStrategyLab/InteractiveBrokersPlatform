@@ -11,6 +11,7 @@ from quant_platform_kit.strategy_contracts import (
     translate_decision_to_target_mode,
 )
 from strategy_registry import IBKR_PLATFORM, resolve_strategy_definition
+from us_equity_strategies.cash_only_equity import resolve_strategy_equity_for_targets
 
 
 _EMERGENCY_FLAGS = frozenset({"emergency", "hard_defense"})
@@ -145,13 +146,27 @@ def map_strategy_decision(
     no_execute = bool(_NO_EXECUTE_FLAGS & set(risk_flags))
     target_mode = resolve_decision_target_mode(decision)
     total_equity_value = runtime_metadata.get("portfolio_total_equity")
-    if not no_execute and target_mode == "value" and total_equity_value is not None:
+    cash_only_execution = bool(runtime_metadata.get("cash_only_execution", True))
+    if not no_execute and total_equity_value is not None:
         total_equity = float(total_equity_value)
+        market_values = runtime_metadata.get("market_values")
+        if not isinstance(market_values, Mapping):
+            market_values = {}
+        raw_cash = float(runtime_metadata.get("liquid_cash", runtime_metadata.get("available_cash", 0.0)) or 0.0)
+        effective_equity, deleverage_mode = resolve_strategy_equity_for_targets(
+            market_values=market_values,
+            raw_cash=raw_cash,
+            cash_only_execution=cash_only_execution,
+        )
         if total_equity <= 0.0:
-            no_execute = True
-            risk_flags = tuple(dict.fromkeys((*risk_flags, "no_execute")))
-            diagnostics.setdefault("execution_blocked_reason", "non_positive_total_equity")
-            diagnostics.setdefault("portfolio_total_equity", total_equity)
+            if deleverage_mode:
+                runtime_metadata["cash_only_deleverage_mode"] = True
+                runtime_metadata["portfolio_total_equity"] = effective_equity
+            else:
+                no_execute = True
+                risk_flags = tuple(dict.fromkeys((*risk_flags, "no_execute")))
+                diagnostics.setdefault("execution_blocked_reason", "non_positive_total_equity")
+                diagnostics.setdefault("portfolio_total_equity", total_equity)
     normalized_decision = decision if no_execute else _normalize_to_weight_decision(decision, runtime_metadata)
     target_weights = None if no_execute else _derive_target_weights(normalized_decision)
     allocation_payload = None

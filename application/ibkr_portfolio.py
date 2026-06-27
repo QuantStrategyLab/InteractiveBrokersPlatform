@@ -151,6 +151,16 @@ def fetch_portfolio_snapshot(
     )
     if cash_only_execution:
         buying_power = float(market_currency_cash or 0.0) if market_currency_cash is not None else 0.0
+        position_market_values = {
+            str(position.symbol).strip().upper(): float(position.market_value)
+            for position in positions
+        }
+        from us_equity_strategies.cash_only_equity import compute_strategy_total_equity
+
+        total_equity = compute_strategy_total_equity(
+            position_market_values,
+            float(market_currency_cash or 0.0) if market_currency_cash is not None else 0.0,
+        )
     else:
         buying_power = float(available_funds or 0.0) if available_funds is not None else (
             float(market_currency_cash or 0.0) if market_currency_cash is not None else 0.0
