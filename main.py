@@ -28,7 +28,11 @@ from application.runtime_strategy_adapters import (
 from application.rebalance_service import run_strategy_core as run_rebalance_cycle
 from application.signal_snapshot import build_signal_snapshot
 from decision_mapper import map_strategy_decision
-from entrypoints.cloud_run import is_market_open_today
+from entrypoints.cloud_run import is_market_open_now
+from runtime_execution_policy import (
+    IBKR_FRACTIONAL_EQUITY_API_UNSUPPORTED_SKIP_REASON,
+    dca_execution_unsupported_reason,
+)
 from notifications.telegram import build_strategy_display_name, build_translator, send_telegram_message
 from quant_platform_kit.notifications.strategy_plugin_alerts import (
     StrategyPluginAlertStateSettings,
@@ -1037,11 +1041,13 @@ def _handle_request(
                 diagnostics={"skip_reason": "already_running"},
             )
             return "Already Running", 200
-        if not is_market_open_today(
+        market_open = is_market_open_now(
             calendar_name=MARKET_CALENDAR,
             timezone_name=MARKET_TIMEZONE,
             logger=lambda message: print(message, flush=True),
-        ):
+        )
+        force_run = (os.getenv("IBKR_FORCE_RUN") or "").strip().lower() == "true"
+        if not market_open and not force_run:
             log_runtime_event(
                 log_context,
                 "market_closed",
@@ -1057,6 +1063,41 @@ def _handle_request(
                 diagnostics={"skip_reason": "market_closed"},
             )
             return "Market Closed", 200
+        if force_run and not market_open:
+            log_runtime_event(
+                log_context,
+                "market_hours_bypassed",
+                message="Market hours bypassed for strategy execution",
+                execution_window=execution_window,
+                market=MARKET,
+                market_calendar=MARKET_CALENDAR,
+                market_timezone=MARKET_TIMEZONE,
+            )
+        unsupported_reason = dca_execution_unsupported_reason(STRATEGY_PROFILE)
+        if unsupported_reason is not None:
+            unsupported_message = (
+                "Strategy requires fractional-share execution; IBKR TWS API does not support "
+                "fractional equity orders (use desktop TWS for manual DCA or choose another platform)"
+                if unsupported_reason == IBKR_FRACTIONAL_EQUITY_API_UNSUPPORTED_SKIP_REASON
+                else "Strategy requires fractional-share execution; skip"
+            )
+            log_runtime_event(
+                log_context,
+                "strategy_execution_unsupported",
+                message=unsupported_message,
+                execution_window=execution_window,
+                skip_reason=unsupported_reason,
+                strategy_profile=STRATEGY_PROFILE,
+                market=MARKET,
+                market_calendar=MARKET_CALENDAR,
+                market_timezone=MARKET_TIMEZONE,
+            )
+            finalize_runtime_report(
+                report,
+                status="skipped",
+                diagnostics={"skip_reason": unsupported_reason},
+            )
+            return "Unsupported Strategy", 200
         log_runtime_event(
             log_context,
             "strategy_cycle_started",

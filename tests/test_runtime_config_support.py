@@ -60,8 +60,6 @@ EXPECTED_IBKR_ENABLED_PROFILES = frozenset(
     {
         "global_etf_rotation",
         "russell_top50_leader_rotation",
-        "nasdaq_sp500_smart_dca",
-        "ibit_smart_dca",
         "soxl_soxx_trend_income",
         "tqqq_growth_income",
         "hk_global_etf_tactical_rotation",
@@ -780,9 +778,8 @@ def test_platform_profile_status_matrix_matches_current_ibkr_rollout():
     assert by_profile["tqqq_growth_income"]["display_name"] == "TQQQ Growth Income"
     assert by_profile["tqqq_growth_income"]["eligible"] is True
     assert by_profile["tqqq_growth_income"]["enabled"] is True
-    assert by_profile["nasdaq_sp500_smart_dca"]["display_name"] == "Nasdaq 100 / S&P 500 Smart DCA"
-    assert by_profile["nasdaq_sp500_smart_dca"]["eligible"] is True
-    assert by_profile["nasdaq_sp500_smart_dca"]["enabled"] is True
+    assert "nasdaq_sp500_smart_dca" not in by_profile
+    assert "ibit_smart_dca" not in by_profile
     assert by_profile["hk_global_etf_tactical_rotation"] == {
         "canonical_profile": "hk_global_etf_tactical_rotation",
         "display_name": "HK Global ETF Tactical Rotation",
@@ -826,9 +823,8 @@ def test_print_strategy_profile_status_json_matches_registry():
     assert by_profile["global_etf_rotation"]["requires_snapshot_artifacts"] is True
     assert by_profile["global_etf_rotation"]["requires_snapshot_manifest_path"] is True
     assert by_profile["global_etf_rotation"]["requires_strategy_config_path"] is False
-    assert by_profile["nasdaq_sp500_smart_dca"]["profile_group"] == "direct_runtime_inputs"
-    assert by_profile["nasdaq_sp500_smart_dca"]["input_mode"] == "market_history+portfolio_snapshot"
-    assert by_profile["nasdaq_sp500_smart_dca"]["requires_snapshot_artifacts"] is False
+    assert "nasdaq_sp500_smart_dca" not in by_profile
+    assert "ibit_smart_dca" not in by_profile
     assert "tech_communication_pullback_enhancement" not in by_profile
     assert by_profile["russell_top50_leader_rotation"]["profile_group"] == "snapshot_backed"
     assert by_profile["russell_top50_leader_rotation"]["display_name_zh"] == "罗素 Top50 领涨轮动"
