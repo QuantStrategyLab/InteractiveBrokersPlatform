@@ -412,7 +412,7 @@ def _iter_open_orders(ib) -> list[Any]:
 def _extract_open_order_symbol(order_like: Any) -> str | None:
     contract = getattr(order_like, "contract", None)
     if contract is None and hasattr(order_like, "order"):
-        contract = getattr(order_like, "contract", None)
+        contract = getattr(order_like.order, "contract", None)
     symbol = getattr(contract, "symbol", None)
     if symbol is None and hasattr(order_like, "symbol"):
         symbol = getattr(order_like, "symbol")
