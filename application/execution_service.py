@@ -8,7 +8,7 @@ import tempfile
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -949,7 +949,7 @@ def _build_execution_lock_payload(
         "snapshot_date": snapshot_date,
         "mode": execution_mode,
         "target_hash": target_hash,
-        "created_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z",
     }
 
 

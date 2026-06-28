@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from quant_platform_kit.cloud import get_secret_store
 from quant_platform_kit.common.runtime_config import (
     first_non_empty,
     resolve_bool_value,
@@ -781,18 +782,7 @@ def load_secret_payload(
     *,
     secret_client_factory: Callable[[], Any] | None = None,
 ) -> str:
-    if secret_client_factory is None:
-        try:
-            import google.cloud.secretmanager_v1 as secret_manager
-        except ImportError:
-            from google.cloud import secret_manager
-
-        secret_client_factory = secret_manager.SecretManagerServiceClient
-
-    client = secret_client_factory()
-    resource_name = f"projects/{project_id}/secrets/{secret_name}/versions/latest"
-    response = client.access_secret_version(request={"name": resource_name})
-    return response.payload.data.decode("UTF-8")
+    return get_secret_store().get_secret(secret_name, project_id=project_id)
 
 
 def parse_account_ids(raw_value: Any) -> tuple[str, ...]:

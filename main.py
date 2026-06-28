@@ -8,15 +8,14 @@ import traceback
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-import google.auth
 import pandas as pd
 import requests
 from flask import Flask, request
 
 try:
-    from google.cloud import compute_v1
+    from quant_platform_kit.cloud import get_compute_discovery
 except ImportError:
-    compute_v1 = None
+    get_compute_discovery = None
 
 from application.cycle_result import coerce_strategy_cycle_result
 from application.runtime_broker_adapters import build_runtime_broker_adapters
@@ -89,8 +88,9 @@ STRATEGY_RUN_LOCK = threading.Lock()
 
 def get_project_id():
     try:
-        _, project_id = google.auth.default()
-        return project_id if project_id else os.getenv("GOOGLE_CLOUD_PROJECT")
+        from quant_platform_kit.cloud import get_deployment_context
+
+        return get_deployment_context().project_id
     except Exception:
         return os.getenv("GOOGLE_CLOUD_PROJECT")
 
@@ -106,32 +106,18 @@ def get_ib_gateway_ip_mode():
 
 
 def resolve_gce_instance_ip(instance_name, zone):
-    if not compute_v1:
-        print(f"google-cloud-compute not installed, using {instance_name} as host directly", flush=True)
+    if not get_compute_discovery:
+        print(f"quant_platform_kit.cloud not installed, using {instance_name} as host directly", flush=True)
         return instance_name
     try:
         ip_mode = get_ib_gateway_ip_mode()
         project = get_project_id()
-        client = compute_v1.InstancesClient()
-        instance = client.get(project=project, zone=zone, instance=instance_name)
-        internal_ip = None
-        external_ip = None
-        for iface in instance.network_interfaces:
-            if iface.network_i_p:
-                internal_ip = iface.network_i_p
-            for ac in iface.access_configs:
-                if ac.nat_i_p:
-                    external_ip = ac.nat_i_p
-
-        candidates = (
-            (("internal", internal_ip), ("external", external_ip))
-            if ip_mode == "internal"
-            else (("external", external_ip), ("internal", internal_ip))
+        return get_compute_discovery().resolve_instance_ip(
+            instance_name,
+            zone,
+            project_id=project,
+            prefer_internal=ip_mode == "internal",
         )
-        for label, ip in candidates:
-            if ip:
-                print(f"Resolved {instance_name} → {ip} ({label}, mode={ip_mode})", flush=True)
-                return ip
     except Exception as exc:
         print(f"GCE resolve failed for {instance_name}: {exc}, using as hostname", flush=True)
     return instance_name
