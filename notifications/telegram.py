@@ -236,6 +236,7 @@ I18N = {
         "strategy_name_hk_low_vol_dividend_quality_snapshot": "港股低波股息质量快照",
         "strategy_name_tqqq_growth_income": "TQQQ 增长收益",
         "strategy_name_soxl_soxx_trend_income": "SOXL/SOXX 半导体趋势收益",
+        "strategy_name_tecl_xlk_trend_income": "TECL/XLK 科技趋势收益",
     },
     "en": {
         "rebalance_title": "🔔 【Trade Execution Report】",
@@ -448,6 +449,7 @@ I18N = {
         "strategy_name_hk_low_vol_dividend_quality_snapshot": "HK Low-Vol Dividend Quality Snapshot",
         "strategy_name_tqqq_growth_income": "TQQQ Growth Income",
         "strategy_name_soxl_soxx_trend_income": "SOXL/SOXX Semiconductor Trend Income",
+        "strategy_name_tecl_xlk_trend_income": "TECL/XLK Technology Trend Income",
     },
 }
 
