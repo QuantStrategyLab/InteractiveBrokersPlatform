@@ -65,22 +65,6 @@ def _localize_notification_text(text: str, *, translator) -> str:
     )
 
 
-def _render_notification_context_text(
-    notification_context: Mapping[str, object] | None,
-    *,
-    translator,
-    fallback: str = "",
-) -> str:
-    if not isinstance(notification_context, Mapping):
-        return fallback
-    key = str(notification_context.get("code") or "").strip()
-    if not key:
-        return fallback
-    params = dict(notification_context.get("params") or {})
-    rendered = translator(key, **params)
-    return fallback if rendered == key else str(rendered)
-
-
 def _should_suppress_noop_notification(signal_metadata: Mapping[str, object] | None) -> bool:
     metadata = signal_metadata if isinstance(signal_metadata, Mapping) else {}
     no_op_reason = str(metadata.get("no_op_reason") or "").strip()
@@ -119,15 +103,6 @@ def _resolve_reconciliation_mode(
     if summary_mode:
         return summary_mode
     return _normalize_reconciliation_mode(getattr(config, "execution_mode", None), fallback="paper")
-
-
-def _translate_snapshot_guard_decision(decision: object, *, translator) -> str:
-    value = str(decision or "").strip()
-    if not value:
-        return ""
-    key = f"snapshot_guard_decision_{value}"
-    translated = translator(key)
-    return value if translated == key else str(translated)
 
 
 def _localize_timing_contract(contract: str, *, translator) -> str:
