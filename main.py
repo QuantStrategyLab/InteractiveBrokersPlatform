@@ -262,7 +262,21 @@ PAPER_LIQUIDATE_ONLY = _env_flag("IBKR_PAPER_LIQUIDATE_ONLY")
 
 TG_TOKEN = RUNTIME_SETTINGS.tg_token
 TG_CHAT_ID = RUNTIME_SETTINGS.tg_chat_id
+NOTIFICATION_CHANNEL = RUNTIME_SETTINGS.notification_channel
 NOTIFY_LANG = RUNTIME_SETTINGS.notify_lang
+
+
+def _resolve_notification_webhook_url() -> str | None:
+    channel = NOTIFICATION_CHANNEL
+    if channel == "wecom":
+        return RUNTIME_SETTINGS.wecom_webhook_url
+    if channel == "dingtalk":
+        return RUNTIME_SETTINGS.dingtalk_webhook_url
+    if channel == "feishu":
+        return RUNTIME_SETTINGS.feishu_webhook_url
+    if channel == "serverchan":
+        return RUNTIME_SETTINGS.serverchan_webhook_url
+    return None
 
 CASH_RESERVE_RATIO = STRATEGY_RUNTIME.cash_reserve_ratio
 CASH_ONLY_EXECUTION = getattr(RUNTIME_SETTINGS, "cash_only_execution", True)
@@ -523,6 +537,7 @@ def build_composer(*, dry_run_only_override: bool | None = None, strategy_plugin
         translator=t,
         separator=SEPARATOR,
         send_message=send_tg_message,
+        notification_channel=NOTIFICATION_CHANNEL,
         connect_ib_fn=connect_ib,
         build_portfolio_snapshot_fn=build_portfolio_snapshot,
         compute_signals_fn=compute_signals_fn,
@@ -557,12 +572,14 @@ def build_composer(*, dry_run_only_override: bool | None = None, strategy_plugin
 
 
 def send_tg_message(message):
-    return send_telegram_message(
-        message,
-        token=TG_TOKEN,
-        chat_id=TG_CHAT_ID,
-        requests_module=requests,
+    from quant_platform_kit.notifications.cycle_channel import build_cycle_sender
+    sender = build_cycle_sender(
+        channel=NOTIFICATION_CHANNEL,
+        telegram_token=TG_TOKEN,
+        telegram_chat_id=TG_CHAT_ID,
+        webhook_url=_resolve_notification_webhook_url(),
     )
+    sender(message)
 
 
 def publish_notification(*, detailed_text, compact_text):

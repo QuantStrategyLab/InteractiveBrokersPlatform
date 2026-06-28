@@ -52,6 +52,7 @@ class IBKRRuntimeComposer:
     translator: Callable[..., str]
     separator: str
     send_message: Callable[[str], None]
+    notification_channel: str = "telegram"
     connect_ib_fn: Callable[[], Any]
     build_portfolio_snapshot_fn: Callable[[Any], Any]
     compute_signals_fn: Callable[[Any, set[str]], tuple[Any, ...]]
@@ -71,6 +72,7 @@ class IBKRRuntimeComposer:
     def build_notification_adapters(self, *, delivery_events: list[dict[str, Any]] | None = None):
         return self.notification_builder(
             send_message=self.send_message,
+            notification_channel=self.notification_channel,
             log_message=lambda message: self.printer(message, flush=True),
             delivery_events=delivery_events,
         )
@@ -216,6 +218,7 @@ def build_runtime_composer(
     translator: Callable[..., str],
     separator: str,
     send_message: Callable[[str], None],
+    notification_channel: str = "telegram",
     connect_ib_fn: Callable[[], Any],
     build_portfolio_snapshot_fn: Callable[[Any], Any],
     compute_signals_fn: Callable[[Any, set[str]], tuple[Any, ...]],
@@ -262,6 +265,7 @@ def build_runtime_composer(
         translator=translator,
         separator=str(separator or ""),
         send_message=send_message,
+        notification_channel=notification_channel,
         connect_ib_fn=connect_ib_fn,
         build_portfolio_snapshot_fn=build_portfolio_snapshot_fn,
         compute_signals_fn=compute_signals_fn,

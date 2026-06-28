@@ -241,6 +241,11 @@ class PlatformRuntimeSettings:
     strategy_plugin_alert_telegram_parse_mode: str | None = None
     strategy_plugin_alert_telegram_disable_web_page_preview: str | None = None
     strategy_plugin_alert_telegram_body_max_chars: str | None = None
+    notification_channel: str = "telegram"
+    wecom_webhook_url: str | None = None
+    dingtalk_webhook_url: str | None = None
+    feishu_webhook_url: str | None = None
+    serverchan_webhook_url: str | None = None
     runtime_target: RuntimeTarget | None = None
     execution_backend: str = EXECUTION_BACKEND_GATEWAY
 
@@ -573,6 +578,11 @@ def load_platform_runtime_settings(
         strategy_plugin_alert_telegram_body_max_chars=first_non_empty(
             os.getenv("STRATEGY_PLUGIN_ALERT_TELEGRAM_BODY_MAX_CHARS")
         ),
+        notification_channel=os.getenv("NOTIFICATION_CHANNEL", "telegram"),
+        wecom_webhook_url=os.getenv("NOTIFICATION_WECOM_WEBHOOK_URL"),
+        dingtalk_webhook_url=os.getenv("NOTIFICATION_DINGTALK_WEBHOOK_URL"),
+        feishu_webhook_url=os.getenv("NOTIFICATION_FEISHU_WEBHOOK_URL"),
+        serverchan_webhook_url=os.getenv("NOTIFICATION_SERVERCHAN_WEBHOOK_URL"),
         runtime_target=runtime_target,
     )
 

@@ -29,6 +29,7 @@ class IBKRNotificationAdapters:
 def build_runtime_notification_adapters(
     *,
     send_message,
+    notification_channel: str = "telegram",
     log_message=None,
     delivery_events: list[dict[str, Any]] | None = None,
 ) -> IBKRNotificationAdapters:
@@ -39,7 +40,7 @@ def build_runtime_notification_adapters(
         compact = str(message or "")
         recorded_delivery_events.append(
             {
-                "sink": "telegram",
+                "sink": notification_channel,
                 "delivery_status": "sent",
                 "compact_text_sha256": hashlib.sha256(compact.encode("utf-8")).hexdigest(),
                 "compact_text_length": len(compact),
