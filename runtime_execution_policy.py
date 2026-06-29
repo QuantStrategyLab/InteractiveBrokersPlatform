@@ -3,7 +3,6 @@ from __future__ import annotations
 from quant_platform_kit.common.execution_capabilities import (
     FRACTIONAL_SHARE_EXECUTION_SKIP_REASON,
     definition_requires_fractional_share_execution,
-    fractional_share_execution_unsupported_reason,
     platform_supports_fractional_share_execution,
 )
 from quant_platform_kit.common.strategies import normalize_profile_name
@@ -17,23 +16,20 @@ IBKR_FRACTIONAL_EQUITY_API_UNSUPPORTED_SKIP_REASON = "ibkr_fractional_equity_api
 
 
 def dca_execution_unsupported_reason(strategy_profile: str) -> str | None:
-    generic_reason = fractional_share_execution_unsupported_reason(
-        strategy_profile,
-        strategy_catalog=STRATEGY_CATALOG,
-        capability_matrix=PLATFORM_CAPABILITY_MATRIX,
-    )
-    if generic_reason is None:
-        return None
+    # IBKR TWS API *hard-rejects* notional/fractional equity orders at the
+    # protocol level (error codes 10242/10243).  Unlike other platforms that
+    # can fall back to whole-share compat mode, IBKR must keep DCA profiles
+    # blocked regardless of the soft-capability change in QPK.
     normalized_profile = normalize_profile_name(strategy_profile)
     definition = STRATEGY_CATALOG.definitions.get(normalized_profile)
     if definition is None:
-        return generic_reason
+        return None
     if definition_requires_fractional_share_execution(definition):
         if not platform_supports_fractional_share_execution(
             capability_matrix=PLATFORM_CAPABILITY_MATRIX
         ):
             return IBKR_FRACTIONAL_EQUITY_API_UNSUPPORTED_SKIP_REASON
-    return generic_reason
+    return None
 
 
 def notional_buy_execution_enabled(strategy_profile: str) -> bool:
