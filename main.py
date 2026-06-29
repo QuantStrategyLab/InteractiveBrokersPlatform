@@ -208,6 +208,60 @@ IB_CONNECT_RETRY_DELAY_SECONDS = get_non_negative_float_env("IBKR_CONNECT_RETRY_
 IB_CLIENT_ID_RETRY_OFFSET = get_positive_int_env("IBKR_CLIENT_ID_RETRY_OFFSET", 100)
 STRATEGY_PROFILE = RUNTIME_SETTINGS.strategy_profile
 STRATEGY_DISPLAY_NAME = RUNTIME_SETTINGS.strategy_display_name
+
+
+def _normalize_plugin_mounts_strategy(raw_mounts_json: str | None) -> str | None:
+    if not raw_mounts_json:
+        return raw_mounts_json
+    try:
+        mounts = json.loads(raw_mounts_json)
+    except json.JSONDecodeError:
+        return raw_mounts_json
+    if not isinstance(mounts, dict):
+        return raw_mounts_json
+    plugins = mounts.get("strategy_plugins")
+    if not isinstance(plugins, list):
+        return raw_mounts_json
+    changed = False
+    for entry in plugins:
+        if not isinstance(entry, dict):
+            continue
+        old = entry.get("strategy")
+        if old and old != STRATEGY_PROFILE:
+            entry["strategy"] = STRATEGY_PROFILE
+            changed = True
+            print(f"[config-sync] Plugin mount strategy corrected: {old} → {STRATEGY_PROFILE}", flush=True)
+    return json.dumps(mounts, ensure_ascii=False) if changed else raw_mounts_json
+
+
+if hasattr(RUNTIME_SETTINGS, "strategy_plugin_mounts_json"):
+    normalized = _normalize_plugin_mounts_strategy(RUNTIME_SETTINGS.strategy_plugin_mounts_json)
+    if normalized != RUNTIME_SETTINGS.strategy_plugin_mounts_json:
+        object.__setattr__(RUNTIME_SETTINGS, "strategy_plugin_mounts_json", normalized)
+
+for _env_name in ("MONITOR_DISPATCH_TARGETS_JSON", "IBKR_MONITOR_DISPATCH_TARGETS_JSON"):
+    _raw = os.environ.get(_env_name)
+    if _raw:
+        try:
+            _targets = json.loads(_raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(_targets, dict):
+            continue
+        _entries = _targets.get("targets")
+        if not isinstance(_entries, list):
+            continue
+        _changed = False
+        for _entry in _entries:
+            if isinstance(_entry, dict):
+                _old = _entry.get("strategy_profile")
+                if _old and _old != STRATEGY_PROFILE:
+                    _entry["strategy_profile"] = STRATEGY_PROFILE
+                    _changed = True
+                    print(f"[config-sync] {_env_name} strategy_profile corrected: {_old} → {STRATEGY_PROFILE}", flush=True)
+        if _changed:
+            os.environ[_env_name] = json.dumps(_targets, ensure_ascii=False)
+
 ACCOUNT_GROUP = RUNTIME_SETTINGS.account_group
 SERVICE_NAME = RUNTIME_SETTINGS.service_name
 ACCOUNT_IDS = RUNTIME_SETTINGS.account_ids
