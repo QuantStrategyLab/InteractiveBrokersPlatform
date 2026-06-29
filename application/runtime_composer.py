@@ -122,7 +122,7 @@ class IBKRRuntimeComposer:
             strategy_config_path=self.strategy_config_path,
             reconciliation_output_path=self.reconciliation_output_path,
             report_base_dir=self.env_reader("EXECUTION_REPORT_OUTPUT_DIR", ""),
-            report_cloud_prefix_uri=self.env_reader("EXECUTION_REPORT_GCS_URI", ""),
+            report_gcs_prefix_uri=self.env_reader("EXECUTION_REPORT_GCS_URI", ""),
             run_id_builder=self.run_id_builder,
             event_logger=self.event_logger,
             report_builder=self.report_builder,

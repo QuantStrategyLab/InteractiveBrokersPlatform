@@ -201,7 +201,7 @@ def build_runtime_reporting_adapters(
         strategy_config_path=strategy_config_path,
         reconciliation_output_path=reconciliation_output_path,
         report_base_dir=report_base_dir,
-        report_cloud_prefix_uri=report_gcs_prefix_uri,
+        report_gcs_prefix_uri=report_gcs_prefix_uri,
         run_id_builder=run_id_builder,
         event_logger=event_logger,
         report_builder=report_builder,
