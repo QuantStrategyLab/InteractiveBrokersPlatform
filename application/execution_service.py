@@ -1480,6 +1480,8 @@ def execute_rebalance(
             if price > 0.0
             else 0.0
         )
+        # Skip bootstrap if the account cannot afford even 1 share at limit price.
+        _can_afford_one_share = limit_price > 0.0 and investable >= limit_price
         held_quantity = max(0.0, float(positions.get(symbol, {}).get("quantity", 0.0) or 0.0))
         if (
             _should_retain_existing_whole_share(symbol, target_value=target_value, price=price)
@@ -1495,6 +1497,7 @@ def execute_rebalance(
         if (
             held_quantity <= 0.0
             and 0.0 < target_value < limit_price
+            and _can_afford_one_share
             and _should_bootstrap_whole_share_buy(symbol, target_value=target_value, limit_price=limit_price)
         ):
             target_mv[symbol] = limit_price
