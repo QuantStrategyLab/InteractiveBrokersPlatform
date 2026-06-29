@@ -14,3 +14,5 @@ google-cloud-compute
 google-cloud-secret-manager
 google-cloud-storage
 yfinance
+
+quant-us-combo-strategies @ git+https://github.com/QuantStrategyLab/QuantUsComboStrategies.git@c9e290c21289645851c74a4466f2534864b7cec6
