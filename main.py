@@ -239,6 +239,29 @@ if hasattr(RUNTIME_SETTINGS, "strategy_plugin_mounts_json"):
     if normalized != RUNTIME_SETTINGS.strategy_plugin_mounts_json:
         object.__setattr__(RUNTIME_SETTINGS, "strategy_plugin_mounts_json", normalized)
 
+for _env_name in ("MONITOR_DISPATCH_TARGETS_JSON", "IBKR_MONITOR_DISPATCH_TARGETS_JSON"):
+    _raw = os.environ.get(_env_name)
+    if _raw:
+        try:
+            _targets = json.loads(_raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(_targets, dict):
+            continue
+        _entries = _targets.get("targets")
+        if not isinstance(_entries, list):
+            continue
+        _changed = False
+        for _entry in _entries:
+            if isinstance(_entry, dict):
+                _old = _entry.get("strategy_profile")
+                if _old and _old != STRATEGY_PROFILE:
+                    _entry["strategy_profile"] = STRATEGY_PROFILE
+                    _changed = True
+                    print(f"[config-sync] {_env_name} strategy_profile corrected: {_old} → {STRATEGY_PROFILE}", flush=True)
+        if _changed:
+            os.environ[_env_name] = json.dumps(_targets, ensure_ascii=False)
+
 ACCOUNT_GROUP = RUNTIME_SETTINGS.account_group
 SERVICE_NAME = RUNTIME_SETTINGS.service_name
 ACCOUNT_IDS = RUNTIME_SETTINGS.account_ids
