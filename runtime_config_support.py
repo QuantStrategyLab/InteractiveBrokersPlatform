@@ -247,6 +247,7 @@ class PlatformRuntimeSettings:
     feishu_webhook_url: str | None = None
     serverchan_webhook_url: str | None = None
     runtime_target: RuntimeTarget | None = None
+    strategy_metadata: Any = None
     execution_backend: str = EXECUTION_BACKEND_GATEWAY
 
 
@@ -584,6 +585,7 @@ def load_platform_runtime_settings(
         feishu_webhook_url=os.getenv("NOTIFICATION_FEISHU_WEBHOOK_URL"),
         serverchan_webhook_url=os.getenv("NOTIFICATION_SERVERCHAN_WEBHOOK_URL"),
         runtime_target=runtime_target,
+        strategy_metadata=strategy_metadata,
     )
 
 

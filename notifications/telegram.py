@@ -472,8 +472,21 @@ def build_translator(lang):
     return translate
 
 
-def build_strategy_display_name(translate_fn):
-    def strategy_display_name(profile: str, *, fallback_name: str | None = None) -> str:
+def build_strategy_display_name(translate_fn, locale: str = "en"):
+    def strategy_display_name(
+        profile: str,
+        *,
+        fallback_name: str | None = None,
+        metadata=None,
+    ) -> str:
+        if metadata is not None:
+            from quant_platform_kit.common.notification_localization import (
+                resolve_strategy_display_name,
+            )
+            return resolve_strategy_display_name(
+                locale, metadata, translator=translate_fn,
+            )
+
         key = f"strategy_name_{str(profile or '').strip()}"
         translated = translate_fn(key)
         if translated != key:

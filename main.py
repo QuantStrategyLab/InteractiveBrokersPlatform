@@ -324,9 +324,10 @@ def t(key, **kwargs):
     return build_translator(NOTIFY_LANG)(key, **kwargs)
 
 
-strategy_display_name = build_strategy_display_name(t)(
+strategy_display_name = build_strategy_display_name(t, NOTIFY_LANG)(
     STRATEGY_PROFILE,
     fallback_name=STRATEGY_DISPLAY_NAME,
+    metadata=RUNTIME_SETTINGS.strategy_metadata,
 )
 
 RUNTIME_LOG_CONTEXT = build_runtime_assembly(
