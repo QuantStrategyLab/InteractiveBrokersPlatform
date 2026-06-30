@@ -82,6 +82,7 @@ jobs:
       INPUT_CLOUD_RUN_SERVICE: ${{ inputs.cloud_run_service }}
       INPUT_ACCOUNT_GROUP: ${{ inputs.account_group }}
       INPUT_ACCOUNT_GROUP_CONFIG_SECRET_NAME: ${{ inputs.account_group_config_secret_name }}
+      CONSTRAINTS_URL: https://raw.githubusercontent.com/QuantStrategyLab/QuantPlatformKit/fe4341b08f1f026a21ca07c4752e48ed2640cc07/constraints.txt
       INPUT_DEPLOY_IMAGE: ${{ inputs.deploy_image }}
       INPUT_SYNC_ENV: ${{ inputs.sync_env }}
       GCP_ARTIFACT_REGISTRY_HOSTNAME: ${{ vars.GCP_ARTIFACT_REGISTRY_HOSTNAME }}
@@ -204,7 +205,8 @@ jobs:
           fi
 
           if [ "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch" ] && [ "${WORKFLOW_TARGET:-configured}" = "hk-verify" ]; then
-            if [ "${INPUT_DEPLOY_IMAGE:-true}" = "true" ]; then
+            if [ "${CONSTRAINTS_URL: https://raw.githubusercontent.com/QuantStrategyLab/QuantPlatformKit/fe4341b08f1f026a21ca07c4752e48ed2640cc07/constraints.txt
+      INPUT_DEPLOY_IMAGE:-true}" = "true" ]; then
               deploy_enabled=true
             fi
             if [ "${INPUT_SYNC_ENV:-true}" = "true" ]; then
@@ -288,7 +290,8 @@ jobs:
           if [ -n "${INPUT_ACCOUNT_GROUP_CONFIG_SECRET_NAME:-}" ]; then
             echo "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=${INPUT_ACCOUNT_GROUP_CONFIG_SECRET_NAME}" >> "$GITHUB_ENV"
           fi
-          if [ "${INPUT_DEPLOY_IMAGE:-true}" != "true" ]; then
+          if [ "${CONSTRAINTS_URL: https://raw.githubusercontent.com/QuantStrategyLab/QuantPlatformKit/fe4341b08f1f026a21ca07c4752e48ed2640cc07/constraints.txt
+      INPUT_DEPLOY_IMAGE:-true}" != "true" ]; then
             echo "CLOUD_RUN_ENV_SYNC_WAIT_FOR_COMMIT=false" >> "$GITHUB_ENV"
           fi
 
