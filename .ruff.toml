@@ -1,1 +1,4 @@
 target-version = "py311"
+
+[lint]
+ignore = ["E701"]
