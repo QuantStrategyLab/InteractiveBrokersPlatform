@@ -41,7 +41,7 @@ def dispatch_due_monitor_targets(
     timeout_seconds: int | None = None,
     max_workers: int | None = None,
 ) -> dict[str, Any]:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     return _dispatch_due_monitors(
         targets,
