@@ -432,7 +432,6 @@ jobs:
           project_id: ${{ env.GCP_PROJECT_ID }}
           version: ">= 416.0.0"
 
-      - name: 
       - name: Build, push, and deploy Cloud Run image
         if: steps.config.outputs.deploy_enabled == 'true'
         run: |
