@@ -52,7 +52,6 @@ class IBKRRuntimeComposer:
     translator: Callable[..., str]
     separator: str
     send_message: Callable[[str], None]
-    notification_channel: str = "telegram"
     connect_ib_fn: Callable[[], Any]
     build_portfolio_snapshot_fn: Callable[[Any], Any]
     compute_signals_fn: Callable[[Any, set[str]], tuple[Any, ...]]
@@ -68,6 +67,7 @@ class IBKRRuntimeComposer:
     reporting_builder: Callable[..., Any] = build_runtime_reporting_adapters
     runtime_target: RuntimeTarget | None = None
     extra_reporting_fields: Mapping[str, Any] = field(default_factory=dict)
+    notification_channel: str = "telegram"
 
     def build_notification_adapters(self, *, delivery_events: list[dict[str, Any]] | None = None):
         return self.notification_builder(
