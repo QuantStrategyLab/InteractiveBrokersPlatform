@@ -113,13 +113,13 @@ jobs:
           python -m pip install --no-deps -e external/QuantPlatformKit -e external/UsEquityStrategies -e external/UsEquitySnapshotPipelines
 
       - name: Run ruff
+        run: |
+          set -euo pipefail
+          ruff check --exclude external .
 
       - name: Check QPK pin consistency
         run: python scripts/check_qpk_pin_consistency.py
         continue-on-error: true
-        run: |
-          set -euo pipefail
-          ruff check --exclude external .
 
       - name: Run unit tests
         run: |
