@@ -3,7 +3,6 @@ import types
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
-pytestmark = pytest.mark.skip(reason="pre-existing CI failures")
 
 
 def test_ensure_event_loop_creates_loop_in_worker_thread(strategy_module):

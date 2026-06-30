@@ -3,7 +3,6 @@ import datetime as dt
 from application.monitor_dispatcher import dispatch_due_monitor_targets
 
 
-import pytest; @pytest.mark.skip(reason="pre-existing"); @pytest.mark.skip(reason="pre-existing: function renamed")
 def test_due_monitor_dispatches_selects_due_window_and_skips_disabled_target():
     targets = [
         {
@@ -39,7 +38,6 @@ def test_due_monitor_dispatches_selects_due_window_and_skips_disabled_target():
     assert dispatches[0]["url"] == "https://svc-tqqq.example.run.app/probe"
 
 
-import pytest; @pytest.mark.skip(reason="pre-existing"); @pytest.mark.skip(reason="pre-existing: function signature changed")
 def test_dispatch_due_monitor_targets_posts_with_identity_token():
     calls = []
 

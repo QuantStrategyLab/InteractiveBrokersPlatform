@@ -1,4 +1,3 @@
-import pytest
 from notifications.renderers import _summarize_skipped_orders, build_dashboard
 from notifications.telegram import build_strategy_display_name, build_translator, send_telegram_message
 from strategy_registry import SUPPORTED_STRATEGY_PROFILES
@@ -217,8 +216,7 @@ def test_strategy_display_name_translates_new_live_profiles():
     assert en_name("hk_low_vol_dividend_quality_snapshot") == "HK Low-Vol Dividend Quality Snapshot"
 
 
-@pytest.mark.skip(reason="pre-existing: combo profiles missing translations")
-    def test_supported_strategy_profiles_have_translated_names():
+def test_supported_strategy_profiles_have_translated_names():
     zh_name = build_strategy_display_name(build_translator("zh"))
     en_name = build_strategy_display_name(build_translator("en"))
 
