@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "interactive-brokers-platform"
 version = "0.1.0"
@@ -18,3 +22,11 @@ dependencies = [
     "google-cloud-storage",
     "yfinance",
 ]
+
+[tool.coverage.run]
+branch = true
+source = ["src"]
+omit = ["tests/*", "*/external/*"]
+
+[tool.coverage.report]
+show_missing = true

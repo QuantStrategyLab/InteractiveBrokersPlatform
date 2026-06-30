@@ -91,7 +91,7 @@ jobs:
           grep 'git+' requirements.txt | while IFS= read -r pkg; do
             [ -n "$pkg" ] && python -m pip install --no-deps "$pkg"
           done
-          python -m pip install pytest ruff
+          python -m pip install pytest pytest-cov ruff
 
       - name: Smoke import pinned shared packages
         run: |
@@ -120,4 +120,4 @@ jobs:
       - name: Run unit tests
         run: |
           set -euo pipefail
-          PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q tests
+          PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q --cov --cov-report=term --cov-report=xml tests
