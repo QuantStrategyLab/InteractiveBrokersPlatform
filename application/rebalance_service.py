@@ -65,21 +65,33 @@ def _localize_notification_text(text: str, *, translator) -> str:
     )
 
 
-def _should_suppress_noop_notification(signal_metadata: Mapping[str, object] | None) -> bool:
+def _should_suppress_noop_notification(signal_metadata: Mapping[str, object] | None, *, order_count: int = -1, has_error: bool = False) -> bool:
+    """Return True when we should skip sending a Telegram notification.
+
+    Suppress when:
+    - Outside execution window (monthly/weekly cadence)
+    - No orders placed, no errors, and signal is idle/waiting
+    - Purely informational 'waiting for signal' runs
+    """
     metadata = signal_metadata if isinstance(signal_metadata, Mapping) else {}
     no_op_reason = str(metadata.get("no_op_reason") or "").strip()
     if no_op_reason.startswith(("outside_execution_window", "outside_monthly_execution_window")):
         return True
     notification_context = metadata.get("notification_context")
-    if not isinstance(notification_context, Mapping):
-        return False
-    status_context = notification_context.get("status")
-    if not isinstance(status_context, Mapping):
-        return False
-    return str(status_context.get("code") or "").strip() in {
-        "status_monthly_snapshot_waiting_window",
-        "status_no_execution_window_after_snapshot",
-    }
+    if isinstance(notification_context, Mapping):
+        status_context = notification_context.get("status")
+        if isinstance(status_context, Mapping) and str(status_context.get("code") or "").strip() in {
+            "status_monthly_snapshot_waiting_window",
+            "status_no_execution_window_after_snapshot",
+        }:
+            return True
+    # New: skip if nothing happened (no trades, no errors, idle signal)
+    if order_count == 0 and not has_error:
+        actionable = bool(metadata.get("actionable", True))
+        risk_flags = metadata.get("risk_flags") or ()
+        if not actionable and not risk_flags:
+            return True
+    return False
 
 
 def _normalize_reconciliation_mode(value: object, *, fallback: str = "") -> str:
@@ -781,7 +793,11 @@ def run_strategy_core(
                 + json.dumps({"path": str(record_path), "status": record.get("execution_status"), "no_op_reason": record.get("no_op_reason")}, ensure_ascii=False),
                 flush=True,
             )
-            notification_suppressed = _should_suppress_noop_notification(signal_metadata)
+            order_count = len(orders) if 'orders' in dir() and orders else 0
+            has_error = bool(no_op_reason or fail_reason)
+            notification_suppressed = _should_suppress_noop_notification(
+                signal_metadata, order_count=order_count, has_error=has_error
+            )
             if notification_suppressed:
                 print(
                     "notification_suppressed "
