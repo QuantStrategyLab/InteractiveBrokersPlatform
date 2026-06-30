@@ -39,6 +39,7 @@ from quant_platform_kit.notifications.strategy_plugin_alerts import (
     build_strategy_plugin_alert_context_label as build_alert_context_label,
     publish_strategy_plugin_alerts as dispatch_strategy_plugin_alerts,
 )
+from quant_platform_kit.common.health import register_health_endpoint
 from quant_platform_kit.common.runtime_assembly import build_runtime_assembly
 from quant_platform_kit.common.runtime_reports import (
     append_runtime_report_error,
@@ -82,6 +83,7 @@ from runtime_config_support import (
 from strategy_runtime import load_strategy_runtime
 
 app = Flask(__name__)
+register_health_endpoint(app)  # GET /health /healthz
 ensure_event_loop = ibkr_ensure_event_loop
 NEW_YORK_TZ = ZoneInfo("America/New_York")
 STRATEGY_RUN_LOCK = threading.Lock()
