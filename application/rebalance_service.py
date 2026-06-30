@@ -339,6 +339,20 @@ def _strategy_dashboard_text(signal_metadata, *, translator) -> str:
     return f"{dashboard_text}\n" + "\n".join(timing_lines)
 
 
+def _signal_short(signal_desc: str, max_len: int = 80) -> str:
+    """Extract the headline from a verbose signal description."""
+    text = (signal_desc or "").strip()
+    if not text:
+        return ""
+    # Take first clause before comma, colon, or exceed max_len
+    for sep in ("，", "。", ":", "；", "\n"):
+        idx = text.find(sep)
+        if idx > 0:
+            text = text[:idx]
+            break
+    return text[:max_len] + ("…" if len(text) > max_len else "")
+
+
 def build_dashboard(
     positions,
     account_values,
@@ -408,8 +422,13 @@ def build_dashboard(
     diagnostics_text = "\n".join(diagnostics_lines)
     localized_status_desc = _localize_notification_text(status_desc, translator=translator)
     localized_signal_desc = _localize_notification_text(signal_desc, translator=translator)
+    signal_short = _signal_short(localized_signal_desc)
     status_lines = _format_prefixed_text(status_icon, localized_status_desc)
-    signal_lines = _format_prefixed_text("🎯", localized_signal_desc)
+    # Show short signal first, then details if significantly different
+    if len(signal_short) < len(localized_signal_desc) - 10:
+        signal_lines = _format_prefixed_text("🎯", signal_short) + _format_prefixed_text("📋", localized_signal_desc)
+    else:
+        signal_lines = _format_prefixed_text("🎯", localized_signal_desc)
     status_text = "\n".join(status_lines)
     signal_text = "\n".join(signal_lines)
     return (
@@ -458,9 +477,13 @@ def _build_compact_message(
     status_line = _first_prefixed_line(status_icon, status_desc, translator=translator)
     if status_line:
         lines.append(status_line)
-    signal_line = _first_prefixed_line("🎯", signal_desc, translator=translator)
-    if signal_line:
-        lines.append(signal_line)
+    signal_short = _signal_short(str(signal_desc or ""))
+    if signal_short:
+        lines.append(f"🎯 {signal_short}")
+    # Full signal details
+    localized = _localize_notification_text(str(signal_desc), translator=translator)
+    if len(localized) > len(signal_short) + 10:
+        lines.append(f"📋 {localized}")
     compact_body = [str(line).strip() for line in body_lines or () if str(line).strip()]
     if compact_body:
         lines.append(separator)
