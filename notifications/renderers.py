@@ -782,30 +782,28 @@ def _build_compact_message(
     extra_notification_lines=(),
     include_dashboard: bool = False,
 ) -> str:
+    """Minimal notification: account → positions → trades. No signal math, no timing."""
     lines = [title]
     strategy_name = _format_text(strategy_display_name, fallback="<unknown>")
-    lines.append(translator("strategy_label", name=strategy_name))
-    lines.extend(_extra_notification_lines(extra_notification_lines))
+    lines.append(strategy_name)
+    # Plugin/settings toggles
+    extra = _extra_notification_lines(extra_notification_lines)
+    if extra:
+        lines.append(" | ".join(str(e).strip() for e in extra if str(e).strip()))
+    lines.append(separator)
+    # Positions
     dashboard = _format_dashboard_text(dashboard_text)
-    if include_dashboard and dashboard:
-        lines.append(separator)
+    if dashboard:
         lines.extend(dashboard.splitlines())
-    elif dashboard:
-        lines.extend(_extract_timing_lines(dashboard))
-    status_summary = _first_summary_text(status_desc, translator=translator)
-    signal_summary = _first_summary_text(signal_desc, translator=translator)
-    status_summary = _localize_signal_state(status_summary, translator=translator)
-    signal_summary = _localize_signal_state(signal_summary, translator=translator)
-    status_line = f"{status_icon} {status_summary}".strip() if status_summary else None
-    if status_line and status_summary != signal_summary:
-        lines.append(status_line)
-    signal_line = f"🎯 {signal_summary}".strip() if signal_summary else None
-    if signal_line:
-        lines.append(signal_line)
+        lines.append(separator)
+    # Trades
     compact_body = [str(line).strip() for line in body_lines or () if str(line).strip()]
     if compact_body:
-        lines.append(separator)
         lines.extend(compact_body)
+        lines.append(separator)
+    else:
+        lines.append(translator("no_trades"))
+        lines.append(separator)
     return "\n".join(lines)
 
 

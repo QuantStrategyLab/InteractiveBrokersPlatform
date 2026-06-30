@@ -478,28 +478,31 @@ def _build_compact_message(
     separator: str,
     body_lines,
     dashboard_text: str = "",
+    plugin_lines: tuple[str, ...] = (),
 ) -> str:
+    """Build a minimal human-readable notification — no signal math, no execution timing."""
     lines = [title]
     strategy_name = _format_text(strategy_display_name, fallback="<unknown>")
-    lines.append(translator("strategy_label", name=strategy_name))
+    lines.append(strategy_name)
+    # Plugin status — one line with toggles
+    if plugin_lines:
+        plugin_short = " | ".join(str(p).strip() for p in plugin_lines if str(p).strip())
+        if plugin_short:
+            lines.append(plugin_short)
+    lines.append(separator)
+    # Position summary from dashboard
     dashboard = _format_dashboard_text(dashboard_text)
     if dashboard:
-        lines.append(separator)
         lines.extend(dashboard.splitlines())
-    status_line = _first_prefixed_line(status_icon, status_desc, translator=translator)
-    if status_line:
-        lines.append(status_line)
-    signal_short = _signal_short(str(signal_desc or ""))
-    if signal_short:
-        lines.append(f"🎯 {signal_short}")
-    # Full signal details
-    localized = _localize_notification_text(str(signal_desc), translator=translator)
-    if len(localized) > len(signal_short) + 10:
-        lines.append(f"📋 {localized}")
+        lines.append(separator)
+    # Trades
     compact_body = [str(line).strip() for line in body_lines or () if str(line).strip()]
     if compact_body:
-        lines.append(separator)
         lines.extend(compact_body)
+        lines.append(separator)
+    else:
+        lines.append(translator("no_trades"))
+        lines.append(separator)
     return "\n".join(lines)
 
 
