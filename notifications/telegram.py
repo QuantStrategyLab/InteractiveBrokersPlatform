@@ -109,7 +109,7 @@ I18N = {
         "skip_reason_negative_cash": "账户现金为负，避免额外融资",
         "skip_order_detail": "{symbol}（{reason}）",
         "skip_order_detail_with_qty": "{symbol} {quantity}（{reason}）",
-        "no_equity": "❌ 无净值",
+        "no_equity": "⏳ 等待净值",
         "signal_label": "信号",
         "signal_monthly_snapshot_waiting": "月度快照节奏 | 等待进入执行窗口",
         "status_monthly_snapshot_waiting_window": "不执行 | 原因=当前不在月度执行窗口 | 快照日期={snapshot_as_of} | 允许日期={allowed_dates}",
