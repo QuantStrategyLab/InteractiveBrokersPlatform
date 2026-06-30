@@ -17,7 +17,7 @@ on:
           - "true"
           - "false"
   schedule:
-    - cron: "15 23 * * 1-5"
+    - #cron: "15 23 * * 1-5"
 
 env:
   GCP_PROJECT_ID: interactivebrokersquant
