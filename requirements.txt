@@ -13,5 +13,5 @@ google-cloud-storage
 yfinance
 quant-platform-kit @ git+https://github.com/QuantStrategyLab/QuantPlatformKit.git@a9085d6d46147f62b80bbd441d19d85acaa3dda6
 us-equity-strategies @ git+https://github.com/QuantStrategyLab/UsEquityStrategies.git@2d092fc7c2ac26591b38f4f9b2e9f26ed727a099
-hk-equity-strategies @ git+https://github.com/QuantStrategyLab/HkEquityStrategies.git@653fc6f19738f4019a4dc55ae85a510e89891bc8
+hk-equity-strategies @ git+https://github.com/QuantStrategyLab/HkEquityStrategies.git@5fb48ea102c28deb6dd1c9674553f3c77aba4f2c
 quantuscombostrategies @ git+https://github.com/QuantStrategyLab/QuantUsComboStrategies.git@d35f4f86b09a7f4e99a1f83c973b21f2420398ef
