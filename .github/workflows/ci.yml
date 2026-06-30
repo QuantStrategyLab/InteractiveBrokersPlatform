@@ -119,7 +119,7 @@ jobs:
 
       - name: Check QPK pin consistency
         run: python scripts/check_qpk_pin_consistency.py
-        continue-on-error: true
+        continue-on-error: false
 
       - name: Run unit tests
         run: |
