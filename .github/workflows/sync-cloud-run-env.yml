@@ -76,6 +76,7 @@ jobs:
       ENABLE_GITHUB_CLOUD_RUN_DEPLOY: ${{ vars.ENABLE_GITHUB_CLOUD_RUN_DEPLOY }}
       ENABLE_GITHUB_ENV_SYNC: ${{ vars.ENABLE_GITHUB_ENV_SYNC }}
       ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION: ${{ vars.ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION }}
+      QSL_ENABLE_CLOUD_RUN_AUTOMATION: ${{ vars.QSL_ENABLE_CLOUD_RUN_AUTOMATION }}
       WORKFLOW_TARGET: ${{ inputs.target || 'configured' }}
       INPUT_CLOUD_RUN_REGION: ${{ inputs.cloud_run_region }}
       INPUT_CLOUD_RUN_SERVICE: ${{ inputs.cloud_run_service }}
@@ -191,6 +192,8 @@ jobs:
           deploy_enabled=false
           env_sync_enabled=false
 
+          # QSL_ENABLE_CLOUD_RUN_AUTOMATION overrides ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION
+          ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION="${QSL_ENABLE_CLOUD_RUN_AUTOMATION:-$ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION}"
           if [ "${GITHUB_EVENT_NAME:-}" = "push" ] && [ "${ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION:-}" != "true" ]; then
             write_github_output \
               "deploy_enabled=false" \
