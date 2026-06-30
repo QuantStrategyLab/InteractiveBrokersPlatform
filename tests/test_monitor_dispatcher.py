@@ -1,6 +1,6 @@
 import datetime as dt
 
-from application.monitor_dispatcher import dispatch_due_monitor_targets, due_monitor_dispatches
+from application.monitor_dispatcher import dispatch_due_monitor_targets
 
 
 def test_due_monitor_dispatches_selects_due_window_and_skips_disabled_target():
