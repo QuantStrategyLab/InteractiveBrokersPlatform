@@ -785,8 +785,7 @@ def _build_compact_message(
     """Minimal notification: account → positions → trades. No signal math, no timing."""
     lines = [title]
     strategy_name = _format_text(strategy_display_name, fallback="<unknown>")
-    lines.append(strategy_name)
-    # Plugin/settings toggles
+    lines.append(f"{strategy_name}")
     extra = _extra_notification_lines(extra_notification_lines)
     if extra:
         lines.append(" | ".join(str(e).strip() for e in extra if str(e).strip()))
