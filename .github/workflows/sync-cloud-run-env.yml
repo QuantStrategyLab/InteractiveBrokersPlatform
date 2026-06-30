@@ -1257,7 +1257,7 @@ jobs:
               echo "Deleting old Cloud Run revision ${revision} for ${cloud_run_service}."
               gcloud run revisions delete "${revision}" \
                 --region "${CLOUD_RUN_REGION}" \
-                --quiet
+                --quiet 2>&1 || true
             done
           done
 
