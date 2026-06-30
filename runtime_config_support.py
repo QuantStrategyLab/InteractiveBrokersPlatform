@@ -486,10 +486,11 @@ def load_platform_runtime_settings(
         service_name=group_config.service_name,
         account_ids=group_config.account_ids,
         tg_token=os.getenv("TELEGRAM_TOKEN"),
-        tg_chat_id=os.getenv("GLOBAL_TELEGRAM_CHAT_ID"),
-        notify_lang=os.getenv("NOTIFY_LANG", "en"),
+        tg_chat_id=os.getenv("QSL_GLOBAL_TELEGRAM_CHAT_ID") or os.getenv("GLOBAL_TELEGRAM_CHAT_ID"),
+        notify_lang=os.getenv("QSL_NOTIFY_LANG") or os.getenv("NOTIFY_LANG", "en"),
         strategy_plugin_mounts_json=(
             os.getenv("IBKR_STRATEGY_PLUGIN_MOUNTS_JSON")
+            or os.getenv("QSL_STRATEGY_PLUGIN_MOUNTS_JSON")
             or os.getenv("STRATEGY_PLUGIN_MOUNTS_JSON")
         ),
         quantconnect_project_id=group_config.quantconnect_project_id,
@@ -572,7 +573,8 @@ def load_platform_runtime_settings(
             "STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS"
         ),
         strategy_plugin_alert_telegram_bot_token=first_non_empty(
-            os.getenv("STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN")
+            os.getenv("QSL_STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN")
+            or os.getenv("STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN")
         ),
         strategy_plugin_alert_telegram_api_base_url=first_non_empty(
             os.getenv("STRATEGY_PLUGIN_ALERT_TELEGRAM_API_BASE_URL")
