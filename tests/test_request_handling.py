@@ -1,3 +1,4 @@
+import pytest
 import types
 
 from application.cycle_result import StrategyCycleResult
