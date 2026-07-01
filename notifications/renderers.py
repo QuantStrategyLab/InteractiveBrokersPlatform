@@ -444,6 +444,47 @@ def _format_dashboard_text(text) -> str:
     return "\n".join(lines)
 
 
+def _relabel_dashboard_cash_labels(text: str, *, cash_only_execution: bool) -> str:
+    value = str(text or "")
+    if cash_only_execution:
+        value = value.replace("总资产（策略净值）", "总资产（策略标的+现金，不含融资额度）")
+        value = value.replace(
+            "Total assets (strategy net liquidation)",
+            "Total assets (strategy symbols + cash, ex-margin)",
+        )
+        value = value.replace("购买力", "可用现金")
+        value = value.replace("Buying power", "Available cash")
+        return value
+    value = value.replace("总资产（策略标的+现金，不含融资额度）", "总资产（策略净值）")
+    value = value.replace("总资产（策略标的+现金）", "总资产（策略净值）")
+    value = value.replace(
+        "Total assets (strategy symbols + cash, ex-margin)",
+        "Total assets (strategy net liquidation)",
+    )
+    value = value.replace(
+        "Total assets (strategy symbols + cash)",
+        "Total assets (strategy net liquidation)",
+    )
+    value = value.replace("可用现金", "购买力")
+    value = value.replace("Available cash", "Buying power")
+    return value
+
+
+def _format_compact_dashboard_text(text) -> str:
+    lines = []
+    for line in _format_dashboard_text(text).splitlines():
+        stripped = line.strip()
+        lowered = stripped.lower()
+        if stripped.startswith(("⏱", "🧾", "🛡️", "📊", "🎯")):
+            continue
+        if lowered.startswith(("signal:", "signal：", "market status:")):
+            continue
+        if stripped.startswith(("信号:", "信号：", "市场状态:", "市场状态：")):
+            continue
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def _build_timing_audit_lines(signal_metadata, *, translator) -> list[str]:
     metadata = signal_metadata if isinstance(signal_metadata, Mapping) else {}
     raw_annotations = metadata.get("execution_annotations")
@@ -646,6 +687,10 @@ def _strategy_dashboard_text(signal_metadata, *, translator) -> str:
         or metadata.get("dashboard")
         or ""
     )
+    dashboard_text = _relabel_dashboard_cash_labels(
+        dashboard_text,
+        cash_only_execution=bool(metadata.get("cash_only_execution", True)),
+    )
     risk_control_lines = _build_tqqq_risk_control_lines(risk_source, translator=translator)
     timing_lines = _build_timing_audit_lines(metadata, translator=translator)
     snapshot_line = _format_signal_snapshot_line(metadata.get("signal_snapshot"), translator=translator)
@@ -791,7 +836,7 @@ def _build_compact_message(
         lines.append(" | ".join(str(e).strip() for e in extra if str(e).strip()))
     lines.append(separator)
     # Positions
-    dashboard = _format_dashboard_text(dashboard_text)
+    dashboard = _format_compact_dashboard_text(dashboard_text)
     if dashboard:
         lines.extend(dashboard.splitlines())
         lines.append(separator)
