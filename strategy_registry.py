@@ -16,14 +16,6 @@ from hk_equity_strategies import (
 from hk_equity_strategies.runtime_adapters import (
     describe_platform_runtime_requirements as describe_hk_platform_runtime_requirements,
 )
-from quant_us_combo_strategies import (
-    get_platform_runtime_adapter as get_combo_runtime_adapter,
-    get_runtime_enabled_profiles as get_combo_runtime_enabled_profiles,
-    get_strategy_catalog as get_combo_strategy_catalog,
-)
-from quant_us_combo_strategies.runtime_adapters import (
-    describe_platform_runtime_requirements as describe_combo_platform_runtime_requirements,
-)
 
 from quant_platform_kit.common.strategies import (
     PlatformCapabilityMatrix,
@@ -43,12 +35,11 @@ from quant_platform_kit.common.strategies import (
 
 IBKR_PLATFORM = "ibkr"
 HK_EQUITY_DOMAIN = "hk_equity"
-COMBOS_DOMAIN = "quant_combo"
 TECH_COMMUNICATION_PULLBACK_PROFILE = "tech_communication_pullback_enhancement"
 HK_DIVIDEND_GOLD_DEFENSIVE_ROTATION_PROFILE = "hk_dividend_gold_defensive_rotation"
 
 PLATFORM_SUPPORTED_DOMAINS: dict[str, frozenset[str]] = {
-    IBKR_PLATFORM: frozenset({US_EQUITY_DOMAIN, HK_EQUITY_DOMAIN, COMBOS_DOMAIN}),
+    IBKR_PLATFORM: frozenset({US_EQUITY_DOMAIN, HK_EQUITY_DOMAIN}),
 }
 
 
@@ -87,15 +78,10 @@ def _canonical_profile(profile: str | None) -> str:
     return STRATEGY_CATALOG.profile_aliases.get(normalized, normalized)
 
 
-COMBO_STRATEGY_PROFILES = frozenset(get_combo_strategy_catalog().definitions)
-
-
 def get_platform_runtime_adapter(profile: str | None, *, platform_id: str):
     canonical_profile = _canonical_profile(profile)
     if canonical_profile in HK_STRATEGY_PROFILES:
         return get_hk_platform_runtime_adapter(canonical_profile, platform_id=platform_id)
-    if canonical_profile in COMBO_STRATEGY_PROFILES:
-        return get_combo_runtime_adapter(canonical_profile, platform_id=platform_id)
     return get_us_platform_runtime_adapter(canonical_profile, platform_id=platform_id)
 
 
@@ -103,15 +89,12 @@ def describe_platform_runtime_requirements(profile: str | None, *, platform_id: 
     canonical_profile = _canonical_profile(profile)
     if canonical_profile in HK_STRATEGY_PROFILES:
         return describe_hk_platform_runtime_requirements(canonical_profile, platform_id=platform_id)
-    if canonical_profile in COMBO_STRATEGY_PROFILES:
-        return describe_combo_platform_runtime_requirements(canonical_profile, platform_id=platform_id)
     return describe_us_platform_runtime_requirements(canonical_profile, platform_id=platform_id)
 
 
 US_STRATEGY_CATALOG = get_us_strategy_catalog()
 HK_STRATEGY_CATALOG = get_hk_strategy_catalog()
-COMBO_STRATEGY_CATALOG = get_combo_strategy_catalog()
-STRATEGY_CATALOG = _merge_strategy_catalogs(US_STRATEGY_CATALOG, HK_STRATEGY_CATALOG, COMBO_STRATEGY_CATALOG)
+STRATEGY_CATALOG = _merge_strategy_catalogs(US_STRATEGY_CATALOG, HK_STRATEGY_CATALOG)
 US_STRATEGY_PROFILES = frozenset(US_STRATEGY_CATALOG.definitions)
 HK_STRATEGY_PROFILES = frozenset(HK_STRATEGY_CATALOG.definitions)
 IBKR_EXCLUDED_LIVE_PROFILES = frozenset(
@@ -121,7 +104,7 @@ IBKR_EXCLUDED_LIVE_PROFILES = frozenset(
     }
 )
 IBKR_ROLLOUT_ALLOWLIST = (
-    get_us_runtime_enabled_profiles() | get_hk_runtime_enabled_profiles() | get_combo_runtime_enabled_profiles()
+    get_us_runtime_enabled_profiles() | get_hk_runtime_enabled_profiles()
 ) - IBKR_EXCLUDED_LIVE_PROFILES
 PLATFORM_CAPABILITY_MATRIX = PlatformCapabilityMatrix(
     platform_id=IBKR_PLATFORM,

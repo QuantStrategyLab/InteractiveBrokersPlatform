@@ -309,7 +309,7 @@ def main() -> int:
             f"no successful Cloud Run request found for {', '.join(services)} in the last {lookback_minutes} minutes"
         )
 
-    if check_scheduler:
+    if check_scheduler and scheduler_pattern:
         log_filter = f'resource.type="cloud_scheduler_job" AND timestamp >= "{since_text}"'
         try:
             entries = _run_gcloud_logging(project, log_filter, limit)
@@ -326,6 +326,8 @@ def main() -> int:
                 details.extend(_summarize(entry) for entry in failures[:5])
         except RuntimeError as exc:
             issues.append(f"Cloud Scheduler log query failed: {exc}")
+    elif check_scheduler:
+        print("Skipping Cloud Scheduler check because no scheduler job pattern could be derived.", file=sys.stderr)
 
     if not issues:
         service_text = ", ".join(services) if services else "<none configured>"
