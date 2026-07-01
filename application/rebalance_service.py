@@ -343,6 +343,28 @@ def _strategy_dashboard_text(signal_metadata, *, translator) -> str:
         or metadata.get("dashboard")
         or ""
     )
+    cash_only_execution = bool(metadata.get("cash_only_execution", True))
+    if cash_only_execution:
+        dashboard_text = dashboard_text.replace("总资产（策略净值）", "总资产（策略标的+现金，不含融资额度）")
+        dashboard_text = dashboard_text.replace(
+            "Total assets (strategy net liquidation)",
+            "Total assets (strategy symbols + cash, ex-margin)",
+        )
+        dashboard_text = dashboard_text.replace("购买力", "可用现金")
+        dashboard_text = dashboard_text.replace("Buying power", "Available cash")
+    else:
+        dashboard_text = dashboard_text.replace("总资产（策略标的+现金，不含融资额度）", "总资产（策略净值）")
+        dashboard_text = dashboard_text.replace("总资产（策略标的+现金）", "总资产（策略净值）")
+        dashboard_text = dashboard_text.replace(
+            "Total assets (strategy symbols + cash, ex-margin)",
+            "Total assets (strategy net liquidation)",
+        )
+        dashboard_text = dashboard_text.replace(
+            "Total assets (strategy symbols + cash)",
+            "Total assets (strategy net liquidation)",
+        )
+        dashboard_text = dashboard_text.replace("可用现金", "购买力")
+        dashboard_text = dashboard_text.replace("Available cash", "Buying power")
     timing_lines = _build_timing_audit_lines(metadata, translator=translator)
     if not timing_lines:
         return dashboard_text

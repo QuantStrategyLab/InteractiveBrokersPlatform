@@ -1,6 +1,6 @@
 import json
 
-from application.rebalance_service import _resolve_reconciliation_mode, run_strategy_core
+from application.rebalance_service import _resolve_reconciliation_mode, _strategy_dashboard_text, run_strategy_core
 from application.runtime_dependencies import IBKRRebalanceConfig
 from notifications.renderers import (
     _build_notification_trade_lines,
@@ -233,8 +233,8 @@ def test_trade_notification_localizes_compact_signal_state_for_zh_and_en():
         translator=build_translator("en"),
     )
 
-    assert "🎯 入场信号" in zh_notification.compact_text
-    assert "🎯 Entry Signal" in en_notification.compact_text
+    assert "🎯 入场信号" not in zh_notification.compact_text
+    assert "🎯 Entry Signal" not in en_notification.compact_text
 
 
 def test_run_strategy_core_passes_signal_metadata_to_execution():
@@ -308,8 +308,9 @@ def test_run_strategy_core_passes_signal_metadata_to_execution():
     assert "📌 Strategy portfolio" in observed["messages"][0]
     assert "Total assets (strategy symbols + cash): $1,000.00" in observed["messages"][0]
     assert "💼 Strategy holdings" in observed["messages"][0]
-    assert "📏 breadth=60.0%" in observed["messages"][0]
-    assert "⏱ Timing: 2026-04-01 -> 2026-04-02 (next trading day)" in observed["messages"][0]
+    assert "📏 breadth=60.0%" not in observed["messages"][0]
+    assert "⏱ Timing:" not in observed["messages"][0]
+    assert "Signal snapshot:" not in observed["messages"][0]
     assert "Target Weights" not in observed["messages"][0]
 
 
@@ -423,9 +424,27 @@ def test_trade_notification_keeps_detailed_logs_out_of_compact_message():
     assert "execution_profile=tqqq_growth_income" in notification.detailed_text
     assert "execution_profile=tqqq_growth_income" not in notification.compact_text
     assert "📌 Strategy portfolio" in notification.compact_text
-    assert "⏱ Timing: 2026-04-01 -> 2026-04-02 (next trading day)" in notification.compact_text
+    assert "⏱ Timing:" not in notification.compact_text
     assert "no_order_plan_reason reason=min_notional:QQQ,TQQQ" in notification.compact_text
     assert notification.compact_text.index("🆔 Account: U1234567") < notification.compact_text.index("🧩 Plugin:")
+
+
+def test_strategy_dashboard_relabels_total_assets_when_margin_is_enabled():
+    dashboard = _strategy_dashboard_text(
+        {
+            "cash_only_execution": False,
+            "dashboard_text": (
+                "📌 策略账户概览\n"
+                "  - 总资产（策略标的+现金，不含融资额度）: $50,000.00\n"
+                "  - 可用现金: $75,000.00"
+            ),
+        },
+        translator=build_translator("zh"),
+    )
+
+    assert "总资产（策略净值）: $50,000.00" in dashboard
+    assert "购买力: $75,000.00" in dashboard
+    assert "不含融资额度" not in dashboard
 
 
 def test_trade_notification_includes_abnormal_order_batch():
