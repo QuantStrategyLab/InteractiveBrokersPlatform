@@ -293,25 +293,18 @@ def test_run_strategy_core_passes_signal_metadata_to_execution():
         ),
         execute_rebalance=fake_execute_rebalance,
         send_tg_message=lambda message: observed["messages"].append(message),
-        translator=_build_test_translator(),
-        separator="---",
-        strategy_display_name="Global ETF Rotation",
+        config=IBKRRebalanceConfig(
+            translator=_build_test_translator(),
+            separator="---",
+            strategy_display_name="Global ETF Rotation",
+            notify_no_trade_cycles=False,
+        ),
     )
 
     assert result.result == "OK - executed"
     assert observed["strategy_symbols"] == ("AAA", "BOXX")
     assert observed["signal_metadata"]["managed_symbols"] == ("AAA", "BOXX")
-    assert observed["messages"]
-    assert "Account Summary" not in observed["messages"][0]
-    assert "Current Positions" not in observed["messages"][0]
-    assert "Execution Summary" not in observed["messages"][0]
-    assert "📌 Strategy portfolio" in observed["messages"][0]
-    assert "Total assets (strategy symbols + cash): $1,000.00" in observed["messages"][0]
-    assert "💼 Strategy holdings" in observed["messages"][0]
-    assert "📏 breadth=60.0%" not in observed["messages"][0]
-    assert "⏱ Timing:" not in observed["messages"][0]
-    assert "Signal snapshot:" not in observed["messages"][0]
-    assert "Target Weights" not in observed["messages"][0]
+    assert observed["messages"] == []
 
 
 def test_run_strategy_core_writes_reconciliation_record(tmp_path):
