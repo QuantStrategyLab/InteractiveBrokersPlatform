@@ -21,6 +21,7 @@ class IBKRRebalanceConfig:
     execution_mode: str = "paper"
     strategy_profile: str = ""
     dry_run_only: bool = False
+    notify_no_trade_cycles: bool = True
     execution_dedup_enabled: bool = False
     execution_state_store: Any = None
     execution_state_account_scope: str = ""

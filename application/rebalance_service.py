@@ -65,15 +65,24 @@ def _localize_notification_text(text: str, *, translator) -> str:
     )
 
 
-def _should_suppress_noop_notification(signal_metadata: Mapping[str, object] | None, *, order_count: int = -1, has_error: bool = False) -> bool:
+def _should_suppress_noop_notification(
+    signal_metadata: Mapping[str, object] | None,
+    *,
+    order_count: int = -1,
+    has_error: bool = False,
+    notify_no_trade_cycles: bool = True,
+) -> bool:
     """Return True when we should skip sending a Telegram notification.
 
     Suppress when:
     - Outside execution window (monthly/weekly cadence)
+    - No orders placed, no errors, and no-trade cycle notifications are disabled
     - No orders placed, no errors, and signal is idle/waiting
     - Purely informational 'waiting for signal' runs
     """
     metadata = signal_metadata if isinstance(signal_metadata, Mapping) else {}
+    if order_count == 0 and not has_error and not notify_no_trade_cycles:
+        return True
     no_op_reason = str(metadata.get("no_op_reason") or "").strip()
     if no_op_reason.startswith(("outside_execution_window", "outside_monthly_execution_window")):
         return True
@@ -91,6 +100,29 @@ def _should_suppress_noop_notification(signal_metadata: Mapping[str, object] | N
         risk_flags = metadata.get("risk_flags") or ()
         if not actionable and not risk_flags:
             return True
+    return False
+
+
+def _execution_summary_has_order_activity(execution_summary: Mapping[str, object] | None) -> bool:
+    summary = execution_summary if isinstance(execution_summary, Mapping) else {}
+    return any(
+        bool(tuple(summary.get(key) or ()))
+        for key in (
+            "orders_submitted",
+            "orders_filled",
+            "orders_partially_filled",
+            "option_orders_submitted",
+            "option_orders_filled",
+            "option_orders_partially_filled",
+        )
+    )
+
+
+def _has_order_activity(*, trade_logs, execution_summary) -> bool:
+    if _execution_summary_has_order_activity(execution_summary):
+        return True
+    if execution_summary is None and tuple(trade_logs or ()):
+        return True
     return False
 
 
@@ -819,9 +851,12 @@ def run_strategy_core(
                 flush=True,
             )
             order_count = len(orders) if 'orders' in dir() and orders else 0
-            has_error = bool(no_op_reason or fail_reason)
+            has_error = bool(fail_reason)
             notification_suppressed = _should_suppress_noop_notification(
-                signal_metadata, order_count=order_count, has_error=has_error
+                signal_metadata,
+                order_count=order_count,
+                has_error=has_error,
+                notify_no_trade_cycles=getattr(config, "notify_no_trade_cycles", True),
             )
             if notification_suppressed:
                 print(
@@ -906,22 +941,36 @@ def run_strategy_core(
                 no_op_reason="execution_already_recorded",
             )
             record_path = write_reconciliation_record(record, output_path=config.reconciliation_output_path)
-            notification_publisher.publish(
-                notification_renderers.render_heartbeat_notification(
-                    dashboard=dashboard,
-                    strategy_dashboard=strategy_dashboard,
-                    no_op_text=config.translator("no_trades"),
-                    signal_desc=signal_desc,
-                    status_desc=status_desc,
-                    status_icon=signal_metadata.get("status_icon", "🐤"),
-                    translator=config.translator,
-                    separator=config.separator,
-                    strategy_display_name=config.strategy_display_name,
-                    extra_notification_lines=config.extra_notification_lines,
+            notification_suppressed = not getattr(config, "notify_no_trade_cycles", True)
+            if notification_suppressed:
+                print(
+                    "notification_suppressed "
+                    + json.dumps(
+                        {
+                            "reason": "execution_already_recorded",
+                            "strategy_profile": signal_metadata.get("strategy_profile"),
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
                 )
-            )
+            else:
+                notification_publisher.publish(
+                    notification_renderers.render_heartbeat_notification(
+                        dashboard=dashboard,
+                        strategy_dashboard=strategy_dashboard,
+                        no_op_text=config.translator("no_trades"),
+                        signal_desc=signal_desc,
+                        status_desc=status_desc,
+                        status_icon=signal_metadata.get("status_icon", "🐤"),
+                        translator=config.translator,
+                        separator=config.separator,
+                        strategy_display_name=config.strategy_display_name,
+                        extra_notification_lines=config.extra_notification_lines,
+                    )
+                )
             return StrategyCycleResult(
-                result="OK - heartbeat",
+                result="OK - no-op" if notification_suppressed else "OK - heartbeat",
                 signal_metadata=dict(signal_metadata or {}),
                 target_weights=dict(resolved_target_weights or {}),
                 execution_summary={"action_done": False, "no_op_reason": "execution_already_recorded"},
@@ -982,21 +1031,38 @@ def run_strategy_core(
             ),
             flush=True,
         )
-        notification_publisher.publish(
-            notification_renderers.render_trade_notification(
-                dashboard=dashboard,
-                strategy_dashboard=strategy_dashboard,
-                trade_logs=trade_logs,
-                execution_summary=execution_summary,
-                signal_desc=signal_desc,
-                status_desc=status_desc,
-                status_icon=signal_metadata.get("status_icon", "🐤"),
-                translator=config.translator,
-                separator=config.separator,
-                strategy_display_name=config.strategy_display_name,
-                extra_notification_lines=config.extra_notification_lines,
+        if _has_order_activity(trade_logs=trade_logs, execution_summary=execution_summary) or getattr(
+            config,
+            "notify_no_trade_cycles",
+            True,
+        ):
+            notification_publisher.publish(
+                notification_renderers.render_trade_notification(
+                    dashboard=dashboard,
+                    strategy_dashboard=strategy_dashboard,
+                    trade_logs=trade_logs,
+                    execution_summary=execution_summary,
+                    signal_desc=signal_desc,
+                    status_desc=status_desc,
+                    status_icon=signal_metadata.get("status_icon", "🐤"),
+                    translator=config.translator,
+                    separator=config.separator,
+                    strategy_display_name=config.strategy_display_name,
+                    extra_notification_lines=config.extra_notification_lines,
+                )
             )
-        )
+        else:
+            print(
+                "notification_suppressed "
+                + json.dumps(
+                    {
+                        "reason": "no_trade_or_error",
+                        "trade_logs_count": len(tuple(trade_logs or ())),
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
         return StrategyCycleResult(
             result="OK - executed",
             signal_metadata=dict(signal_metadata or {}),

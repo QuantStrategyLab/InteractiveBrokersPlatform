@@ -170,6 +170,7 @@ class IBKRRuntimeComposer:
             execution_mode=execution_mode,
             strategy_profile=self.strategy_profile,
             dry_run_only=self.dry_run_only,
+            notify_no_trade_cycles=False,
             execution_dedup_enabled=resolve_execution_dedup_enabled(
                 platform_env_prefix="IBKR",
                 env_reader=self.env_reader,
