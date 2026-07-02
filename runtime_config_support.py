@@ -18,7 +18,6 @@ from quant_platform_kit.common.runtime_config import (
     resolve_optional_dca_mode_env,
     resolve_optional_ibit_zscore_exit_mode_env,
     resolve_optional_positive_float_env,
-    resolve_optional_ratio_env,
     resolve_optional_symbol_env,
     resolve_split_env_list,
     resolve_strategy_runtime_path_settings,
@@ -430,12 +429,12 @@ def load_platform_runtime_settings(
             os.environ,
             platform_env_prefix="IBKR",
         ),
-        income_layer_enabled=resolve_optional_bool_env("INCOME_LAYER_ENABLED"),
+        income_layer_enabled=resolve_optional_bool_env_value("INCOME_LAYER_ENABLED"),
         income_layer_start_usd=resolve_optional_non_negative_float_env("INCOME_LAYER_START_USD"),
         income_layer_max_ratio=resolve_optional_ratio_env("INCOME_LAYER_MAX_RATIO"),
         dca_mode=resolve_optional_dca_mode_env("DCA_MODE"),
         dca_base_investment_usd=resolve_optional_positive_float_env("DCA_BASE_INVESTMENT_USD"),
-        ibit_zscore_exit_enabled=resolve_optional_bool_env("IBIT_ZSCORE_EXIT_ENABLED"),
+        ibit_zscore_exit_enabled=resolve_optional_bool_env_value("IBIT_ZSCORE_EXIT_ENABLED"),
         ibit_zscore_exit_mode=resolve_optional_ibit_zscore_exit_mode_env("IBIT_ZSCORE_EXIT_MODE"),
         ibit_zscore_exit_parking_symbol=resolve_optional_symbol_env("IBIT_ZSCORE_EXIT_PARKING_SYMBOL"),
         ibit_zscore_exit_risk_reduced_exposure=resolve_optional_ratio_env(
@@ -444,7 +443,7 @@ def load_platform_runtime_settings(
         ibit_zscore_exit_risk_off_exposure=resolve_optional_ratio_env(
             "IBIT_ZSCORE_EXIT_RISK_OFF_EXPOSURE"
         ),
-        ibit_zscore_exit_allow_outside_execution_window=resolve_optional_bool_env(
+        ibit_zscore_exit_allow_outside_execution_window=resolve_optional_bool_env_value(
             "IBIT_ZSCORE_EXIT_ALLOW_OUTSIDE_EXECUTION_WINDOW"
         ),
         market_signal_handoff_index_uri=first_non_empty(
@@ -621,9 +620,27 @@ def resolve_optional_non_negative_float_env(name: str) -> float | None:
     return resolve_non_negative_float_env(name, default=0.0)
 
 
+def resolve_optional_bool_env_value(name: str) -> bool | None:
+    raw_value = os.getenv(f"QSL_{name}") or os.getenv(name)
+    if raw_value is None or str(raw_value).strip() == "":
+        return None
+    return resolve_optional_bool_env(name)
+
+
+def resolve_optional_ratio_env(name: str, default: float | None = None) -> float | None:
+    raw_value = os.getenv(f"QSL_{name}") or os.getenv(name)
+    if raw_value is None or str(raw_value).strip() == "":
+        return default
+    value = float(raw_value)
+    if not math.isfinite(value):
+        raise ValueError(f"{name} must be finite, got {value}")
+    if not 0.0 <= value <= 1.0:
+        raise ValueError(f"{name} must be in [0,1], got {value}")
+    return value
+
+
 def resolve_runtime_target_enabled_env() -> bool:
-    value = resolve_optional_bool_env("RUNTIME_TARGET_ENABLED")
-    return True if value is None else value
+    return resolve_optional_bool_env("RUNTIME_TARGET_ENABLED", default=True)
 
 
 def resolve_account_group(raw_value: str | None) -> str:
@@ -709,6 +726,11 @@ def load_secret_payload(
     *,
     secret_client_factory: Callable[[], Any] | None = None,
 ) -> str:
+    if secret_client_factory is not None:
+        client = secret_client_factory()
+        name = f"projects/{project_id}/secrets/{secret_name}/versions/latest"
+        response = client.access_secret_version(request={"name": name})
+        return response.payload.data.decode("utf-8")
     return get_secret_store().get_secret(secret_name, project_id=project_id)
 
 

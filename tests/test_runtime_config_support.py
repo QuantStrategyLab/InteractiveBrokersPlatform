@@ -6,6 +6,14 @@ from pathlib import Path
 
 import pytest
 
+ROOT = Path(__file__).resolve().parents[1]
+QPK_SRC = ROOT.parent / "QuantPlatformKit" / "src"
+UES_SRC = ROOT.parent / "UsEquityStrategies" / "src"
+HES_SRC = ROOT.parent / "HkEquityStrategies" / "src"
+for candidate in (ROOT, QPK_SRC, UES_SRC, HES_SRC):
+    if candidate.exists() and str(candidate) not in sys.path:
+        sys.path.insert(0, str(candidate))
+
 from runtime_config_support import (
     DEFAULT_MARKET,
     DEFAULT_MARKET_CALENDAR,
@@ -59,9 +67,13 @@ SAMPLE_STRATEGY_PROFILE = "global_etf_rotation"
 EXPECTED_IBKR_ENABLED_PROFILES = frozenset(
     {
         "global_etf_rotation",
+        "ibit_smart_dca",
+        "nasdaq_sp500_smart_dca",
         "russell_top50_leader_rotation",
         "soxl_soxx_trend_income",
         "tqqq_growth_income",
+        "us_equity_combo",
+        "us_equity_combo_leveraged",
         "hk_global_etf_tactical_rotation",
         "hk_low_vol_dividend_quality_snapshot",
     }
@@ -106,7 +118,7 @@ def test_load_platform_runtime_settings_requires_strategy_profile(monkeypatch):
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
     monkeypatch.delenv("RUNTIME_TARGET_JSON", raising=False)
 
-    with pytest.raises(EnvironmentError, match="RUNTIME_TARGET_JSON is required"):
+    with pytest.raises(EnvironmentError, match="RUNTIME_TARGET_JSON"):
         load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
 
@@ -541,7 +553,7 @@ def test_load_platform_runtime_settings_reads_income_layer_overrides(monkeypatch
     assert settings.income_layer_max_ratio == 0.25
 
 
-def test_ibit_smart_dca_profile_is_rejected_on_ibkr(monkeypatch):
+def test_ibit_smart_dca_profile_is_loaded_on_ibkr(monkeypatch):
     monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json("ibit_smart_dca"))
     monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
@@ -552,8 +564,11 @@ def test_ibit_smart_dca_profile_is_rejected_on_ibkr(monkeypatch):
     monkeypatch.setenv("IBIT_ZSCORE_EXIT_RISK_OFF_EXPOSURE", "0.25")
     monkeypatch.setenv("IBIT_ZSCORE_EXIT_ALLOW_OUTSIDE_EXECUTION_WINDOW", "true")
 
-    with pytest.raises(ValueError, match="Unsupported STRATEGY_PROFILE='ibit_smart_dca'"):
-        load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
+    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
+
+    assert settings.strategy_profile == "ibit_smart_dca"
+    assert settings.ibit_zscore_exit_enabled is True
+    assert settings.ibit_zscore_exit_mode == "live"
 
 
 def test_load_platform_runtime_settings_rejects_invalid_income_layer_enabled(monkeypatch):
@@ -723,13 +738,14 @@ def test_load_platform_runtime_settings_accepts_tqqq_growth_income(monkeypatch):
     assert settings.strategy_target_mode == "value"
 
 
-def test_load_platform_runtime_settings_rejects_nasdaq_sp500_smart_dca(monkeypatch):
+def test_load_platform_runtime_settings_accepts_nasdaq_sp500_smart_dca(monkeypatch):
     monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json("nasdaq_sp500_smart_dca"))
     monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
 
-    with pytest.raises(ValueError, match="Unsupported STRATEGY_PROFILE='nasdaq_sp500_smart_dca'"):
-        load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
+    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
+
+    assert settings.strategy_profile == "nasdaq_sp500_smart_dca"
 
 
 def test_load_platform_runtime_settings_rejects_legacy_qqq_tech_alias(monkeypatch):
@@ -758,6 +774,7 @@ def test_platform_profile_status_matrix_matches_current_ibkr_rollout():
     assert by_profile["global_etf_rotation"] == {
         "canonical_profile": "global_etf_rotation",
         "display_name": "Global ETF Rotation",
+        "display_name_zh": "全球ETF轮动",
         "domain": "us_equity",
         "eligible": True,
         "enabled": True,
@@ -769,11 +786,12 @@ def test_platform_profile_status_matrix_matches_current_ibkr_rollout():
     assert by_profile["tqqq_growth_income"]["display_name"] == "TQQQ Growth Income"
     assert by_profile["tqqq_growth_income"]["eligible"] is True
     assert by_profile["tqqq_growth_income"]["enabled"] is True
-    assert "nasdaq_sp500_smart_dca" not in by_profile
-    assert "ibit_smart_dca" not in by_profile
+    assert "nasdaq_sp500_smart_dca" in by_profile
+    assert "ibit_smart_dca" in by_profile
     assert by_profile["hk_global_etf_tactical_rotation"] == {
         "canonical_profile": "hk_global_etf_tactical_rotation",
         "display_name": "HK Global ETF Tactical Rotation",
+        "display_name_zh": "港股ETF战术轮动",
         "domain": "hk_equity",
         "eligible": True,
         "enabled": True,
@@ -814,11 +832,11 @@ def test_print_strategy_profile_status_json_matches_registry():
     assert by_profile["global_etf_rotation"]["requires_snapshot_artifacts"] is True
     assert by_profile["global_etf_rotation"]["requires_snapshot_manifest_path"] is True
     assert by_profile["global_etf_rotation"]["requires_strategy_config_path"] is False
-    assert "nasdaq_sp500_smart_dca" not in by_profile
-    assert "ibit_smart_dca" not in by_profile
+    assert "nasdaq_sp500_smart_dca" in by_profile
+    assert "ibit_smart_dca" in by_profile
     assert "tech_communication_pullback_enhancement" not in by_profile
     assert by_profile["russell_top50_leader_rotation"]["profile_group"] == "snapshot_backed"
-    assert by_profile["russell_top50_leader_rotation"]["display_name_zh"] == "罗素 Top50 领涨轮动"
+    assert by_profile["russell_top50_leader_rotation"]["display_name_zh"] == "罗素Top50领涨"
     assert by_profile["russell_top50_leader_rotation"]["input_mode"] == "feature_snapshot"
     assert by_profile["russell_top50_leader_rotation"]["requires_snapshot_artifacts"] is True
     assert by_profile["russell_top50_leader_rotation"]["requires_strategy_config_path"] is False
@@ -849,7 +867,7 @@ def test_print_strategy_profile_status_table_contains_expected_headers():
     assert "global_etf_rotation" in result.stdout
     assert "hk_global_etf_tactical_rotation" in result.stdout
     assert "Russell Top50 Leader Rotation" in result.stdout
-    assert "罗素 Top50 领涨轮动" in result.stdout
+    assert "罗素Top50领涨" in result.stdout
     assert "Tech/Communication Pullback Enhancement" not in result.stdout
     assert "HK Global ETF Tactical Rotation" in result.stdout
     assert "TQQQ Growth Income" in result.stdout
