@@ -345,7 +345,26 @@ def _entry_text(entry: dict[str, Any]) -> str:
     return " ".join(chunks)
 
 
+def _request_path(entry: dict[str, Any]) -> str:
+    request_url = str((entry.get("httpRequest") or {}).get("requestUrl") or "").strip()
+    if not request_url:
+        return ""
+    return urllib.parse.urlparse(request_url).path
+
+
+def _is_ignorable_monitor_dispatch_capacity_warning(entry: dict[str, Any]) -> bool:
+    if not _env_bool("RUNTIME_GUARD_IGNORE_MONITOR_DISPATCH_CAPACITY_WARNINGS", True):
+        return False
+    return (
+        _status(entry) == 429
+        and _request_path(entry) == "/monitor-dispatch"
+        and "NO AVAILABLE INSTANCE" in _entry_text(entry).upper()
+    )
+
+
 def _is_failure(entry: dict[str, Any]) -> bool:
+    if _is_ignorable_monitor_dispatch_capacity_warning(entry):
+        return False
     severity = str(entry.get("severity") or "").upper()
     status = _status(entry)
     text = _entry_text(entry).upper()
