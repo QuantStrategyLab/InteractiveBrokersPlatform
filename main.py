@@ -633,7 +633,41 @@ def send_tg_message(message):
         telegram_chat_id=TG_CHAT_ID,
         webhook_url=_NOTIFICATION_WEBHOOK_URL,
     )
-    sender(message)
+    sender(_with_platform_notification_prefix(message))
+
+
+def _platform_notification_prefix() -> str:
+    runtime_target = getattr(RUNTIME_SETTINGS, "runtime_target", None)
+    account_selector = getattr(runtime_target, "account_selector", None) or ()
+    for selector in account_selector:
+        label = _normalize_account_prefix_label(selector)
+        if label:
+            return f"[{label}]"
+    raw_scope = (
+        getattr(runtime_target, "account_scope", None)
+        or ACCOUNT_GROUP
+    )
+    label = _normalize_account_prefix_label(raw_scope)
+    if not label:
+        return ""
+    return f"[{label}]"
+
+
+def _normalize_account_prefix_label(value: object) -> str:
+    label = str(value or "").strip().upper()
+    if not label or label in {"DEFAULT", "LIVE", "US"}:
+        return ""
+    if label.startswith("LIVE-U") and len(label) > len("LIVE-U"):
+        return label.removeprefix("LIVE-")
+    return label
+
+
+def _with_platform_notification_prefix(message: str) -> str:
+    prefix = _platform_notification_prefix()
+    text = str(message or "")
+    if not prefix or text.lstrip().startswith(prefix):
+        return text
+    return f"{prefix} {text}"
 
 
 def publish_notification(*, detailed_text, compact_text):
@@ -696,7 +730,7 @@ def _notify_runtime_error(exc: Exception, *, route_label: str | None = None) -> 
     message = _runtime_error_notification_message(exc, route_label=route_label)
     for token, chat_id in targets:
         send_telegram_message(
-            message,
+            _with_platform_notification_prefix(message),
             token=token,
             chat_id=chat_id,
             requests_module=requests,

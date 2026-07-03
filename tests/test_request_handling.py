@@ -1,3 +1,4 @@
+import json
 import types
 
 from application.cycle_result import StrategyCycleResult
@@ -27,6 +28,35 @@ def test_health_route_returns_ok(strategy_module):
 
     assert status == 200
     assert body == "OK"
+
+
+def test_platform_notification_prefix_stays_empty_for_default_account(strategy_module):
+    assert strategy_module._platform_notification_prefix() == ""
+    assert strategy_module._with_platform_notification_prefix("hello") == "hello"
+
+
+def test_platform_notification_prefix_uses_ibkr_account_scope(strategy_module_factory):
+    module = strategy_module_factory(
+        ACCOUNT_GROUP="live-u1234567",
+        IB_ACCOUNT_GROUP_CONFIG_JSON=(
+            '{"groups":{"live-u1234567":{"ib_gateway_instance_name":"127.0.0.1",'
+            '"ib_gateway_mode":"live","ib_client_id":1,"account_ids":["U1234567"]}}}'
+        ),
+        RUNTIME_TARGET_JSON=json.dumps(
+            {
+                "platform_id": "ibkr",
+                "strategy_profile": "global_etf_rotation",
+                "dry_run_only": False,
+                "execution_mode": "live",
+                "account_selector": ["U1234567"],
+                "account_scope": "live-u1234567",
+            },
+            separators=(",", ":"),
+        ),
+    )
+
+    assert module._platform_notification_prefix() == "[U1234567]"
+    assert module._with_platform_notification_prefix("hello") == "[U1234567] hello"
 
 
 def test_handle_request_get_returns_safe_message(strategy_module, monkeypatch):
@@ -755,3 +785,45 @@ def test_handle_request_runtime_error_fallback_uses_chinese_copy(strategy_module
     assert "IBKR 策略运行失败" in text
     assert "账户组:" in text
     assert "错误: RuntimeError: boom" in text
+
+
+def test_handle_request_runtime_error_fallback_prefixes_account_scope(strategy_module_factory, monkeypatch):
+    strategy_module = strategy_module_factory(
+        ACCOUNT_GROUP="live-u1234567",
+        IB_ACCOUNT_GROUP_CONFIG_JSON=(
+            '{"groups":{"live-u1234567":{"ib_gateway_instance_name":"127.0.0.1",'
+            '"ib_gateway_mode":"live","ib_client_id":1,"account_ids":["U1234567"]}}}'
+        ),
+        RUNTIME_TARGET_JSON=json.dumps(
+            {
+                "platform_id": "ibkr",
+                "strategy_profile": "global_etf_rotation",
+                "dry_run_only": False,
+                "execution_mode": "live",
+                "account_selector": ["U1234567"],
+                "account_scope": "live-u1234567",
+            },
+            separators=(",", ":"),
+        ),
+    )
+    sent_payloads = []
+
+    class FakeResponse:
+        status_code = 200
+        text = "ok"
+
+    def fake_post(_url, *, json, timeout):
+        sent_payloads.append((json, timeout))
+        return FakeResponse()
+
+    monkeypatch.setattr(strategy_module, "_handle_request", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(strategy_module, "TG_TOKEN", "token-1")
+    monkeypatch.setattr(strategy_module, "TG_CHAT_ID", "chat-1")
+    monkeypatch.setattr(strategy_module.requests, "post", fake_post)
+
+    with strategy_module.app.test_request_context("/run", method="POST"):
+        body, status = strategy_module.handle_request()
+
+    assert status == 500
+    assert body == "Error"
+    assert sent_payloads[0][0]["text"].startswith("[U1234567] IBKR strategy run failed")
