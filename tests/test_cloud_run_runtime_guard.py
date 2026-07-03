@@ -8,6 +8,18 @@ import subprocess
 from scripts import cloud_run_runtime_guard as guard
 
 
+def test_cloud_run_log_filter_includes_region_when_available():
+    log_filter = guard._cloud_run_log_filter(
+        "interactive-brokers-live-u1599-tqqq-service",
+        "2026-07-01T12:00:00Z",
+        "asia-east1",
+    )
+
+    assert 'resource.labels.service_name="interactive-brokers-live-u1599-tqqq-service"' in log_filter
+    assert 'resource.labels.location="asia-east1"' in log_filter
+    assert 'timestamp >= "2026-07-01T12:00:00Z"' in log_filter
+
+
 def test_scheduler_job_pattern_includes_service_alias():
     pattern = guard._scheduler_job_pattern_for_services(
         ["interactive-brokers-live-u1599-tqqq-service"]
