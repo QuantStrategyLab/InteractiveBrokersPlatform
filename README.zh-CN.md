@@ -40,8 +40,9 @@ InteractiveBrokersPlatform 是 QuantStrategyLab 的Interactive Brokers 多市场
 ## 快速开始
 
 ```bash
-python -m pip install -r requirements.txt
-python -m pytest -q
+uv sync --frozen --extra test --no-install-project
+uv run --no-sync ruff check --exclude external .
+uv run --no-sync python scripts/check_qpk_pin_consistency.py
 ```
 
 ## 延伸文档
