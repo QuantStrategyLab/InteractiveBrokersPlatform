@@ -13,7 +13,7 @@ grep -Fq 'workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}'
 grep -Fq 'service_account: ${{ env.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}' "$workflow_file"
 grep -Fq 'uses: actions/checkout@v6' "$workflow_file"
 grep -Fq 'uses: actions/setup-python@v6' "$workflow_file"
-grep -Fq 'python -m pip install -r requirements.txt' "$workflow_file"
+grep -Fq 'uv sync --frozen --no-dev --no-install-project' "$workflow_file"
 
 grep -Fq 'ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION: ${{ vars.ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION }}' "$workflow_file"
 grep -Fq 'target:' "$workflow_file"
@@ -69,6 +69,7 @@ grep -Fq 'STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN: ${{ secrets.STRATEGY_PLUGIN_
 
 grep -Fq 'Skipping Cloud Run automation because ENABLE_GITHUB_CLOUD_RUN_DEPLOY and ENABLE_GITHUB_ENV_SYNC are not true.' "$workflow_file"
 grep -Fq 'Skipping Cloud Run automation on push because ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION is not true.' "$workflow_file"
+grep -Fq 'uv run --no-sync python scripts/build_cloud_run_env_sync_plan.py --json' "$workflow_file"
 grep -Fq 'scripts/build_cloud_run_env_sync_plan.py --json' "$workflow_file"
 grep -Fq 'sync_plan_json<<__SYNC_PLAN_JSON__' "$workflow_file"
 grep -Fq 'SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}' "$workflow_file"

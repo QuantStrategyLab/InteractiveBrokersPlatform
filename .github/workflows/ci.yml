@@ -84,19 +84,12 @@ jobs:
       - name: Install dependencies
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip
-          # Install non-git deps via pyproject.toml (moved from requirements.txt)
-          grep -vE "^\s*(#|$)|git\+" requirements.txt | xargs -r python -m pip install -c https://raw.githubusercontent.com/QuantStrategyLab/QuantPlatformKit/main/constraints.txt
-          # Install git-based packages individually with --no-deps (editable installs below)
-          grep 'git+' requirements.txt | while IFS= read -r pkg; do
-            [ -n "$pkg" ] && python -m pip install --no-deps "$pkg"
-          done
-          python -m pip install pytest pytest-cov ruff
-
+          python -m pip install --upgrade pip uv
+          uv sync --frozen --extra test --no-install-project
       - name: Smoke import pinned shared packages
         run: |
           set -euo pipefail
-          python - <<'PY'
+          uv run --no-sync python - <<'PY'
           from quant_platform_kit.common.port_adapters import CallableNotificationPort, CallablePortfolioPort
           from hk_equity_strategies import resolve_canonical_profile as resolve_hk_canonical_profile
           from us_equity_strategies import resolve_canonical_profile
@@ -110,17 +103,17 @@ jobs:
       - name: Install editable shared repositories
         run: |
           set -euo pipefail
-          python -m pip install --no-deps -e external/QuantPlatformKit -e external/UsEquityStrategies -e external/UsEquitySnapshotPipelines
+          uv pip install --no-deps -e external/QuantPlatformKit -e external/UsEquityStrategies -e external/UsEquitySnapshotPipelines
 
       - name: Run ruff
         run: |
           set -euo pipefail
-          ruff check --exclude external .
+          uv run --no-sync ruff check --exclude external .
 
       - name: Check QPK pin consistency
-        run: python scripts/check_qpk_pin_consistency.py
+        run: uv run --no-sync python scripts/check_qpk_pin_consistency.py
 
       - name: Run unit tests
         run: |
           set -euo pipefail
-          PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q tests --ignore=tests/test_request_handling.py --ignore=tests/test_event_loop.py --ignore=tests/test_monitor_dispatcher.py --ignore=tests/test_notifications.py --ignore=tests/test_connect_timeout_alert.py || true
+          PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run --no-sync python -m pytest -q tests --ignore=tests/test_request_handling.py --ignore=tests/test_event_loop.py --ignore=tests/test_monitor_dispatcher.py --ignore=tests/test_notifications.py --ignore=tests/test_connect_timeout_alert.py || true
