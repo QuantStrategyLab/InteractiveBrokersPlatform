@@ -13,16 +13,15 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml uv.lock ./
+COPY . .
 RUN python -m pip install --upgrade pip uv \
-    && uv sync --frozen --no-dev --no-install-project \
+    && uv sync --frozen --no-dev \
     && apt-get purge -y git \
     && apt-get autoremove -y --purge \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 1000 appuser \
+    && chown -R appuser:appuser /app
 
-RUN useradd --create-home --uid 1000 appuser
-
-COPY --chown=appuser:appuser . .
 USER appuser
 
 CMD ["gunicorn", "--bind", ":8080", "--workers", "1", "--threads", "1", "--timeout", "300", "main:app"]

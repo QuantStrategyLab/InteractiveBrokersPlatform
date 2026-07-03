@@ -303,7 +303,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip uv
-          uv sync --frozen --no-dev --no-install-project
+          uv sync --frozen --no-dev
       - name: Resolve Cloud Run sync targets
         id: strategy_requirements
         if: steps.config.outputs.env_sync_enabled == 'true'

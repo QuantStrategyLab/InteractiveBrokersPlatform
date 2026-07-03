@@ -28,5 +28,5 @@ Thanks for contributing to `InteractiveBrokersPlatform`.
 Run the main verification command before opening a pull request:
 
 ```bash
-python3 -m pip install -r requirements.txt pytest && PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q
+uv sync --frozen --extra test && PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run --no-sync python -m pytest -q
 ```
