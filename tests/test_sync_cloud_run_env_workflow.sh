@@ -150,6 +150,7 @@ grep -Fq 'monitor_uri="${monitor_dispatch_base_url}/monitor-dispatch"' "$workflo
 grep -Fq -- '--schedule="*/5 * * * *"' "$workflow_file"
 grep -Fq 'legacy_candidates+=("${cloud_run_service%-service}-probe-scheduler")' "$workflow_file"
 grep -Fq 'legacy_candidates+=("${cloud_run_service%-service}-precheck-scheduler")' "$workflow_file"
+grep -Fq 'legacy_candidates+=("ibkr-${account_suffix}-backup-execution")' "$workflow_file"
 grep -Fq 'gcloud scheduler jobs delete "${legacy_job}"' "$workflow_file"
 
 grep -Fq '"CRISIS_ALERT_GOOGLE_VOICE_TO"' "$workflow_file"

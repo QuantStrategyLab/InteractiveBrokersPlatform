@@ -1159,6 +1159,11 @@ jobs:
             fi
             legacy_candidates+=("${cloud_run_service}-probe-scheduler")
             legacy_candidates+=("${cloud_run_service}-precheck-scheduler")
+            account_suffix="${cloud_run_service#interactive-brokers-quant-live-}"
+            account_suffix="${account_suffix%-service}"
+            if [[ "${account_suffix}" == u* ]]; then
+              legacy_candidates+=("ibkr-${account_suffix}-backup-execution")
+            fi
             for legacy_job in "${legacy_candidates[@]}"; do
               if gcloud scheduler jobs describe "${legacy_job}" \
                 --project="${GCP_PROJECT_ID}" \
