@@ -469,50 +469,95 @@ class LoadedStrategyRuntime:
             raise ValueError(f"Unsupported market_data strategy profile {self.profile!r}")
 
         trend_symbol = str(self.merged_runtime_config.get("market_data_trend_symbol") or "SPY").strip().upper()
+        raw_regime_symbols = self.merged_runtime_config.get("market_data_regime_symbols") or ("SPY", "QQQ", "SOXX")
+        if isinstance(raw_regime_symbols, str):
+            regime_symbols = tuple(
+                symbol.strip().upper()
+                for symbol in raw_regime_symbols.split(",")
+                if symbol.strip()
+            )
+        else:
+            regime_symbols = tuple(
+                str(symbol).strip().upper()
+                for symbol in raw_regime_symbols
+                if str(symbol).strip()
+            )
+        regime_symbols = tuple(dict.fromkeys((trend_symbol, *regime_symbols)))
         ma_window = int(
             self.merged_runtime_config.get(
                 "market_data_ma_window",
                 self.merged_runtime_config.get("sma_period", 200),
             )
         )
+        slope_window = int(self.merged_runtime_config.get("market_data_slope_window") or 20)
         if ma_window <= 0:
             raise ValueError("market_data_ma_window must be positive")
-        history = historical_close_loader(
-            ib,
-            trend_symbol,
-            duration=str(self.merged_runtime_config.get("market_data_history_duration") or "2 Y"),
-            bar_size=str(self.merged_runtime_config.get("market_data_history_bar_size") or "1 day"),
-        )
-        if isinstance(history, pd.DataFrame):
-            if "close" in history.columns:
-                close_values = history["close"]
-            else:
-                close_values = history.iloc[:, 0]
-        elif isinstance(history, pd.Series):
-            close_values = history
-        else:
-            close_values = [
-                item.get("close") if isinstance(item, Mapping) else getattr(item, "close", item)
-                for item in (history or ())
-            ]
-        close_series = pd.to_numeric(pd.Series(close_values), errors="coerce").dropna()
-        close_series = close_series[close_series > 0]
-        if len(close_series) < ma_window:
-            raise ValueError(
-                f"{self.profile} requires at least {ma_window} positive {trend_symbol} closes, "
-                f"got {len(close_series)}"
+        if slope_window <= 1:
+            raise ValueError("market_data_slope_window must be greater than 1")
+
+        def load_close_series(symbol: str) -> pd.Series:
+            history = historical_close_loader(
+                ib,
+                symbol,
+                duration=str(self.merged_runtime_config.get("market_data_history_duration") or "2 Y"),
+                bar_size=str(self.merged_runtime_config.get("market_data_history_bar_size") or "1 day"),
             )
-        trend_price = float(close_series.iloc[-1])
-        trend_ma = float(close_series.tail(ma_window).mean())
-        return {
-            _MARKET_DATA_INPUT: {
-                "spy_above_ma200": trend_price > trend_ma,
-                "trend_symbol": trend_symbol,
-                "trend_price": trend_price,
-                "trend_ma": trend_ma,
-                "trend_ma_window": ma_window,
+            if isinstance(history, pd.DataFrame):
+                if "close" in history.columns:
+                    close_values = history["close"]
+                else:
+                    close_values = history.iloc[:, 0]
+            elif isinstance(history, pd.Series):
+                close_values = history
+            else:
+                close_values = [
+                    item.get("close") if isinstance(item, Mapping) else getattr(item, "close", item)
+                    for item in (history or ())
+                ]
+            close_series = pd.to_numeric(pd.Series(close_values), errors="coerce").dropna()
+            close_series = close_series[close_series > 0]
+            if len(close_series) < ma_window:
+                raise ValueError(
+                    f"{self.profile} requires at least {ma_window} positive {symbol} closes, "
+                    f"got {len(close_series)}"
+                )
+            return close_series
+
+        market_data: dict[str, Any] = {
+            "trend_symbol": trend_symbol,
+            "trend_symbols": regime_symbols,
+            "trend_ma_window": ma_window,
+            "trend_slope_window": slope_window,
+            "regime_indicators": {},
+        }
+        for symbol in regime_symbols:
+            close_series = load_close_series(symbol)
+            price = float(close_series.iloc[-1])
+            ma_value = float(close_series.tail(ma_window).mean())
+            rolling_ma = close_series.rolling(slope_window).mean()
+            slope_positive = bool(len(rolling_ma.dropna()) >= 2 and rolling_ma.iloc[-1] > rolling_ma.iloc[-2])
+            key = symbol.lower()
+            market_data[f"{key}_above_ma200"] = price > ma_value
+            market_data[f"{key}_price"] = price
+            market_data[f"{key}_ma200"] = ma_value
+            market_data[f"{key}_ma20_slope_positive"] = slope_positive
+            market_data["regime_indicators"][key] = {
+                "price": price,
+                "ma200": ma_value,
+                "above_ma200": price > ma_value,
+                "ma20_slope_positive": slope_positive,
                 "history_observation_count": int(len(close_series)),
             }
+            if symbol == trend_symbol:
+                market_data.update(
+                    {
+                        "trend_price": price,
+                        "trend_ma": ma_value,
+                        "history_observation_count": int(len(close_series)),
+                    }
+                )
+        return {
+            _MARKET_DATA_INPUT: market_data,
         }
 
     def _build_strategy_context(

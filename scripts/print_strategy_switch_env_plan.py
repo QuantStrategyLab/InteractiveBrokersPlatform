@@ -267,9 +267,9 @@ def build_switch_plan(
     if artifact_paths.bundled_config_path is not None:
         hints["bundled_strategy_config_path"] = str(artifact_paths.bundled_config_path)
     if definition.profile == "us_equity_combo_leveraged":
-        hints["shadow_352045_strategy_config_path"] = (
+        hints["shadow_402040_strategy_config_path"] = (
             "package://us_equity_strategies/configs/"
-            "us_equity_combo_leveraged_shadow_352045.json"
+            "us_equity_combo_leveraged_shadow_402040.json"
         )
 
     return {

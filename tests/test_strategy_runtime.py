@@ -1,4 +1,14 @@
+import sys
+from pathlib import Path
 from types import SimpleNamespace
+
+ROOT = Path(__file__).resolve().parents[1]
+QPK_SRC = ROOT.parent / "QuantPlatformKit" / "src"
+UES_SRC = ROOT.parent / "UsEquityStrategies" / "src"
+HES_SRC = ROOT.parent / "HkEquityStrategies" / "src"
+for candidate in (ROOT, QPK_SRC, UES_SRC, HES_SRC):
+    if candidate.exists() and str(candidate) not in sys.path:
+        sys.path.insert(0, str(candidate))
 
 import strategy_runtime as strategy_runtime_module
 from quant_platform_kit.common.models import PortfolioSnapshot
@@ -409,7 +419,7 @@ def test_direct_market_data_strategy_builds_spy_ma200_context():
     )
 
     def fake_close_loader(_ib, symbol, **_kwargs):
-        if symbol == "SPY":
+        if symbol in {"SPY", "QQQ", "SOXX"}:
             return strategy_runtime_module.pd.Series([100.0] * 200 + [120.0])
         return strategy_runtime_module.pd.Series([10.0] * 201)
 
@@ -425,7 +435,13 @@ def test_direct_market_data_strategy_builds_spy_ma200_context():
 
     market_data = captured["market_data"]["market_data"]
     assert market_data["spy_above_ma200"] is True
+    assert market_data["qqq_above_ma200"] is True
+    assert market_data["soxx_above_ma200"] is True
+    assert market_data["spy_ma20_slope_positive"] is True
+    assert market_data["qqq_ma20_slope_positive"] is True
+    assert market_data["soxx_ma20_slope_positive"] is True
     assert market_data["trend_symbol"] == "SPY"
+    assert market_data["trend_symbols"] == ("SPY", "QQQ", "SOXX")
     assert market_data["trend_ma_window"] == 200
     assert captured["runtime_config"]["market_data_ma_window"] == 200
     assert result.metadata["managed_symbols"] == ("TQQQ", "SOXL", "BOXX")
