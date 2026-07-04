@@ -321,6 +321,117 @@ def test_load_strategy_runtime_uses_entrypoint_defaults_and_runtime_adapter(monk
     assert runtime.status_icon == "🧲"
 
 
+def test_load_strategy_runtime_loads_explicit_config_for_market_data_profile(monkeypatch):
+    class FakeEntrypoint:
+        manifest = StrategyManifest(
+            profile="us_equity_combo_leveraged",
+            domain="quant_combo",
+            display_name="US Equity Combo Leveraged",
+            description="test",
+            required_inputs=frozenset({"market_data"}),
+            default_config={"dynamic": True},
+        )
+
+        def evaluate(self, ctx):
+            return StrategyDecision()
+
+    monkeypatch.setattr(
+        strategy_runtime_module,
+        "load_strategy_definition",
+        lambda raw_profile: SimpleNamespace(profile="us_equity_combo_leveraged"),
+    )
+    monkeypatch.setattr(
+        strategy_runtime_module,
+        "load_strategy_entrypoint_for_profile",
+        lambda raw_profile: FakeEntrypoint(),
+    )
+    monkeypatch.setattr(
+        strategy_runtime_module,
+        "load_strategy_runtime_adapter_for_profile",
+        lambda raw_profile: StrategyRuntimeAdapter(
+            runtime_parameter_loader=lambda **_kwargs: {
+                "tqqq_weight": 0.35,
+                "soxl_weight": 0.20,
+                "boxx_weight": 0.45,
+                "hard_defense_risk_exposure": 0.0,
+            },
+        ),
+    )
+
+    runtime = strategy_runtime_module.load_strategy_runtime(
+        "us_equity_combo_leveraged",
+        runtime_settings=_build_runtime_settings(profile="us_equity_combo_leveraged"),
+        logger=lambda _message: None,
+    )
+
+    assert runtime.runtime_config["tqqq_weight"] == 0.35
+    assert runtime.runtime_config["hard_defense_risk_exposure"] == 0.0
+    assert runtime.merged_runtime_config["dynamic"] is True
+    assert runtime.merged_runtime_config["boxx_weight"] == 0.45
+
+
+def test_direct_market_data_strategy_builds_spy_ma200_context():
+    captured = {}
+
+    class FakeEntrypoint:
+        manifest = StrategyManifest(
+            profile="us_equity_combo_leveraged",
+            domain="quant_combo",
+            display_name="US Equity Combo Leveraged",
+            description="test",
+            required_inputs=frozenset({"market_data"}),
+            default_config={},
+        )
+
+        def evaluate(self, ctx):
+            captured["market_data"] = dict(ctx.market_data)
+            captured["runtime_config"] = dict(ctx.runtime_config)
+            return StrategyDecision(
+                positions=(
+                    PositionTarget(symbol="TQQQ", target_weight=0.35),
+                    PositionTarget(symbol="SOXL", target_weight=0.20),
+                    PositionTarget(symbol="BOXX", target_weight=0.45),
+                )
+            )
+
+    runtime = strategy_runtime_module.LoadedStrategyRuntime(
+        entrypoint=FakeEntrypoint(),
+        runtime_settings=_build_runtime_settings(profile="us_equity_combo_leveraged"),
+        runtime_adapter=StrategyRuntimeAdapter(
+            status_icon="🇺🇸",
+            available_inputs=frozenset({"market_data"}),
+            runtime_policy=StrategyRuntimePolicy(signal_effective_after_trading_days=0),
+        ),
+        runtime_config={"market_data_ma_window": 200},
+        merged_runtime_config={"market_data_ma_window": 200},
+        status_icon="🇺🇸",
+        logger=lambda _message: None,
+    )
+
+    def fake_close_loader(_ib, symbol, **_kwargs):
+        if symbol == "SPY":
+            return strategy_runtime_module.pd.Series([100.0] * 200 + [120.0])
+        return strategy_runtime_module.pd.Series([10.0] * 201)
+
+    result = runtime.evaluate(
+        ib=None,
+        current_holdings=set(),
+        historical_close_loader=fake_close_loader,
+        historical_candle_loader=None,
+        run_as_of=strategy_runtime_module.pd.Timestamp("2026-07-02"),
+        translator=lambda value, **_kwargs: value,
+        pacing_sec=0.0,
+    )
+
+    market_data = captured["market_data"]["market_data"]
+    assert market_data["spy_above_ma200"] is True
+    assert market_data["trend_symbol"] == "SPY"
+    assert market_data["trend_ma_window"] == 200
+    assert captured["runtime_config"]["market_data_ma_window"] == 200
+    assert result.metadata["managed_symbols"] == ("TQQQ", "SOXL", "BOXX")
+    assert result.metadata["safe_haven_symbol"] == "BOXX"
+
+
 def test_dca_overrides_apply_to_runtime_config():
     settings = _build_runtime_settings(
         profile="nasdaq_sp500_smart_dca",

@@ -47,6 +47,7 @@ _FEATURE_SNAPSHOT_INPUT = "feature_snapshot"
 DCA_PROFILES = frozenset({"nasdaq_sp500_smart_dca", "ibit_smart_dca"})
 IBIT_ZSCORE_EXIT_PROFILE = "ibit_smart_dca"
 _MARKET_HISTORY_INPUT = "market_history"
+_MARKET_DATA_INPUT = "market_data"
 _BENCHMARK_HISTORY_INPUT = "benchmark_history"
 _DERIVED_INDICATORS_INPUT = "derived_indicators"
 _PORTFOLIO_SNAPSHOT_INPUT = "portfolio_snapshot"
@@ -459,6 +460,61 @@ class LoadedStrategyRuntime:
             }
         }
 
+    def _build_direct_market_data_inputs(
+        self,
+        ib,
+        historical_close_loader: Callable[..., Any],
+    ) -> Mapping[str, Any]:
+        if self.profile != "us_equity_combo_leveraged":
+            raise ValueError(f"Unsupported market_data strategy profile {self.profile!r}")
+
+        trend_symbol = str(self.merged_runtime_config.get("market_data_trend_symbol") or "SPY").strip().upper()
+        ma_window = int(
+            self.merged_runtime_config.get(
+                "market_data_ma_window",
+                self.merged_runtime_config.get("sma_period", 200),
+            )
+        )
+        if ma_window <= 0:
+            raise ValueError("market_data_ma_window must be positive")
+        history = historical_close_loader(
+            ib,
+            trend_symbol,
+            duration=str(self.merged_runtime_config.get("market_data_history_duration") or "2 Y"),
+            bar_size=str(self.merged_runtime_config.get("market_data_history_bar_size") or "1 day"),
+        )
+        if isinstance(history, pd.DataFrame):
+            if "close" in history.columns:
+                close_values = history["close"]
+            else:
+                close_values = history.iloc[:, 0]
+        elif isinstance(history, pd.Series):
+            close_values = history
+        else:
+            close_values = [
+                item.get("close") if isinstance(item, Mapping) else getattr(item, "close", item)
+                for item in (history or ())
+            ]
+        close_series = pd.to_numeric(pd.Series(close_values), errors="coerce").dropna()
+        close_series = close_series[close_series > 0]
+        if len(close_series) < ma_window:
+            raise ValueError(
+                f"{self.profile} requires at least {ma_window} positive {trend_symbol} closes, "
+                f"got {len(close_series)}"
+            )
+        trend_price = float(close_series.iloc[-1])
+        trend_ma = float(close_series.tail(ma_window).mean())
+        return {
+            _MARKET_DATA_INPUT: {
+                "spy_above_ma200": trend_price > trend_ma,
+                "trend_symbol": trend_symbol,
+                "trend_price": trend_price,
+                "trend_ma": trend_ma,
+                "trend_ma_window": ma_window,
+                "history_observation_count": int(len(close_series)),
+            }
+        }
+
     def _build_strategy_context(
         self,
         *,
@@ -517,6 +573,16 @@ class LoadedStrategyRuntime:
                 pacing_sec=pacing_sec,
                 strategy_plugin_signals=strategy_plugin_signals,
             )
+        if _MARKET_DATA_INPUT in self.required_inputs:
+            return self._evaluate_direct_market_data_strategy(
+                ib=ib,
+                current_holdings=current_holdings,
+                historical_close_loader=historical_close_loader,
+                run_as_of=run_as_of,
+                translator=translator,
+                pacing_sec=pacing_sec,
+                strategy_plugin_signals=strategy_plugin_signals,
+            )
         if _MARKET_HISTORY_INPUT in self.required_inputs:
             return self._evaluate_market_data_strategy(
                 ib=ib,
@@ -546,6 +612,81 @@ class LoadedStrategyRuntime:
             f"Unsupported required_inputs for IBKR strategy profile {self.profile!r}: "
             f"{', '.join(sorted(self.required_inputs)) or '<none>'}"
         )
+
+    def _evaluate_direct_market_data_strategy(
+        self,
+        *,
+        ib,
+        current_holdings,
+        historical_close_loader: Callable[..., Any],
+        run_as_of: pd.Timestamp,
+        translator: Callable[[str], str],
+        pacing_sec: float,
+        strategy_plugin_signals=(),
+    ) -> StrategyEvaluationResult:
+        runtime_config = dict(self.runtime_config)
+        runtime_config.setdefault("translator", translator)
+        runtime_config.setdefault("pacing_sec", float(pacing_sec))
+        apply_runtime_policy_to_runtime_config(runtime_config, self.runtime_adapter)
+        portfolio_snapshot = self._fetch_portfolio_snapshot_for_context(
+            ib,
+            required=False,
+        )
+        portfolio_snapshot = self._project_portfolio_snapshot(
+            portfolio_snapshot,
+            self._configured_strategy_symbols(include_ranking_pool=True),
+        )
+        portfolio_snapshot = self._attach_strategy_plugin_metadata(portfolio_snapshot, strategy_plugin_signals)
+        option_chains = self._fetch_option_chains_for_runtime(ib, runtime_config, portfolio_snapshot)
+        if option_chains:
+            runtime_config["option_chains"] = option_chains
+        ctx = self._build_strategy_context(
+            runtime_adapter=self.runtime_adapter,
+            as_of=run_as_of,
+            market_inputs=self._build_direct_market_data_inputs(ib, historical_close_loader),
+            portfolio_snapshot=portfolio_snapshot,
+            runtime_config=runtime_config,
+            current_holdings=current_holdings,
+            ib=ib,
+        )
+        decision = self.entrypoint.evaluate(ctx)
+        managed_symbols = tuple(
+            dict.fromkeys(
+                str(position.symbol).strip().upper()
+                for position in decision.positions
+                if str(position.symbol or "").strip()
+            )
+        )
+        price_fallbacks = self._build_historical_close_map(
+            ib,
+            historical_close_loader,
+            self._build_price_fallback_symbol_list(
+                decision,
+                managed_symbols=managed_symbols,
+                current_holdings=current_holdings,
+            ),
+        )
+        metadata = {
+            "strategy_profile": self.profile,
+            "managed_symbols": managed_symbols,
+            "status_icon": self.status_icon,
+            "dry_run_only": self.runtime_settings.dry_run_only,
+            **build_execution_timing_metadata(
+                signal_date=run_as_of,
+                signal_effective_after_trading_days=(
+                    self.runtime_adapter.runtime_policy.signal_effective_after_trading_days
+                ),
+            ),
+        }
+        if portfolio_snapshot is not None:
+            metadata = self._enrich_portfolio_metadata(metadata, portfolio_snapshot)
+        if "BOXX" in managed_symbols:
+            metadata["safe_haven_symbol"] = "BOXX"
+        if price_fallbacks:
+            metadata["price_fallbacks"] = price_fallbacks
+            metadata["dry_run_price_fallbacks"] = price_fallbacks
+            metadata["price_fallback_source"] = "historical_close"
+        return StrategyEvaluationResult(decision=decision, metadata=metadata)
 
     def _evaluate_market_data_strategy(
         self,
@@ -942,7 +1083,10 @@ def load_strategy_runtime(
         logger=logger,
     )
     runtime_config: dict[str, Any] = {}
-    if _FEATURE_SNAPSHOT_INPUT in frozenset(entrypoint.manifest.required_inputs):
+    if (
+        _FEATURE_SNAPSHOT_INPUT in frozenset(entrypoint.manifest.required_inputs)
+        or runtime_settings.strategy_config_path
+    ):
         runtime_config = runtime.load_runtime_parameters()
     runtime_config.update(_build_runtime_overrides(runtime_settings))
 
