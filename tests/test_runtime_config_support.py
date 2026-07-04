@@ -948,7 +948,7 @@ def test_print_strategy_switch_env_plan_keeps_optional_config_for_leveraged_comb
     assert "IBKR_STRATEGY_CONFIG_PATH" in plan["optional_env"]
     assert "IBKR_STRATEGY_CONFIG_PATH" not in plan["remove_if_present"]
     assert "IBKR_FEATURE_SNAPSHOT_PATH" in plan["remove_if_present"]
-    assert plan["hints"]["shadow_352045_strategy_config_path"].startswith(
+    assert plan["hints"]["shadow_402040_strategy_config_path"].startswith(
         "package://us_equity_strategies/"
     )
 
