@@ -73,7 +73,6 @@ EXPECTED_IBKR_ENABLED_PROFILES = frozenset(
         "soxl_soxx_trend_income",
         "tqqq_growth_income",
         "us_equity_combo",
-        "us_equity_combo_core",
         "us_equity_combo_leveraged",
         "hk_global_etf_tactical_rotation",
         "hk_low_vol_dividend_quality_snapshot",
@@ -749,16 +748,13 @@ def test_load_platform_runtime_settings_accepts_nasdaq_sp500_smart_dca(monkeypat
     assert settings.strategy_profile == "nasdaq_sp500_smart_dca"
 
 
-def test_load_platform_runtime_settings_accepts_us_equity_combo_core(monkeypatch):
+def test_load_platform_runtime_settings_rejects_us_equity_combo_core_shadow(monkeypatch):
     monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json("us_equity_combo_core"))
     monkeypatch.setenv("ACCOUNT_GROUP", "paper")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
 
-    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
-
-    assert settings.strategy_profile == "us_equity_combo_core"
-    assert settings.strategy_display_name == "US Core Combo Shadow"
-    assert settings.strategy_target_mode == "weight"
+    with pytest.raises(ValueError, match="Unsupported STRATEGY_PROFILE"):
+        load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
 
 def test_load_platform_runtime_settings_rejects_legacy_qqq_tech_alias(monkeypatch):
@@ -801,9 +797,7 @@ def test_platform_profile_status_matrix_matches_current_ibkr_rollout():
     assert by_profile["tqqq_growth_income"]["enabled"] is True
     assert "nasdaq_sp500_smart_dca" in by_profile
     assert "ibit_smart_dca" in by_profile
-    assert by_profile["us_equity_combo_core"]["display_name"] == "US Core Combo Shadow"
-    assert by_profile["us_equity_combo_core"]["eligible"] is True
-    assert by_profile["us_equity_combo_core"]["enabled"] is True
+    assert "us_equity_combo_core" not in by_profile
     assert by_profile["hk_global_etf_tactical_rotation"] == {
         "canonical_profile": "hk_global_etf_tactical_rotation",
         "display_name": "HK Global ETF Tactical Rotation",
@@ -850,9 +844,9 @@ def test_print_strategy_profile_status_json_matches_registry():
     assert by_profile["global_etf_rotation"]["requires_strategy_config_path"] is False
     assert "nasdaq_sp500_smart_dca" in by_profile
     assert "ibit_smart_dca" in by_profile
-    assert by_profile["us_equity_combo_core"]["profile_group"] == "direct_runtime_inputs"
-    assert by_profile["us_equity_combo_core"]["input_mode"] == "current_holdings+russell_snapshot"
-    assert by_profile["us_equity_combo_core"]["requires_strategy_config_path"] is False
+    assert by_profile["us_equity_combo"]["profile_group"] == "direct_runtime_inputs"
+    assert by_profile["us_equity_combo"]["input_mode"] == "current_holdings+russell_snapshot"
+    assert by_profile["us_equity_combo"]["requires_strategy_config_path"] is False
     assert by_profile["us_equity_combo_leveraged"]["profile_group"] == "direct_runtime_inputs"
     assert by_profile["us_equity_combo_leveraged"]["input_mode"] == "market_data"
     assert by_profile["us_equity_combo_leveraged"]["requires_strategy_config_path"] is False
