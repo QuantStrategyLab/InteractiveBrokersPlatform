@@ -245,10 +245,16 @@ def build_switch_plan(
             [
                 "IBKR_FEATURE_SNAPSHOT_PATH",
                 "IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH",
-                "IBKR_STRATEGY_CONFIG_PATH",
                 "IBKR_RECONCILIATION_OUTPUT_PATH",
             ]
         )
+        if config_source_policy == "env_only":
+            optional_env.append("IBKR_STRATEGY_CONFIG_PATH")
+            notes.append(
+                "IBKR_STRATEGY_CONFIG_PATH is optional for this profile; set it only for an explicit shadow/runtime config."
+            )
+        else:
+            remove_if_present.append("IBKR_STRATEGY_CONFIG_PATH")
 
     hints: dict[str, str] = {}
     if requires_feature_snapshot:
@@ -260,6 +266,11 @@ def build_switch_plan(
         hints["feature_snapshot_manifest_filename"] = manifest_filename
     if artifact_paths.bundled_config_path is not None:
         hints["bundled_strategy_config_path"] = str(artifact_paths.bundled_config_path)
+    if definition.profile == "us_equity_combo_leveraged":
+        hints["shadow_352045_strategy_config_path"] = (
+            "package://us_equity_strategies/configs/"
+            "us_equity_combo_leveraged_shadow_352045.json"
+        )
 
     return {
         "platform": IBKR_PLATFORM,
