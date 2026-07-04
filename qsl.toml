@@ -5,9 +5,9 @@ ring = 3
 allow_legacy = false
 
 [qsl.requires]
-quant_platform_kit = "7032cde4547e7ec59af15df8935d142461a77051"
-us_equity_strategies = "9f0e5e2deca8a9c16d711eb4772f08a7901da101"
-hk_equity_strategies = "00dd0e5b62a6fa65bd9262e15c083468e8b8c191"
+quant_platform_kit = "37c81901160c5b31127a27dba1c63944933fb6bf"
+us_equity_strategies = "17ddb86c72d44b2c7b78ba7a10d8f71b21180166"
+hk_equity_strategies = "b6a8ac2ad3c8110b5ea74fb059c8206388d63bcd"
 
 [qsl.compat]
-bundle = "2026.07.1"
+bundle = "2026.07.2"

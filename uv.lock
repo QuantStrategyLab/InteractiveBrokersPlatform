@@ -704,7 +704,7 @@ wheels = [
 [[package]]
 name = "hk-equity-strategies"
 version = "0.4.7"
-source = { git = "https://github.com/QuantStrategyLab/HkEquityStrategies.git?rev=61993bf261aeccf64b5a75428b9405f4e1d1d682#61993bf261aeccf64b5a75428b9405f4e1d1d682" }
+source = { git = "https://github.com/QuantStrategyLab/HkEquityStrategies.git?rev=b6a8ac2ad3c8110b5ea74fb059c8206388d63bcd#b6a8ac2ad3c8110b5ea74fb059c8206388d63bcd" }
 dependencies = [
     { name = "pandas" },
     { name = "quant-platform-kit" },
@@ -780,7 +780,7 @@ requires-dist = [
     { name = "google-cloud-secret-manager" },
     { name = "google-cloud-storage" },
     { name = "gunicorn" },
-    { name = "hk-equity-strategies", git = "https://github.com/QuantStrategyLab/HkEquityStrategies.git?rev=61993bf261aeccf64b5a75428b9405f4e1d1d682" },
+    { name = "hk-equity-strategies", git = "https://github.com/QuantStrategyLab/HkEquityStrategies.git?rev=b6a8ac2ad3c8110b5ea74fb059c8206388d63bcd" },
     { name = "ib-insync" },
     { name = "numpy" },
     { name = "pandas" },
@@ -788,10 +788,10 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'test'" },
     { name = "pytest-cov", marker = "extra == 'test'" },
     { name = "pytz" },
-    { name = "quant-platform-kit", git = "https://github.com/QuantStrategyLab/QuantPlatformKit.git?rev=0063af3b4a974650ea58a7d3f26dd1b94f65d3e8" },
+    { name = "quant-platform-kit", git = "https://github.com/QuantStrategyLab/QuantPlatformKit.git?rev=37c81901160c5b31127a27dba1c63944933fb6bf" },
     { name = "requests" },
     { name = "ruff", marker = "extra == 'test'" },
-    { name = "us-equity-strategies", git = "https://github.com/QuantStrategyLab/UsEquityStrategies.git?rev=1643f37d723c4d0fdc475ce1030b3d911c07aacb" },
+    { name = "us-equity-strategies", git = "https://github.com/QuantStrategyLab/UsEquityStrategies.git?rev=17ddb86c72d44b2c7b78ba7a10d8f71b21180166" },
     { name = "yfinance" },
 ]
 provides-extras = ["test"]
@@ -1324,7 +1324,7 @@ wheels = [
 [[package]]
 name = "quant-platform-kit"
 version = "0.10.0"
-source = { git = "https://github.com/QuantStrategyLab/QuantPlatformKit.git?rev=0063af3b4a974650ea58a7d3f26dd1b94f65d3e8#0063af3b4a974650ea58a7d3f26dd1b94f65d3e8" }
+source = { git = "https://github.com/QuantStrategyLab/QuantPlatformKit.git?rev=37c81901160c5b31127a27dba1c63944933fb6bf#37c81901160c5b31127a27dba1c63944933fb6bf" }
 
 [[package]]
 name = "requests"
@@ -1490,7 +1490,7 @@ wheels = [
 [[package]]
 name = "us-equity-strategies"
 version = "0.7.60"
-source = { git = "https://github.com/QuantStrategyLab/UsEquityStrategies.git?rev=1643f37d723c4d0fdc475ce1030b3d911c07aacb#1643f37d723c4d0fdc475ce1030b3d911c07aacb" }
+source = { git = "https://github.com/QuantStrategyLab/UsEquityStrategies.git?rev=17ddb86c72d44b2c7b78ba7a10d8f71b21180166#17ddb86c72d44b2c7b78ba7a10d8f71b21180166" }
 dependencies = [
     { name = "pandas" },
     { name = "pytz" },
