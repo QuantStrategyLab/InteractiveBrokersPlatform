@@ -1,5 +1,14 @@
 # InteractiveBrokersPlatform
 
+
+## QSL 架构角色
+
+- **层级**：`执行平台`。
+- **职责**：Interactive Brokers 多市场执行运行时。
+- **事实源/归属**：IBKR 连接、paper/live 控制、账户/runtime 集成。
+- **消费对象**：UsEquityStrategies、HkEquityStrategies、snapshot artifacts、QuantPlatformKit、QuantRuntimeSettings。
+- **禁止事项**：承载策略研究逻辑或绕过 dry-run checks。
+
 [English README](README.md)
 
 > 投资有风险。本项目不构成投资建议，仅用于学习、研究和工程审阅。
