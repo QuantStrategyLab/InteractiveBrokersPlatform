@@ -1183,3 +1183,41 @@ def test_value_target_runtime_builds_tqqq_inputs(monkeypatch):
     assert close_loader_symbols == [("TQQQ", "10 D", "1 day"), ("BOXX", "10 D", "1 day")]
     assert result.metadata["price_fallback_source"] == "historical_close"
     assert result.metadata["price_fallbacks"] == {"TQQQ": 70.0, "BOXX": 105.0}
+
+
+def test_enrich_portfolio_metadata_includes_unrealized_pnl():
+    from datetime import datetime, timezone
+
+    from quant_platform_kit.common.models import Position
+
+    class FakeEntrypoint:
+        manifest = StrategyManifest(
+            profile="tech_communication_pullback_enhancement",
+            domain="us_equity",
+            display_name="Tech Pullback",
+            description="test",
+            required_inputs=frozenset(),
+        )
+
+        def evaluate(self, ctx):
+            return StrategyDecision(positions=())
+
+    runtime = strategy_runtime_module.LoadedStrategyRuntime(
+        entrypoint=FakeEntrypoint(),
+        runtime_adapter=StrategyRuntimeAdapter(),
+        runtime_settings=_build_runtime_settings(),
+    )
+    snapshot = PortfolioSnapshot(
+        as_of=datetime.now(timezone.utc),
+        total_equity=10_000.0,
+        positions=(
+            Position(symbol="SPY", quantity=10.0, market_value=4_500.0, average_cost=500.0),
+        ),
+        metadata={"consecutive_losses": 2},
+    )
+
+    enriched = runtime._enrich_portfolio_metadata({}, snapshot)
+
+    assert enriched["unrealized_pnl_pct"] == -0.05
+    assert enriched["consecutive_losses"] == 2
+    assert enriched["portfolio_total_equity"] == 10_000.0
