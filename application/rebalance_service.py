@@ -24,6 +24,7 @@ from quant_platform_kit.common.notification_localization import (
     localize_notification_text as _base_localize_notification_text,
     translator_uses_zh as _base_translator_uses_zh,
 )
+from quant_platform_kit.strategy_lifecycle.performance_monitor import try_record_platform_execution
 from quant_platform_kit.common.port_adapters import CallableNotificationPort, CallablePortfolioPort
 
 
@@ -35,6 +36,31 @@ _EXTRA_ZH_REASON_REPLACEMENTS = (
     ("decision=", "决策="),
 )
 _DETAIL_FIELD_SPLIT_RE = re.compile(r"\s+(?=[^\s=:：]+[=:：])")
+
+
+def _record_platform_execution_telemetry(
+    signal_metadata: Mapping[str, object] | None,
+    execution_summary: Mapping[str, object] | None,
+) -> None:
+    metadata = signal_metadata if isinstance(signal_metadata, Mapping) else {}
+    profile = str(metadata.get("strategy_profile") or "").strip()
+    if not profile:
+        return
+    summary = dict(execution_summary or {})
+    try_record_platform_execution(
+        profile,
+        {
+            "platform": "ibkr",
+            "mode": summary.get("mode"),
+            "execution_status": summary.get("execution_status"),
+            "no_op_reason": summary.get("no_op_reason") or metadata.get("no_op_reason"),
+            "orders_submitted": list(summary.get("orders_submitted") or ()),
+            "orders_filled": list(summary.get("orders_filled") or ()),
+            "orders_skipped": list(summary.get("orders_skipped") or ()),
+            "trade_date": summary.get("trade_date") or metadata.get("trade_date"),
+        },
+        domain=str(metadata.get("domain") or ""),
+    )
 
 
 def _format_text(value, *, fallback: str) -> str:
@@ -885,6 +911,7 @@ def run_strategy_core(
                         extra_notification_lines=config.extra_notification_lines,
                     )
                 )
+            _record_platform_execution_telemetry(signal_metadata, {})
             return StrategyCycleResult(
                 result="OK - no-op" if notification_suppressed else "OK - heartbeat",
                 signal_metadata=dict(signal_metadata or {}),
@@ -969,6 +996,10 @@ def run_strategy_core(
                         extra_notification_lines=config.extra_notification_lines,
                     )
                 )
+            _record_platform_execution_telemetry(
+                signal_metadata,
+                {"action_done": False, "no_op_reason": "execution_already_recorded"},
+            )
             return StrategyCycleResult(
                 result="OK - no-op" if notification_suppressed else "OK - heartbeat",
                 signal_metadata=dict(signal_metadata or {}),
@@ -1063,6 +1094,7 @@ def run_strategy_core(
                 ),
                 flush=True,
             )
+        _record_platform_execution_telemetry(signal_metadata, dict(execution_summary or {}))
         return StrategyCycleResult(
             result="OK - executed",
             signal_metadata=dict(signal_metadata or {}),
