@@ -444,6 +444,9 @@ class LoadedStrategyRuntime:
             for position in getattr(portfolio_snapshot, "positions", ()) or ()
             if str(getattr(position, "symbol", "") or "").strip()
         }
+        from quant_platform_kit.risk.portfolio_diagnostics import extract_portfolio_risk_diagnostics
+
+        enriched.update(extract_portfolio_risk_diagnostics(portfolio_snapshot))
         return enriched
 
     def _build_market_history_inputs(
