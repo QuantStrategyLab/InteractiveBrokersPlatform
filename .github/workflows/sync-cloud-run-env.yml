@@ -169,8 +169,6 @@ jobs:
       STRATEGY_PLUGIN_ALERT_TELEGRAM_BODY_MAX_CHARS: ${{ vars.STRATEGY_PLUGIN_ALERT_TELEGRAM_BODY_MAX_CHARS }}
       # Strategy-owned defaults continue to come from UsEquityStrategies; this workflow only syncs platform/runtime inputs.
       EXECUTION_REPORT_GCS_URI: ${{ vars.EXECUTION_REPORT_GCS_URI }}
-      IB_GATEWAY_ZONE: ${{ vars.IB_GATEWAY_ZONE }}
-      IB_GATEWAY_IP_MODE: ${{ vars.IB_GATEWAY_IP_MODE }}
       GLOBAL_TELEGRAM_CHAT_ID: ${{ vars.GLOBAL_TELEGRAM_CHAT_ID }}
       NOTIFY_LANG: ${{ vars.NOTIFY_LANG }}
       TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
