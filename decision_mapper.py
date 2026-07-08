@@ -141,6 +141,11 @@ def map_strategy_decision(
         platform_id=IBKR_PLATFORM,
     ).profile
     diagnostics = dict(decision.diagnostics)
+    # Platform-computed risk inputs for QPK apply_risk_gate / stop-loss checks.
+    if runtime_metadata.get("unrealized_pnl_pct") is not None:
+        diagnostics["unrealized_pnl_pct"] = float(runtime_metadata["unrealized_pnl_pct"])
+    if runtime_metadata.get("consecutive_losses") is not None:
+        diagnostics["consecutive_losses"] = int(runtime_metadata["consecutive_losses"])
     risk_flags = tuple(str(flag) for flag in decision.risk_flags)
     no_execute = bool(_NO_EXECUTE_FLAGS & set(risk_flags))
     total_equity_value = runtime_metadata.get("portfolio_total_equity")
