@@ -5,7 +5,7 @@ ring = 3
 allow_legacy = false
 
 [qsl.requires]
-quant_platform_kit = "53b2ca73a5a50257b5d1a3c769b75c40924e4ba6"
+quant_platform_kit = "f6d5c2c64d2b0dcd2e16a8bb2093e737a281d305"
 us_equity_strategies = "17ddb86c72d44b2c7b78ba7a10d8f71b21180166"
 hk_equity_strategies = "b6a8ac2ad3c8110b5ea74fb059c8206388d63bcd"
 
