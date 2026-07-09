@@ -185,6 +185,46 @@ class LoadedStrategyRuntime:
             return portfolio_snapshot
         return attach_strategy_plugin_metadata(portfolio_snapshot, tuple(strategy_plugin_signals or ()))
 
+    def _with_consecutive_loss_metadata(self, portfolio_snapshot: Any | None) -> Any | None:
+        """Stamp trailing consecutive_losses onto portfolio metadata before evaluate."""
+        if portfolio_snapshot is None:
+            return None
+        metadata = dict(getattr(portfolio_snapshot, "metadata", None) or {})
+        if metadata.get("consecutive_losses") is not None:
+            return portfolio_snapshot
+        try:
+            from quant_platform_kit.strategy_lifecycle.live_equity import resolve_consecutive_losses
+            from quant_platform_kit.strategy_lifecycle.performance_monitor import infer_strategy_domain
+
+            streak = resolve_consecutive_losses(
+                domain=infer_strategy_domain(self.profile),
+                strategy_profile=self.profile,
+            )
+        except Exception as exc:
+            self.logger(
+                "strategy_consecutive_losses_resolve_failed | "
+                f"profile={self.profile} error_type={type(exc).__name__} error={exc}"
+            )
+            return portfolio_snapshot
+        if streak is None:
+            return portfolio_snapshot
+        metadata["consecutive_losses"] = int(streak)
+        return replace(portfolio_snapshot, metadata=metadata)
+
+    def _prepare_portfolio_snapshot(
+        self,
+        portfolio_snapshot: Any | None,
+        strategy_symbols=(),
+        strategy_plugin_signals=(),
+        *,
+        project: bool = True,
+    ) -> Any | None:
+        snapshot = portfolio_snapshot
+        if project:
+            snapshot = self._project_portfolio_snapshot(snapshot, strategy_symbols)
+        snapshot = self._attach_strategy_plugin_metadata(snapshot, strategy_plugin_signals)
+        return self._with_consecutive_loss_metadata(snapshot)
+
     @staticmethod
     def _normalize_symbols(symbols) -> tuple[str, ...]:
         normalized = []
@@ -680,11 +720,11 @@ class LoadedStrategyRuntime:
             ib,
             required=False,
         )
-        portfolio_snapshot = self._project_portfolio_snapshot(
+        portfolio_snapshot = self._prepare_portfolio_snapshot(
             portfolio_snapshot,
             self._configured_strategy_symbols(include_ranking_pool=True),
+            strategy_plugin_signals,
         )
-        portfolio_snapshot = self._attach_strategy_plugin_metadata(portfolio_snapshot, strategy_plugin_signals)
         option_chains = self._fetch_option_chains_for_runtime(ib, runtime_config, portfolio_snapshot)
         if option_chains:
             runtime_config["option_chains"] = option_chains
@@ -760,11 +800,11 @@ class LoadedStrategyRuntime:
             ib,
             required=requires_portfolio,
         )
-        portfolio_snapshot = self._project_portfolio_snapshot(
+        portfolio_snapshot = self._prepare_portfolio_snapshot(
             portfolio_snapshot,
             self._configured_strategy_symbols(include_ranking_pool=True),
+            strategy_plugin_signals,
         )
-        portfolio_snapshot = self._attach_strategy_plugin_metadata(portfolio_snapshot, strategy_plugin_signals)
         option_chains = self._fetch_option_chains_for_runtime(ib, runtime_config, portfolio_snapshot)
         if option_chains:
             runtime_config["option_chains"] = option_chains
@@ -835,8 +875,11 @@ class LoadedStrategyRuntime:
         apply_runtime_policy_to_runtime_config(runtime_config, self.runtime_adapter)
         managed_symbols = self._configured_strategy_symbols()
         portfolio_snapshot = self._fetch_portfolio_snapshot_for_context(ib, required=True)
-        portfolio_snapshot = self._project_portfolio_snapshot(portfolio_snapshot, managed_symbols)
-        portfolio_snapshot = self._attach_strategy_plugin_metadata(portfolio_snapshot, strategy_plugin_signals)
+        portfolio_snapshot = self._prepare_portfolio_snapshot(
+            portfolio_snapshot,
+            managed_symbols,
+            strategy_plugin_signals,
+        )
         option_chains = self._fetch_option_chains_for_runtime(ib, runtime_config, portfolio_snapshot)
         if option_chains:
             runtime_config["option_chains"] = option_chains
@@ -965,7 +1008,11 @@ class LoadedStrategyRuntime:
                 ib,
                 required=requires_portfolio,
             )
-            portfolio_snapshot = self._attach_strategy_plugin_metadata(portfolio_snapshot, strategy_plugin_signals)
+            portfolio_snapshot = self._prepare_portfolio_snapshot(
+                portfolio_snapshot,
+                strategy_plugin_signals=strategy_plugin_signals,
+                project=False,
+            )
             if portfolio_snapshot is not None:
                 portfolio_snapshot_holder["portfolio_snapshot"] = portfolio_snapshot
             option_chains = self._fetch_option_chains_for_runtime(ib, runtime_config, portfolio_snapshot)

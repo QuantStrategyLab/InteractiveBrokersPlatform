@@ -1221,3 +1221,85 @@ def test_enrich_portfolio_metadata_includes_unrealized_pnl():
     assert enriched["unrealized_pnl_pct"] == -0.05
     assert enriched["consecutive_losses"] == 2
     assert enriched["portfolio_total_equity"] == 10_000.0
+
+
+def test_with_consecutive_loss_metadata_stamps_from_resolver(monkeypatch):
+    from datetime import datetime, timezone
+
+    class FakeEntrypoint:
+        manifest = StrategyManifest(
+            profile="global_etf_rotation",
+            domain="us_equity",
+            display_name="Global ETF",
+            description="test",
+            required_inputs=frozenset(),
+        )
+
+        def evaluate(self, ctx):
+            return StrategyDecision(positions=())
+
+    runtime = strategy_runtime_module.LoadedStrategyRuntime(
+        entrypoint=FakeEntrypoint(),
+        runtime_adapter=StrategyRuntimeAdapter(),
+        runtime_settings=_build_runtime_settings("global_etf_rotation"),
+        logger=lambda _msg: None,
+    )
+    monkeypatch.setattr(
+        "quant_platform_kit.strategy_lifecycle.live_equity.resolve_consecutive_losses",
+        lambda **_kwargs: 4,
+    )
+    snapshot = PortfolioSnapshot(
+        as_of=datetime.now(timezone.utc),
+        total_equity=10_000.0,
+        positions=(),
+        metadata={},
+    )
+
+    stamped = runtime._with_consecutive_loss_metadata(snapshot)
+
+    assert stamped is not snapshot
+    assert stamped.metadata["consecutive_losses"] == 4
+
+
+def test_with_consecutive_loss_metadata_preserves_explicit_value(monkeypatch):
+    from datetime import datetime, timezone
+
+    class FakeEntrypoint:
+        manifest = StrategyManifest(
+            profile="global_etf_rotation",
+            domain="us_equity",
+            display_name="Global ETF",
+            description="test",
+            required_inputs=frozenset(),
+        )
+
+        def evaluate(self, ctx):
+            return StrategyDecision(positions=())
+
+    runtime = strategy_runtime_module.LoadedStrategyRuntime(
+        entrypoint=FakeEntrypoint(),
+        runtime_adapter=StrategyRuntimeAdapter(),
+        runtime_settings=_build_runtime_settings("global_etf_rotation"),
+        logger=lambda _msg: None,
+    )
+    called = {"count": 0}
+
+    def _boom(**_kwargs):
+        called["count"] += 1
+        raise AssertionError("should not resolve when already set")
+
+    monkeypatch.setattr(
+        "quant_platform_kit.strategy_lifecycle.live_equity.resolve_consecutive_losses",
+        _boom,
+    )
+    snapshot = PortfolioSnapshot(
+        as_of=datetime.now(timezone.utc),
+        total_equity=10_000.0,
+        positions=(),
+        metadata={"consecutive_losses": 1},
+    )
+
+    stamped = runtime._with_consecutive_loss_metadata(snapshot)
+
+    assert stamped is snapshot
+    assert called["count"] == 0

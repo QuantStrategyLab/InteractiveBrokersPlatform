@@ -58,7 +58,13 @@ def _record_platform_execution_telemetry(
             "orders_filled": list(summary.get("orders_filled") or ()),
             "orders_skipped": list(summary.get("orders_skipped") or ()),
             "trade_date": summary.get("trade_date") or metadata.get("trade_date"),
-            "total_equity": summary.get("equity") or metadata.get("equity"),
+            "total_equity": (
+                summary.get("equity")
+                or summary.get("total_equity")
+                or metadata.get("equity")
+                or metadata.get("portfolio_total_equity")
+                or metadata.get("total_equity")
+            ),
         },
         domain=str(metadata.get("domain") or ""),
     )
