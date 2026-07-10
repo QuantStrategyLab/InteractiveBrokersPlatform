@@ -82,7 +82,9 @@ def test_check_order_submitted_warns_submitted_order_is_not_fill_confirmation():
     report = SimpleNamespace(broker_order_id="123", status="Submitted")
     ok, message = check_order_submitted(report, translator=build_translator("zh"))
     assert ok is True
-    assert "尚未确认成交" in message
+    assert "状态: Submitted" in message
+    assert "仍可能被拒单或取消" in message
+    assert "尚未确认券商接受或成交" in message
     assert "自动取消" in message
 
 
