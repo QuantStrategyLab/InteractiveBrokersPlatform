@@ -1,7 +1,7 @@
 [qsl]
 repo = "InteractiveBrokersPlatform"
-tier = "runtime-platform"
-ring = 3
+tier = "runtime"
+upgrade_ring = "ring_d"
 allow_legacy = false
 
 [qsl.requires]
@@ -10,4 +10,4 @@ us_equity_strategies = "17ddb86c72d44b2c7b78ba7a10d8f71b21180166"
 hk_equity_strategies = "b6a8ac2ad3c8110b5ea74fb059c8206388d63bcd"
 
 [qsl.compat]
-bundle = "2026.07.2"
+bundle = "2026.07.3"
