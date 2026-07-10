@@ -470,6 +470,68 @@ def test_execute_rebalance_caps_buy_budget_by_reserved_cash_after_sell(tmp_path,
     assert buy_notional <= max_investable + 1.0
 
 
+def test_execute_rebalance_live_cash_only_reuses_projected_sell_proceeds_when_cash_snapshot_is_stale(
+    tmp_path, monkeypatch
+):
+    class FakeIB:
+        def openTrades(self):
+            return []
+
+        def fills(self):
+            return []
+
+        def accountValues(self):
+            return [SimpleNamespace(tag="CashBalance", currency="USD", value="112.38")]
+
+    prices = {"SOXL": 192.50, "SOXX": 582.25}
+    submitted = []
+    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+
+    def fake_submit_order_intent(_ib, intent):
+        submitted.append(intent)
+        return SimpleNamespace(broker_order_id=f"order-{len(submitted)}", status="Submitted")
+
+    _trade_logs, summary = execute_rebalance(
+        FakeIB(),
+        {},
+        {
+            "SOXL": {"quantity": 3},
+            "SOXX": {"quantity": 2},
+        },
+        {"equity": 1920.36, "buying_power": 112.38},
+        fetch_quote_snapshots=lambda _ib, symbols: {
+            symbol: SimpleNamespace(last_price=prices[symbol]) for symbol in symbols
+        },
+        submit_order_intent=fake_submit_order_intent,
+        order_intent_cls=OrderIntent,
+        translator=build_translator("zh"),
+        strategy_symbols=["SOXL", "SOXX"],
+        strategy_profile="soxl_soxx_trend_income",
+        signal_metadata=_signal_metadata(
+            {"SOXL": 0.0, "SOXX": 0.90},
+            risk_symbols=("SOXL", "SOXX"),
+            trade_date="2026-07-09",
+        ),
+        dry_run_only=False,
+        cash_reserve_ratio=0.03,
+        rebalance_threshold_ratio=0.01,
+        limit_buy_premium=1.005,
+        quantity_step=1.0,
+        sell_settle_delay_sec=0,
+        execution_lock_dir=tmp_path,
+        return_summary=True,
+    )
+
+    assert [(intent.symbol, intent.side, intent.quantity) for intent in submitted] == [
+        ("SOXL", "sell", 3),
+        ("SOXX", "buy", 1),
+    ]
+    assert summary["orders_submitted"][0]["symbol"] == "SOXL"
+    assert summary["orders_submitted"][1]["symbol"] == "SOXX"
+    assert summary["projected_sell_release_value"] == 577.5
+    assert summary["orders_skipped"] == []
+
+
 def test_execute_rebalance_projects_unbuyable_weight_target_to_zero(tmp_path, monkeypatch):
     class FakeIB:
         def openTrades(self):
