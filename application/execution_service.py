@@ -1239,6 +1239,62 @@ def _should_top_up_existing_whole_share_buy(symbol, *, target_gap_value, limit_p
     )
 
 
+def _planned_buy_order_quantity(
+    symbol,
+    *,
+    buy_value,
+    limit_price,
+    quantity_step,
+    investable_buying_power,
+    held_quantity=0.0,
+) -> tuple[float, bool]:
+    effective_limit_price = max(0.0, float(limit_price or 0.0))
+    qty = (
+        _floor_order_quantity(float(buy_value or 0.0) / effective_limit_price, quantity_step=quantity_step)
+        if effective_limit_price > 0.0
+        else 0.0
+    )
+    forced_whole_share = False
+    if (
+        qty <= 0
+        and effective_limit_price > 0.0
+        and float(investable_buying_power or 0.0) >= effective_limit_price
+        and (
+            _should_top_up_existing_whole_share_buy(
+                symbol,
+                target_gap_value=buy_value,
+                limit_price=effective_limit_price,
+                quantity=held_quantity,
+            )
+            or _should_bootstrap_whole_share_buy(
+                symbol,
+                target_value=buy_value,
+                limit_price=effective_limit_price,
+            )
+        )
+    ):
+        qty = _floor_order_quantity(1.0, quantity_step=quantity_step)
+        forced_whole_share = qty > 0
+    return qty, forced_whole_share
+
+
+def _projected_sell_release_value_for_report(report, *, fallback_price=0.0, fallback_quantity=0.0) -> float:
+    status = str(getattr(report, "status", "") or "")
+    if status not in {"Filled", "PartiallyFilled", "Partial"}:
+        return 0.0
+    filled_quantity = float(getattr(report, "filled_quantity", 0.0) or 0.0)
+    if status == "Filled" and filled_quantity <= 0.0:
+        filled_quantity = float(getattr(report, "quantity", 0.0) or fallback_quantity or 0.0)
+    if filled_quantity <= 0.0:
+        return 0.0
+    fill_price = float(getattr(report, "average_fill_price", 0.0) or 0.0)
+    if fill_price <= 0.0:
+        fill_price = max(0.0, float(fallback_price or 0.0))
+    if fill_price <= 0.0:
+        return 0.0
+    return filled_quantity * fill_price
+
+
 def _format_symbol_with_suffix(symbol, *, suffix=".US") -> str:
     normalized = str(symbol or "").strip().upper()
     if not normalized:
@@ -1793,10 +1849,13 @@ def execute_rebalance(
             min_notional_symbols.append(symbol)
             continue
         limit_price = _limit_buy_price(symbol, price, limit_buy_premium, limit_buy_premium_by_symbol)
-        qty = (
-            _floor_order_quantity(buy_value / limit_price, quantity_step=order_quantity_step)
-            if limit_price > 0
-            else 0
+        qty, _forced_whole_share = _planned_buy_order_quantity(
+            symbol,
+            buy_value=buy_value,
+            limit_price=limit_price,
+            quantity_step=order_quantity_step,
+            investable_buying_power=investable_anticipated_buying_power,
+            held_quantity=max(0.0, float(positions.get(symbol, {}).get("quantity", 0.0) or 0.0)),
         )
         if qty > 0:
             has_buy_plan = True
@@ -1995,7 +2054,11 @@ def execute_rebalance(
         trade_logs.append(translator("market_sell", symbol=symbol, qty=format_quantity(qty)) + f" {status_msg}")
         if ok:
             sell_executed = True
-            projected_sell_release_value += float(qty) * float(price)
+            projected_sell_release_value += _projected_sell_release_value_for_report(
+                report,
+                fallback_price=price,
+                fallback_quantity=qty,
+            )
 
     if dry_run_only:
         buying_power = max(0.0, anticipated_buying_power + dry_run_sale_proceeds)
@@ -2087,38 +2150,26 @@ def execute_rebalance(
                 continue
 
             limit_price = _limit_buy_price(symbol, price, limit_buy_premium, limit_buy_premium_by_symbol)
-            qty = _floor_order_quantity(
-                buy_value / limit_price,
-                quantity_step=order_quantity_step,
-            )
             held_quantity = max(0.0, float(positions.get(symbol, {}).get("quantity", 0.0) or 0.0))
+            qty, forced_whole_share = _planned_buy_order_quantity(
+                symbol,
+                buy_value=buy_value,
+                limit_price=limit_price,
+                quantity_step=order_quantity_step,
+                investable_buying_power=investable_buying_power,
+                held_quantity=held_quantity,
+            )
             if (
-                qty <= 0
-                and limit_price > 0.0
-                and investable_buying_power >= limit_price
-                and (
-                    _should_top_up_existing_whole_share_buy(
-                        symbol,
-                        target_gap_value=buy_value,
-                        limit_price=limit_price,
-                        quantity=held_quantity,
-                    )
-                    or _should_bootstrap_whole_share_buy(
-                        symbol,
-                        target_value=buy_value,
-                        limit_price=limit_price,
+                forced_whole_share
+                and symbol not in execution_summary["small_account_whole_share_bootstrap_symbols"]
+            ):
+                execution_summary["small_account_whole_share_bootstrap_symbols"].append(symbol)
+                trade_logs.extend(
+                    _format_small_account_whole_share_bootstrap_notes(
+                        (symbol,),
+                        translator=translator,
                     )
                 )
-            ):
-                qty = _floor_order_quantity(1.0, quantity_step=order_quantity_step)
-                if qty > 0 and symbol not in execution_summary["small_account_whole_share_bootstrap_symbols"]:
-                    execution_summary["small_account_whole_share_bootstrap_symbols"].append(symbol)
-                    trade_logs.extend(
-                        _format_small_account_whole_share_bootstrap_notes(
-                            (symbol,),
-                            translator=translator,
-                        )
-                    )
             if qty <= 0:
                 execution_summary["orders_skipped"].append({"symbol": symbol, "side": "buy", "reason": "quantity_zero"})
                 continue
