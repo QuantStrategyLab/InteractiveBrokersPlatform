@@ -509,6 +509,9 @@ def _build_scheduler_plan(
     ):
         for key in SCHEDULER_TIME_ENV:
             fields = scheduler[key].split()
+            if len(fields) == 2:
+                scheduler[key] = " ".join([*fields, "*", "*", "1-5"])
+                fields = scheduler[key].split()
             if len(fields) != 5 or fields[2:] != ["*", "*", "1-5"]:
                 raise ValueError(
                     f"US live account scheduler {key} must be Mon-Fri cron: {scheduler[key]!r}"

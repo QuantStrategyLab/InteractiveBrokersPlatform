@@ -1192,6 +1192,14 @@ def test_build_cloud_run_env_sync_plan_keeps_four_live_account_targets_weekday_o
             "probe_time": "35 9,15 * * 1-5",
             "precheck_time": "45 9 * * 1-5",
         }
+        if account == "U1000001":
+            runtime_target["scheduler"].update(
+                {
+                    "main_time": "45 15",
+                    "probe_time": "35 9,15",
+                    "precheck_time": "45 9",
+                }
+            )
         targets.append(
             {
                 "service": service_name,
