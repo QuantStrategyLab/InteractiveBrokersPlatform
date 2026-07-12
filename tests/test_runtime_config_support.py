@@ -1306,11 +1306,22 @@ def test_build_cloud_run_env_sync_plan_rejects_weekend_schedule_and_force_run_fo
 
     runtime_target["scheduler"] = {
         "timezone": "America/New_York",
-        "main_time": "45 15 * * 1-5",
-        "probe_time": "35 9,15 * * 1-5",
-        "precheck_time": "45 9 * * 1-5",
+        "main_time": "45 15 * * 1,3,5",
+        "probe_time": "35 9,15 * * MON-FRI",
+        "precheck_time": "45 9 * * 2-5",
     }
     payload["targets"][0]["runtime_target"] = runtime_target
+    env["CLOUD_RUN_SERVICE_TARGETS_JSON"] = json.dumps(payload)
+    result = subprocess.run(
+        [sys.executable, str(SYNC_PLAN_SCRIPT_PATH), "--json"],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["targets"][0]["scheduler"] == runtime_target["scheduler"]
+
     payload["targets"][0]["IBKR_FORCE_RUN"] = "true"
     env["CLOUD_RUN_SERVICE_TARGETS_JSON"] = json.dumps(payload)
     result = subprocess.run(

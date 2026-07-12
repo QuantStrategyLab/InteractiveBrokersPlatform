@@ -136,6 +136,50 @@ SCHEDULER_TIME_ENV = {
     "probe_time": "CLOUD_SCHEDULER_PROBE_TIME",
     "precheck_time": "CLOUD_SCHEDULER_PRECHECK_TIME",
 }
+WEEKDAY_CRON_DAYS = frozenset({1, 2, 3, 4, 5})
+CRON_DAY_NAMES = {
+    "SUN": 0,
+    "MON": 1,
+    "TUE": 2,
+    "WED": 3,
+    "THU": 4,
+    "FRI": 5,
+    "SAT": 6,
+}
+
+
+def _cron_day_value(raw: str) -> int:
+    value = raw.strip().upper()
+    if value in CRON_DAY_NAMES:
+        return CRON_DAY_NAMES[value]
+    numeric = int(value)
+    if not 0 <= numeric <= 7:
+        raise ValueError(f"Invalid cron day-of-week value: {raw!r}")
+    return numeric % 7
+
+
+def _cron_days_of_week(raw: str) -> set[int]:
+    days: set[int] = set()
+    for item in raw.split(","):
+        base, separator, raw_step = item.strip().partition("/")
+        step = int(raw_step) if separator else 1
+        if step <= 0:
+            raise ValueError(f"Invalid cron day-of-week step: {item!r}")
+        if base == "*":
+            values = list(range(7))
+        elif "-" in base:
+            raw_start, raw_end = base.split("-", 1)
+            start = _cron_day_value(raw_start)
+            end = _cron_day_value(raw_end)
+            values = [start]
+            while values[-1] != end:
+                values.append((values[-1] + 1) % 7)
+                if len(values) > 7:
+                    raise ValueError(f"Invalid cron day-of-week range: {item!r}")
+        else:
+            values = [_cron_day_value(base)]
+        days.update(values[::step])
+    return days
 
 # Strategy-derived vars: auto-populated from platform-config.json defaults.
 def _derive_strategy_env_defaults(strategy_config: dict) -> dict[str, str]:
@@ -512,7 +556,11 @@ def _build_scheduler_plan(
             if len(fields) == 2:
                 scheduler[key] = " ".join([*fields, "*", "*", "1-5"])
                 fields = scheduler[key].split()
-            if len(fields) != 5 or fields[2:] != ["*", "*", "1-5"]:
+            try:
+                scheduled_days = _cron_days_of_week(fields[4]) if len(fields) == 5 else set()
+            except (TypeError, ValueError):
+                scheduled_days = set()
+            if len(fields) != 5 or fields[2] != "*" or not scheduled_days or not scheduled_days <= WEEKDAY_CRON_DAYS:
                 raise ValueError(
                     f"US live account scheduler {key} must be Mon-Fri cron: {scheduler[key]!r}"
                 )
