@@ -635,6 +635,7 @@ def test_handle_request_post_returns_market_closed_when_schedule_empty(strategy_
         raise AssertionError("Closed market should not execute strategy")
 
     monkeypatch.setattr(strategy_module, "is_market_open_now", lambda **_kwargs: False)
+    monkeypatch.delenv("IBKR_FORCE_RUN", raising=False)
     monkeypatch.setattr(strategy_module, "run_strategy_core", fail_if_called)
     monkeypatch.setattr(
         strategy_module,

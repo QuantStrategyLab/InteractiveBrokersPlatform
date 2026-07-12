@@ -61,6 +61,7 @@ SHARED_TARGET_FALLBACK_ENV = frozenset(
         "NOTIFY_LANG",
         "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME",
         "IBKR_EXECUTION_BACKEND",
+        "IBKR_FORCE_RUN",
         "IBKR_MARKET",
         "IBKR_MARKET_CALENDAR",
         "IBKR_MARKET_CURRENCY",
@@ -98,6 +99,7 @@ PLATFORM_GENERIC_ENV = (
     "IBKR_RECONCILIATION_OUTPUT_PATH",
     "IBKR_DRY_RUN_ONLY",
     "IBKR_PAPER_LIQUIDATE_ONLY",
+    "IBKR_FORCE_RUN",
     "IBKR_MIN_RESERVED_CASH_USD",
     "IBKR_RESERVED_CASH_RATIO",
     "IBKR_CASH_ONLY_EXECUTION",
@@ -125,15 +127,59 @@ PLATFORM_GENERIC_ENV = (
     "EXECUTION_REPORT_GCS_URI",
 )
 SCHEDULER_TIME_DEFAULTS = {
-    "main_time": "45 15",
-    "probe_time": "35 9,15",
-    "precheck_time": "45 9",
+    "main_time": "45 15 * * 1-5",
+    "probe_time": "35 9,15 * * 1-5",
+    "precheck_time": "45 9 * * 1-5",
 }
 SCHEDULER_TIME_ENV = {
     "main_time": "CLOUD_SCHEDULER_MAIN_TIME",
     "probe_time": "CLOUD_SCHEDULER_PROBE_TIME",
     "precheck_time": "CLOUD_SCHEDULER_PRECHECK_TIME",
 }
+WEEKDAY_CRON_DAYS = frozenset({1, 2, 3, 4, 5})
+CRON_DAY_NAMES = {
+    "SUN": 0,
+    "MON": 1,
+    "TUE": 2,
+    "WED": 3,
+    "THU": 4,
+    "FRI": 5,
+    "SAT": 6,
+}
+
+
+def _cron_day_value(raw: str) -> int:
+    value = raw.strip().upper()
+    if value in CRON_DAY_NAMES:
+        return CRON_DAY_NAMES[value]
+    numeric = int(value)
+    if not 0 <= numeric <= 7:
+        raise ValueError(f"Invalid cron day-of-week value: {raw!r}")
+    return numeric % 7
+
+
+def _cron_days_of_week(raw: str) -> set[int]:
+    days: set[int] = set()
+    for item in raw.split(","):
+        base, separator, raw_step = item.strip().partition("/")
+        step = int(raw_step) if separator else 1
+        if step <= 0:
+            raise ValueError(f"Invalid cron day-of-week step: {item!r}")
+        if base == "*":
+            values = list(range(7))
+        elif "-" in base:
+            raw_start, raw_end = base.split("-", 1)
+            start = _cron_day_value(raw_start)
+            end = _cron_day_value(raw_end)
+            values = [start]
+            while values[-1] != end:
+                values.append((values[-1] + 1) % 7)
+                if len(values) > 7:
+                    raise ValueError(f"Invalid cron day-of-week range: {item!r}")
+        else:
+            values = [_cron_day_value(base)]
+        days.update(values[::step])
+    return days
 
 # Strategy-derived vars: auto-populated from platform-config.json defaults.
 def _derive_strategy_env_defaults(strategy_config: dict) -> dict[str, str]:
@@ -450,6 +496,12 @@ def _build_target_plan(
             + "\n".join(f"  - {item}" for item in missing)
         )
 
+    if (
+        str(runtime_target.get("execution_mode") or "").strip().lower() == "live"
+        and str(env_values.get("IBKR_FORCE_RUN") or "").strip().lower() == "true"
+    ):
+        raise ValueError("IBKR_FORCE_RUN=true is not allowed for live Cloud Run targets")
+
     return {
         "service_name": service_name,
         "strategy_profile": canonical_profile,
@@ -494,6 +546,24 @@ def _build_scheduler_plan(
             allow_shared_fallback=True,
         )
         scheduler[key] = str(runtime_scheduler.get(key) or configured_value or SCHEDULER_TIME_DEFAULTS[key])
+    if (
+        market == "US"
+        and str(runtime_target.get("execution_mode") or "").strip().lower() == "live"
+        and runtime_target.get("account_selector")
+    ):
+        for key in SCHEDULER_TIME_ENV:
+            fields = scheduler[key].split()
+            if len(fields) == 2:
+                scheduler[key] = " ".join([*fields, "*", "*", "1-5"])
+                fields = scheduler[key].split()
+            try:
+                scheduled_days = _cron_days_of_week(fields[4]) if len(fields) == 5 else set()
+            except (TypeError, ValueError):
+                scheduled_days = set()
+            if len(fields) != 5 or fields[2] != "*" or not scheduled_days or not scheduled_days <= WEEKDAY_CRON_DAYS:
+                raise ValueError(
+                    f"US live account scheduler {key} must be Mon-Fri cron: {scheduler[key]!r}"
+                )
     return scheduler
 
 
