@@ -1091,9 +1091,9 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
                     ),
                     "scheduler": {
                         "timezone": "America/New_York",
-                        "main_time": "45 15 1-7 * *",
-                        "probe_time": "35 9,15 1-7 * *",
-                        "precheck_time": "45 9 1-7 * *",
+                        "main_time": "45 15 * * 1-5",
+                        "probe_time": "35 9,15 * * 1-5",
+                        "precheck_time": "45 9 * * 1-5",
                     },
                 },
                 "ibkr_feature_snapshot_path": "gs://runtime/mega/snapshot.csv",
@@ -1135,10 +1135,11 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
         "timezone": "Asia/Hong_Kong",
         "main_time": "10 16",
         "probe_time": "40 9,15",
-        "precheck_time": "45 9",
+        "precheck_time": "45 9 * * 1-5",
     }
     assert "IBKR_FEATURE_SNAPSHOT_PATH" not in slot_a["env"]
     assert "IBKR_FEATURE_SNAPSHOT_PATH" in slot_a["remove_env_vars"]
+    assert "IBKR_FORCE_RUN" in slot_a["remove_env_vars"]
     assert "gs://stale-paper/snapshot.csv" not in json.dumps(slot_a)
     assert json.loads(slot_a["env"]["IBKR_STRATEGY_PLUGIN_MOUNTS_JSON"])["strategy_plugins"][0][
         "strategy"
@@ -1148,9 +1149,9 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
     assert u7654_mega["env"]["STRATEGY_PROFILE"] == "russell_top50_leader_rotation"
     assert u7654_mega["scheduler"] == {
         "timezone": "America/New_York",
-        "main_time": "45 15 1-7 * *",
-        "probe_time": "35 9,15 1-7 * *",
-        "precheck_time": "45 9 1-7 * *",
+        "main_time": "45 15 * * 1-5",
+        "probe_time": "35 9,15 * * 1-5",
+        "precheck_time": "45 9 * * 1-5",
     }
     assert u7654_mega["env"]["IBKR_FEATURE_SNAPSHOT_PATH"] == "gs://runtime/mega/snapshot.csv"
     assert (
@@ -1162,6 +1163,157 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
     assert u7654_mega["env"]["INCOME_LAYER_MAX_RATIO"] == "0.25"
     assert u7654_mega["env"]["DCA_MODE"] == "smart"
     assert u7654_mega["env"]["DCA_BASE_INVESTMENT_USD"] == "500"
+    assert "IBKR_FORCE_RUN" in u7654_mega["remove_env_vars"]
+
+
+def test_build_cloud_run_env_sync_plan_keeps_four_live_account_targets_weekday_only():
+    enabled_by_account = {
+        "U1000001": "true",
+        "U1000002": "true",
+        "U1000003": "false",
+        "U1000004": "false",
+    }
+    targets = []
+    for account, enabled in enabled_by_account.items():
+        service_name = f"interactive-brokers-live-{account.lower()}-service"
+        runtime_target = json.loads(
+            runtime_target_json(
+                "tqqq_growth_income",
+                deployment_selector=f"live-{account.lower()}",
+                account_selector=[account],
+                account_scope=f"live-{account.lower()}",
+                service_name=service_name,
+            )
+        )
+        runtime_target["execution_mode"] = "live"
+        runtime_target["scheduler"] = {
+            "timezone": "America/New_York",
+            "main_time": "45 15 * * 1-5",
+            "probe_time": "35 9,15 * * 1-5",
+            "precheck_time": "45 9 * * 1-5",
+        }
+        targets.append(
+            {
+                "service": service_name,
+                "account_group": f"live-{account.lower()}",
+                "RUNTIME_TARGET_ENABLED": enabled,
+                "runtime_target": runtime_target,
+            }
+        )
+    payload = {
+        "defaults": {
+            "GLOBAL_TELEGRAM_CHAT_ID": "5992562050",
+            "NOTIFY_LANG": "zh",
+            "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME": "ibkr-account-groups",
+            "IBKR_MARKET": "US",
+            "IBKR_MARKET_CALENDAR": "NYSE",
+            "IBKR_MARKET_CURRENCY": "USD",
+            "IBKR_MARKET_EXCHANGE": "SMART",
+            "IBKR_MARKET_TIMEZONE": "America/New_York",
+        },
+        "targets": targets,
+    }
+    env = {
+        **os.environ,
+        "CLOUD_RUN_SERVICE_TARGETS_JSON": json.dumps(payload),
+        "PLATFORM_CONFIG_JSON": "{}",
+    }
+    env.pop("IBKR_FORCE_RUN", None)
+
+    result = subprocess.run(
+        [sys.executable, str(SYNC_PLAN_SCRIPT_PATH), "--json"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    plan = json.loads(result.stdout)
+    assert len(plan["targets"]) == 4
+    for target in plan["targets"]:
+        account = json.loads(target["env"]["RUNTIME_TARGET_JSON"])["account_selector"][0]
+        assert target["env"]["RUNTIME_TARGET_ENABLED"] == enabled_by_account[account]
+        assert target["scheduler"] == {
+            "timezone": "America/New_York",
+            "main_time": "45 15 * * 1-5",
+            "probe_time": "35 9,15 * * 1-5",
+            "precheck_time": "45 9 * * 1-5",
+        }
+        assert "IBKR_FORCE_RUN" not in target["env"]
+        assert "IBKR_FORCE_RUN" in target["remove_env_vars"]
+
+
+def test_build_cloud_run_env_sync_plan_rejects_weekend_schedule_and_force_run_for_live_account():
+    service_name = "interactive-brokers-live-u1000001-service"
+    runtime_target = json.loads(
+        runtime_target_json(
+            "tqqq_growth_income",
+            deployment_selector="live-u1000001",
+            account_selector=["U1000001"],
+            account_scope="live-u1000001",
+            service_name=service_name,
+        )
+    )
+    runtime_target["execution_mode"] = "live"
+    runtime_target["scheduler"] = {
+        "timezone": "America/New_York",
+        "main_time": "45 15 * * *",
+        "probe_time": "35 9,15 * * *",
+        "precheck_time": "45 9 * * *",
+    }
+    payload = {
+        "defaults": {
+            "GLOBAL_TELEGRAM_CHAT_ID": "5992562050",
+            "NOTIFY_LANG": "zh",
+            "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME": "ibkr-account-groups",
+            "IBKR_MARKET": "US",
+            "IBKR_MARKET_CALENDAR": "NYSE",
+            "IBKR_MARKET_CURRENCY": "USD",
+            "IBKR_MARKET_EXCHANGE": "SMART",
+            "IBKR_MARKET_TIMEZONE": "America/New_York",
+        },
+        "targets": [
+            {
+                "service": service_name,
+                "account_group": "live-u1000001",
+                "runtime_target": runtime_target,
+            }
+        ],
+    }
+    env = {
+        **os.environ,
+        "CLOUD_RUN_SERVICE_TARGETS_JSON": json.dumps(payload),
+        "PLATFORM_CONFIG_JSON": "{}",
+    }
+
+    result = subprocess.run(
+        [sys.executable, str(SYNC_PLAN_SCRIPT_PATH), "--json"],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert result.returncode != 0
+    assert "US live account scheduler main_time must be Mon-Fri cron" in result.stderr
+
+    runtime_target["scheduler"] = {
+        "timezone": "America/New_York",
+        "main_time": "45 15 * * 1-5",
+        "probe_time": "35 9,15 * * 1-5",
+        "precheck_time": "45 9 * * 1-5",
+    }
+    payload["targets"][0]["runtime_target"] = runtime_target
+    payload["targets"][0]["IBKR_FORCE_RUN"] = "true"
+    env["CLOUD_RUN_SERVICE_TARGETS_JSON"] = json.dumps(payload)
+    result = subprocess.run(
+        [sys.executable, str(SYNC_PLAN_SCRIPT_PATH), "--json"],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert result.returncode != 0
+    assert "IBKR_FORCE_RUN=true is not allowed for live Cloud Run targets" in result.stderr
 
 
 def test_build_cloud_run_env_sync_plan_requires_target_snapshot_in_per_service_mode():

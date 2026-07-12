@@ -61,6 +61,7 @@ SHARED_TARGET_FALLBACK_ENV = frozenset(
         "NOTIFY_LANG",
         "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME",
         "IBKR_EXECUTION_BACKEND",
+        "IBKR_FORCE_RUN",
         "IBKR_MARKET",
         "IBKR_MARKET_CALENDAR",
         "IBKR_MARKET_CURRENCY",
@@ -98,6 +99,7 @@ PLATFORM_GENERIC_ENV = (
     "IBKR_RECONCILIATION_OUTPUT_PATH",
     "IBKR_DRY_RUN_ONLY",
     "IBKR_PAPER_LIQUIDATE_ONLY",
+    "IBKR_FORCE_RUN",
     "IBKR_MIN_RESERVED_CASH_USD",
     "IBKR_RESERVED_CASH_RATIO",
     "IBKR_CASH_ONLY_EXECUTION",
@@ -125,9 +127,9 @@ PLATFORM_GENERIC_ENV = (
     "EXECUTION_REPORT_GCS_URI",
 )
 SCHEDULER_TIME_DEFAULTS = {
-    "main_time": "45 15",
-    "probe_time": "35 9,15",
-    "precheck_time": "45 9",
+    "main_time": "45 15 * * 1-5",
+    "probe_time": "35 9,15 * * 1-5",
+    "precheck_time": "45 9 * * 1-5",
 }
 SCHEDULER_TIME_ENV = {
     "main_time": "CLOUD_SCHEDULER_MAIN_TIME",
@@ -450,6 +452,12 @@ def _build_target_plan(
             + "\n".join(f"  - {item}" for item in missing)
         )
 
+    if (
+        str(runtime_target.get("execution_mode") or "").strip().lower() == "live"
+        and str(env_values.get("IBKR_FORCE_RUN") or "").strip().lower() == "true"
+    ):
+        raise ValueError("IBKR_FORCE_RUN=true is not allowed for live Cloud Run targets")
+
     return {
         "service_name": service_name,
         "strategy_profile": canonical_profile,
@@ -494,6 +502,17 @@ def _build_scheduler_plan(
             allow_shared_fallback=True,
         )
         scheduler[key] = str(runtime_scheduler.get(key) or configured_value or SCHEDULER_TIME_DEFAULTS[key])
+    if (
+        market == "US"
+        and str(runtime_target.get("execution_mode") or "").strip().lower() == "live"
+        and runtime_target.get("account_selector")
+    ):
+        for key in SCHEDULER_TIME_ENV:
+            fields = scheduler[key].split()
+            if len(fields) != 5 or fields[2:] != ["*", "*", "1-5"]:
+                raise ValueError(
+                    f"US live account scheduler {key} must be Mon-Fri cron: {scheduler[key]!r}"
+                )
     return scheduler
 
 
