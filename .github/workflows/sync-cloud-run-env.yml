@@ -1136,7 +1136,7 @@ jobs:
             fi
 
             warmup_job_name="${cloud_run_service%-service}-warmup-scheduler"
-            warmup_uri="${service_url}/healthz"
+            warmup_uri="${service_url}/health"
             if gcloud scheduler jobs describe "${warmup_job_name}" \
               --project="${GCP_PROJECT_ID}" \
               --location="${scheduler_location}" >/dev/null 2>&1; then
