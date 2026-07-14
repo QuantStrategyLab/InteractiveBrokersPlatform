@@ -1164,6 +1164,139 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
     assert u7654_mega["env"]["DCA_BASE_INVESTMENT_USD"] == "500"
 
 
+def _four_gateway_warmup_payload(probe_time: str) -> dict[str, object]:
+    gateway_targets = (
+        (
+            "interactive-brokers-quant-live-u15998061-service",
+            "live-u15998061",
+            "soxl_soxx_trend_income",
+            True,
+        ),
+        (
+            "interactive-brokers-quant-live-u16608560-service",
+            "live-u16608560",
+            "tqqq_growth_income",
+            True,
+        ),
+        (
+            "interactive-brokers-quant-live-u18336562-service",
+            "live-u18336562",
+            "russell_top50_leader_rotation",
+            False,
+        ),
+        (
+            "interactive-brokers-quant-live-u18308207-service",
+            "live-u18308207",
+            "global_etf_rotation",
+            False,
+        ),
+    )
+    targets = []
+    for service_name, account_group, strategy_profile, enabled in gateway_targets:
+        targets.append(
+            {
+                "service": service_name,
+                "account_group": account_group,
+                "runtime_target_enabled": enabled,
+                "runtime_target": {
+                    **json.loads(
+                        runtime_target_json(
+                            strategy_profile,
+                            deployment_selector=account_group,
+                            account_scope=account_group,
+                            service_name=service_name,
+                        )
+                    ),
+                    "scheduler": {
+                        "timezone": "America/New_York",
+                        "main_time": "45 15 * * 1-5",
+                        "probe_time": probe_time,
+                        "precheck_time": "45 9 * * 1-5",
+                    },
+                },
+            }
+        )
+
+    targets.append(
+        {
+            "service": "interactive-brokers-us-combo-shadow-service",
+            "account_group": "us-combo-shadow",
+            "runtime_target_enabled": False,
+            "runtime_target": {
+                **json.loads(
+                    runtime_target_json(
+                        "us_equity_combo_leveraged",
+                        dry_run_only=True,
+                        deployment_selector="us-combo-shadow",
+                        account_scope="us-combo-shadow",
+                        service_name="interactive-brokers-us-combo-shadow-service",
+                    )
+                ),
+                "scheduler": {
+                    "timezone": "America/New_York",
+                    "main_time": "45 15 * * 1-5",
+                    "probe_time": "35 9,15 * * *",
+                    "precheck_time": "45 9 * * *",
+                },
+            },
+        }
+    )
+    return {
+        "defaults": {
+            "GLOBAL_TELEGRAM_CHAT_ID": "test-chat",
+            "NOTIFY_LANG": "zh",
+            "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME": "ibkr-account-groups",
+            "EXECUTION_REPORT_GCS_URI": "gs://runtime/execution-reports",
+        },
+        "targets": targets,
+    }
+
+
+def test_build_cloud_run_env_sync_plan_generates_four_gateway_near_run_warmups() -> None:
+    payload = _four_gateway_warmup_payload("43 9,15 * * 1-5")
+    result = subprocess.run(
+        [sys.executable, str(SYNC_PLAN_SCRIPT_PATH), "--json"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CLOUD_RUN_SERVICE_TARGETS_JSON": json.dumps(payload)},
+    )
+
+    plan = json.loads(result.stdout)
+    by_service = {target["service_name"]: target for target in plan["targets"]}
+    gateway_accounts = ("u15998061", "u16608560", "u18336562", "u18308207")
+    for account in gateway_accounts:
+        service_name = f"interactive-brokers-quant-live-{account}-service"
+        assert by_service[service_name]["scheduler"] == {
+            "timezone": "America/New_York",
+            "main_time": "45 15 * * 1-5",
+            "probe_time": "43 9,15 * * 1-5",
+            "precheck_time": "45 9 * * 1-5",
+        }
+        assert f"{service_name.removesuffix('-service')}-warmup-scheduler" == (
+            f"interactive-brokers-quant-live-{account}-warmup-scheduler"
+        )
+
+    assert by_service["interactive-brokers-us-combo-shadow-service"]["scheduler"]["probe_time"] == (
+        "35 9,15 * * *"
+    )
+
+
+def test_build_cloud_run_env_sync_plan_rejects_stale_gateway_warmup_schedule() -> None:
+    payload = _four_gateway_warmup_payload("35 9,15 * * 1-5")
+    result = subprocess.run(
+        [sys.executable, str(SYNC_PLAN_SCRIPT_PATH), "--json"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CLOUD_RUN_SERVICE_TARGETS_JSON": json.dumps(payload)},
+    )
+
+    assert result.returncode != 0
+    assert "interactive-brokers-quant-live-u15998061-service" in result.stderr
+    assert "43 9,15 * * 1-5" in result.stderr
+
+
 def test_build_cloud_run_env_sync_plan_requires_target_snapshot_in_per_service_mode():
     payload = {
         "defaults": {
