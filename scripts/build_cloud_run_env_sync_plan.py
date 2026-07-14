@@ -134,6 +134,15 @@ SCHEDULER_TIME_ENV = {
     "probe_time": "CLOUD_SCHEDULER_PROBE_TIME",
     "precheck_time": "CLOUD_SCHEDULER_PRECHECK_TIME",
 }
+NEAR_RUN_WARMUP_SCHEDULE = "43 9,15 * * 1-5"
+NEAR_RUN_WARMUP_SERVICES = frozenset(
+    {
+        "interactive-brokers-quant-live-u15998061-service",
+        "interactive-brokers-quant-live-u16608560-service",
+        "interactive-brokers-quant-live-u18336562-service",
+        "interactive-brokers-quant-live-u18308207-service",
+    }
+)
 
 # Strategy-derived vars: auto-populated from platform-config.json defaults.
 def _derive_strategy_env_defaults(strategy_config: dict) -> dict[str, str]:
@@ -450,18 +459,21 @@ def _build_target_plan(
             + "\n".join(f"  - {item}" for item in missing)
         )
 
+    scheduler = _build_scheduler_plan(
+        runtime_target=runtime_target,
+        target=target,
+        defaults=defaults,
+        env=env,
+        env_values=env_values,
+        per_service_mode=per_service_mode,
+    )
+    _validate_near_run_warmup_schedule(service_name, scheduler)
+
     return {
         "service_name": service_name,
         "strategy_profile": canonical_profile,
         "env": env_values,
-        "scheduler": _build_scheduler_plan(
-            runtime_target=runtime_target,
-            target=target,
-            defaults=defaults,
-            env=env,
-            env_values=env_values,
-            per_service_mode=per_service_mode,
-        ),
+        "scheduler": scheduler,
         "remove_env_vars": sorted(set(remove_env_vars) - set(env_values)),
     }
 
@@ -495,6 +507,20 @@ def _build_scheduler_plan(
         )
         scheduler[key] = str(runtime_scheduler.get(key) or configured_value or SCHEDULER_TIME_DEFAULTS[key])
     return scheduler
+
+
+def _validate_near_run_warmup_schedule(
+    service_name: str,
+    scheduler: Mapping[str, str],
+) -> None:
+    if service_name not in NEAR_RUN_WARMUP_SERVICES:
+        return
+    if scheduler.get("timezone") != "America/New_York":
+        raise ValueError(f"{service_name} warmup timezone must be America/New_York")
+    if scheduler.get("probe_time") != NEAR_RUN_WARMUP_SCHEDULE:
+        raise ValueError(
+            f"{service_name} warmup schedule must be {NEAR_RUN_WARMUP_SCHEDULE!r}"
+        )
 
 
 def _validate_profile_inputs(
