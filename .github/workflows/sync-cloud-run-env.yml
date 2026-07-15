@@ -1016,6 +1016,7 @@ jobs:
                           timezone,
                           str(scheduler.get("main_time") or configured_time("CLOUD_SCHEDULER_MAIN_TIME", "45 15")),
                           str(scheduler.get("probe_time") or configured_time("CLOUD_SCHEDULER_PROBE_TIME", "35 9,15")),
+                          str(scheduler.get("attempt_deadline") or ""),
                       ]
                   )
               )
@@ -1023,7 +1024,7 @@ jobs:
           )
 
           for update in "${scheduler_updates[@]}"; do
-            IFS=$'\t' read -r cloud_run_service market_timezone main_time warmup_time <<< "${update}"
+            IFS=$'\t' read -r cloud_run_service market_timezone main_time warmup_time main_attempt_deadline <<< "${update}"
             if [ -z "${cloud_run_service}" ] || [ -z "${market_timezone}" ]; then
               continue
             fi
@@ -1112,6 +1113,10 @@ jobs:
             )"
 
             scheduler_uri="${service_url}/run"
+            main_attempt_deadline_args=()
+            if [ -n "${main_attempt_deadline}" ]; then
+              main_attempt_deadline_args+=(--attempt-deadline="${main_attempt_deadline}")
+            fi
             if [ "${job_exists}" = "true" ]; then
               echo "Updating Cloud Scheduler job ${job_name} schedule to ${desired_schedule}, timezone to ${market_timezone}, and URI to ${scheduler_uri}."
               gcloud scheduler jobs update http "${job_name}" \
@@ -1120,6 +1125,7 @@ jobs:
                 --uri="${scheduler_uri}" \
                 --schedule="${desired_schedule}" \
                 --time-zone="${market_timezone}" \
+                "${main_attempt_deadline_args[@]}" \
                 --quiet
             else
               echo "Creating Cloud Scheduler job ${job_name} schedule ${desired_schedule}, timezone ${market_timezone}, and URI ${scheduler_uri}."
@@ -1132,6 +1138,7 @@ jobs:
                 --http-method=POST \
                 --oidc-service-account-email="${GCP_SCHEDULER_SERVICE_ACCOUNT}" \
                 --oidc-token-audience="${service_url}" \
+                "${main_attempt_deadline_args[@]}" \
                 --quiet
             fi
 
