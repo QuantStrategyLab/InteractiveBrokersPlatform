@@ -134,17 +134,7 @@ SCHEDULER_TIME_ENV = {
     "probe_time": "CLOUD_SCHEDULER_PROBE_TIME",
     "precheck_time": "CLOUD_SCHEDULER_PRECHECK_TIME",
 }
-NEAR_RUN_WARMUP_SCHEDULE = "43 9,15 * * 1-5"
-RUN_SCHEDULER_ATTEMPT_DEADLINE = "330s"
-NEAR_RUN_WARMUP_SERVICES = frozenset(
-    {
-        "interactive-brokers-quant-live-u15998061-service",
-        "interactive-brokers-quant-live-u16608560-service",
-        "interactive-brokers-quant-live-u18336562-service",
-        "interactive-brokers-quant-live-u18308207-service",
-    }
-)
-
+DEFAULT_LIVE_RUN_ATTEMPT_DEADLINE = "330s"
 # Strategy-derived vars: auto-populated from platform-config.json defaults.
 def _derive_strategy_env_defaults(strategy_config: dict) -> dict[str, str]:
     """Derive env var defaults from a strategy's platform-config.json entry."""
@@ -468,10 +458,6 @@ def _build_target_plan(
         env_values=env_values,
         per_service_mode=per_service_mode,
     )
-    if service_name in NEAR_RUN_WARMUP_SERVICES:
-        scheduler["attempt_deadline"] = RUN_SCHEDULER_ATTEMPT_DEADLINE
-    _validate_near_run_warmup_schedule(service_name, scheduler)
-
     return {
         "service_name": service_name,
         "strategy_profile": canonical_profile,
@@ -509,21 +495,14 @@ def _build_scheduler_plan(
             allow_shared_fallback=True,
         )
         scheduler[key] = str(runtime_scheduler.get(key) or configured_value or SCHEDULER_TIME_DEFAULTS[key])
+    attempt_deadline = runtime_scheduler.get("attempt_deadline")
+    if attempt_deadline is None and str(runtime_target.get("execution_mode") or "").strip() == "live":
+        attempt_deadline = DEFAULT_LIVE_RUN_ATTEMPT_DEADLINE
+    if attempt_deadline is not None:
+        if type(attempt_deadline) is not str or not attempt_deadline.strip():
+            raise ValueError("scheduler.attempt_deadline must be a non-empty string")
+        scheduler["attempt_deadline"] = attempt_deadline.strip()
     return scheduler
-
-
-def _validate_near_run_warmup_schedule(
-    service_name: str,
-    scheduler: Mapping[str, str],
-) -> None:
-    if service_name not in NEAR_RUN_WARMUP_SERVICES:
-        return
-    if scheduler.get("timezone") != "America/New_York":
-        raise ValueError(f"{service_name} warmup timezone must be America/New_York")
-    if scheduler.get("probe_time") != NEAR_RUN_WARMUP_SCHEDULE:
-        raise ValueError(
-            f"{service_name} warmup schedule must be {NEAR_RUN_WARMUP_SCHEDULE!r}"
-        )
 
 
 def _validate_profile_inputs(

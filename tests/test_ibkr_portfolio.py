@@ -77,15 +77,15 @@ def test_fetch_portfolio_snapshot_prefers_market_currency_cash_balance():
 
         def accountValues(self):
             return [
-                SimpleNamespace(account="U16608560", currency="USD", tag="NetLiquidation", value="1130"),
-                SimpleNamespace(account="U16608560", currency="USD", tag="AvailableFunds", value="885.99"),
-                SimpleNamespace(account="U16608560", currency="USD", tag="CashBalance", value="477.10"),
-                SimpleNamespace(account="U16608560", currency="HKD", tag="CashBalance", value="408.98"),
+                SimpleNamespace(account="DEMO_ACCOUNT", currency="USD", tag="NetLiquidation", value="1130"),
+                SimpleNamespace(account="DEMO_ACCOUNT", currency="USD", tag="AvailableFunds", value="885.99"),
+                SimpleNamespace(account="DEMO_ACCOUNT", currency="USD", tag="CashBalance", value="477.10"),
+                SimpleNamespace(account="DEMO_ACCOUNT", currency="HKD", tag="CashBalance", value="408.98"),
             ]
 
     snapshot = fetch_portfolio_snapshot(
         MultiCurrencyIB(),
-        account_ids=("U16608560",),
+        account_ids=("DEMO_ACCOUNT",),
         wait_seconds=0,
         currency="USD",
     )
@@ -103,14 +103,14 @@ def test_fetch_portfolio_snapshot_allows_negative_cash_balance():
 
         def accountValues(self):
             return [
-                SimpleNamespace(account="U16608560", currency="USD", tag="NetLiquidation", value="2160"),
-                SimpleNamespace(account="U16608560", currency="USD", tag="AvailableFunds", value="1588.89"),
-                SimpleNamespace(account="U16608560", currency="USD", tag="CashBalance", value="-284.0"),
+                SimpleNamespace(account="DEMO_ACCOUNT", currency="USD", tag="NetLiquidation", value="2160"),
+                SimpleNamespace(account="DEMO_ACCOUNT", currency="USD", tag="AvailableFunds", value="1588.89"),
+                SimpleNamespace(account="DEMO_ACCOUNT", currency="USD", tag="CashBalance", value="-284.0"),
             ]
 
     snapshot = fetch_portfolio_snapshot(
         NegativeCashIB(),
-        account_ids=("U16608560",),
+        account_ids=("DEMO_ACCOUNT",),
         wait_seconds=0,
         currency="USD",
     )

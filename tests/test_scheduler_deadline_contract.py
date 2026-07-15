@@ -10,20 +10,20 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "sync-cloud-run-env.yml"
 
 
-def test_four_gateway_run_deadline_exceeds_cloud_run_timeout() -> None:
-    expected_services = {
-        "interactive-brokers-quant-live-u15998061-service",
-        "interactive-brokers-quant-live-u16608560-service",
-        "interactive-brokers-quant-live-u18336562-service",
-        "interactive-brokers-quant-live-u18308207-service",
-    }
-    assert sync_plan.NEAR_RUN_WARMUP_SERVICES == expected_services
-    assert sync_plan.RUN_SCHEDULER_ATTEMPT_DEADLINE == "330s"
+def test_configured_run_deadline_exceeds_cloud_run_timeout() -> None:
+    scheduler = sync_plan._build_scheduler_plan(
+        runtime_target={"execution_mode": "live", "scheduler": {}},
+        target={},
+        defaults={},
+        env={},
+        env_values={},
+        per_service_mode=True,
+    )
 
     workflow = WORKFLOW.read_text(encoding="utf-8")
     cloud_run_timeout = re.search(r"--timeout=(\d+)s", workflow)
     assert cloud_run_timeout is not None
-    assert int(sync_plan.RUN_SCHEDULER_ATTEMPT_DEADLINE.removesuffix("s")) > int(
+    assert int(scheduler["attempt_deadline"].removesuffix("s")) > int(
         cloud_run_timeout.group(1)
     )
 
