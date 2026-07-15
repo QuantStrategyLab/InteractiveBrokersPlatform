@@ -1272,6 +1272,7 @@ def test_build_cloud_run_env_sync_plan_generates_four_gateway_near_run_warmups()
             "main_time": "45 15 * * 1-5",
             "probe_time": "43 9,15 * * 1-5",
             "precheck_time": "45 9 * * 1-5",
+            "attempt_deadline": "330s",
         }
         assert f"{service_name.removesuffix('-service')}-warmup-scheduler" == (
             f"interactive-brokers-quant-live-{account}-warmup-scheduler"
@@ -1280,6 +1281,7 @@ def test_build_cloud_run_env_sync_plan_generates_four_gateway_near_run_warmups()
     assert by_service["interactive-brokers-us-combo-shadow-service"]["scheduler"]["probe_time"] == (
         "35 9,15 * * *"
     )
+    assert "attempt_deadline" not in by_service["interactive-brokers-us-combo-shadow-service"]["scheduler"]
 
 
 def test_build_cloud_run_env_sync_plan_rejects_stale_gateway_warmup_schedule() -> None:

@@ -135,6 +135,7 @@ SCHEDULER_TIME_ENV = {
     "precheck_time": "CLOUD_SCHEDULER_PRECHECK_TIME",
 }
 NEAR_RUN_WARMUP_SCHEDULE = "43 9,15 * * 1-5"
+RUN_SCHEDULER_ATTEMPT_DEADLINE = "330s"
 NEAR_RUN_WARMUP_SERVICES = frozenset(
     {
         "interactive-brokers-quant-live-u15998061-service",
@@ -467,6 +468,8 @@ def _build_target_plan(
         env_values=env_values,
         per_service_mode=per_service_mode,
     )
+    if service_name in NEAR_RUN_WARMUP_SERVICES:
+        scheduler["attempt_deadline"] = RUN_SCHEDULER_ATTEMPT_DEADLINE
     _validate_near_run_warmup_schedule(service_name, scheduler)
 
     return {
