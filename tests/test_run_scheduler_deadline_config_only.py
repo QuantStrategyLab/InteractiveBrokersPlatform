@@ -16,13 +16,22 @@ SCRIPT = ROOT / "scripts" / "sync_run_scheduler_deadlines.py"
 
 
 def _job(*, name: str, deadline: str, method: str, path: str) -> dict[str, Any]:
+    if name.endswith("-warmup-scheduler"):
+        service = name.removesuffix("-warmup-scheduler") + "-service"
+    else:
+        service = name.removesuffix("-scheduler") + "-service"
+    origin = f"https://{service}-stable-uc.a.run.app"
     return {
         "name": f"projects/test/locations/us-central1/jobs/{name}",
         "state": "ENABLED",
         "attemptDeadline": deadline,
         "httpTarget": {
             "httpMethod": method,
-            "uri": f"https://service.example.invalid{path}",
+            "uri": f"{origin}{path}",
+            "oidcToken": {
+                "audience": origin,
+                "serviceAccountEmail": sync.SCHEDULER_SERVICE_ACCOUNT,
+            },
         },
     }
 
@@ -40,6 +49,7 @@ class FakeGcloud:
             }
         )
         self.commands: list[list[str]] = []
+        self.fail_updates: set[str] = set()
 
     def __call__(
         self,
@@ -58,6 +68,8 @@ class FakeGcloud:
             return subprocess.CompletedProcess(command, 0, json.dumps(self.jobs[name]), "")
         if command[1:5] == ["scheduler", "jobs", "update", "http"]:
             name = command[5]
+            if name in self.fail_updates:
+                raise subprocess.CalledProcessError(1, command)
             self.jobs[name]["attemptDeadline"] = "330s"
             return subprocess.CompletedProcess(command, 0, "", "")
         raise AssertionError(f"Unexpected command: {command!r}")
@@ -89,9 +101,28 @@ def test_fixed_allowlist_updates_only_four_run_deadlines() -> None:
 def test_preflight_rejects_non_run_target_before_any_update() -> None:
     gcloud = FakeGcloud()
     first_run = sync.RUN_JOB_NAMES[0]
-    gcloud.jobs[first_run]["httpTarget"]["uri"] = "https://service.example.invalid/health"
+    target = gcloud.jobs[first_run]["httpTarget"]
+    target["uri"] = target["uri"].removesuffix("/run") + "/health"
 
     with pytest.raises(sync.ConfigOnlySyncError, match="expected path /run"):
+        sync.sync_deadlines(project="test", location="us-central1", run_command=gcloud)
+
+    assert not any("update" in command for command in gcloud.commands)
+
+
+@pytest.mark.parametrize("drift", ["host", "audience", "service_account"])
+def test_preflight_rejects_destination_or_auth_drift_before_any_update(drift: str) -> None:
+    gcloud = FakeGcloud()
+    first_run = sync.RUN_JOB_NAMES[0]
+    target = gcloud.jobs[first_run]["httpTarget"]
+    if drift == "host":
+        target["uri"] = "https://external.example.invalid/run"
+    elif drift == "audience":
+        target["oidcToken"]["audience"] = "https://external.example.invalid"
+    else:
+        target["oidcToken"]["serviceAccountEmail"] = "other@example.invalid"
+
+    with pytest.raises(sync.ConfigOnlySyncError):
         sync.sync_deadlines(project="test", location="us-central1", run_command=gcloud)
 
     assert not any("update" in command for command in gcloud.commands)
@@ -106,6 +137,20 @@ def test_preflight_rejects_warmup_drift_before_any_update() -> None:
         sync.sync_deadlines(project="test", location="us-central1", run_command=gcloud)
 
     assert not any("update" in command for command in gcloud.commands)
+
+
+def test_update_failure_does_not_skip_remaining_allowlisted_jobs() -> None:
+    gcloud = FakeGcloud()
+    gcloud.fail_updates.add(sync.RUN_JOB_NAMES[0])
+
+    with pytest.raises(sync.ConfigOnlySyncError, match=sync.RUN_JOB_NAMES[0]):
+        sync.sync_deadlines(project="test", location="us-central1", run_command=gcloud)
+
+    attempted_updates = [command[5] for command in gcloud.commands if "update" in command]
+    assert attempted_updates == list(sync.RUN_JOB_NAMES)
+    assert all(
+        gcloud.jobs[name]["attemptDeadline"] == "330s" for name in sync.RUN_JOB_NAMES[1:]
+    )
 
 
 def test_manual_workflow_has_no_broad_deploy_or_job_trigger_path() -> None:

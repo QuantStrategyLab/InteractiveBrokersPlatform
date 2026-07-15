@@ -19,6 +19,7 @@ RUN_JOB_NAMES = (
 WARMUP_JOB_NAMES = tuple(name.replace("-scheduler", "-warmup-scheduler") for name in RUN_JOB_NAMES)
 RUN_DEADLINE = "330s"
 WARMUP_DEADLINE = "60s"
+SCHEDULER_SERVICE_ACCOUNT = "ibkr-platform-scheduler@interactivebrokersquant.iam.gserviceaccount.com"
 
 RunCommand = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -84,9 +85,31 @@ def _validate_job(
     method = str(target.get("httpMethod") or "")
     if method != expected_method:
         raise ConfigOnlySyncError(f"Existing job {expected_name} expected method {expected_method}")
-    path = urlsplit(str(target.get("uri") or "")).path
-    if path != expected_path:
+    uri = urlsplit(str(target.get("uri") or ""))
+    if expected_name.endswith("-warmup-scheduler"):
+        expected_service = expected_name.removesuffix("-warmup-scheduler") + "-service"
+    else:
+        expected_service = expected_name.removesuffix("-scheduler") + "-service"
+    hostname = uri.hostname or ""
+    if (
+        uri.scheme != "https"
+        or not hostname.startswith(f"{expected_service}-")
+        or not hostname.endswith(".run.app")
+        or uri.netloc != hostname
+        or uri.query
+        or uri.fragment
+    ):
+        raise ConfigOnlySyncError(f"Existing job {expected_name} has an unexpected destination")
+    if uri.path != expected_path:
         raise ConfigOnlySyncError(f"Existing job {expected_name} expected path {expected_path}")
+
+    oidc = target.get("oidcToken")
+    if not isinstance(oidc, dict):
+        raise ConfigOnlySyncError(f"Existing job {expected_name} has no OIDC target")
+    if oidc.get("serviceAccountEmail") != SCHEDULER_SERVICE_ACCOUNT:
+        raise ConfigOnlySyncError(f"Existing job {expected_name} has an unexpected OIDC identity")
+    if oidc.get("audience") != f"https://{hostname}":
+        raise ConfigOnlySyncError(f"Existing job {expected_name} has an unexpected OIDC audience")
     if expected_deadline is not None and job.get("attemptDeadline") != expected_deadline:
         raise ConfigOnlySyncError(
             f"Existing job {expected_name} expected deadline {expected_deadline}"
@@ -130,34 +153,37 @@ def sync_deadlines(
     run_command: RunCommand = subprocess.run,
 ) -> None:
     jobs = _preflight(project=project, location=location, run_command=run_command)
+    update_failures: list[str] = []
     for name in RUN_JOB_NAMES:
         if jobs[name].get("attemptDeadline") == RUN_DEADLINE:
             continue
-        _run_gcloud(
-            [
-                "gcloud",
-                "scheduler",
-                "jobs",
-                "update",
-                "http",
-                name,
-                f"--project={project}",
-                f"--location={location}",
-                f"--attempt-deadline={RUN_DEADLINE}",
-                "--quiet",
-            ],
-            run_command=run_command,
-        )
+        try:
+            _run_gcloud(
+                [
+                    "gcloud",
+                    "scheduler",
+                    "jobs",
+                    "update",
+                    "http",
+                    name,
+                    f"--project={project}",
+                    f"--location={location}",
+                    f"--attempt-deadline={RUN_DEADLINE}",
+                    "--quiet",
+                ],
+                run_command=run_command,
+            )
+        except subprocess.CalledProcessError:
+            update_failures.append(name)
 
     verified = _preflight(project=project, location=location, run_command=run_command)
+    not_converged: list[str] = []
     for name in RUN_JOB_NAMES:
-        _validate_job(
-            verified[name],
-            expected_name=name,
-            expected_method="POST",
-            expected_path="/run",
-            expected_deadline=RUN_DEADLINE,
-        )
+        if verified[name].get("attemptDeadline") != RUN_DEADLINE:
+            not_converged.append(name)
+    failed_names = list(dict.fromkeys([*update_failures, *not_converged]))
+    if failed_names:
+        raise ConfigOnlySyncError(f"Run deadline convergence failed for: {', '.join(failed_names)}")
     print("Verified four allowlisted run deadlines and four unchanged warmup deadlines.")
 
 
