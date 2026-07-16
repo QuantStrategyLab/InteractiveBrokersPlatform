@@ -60,7 +60,7 @@ Gateway 后端至少放这些字段：
 先复制一份出来改成你的真实值：
 
 ```bash
-cd /Users/lisiyi/Projects/InteractiveBrokersPlatform
+cd /path/to/InteractiveBrokersPlatform
 cp docs/examples/ibkr-account-groups.paper.json /tmp/ibkr-account-groups.json
 ```
 
