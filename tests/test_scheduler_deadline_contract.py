@@ -60,3 +60,23 @@ def test_explicit_run_deadline_must_be_valid_and_exceed_cloud_run_timeout(
             env_values={},
             per_service_mode=True,
         )
+
+
+@pytest.mark.parametrize(
+    ("dry_run_only", "expected_deadline"),
+    [(False, "330s"), (True, None)],
+)
+def test_omitted_execution_mode_uses_dry_run_only(
+    dry_run_only: bool,
+    expected_deadline: str | None,
+) -> None:
+    scheduler = sync_plan._build_scheduler_plan(
+        runtime_target={"dry_run_only": dry_run_only, "scheduler": {}},
+        target={},
+        defaults={},
+        env={},
+        env_values={},
+        per_service_mode=True,
+    )
+
+    assert scheduler.get("attempt_deadline") == expected_deadline

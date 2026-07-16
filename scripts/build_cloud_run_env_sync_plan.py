@@ -500,7 +500,12 @@ def _build_scheduler_plan(
         scheduler[key] = str(runtime_scheduler.get(key) or configured_value or SCHEDULER_TIME_DEFAULTS[key])
     has_attempt_deadline = "attempt_deadline" in runtime_scheduler
     attempt_deadline = runtime_scheduler.get("attempt_deadline")
-    if not has_attempt_deadline and str(runtime_target.get("execution_mode") or "").strip() == "live":
+    execution_mode = str(runtime_target.get("execution_mode") or "").strip()
+    dry_run_only = runtime_target.get("dry_run_only")
+    is_live = execution_mode == "live" or (
+        not execution_mode and type(dry_run_only) is bool and not dry_run_only
+    )
+    if not has_attempt_deadline and is_live:
         attempt_deadline = DEFAULT_LIVE_RUN_ATTEMPT_DEADLINE
     if attempt_deadline is not None:
         if type(attempt_deadline) is not str or not attempt_deadline.strip():
