@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -135,6 +136,8 @@ SCHEDULER_TIME_ENV = {
     "precheck_time": "CLOUD_SCHEDULER_PRECHECK_TIME",
 }
 DEFAULT_LIVE_RUN_ATTEMPT_DEADLINE = "330s"
+CLOUD_RUN_REQUEST_TIMEOUT_SECONDS = 300
+MAX_SCHEDULER_ATTEMPT_DEADLINE_SECONDS = 30 * 60
 # Strategy-derived vars: auto-populated from platform-config.json defaults.
 def _derive_strategy_env_defaults(strategy_config: dict) -> dict[str, str]:
     """Derive env var defaults from a strategy's platform-config.json entry."""
@@ -495,13 +498,30 @@ def _build_scheduler_plan(
             allow_shared_fallback=True,
         )
         scheduler[key] = str(runtime_scheduler.get(key) or configured_value or SCHEDULER_TIME_DEFAULTS[key])
+    has_attempt_deadline = "attempt_deadline" in runtime_scheduler
     attempt_deadline = runtime_scheduler.get("attempt_deadline")
-    if attempt_deadline is None and str(runtime_target.get("execution_mode") or "").strip() == "live":
+    if not has_attempt_deadline and str(runtime_target.get("execution_mode") or "").strip() == "live":
         attempt_deadline = DEFAULT_LIVE_RUN_ATTEMPT_DEADLINE
     if attempt_deadline is not None:
         if type(attempt_deadline) is not str or not attempt_deadline.strip():
             raise ValueError("scheduler.attempt_deadline must be a non-empty string")
-        scheduler["attempt_deadline"] = attempt_deadline.strip()
+        normalized_deadline = attempt_deadline.strip()
+        match = re.fullmatch(r"([1-9][0-9]*)s", normalized_deadline)
+        if match is None:
+            raise ValueError("scheduler.attempt_deadline must be whole seconds, for example '330s'")
+        deadline_seconds = int(match.group(1))
+        if not (
+            CLOUD_RUN_REQUEST_TIMEOUT_SECONDS
+            < deadline_seconds
+            <= MAX_SCHEDULER_ATTEMPT_DEADLINE_SECONDS
+        ):
+            raise ValueError(
+                "scheduler.attempt_deadline must exceed the 300s Cloud Run timeout "
+                "and be at most 1800s"
+            )
+        scheduler["attempt_deadline"] = normalized_deadline
+    elif has_attempt_deadline:
+        raise ValueError("scheduler.attempt_deadline must not be null")
     return scheduler
 
 
