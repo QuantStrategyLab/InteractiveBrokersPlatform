@@ -21,6 +21,7 @@ except ImportError:
 from application.cycle_result import coerce_strategy_cycle_result
 from application.runtime_broker_adapters import build_runtime_broker_adapters
 from application.runtime_composer import build_runtime_composer
+from application.runtime_deadline import RuntimeDeadlineExceeded, enforce_runtime_deadline
 from application.runtime_strategy_adapters import (
     build_runtime_strategy_adapters,
     fetch_yfinance_historical_candles,
@@ -206,6 +207,7 @@ IB_CONNECT_TIMEOUT_SECONDS = get_ib_connect_timeout_seconds()
 IB_CONNECT_ATTEMPTS = get_positive_int_env("IBKR_CONNECT_ATTEMPTS", 3)
 IB_CONNECT_RETRY_DELAY_SECONDS = get_non_negative_float_env("IBKR_CONNECT_RETRY_DELAY_SECONDS", 5.0)
 IB_CLIENT_ID_RETRY_OFFSET = get_positive_int_env("IBKR_CLIENT_ID_RETRY_OFFSET", 100)
+IBKR_DRY_RUN_DEADLINE_SECONDS = get_positive_int_env("IBKR_DRY_RUN_DEADLINE_SECONDS", 105)
 STRATEGY_PROFILE = RUNTIME_SETTINGS.strategy_profile
 STRATEGY_DISPLAY_NAME = RUNTIME_SETTINGS.strategy_display_name
 
@@ -1198,14 +1200,18 @@ def _handle_request(
         if dry_run_only_override is None:
             publish_strategy_plugin_alerts(strategy_plugin_signals, report=report)
         notification_delivery_events: list[dict] = []
-        cycle_result = coerce_strategy_cycle_result(
-            run_strategy_core(
-                strategy_plugin_signals=strategy_plugin_signals,
-                strategy_plugin_error=strategy_plugin_error,
-                dry_run_only_override=dry_run_only_override,
-                notification_delivery_events=notification_delivery_events,
+        with enforce_runtime_deadline(
+            IBKR_DRY_RUN_DEADLINE_SECONDS if dry_run_only_override is True else 0,
+            operation="IBKR strategy dry-run",
+        ):
+            cycle_result = coerce_strategy_cycle_result(
+                run_strategy_core(
+                    strategy_plugin_signals=strategy_plugin_signals,
+                    strategy_plugin_error=strategy_plugin_error,
+                    dry_run_only_override=dry_run_only_override,
+                    notification_delivery_events=notification_delivery_events,
+                )
             )
-        )
         execution_summary = dict(cycle_result.execution_summary or {})
         reconciliation_record = dict(cycle_result.reconciliation_record or {})
         signal_metadata = dict(cycle_result.signal_metadata or {})
@@ -1277,6 +1283,30 @@ def _handle_request(
             result=cycle_result.result,
         )
         return (response_body if dry_run_only_override else cycle_result.result), 200
+    except RuntimeDeadlineExceeded as exc:
+        append_runtime_report_error(
+            report,
+            stage="strategy_deadline",
+            message=str(exc),
+            error_type=type(exc).__name__,
+        )
+        finalize_runtime_report(report, status="error")
+        log_runtime_event(
+            log_context,
+            "strategy_cycle_deadline_exceeded",
+            message="Strategy dry-run exceeded its application deadline",
+            severity="ERROR",
+            execution_window=execution_window,
+            timeout_seconds=IBKR_DRY_RUN_DEADLINE_SECONDS,
+            error_message=str(exc),
+        )
+        error_msg = f"🚨 【IBKR 运行超时】\n{str(exc)}"
+        _publish_runtime_failure_notification(
+            detailed_text=error_msg,
+            compact_text=error_msg,
+            exc=exc,
+        )
+        return "Error", 503
     except TimeoutError as exc:
         append_runtime_report_error(
             report,
@@ -1457,6 +1487,8 @@ def _handle_monitor_dispatch():
         lookback_minutes=lookback_minutes_from_env(),
         timeout_seconds=timeout_seconds_from_env(),
         max_workers=max_workers_from_env(),
+        local_service_name=SERVICE_NAME or os.getenv("K_SERVICE"),
+        local_dispatch_fn=_dispatch_local_monitor,
     )
     log_runtime_event(
         log_context,
@@ -1467,7 +1499,22 @@ def _handle_monitor_dispatch():
         dispatches_sent=result.get("dispatches_sent"),
         dispatch_results=result.get("results") or [],
     )
-    return result, 200
+    return result, 200 if result.get("ok") else 502
+
+
+def _dispatch_local_monitor(dispatch):
+    window = str(dispatch.get("window") or "").strip()
+    if window == "probe":
+        _body, status_code = _handle_probe()
+    elif window == "precheck":
+        _body, status_code = _handle_request(
+            dry_run_only_override=True,
+            response_body="Dry Run OK",
+            dry_run_label="strategy dry-run",
+        )
+    else:
+        raise ValueError(f"Unsupported local monitor window: {window!r}")
+    return {"status_code": int(status_code)}
 
 
 @app.route("/run", methods=["POST", "GET"])

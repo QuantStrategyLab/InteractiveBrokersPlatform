@@ -121,6 +121,8 @@ grep -Fq -- '--update-env-vars "^|^$(join_by_delimiter "|" "${env_pairs[@]}")' "
 grep -Fq -- '--update-labels "$(IFS=,; echo "${target_label_pairs[*]}")' "$workflow_file"
 grep -Fq 'monitor_dispatch_targets_json="$(jq -sc '\''{targets:.}'\'' "${monitor_dispatch_targets_file}")"' "$workflow_file"
 grep -Fq 'shared_env_pairs+=("IBKR_MONITOR_DISPATCH_TARGETS_JSON=${monitor_dispatch_targets_json}")' "$workflow_file"
+grep -Fq '"precheck_time": scheduler.get("precheck_time")' "$workflow_file"
+test "$(grep -Fc '"probe_time": scheduler.get("probe_time")' "$workflow_file")" -eq 0
 grep -Fq 'Sync Cloud Scheduler schedule' "$workflow_file"
 grep -Fq 'scheduler_location="${CLOUD_SCHEDULER_LOCATION:-${CLOUD_RUN_REGION}}"' "$workflow_file"
 grep -Fq 'Cloud Scheduler schedule sync requires GCP_SCHEDULER_SERVICE_ACCOUNT.' "$workflow_file"

@@ -153,6 +153,48 @@ def test_handle_dry_run_post_uses_dry_run_override(strategy_module, monkeypatch)
     assert observed["events"][0][1]["execution_window"] == "dry_run"
 
 
+def test_handle_dry_run_returns_service_unavailable_before_platform_timeout(strategy_module, monkeypatch):
+    observed = {"events": [], "notifications": []}
+
+    class ExpiredDeadline:
+        def __enter__(self):
+            raise strategy_module.RuntimeDeadlineExceeded("dry-run deadline exceeded")
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace(run_id="run-001"))
+    monkeypatch.setattr(strategy_module, "build_execution_report", lambda *_args, **_kwargs: {"status": "pending", "errors": []})
+    monkeypatch.setattr(
+        strategy_module,
+        "persist_execution_report",
+        lambda report, **_kwargs: observed.setdefault("report", dict(report)) or "/tmp/runtime-report.json",
+    )
+    monkeypatch.setattr(strategy_module, "is_market_open_now", lambda **_kwargs: True)
+    monkeypatch.setattr(strategy_module, "load_strategy_plugin_signals", lambda: ((), None))
+    monkeypatch.setattr(strategy_module, "attach_strategy_plugin_report", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(strategy_module, "enforce_runtime_deadline", lambda *_args, **_kwargs: ExpiredDeadline())
+    monkeypatch.setattr(
+        strategy_module,
+        "log_runtime_event",
+        lambda _context, event, **fields: observed["events"].append((event, fields)),
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "_publish_runtime_failure_notification",
+        lambda **kwargs: observed["notifications"].append(kwargs) or True,
+    )
+
+    with strategy_module.app.test_request_context("/dry-run", method="POST"):
+        body, status = strategy_module.handle_dry_run()
+
+    assert status == 503
+    assert body == "Error"
+    assert observed["report"]["errors"][0]["stage"] == "strategy_deadline"
+    assert observed["events"][-1][0] == "strategy_cycle_deadline_exceeded"
+    assert len(observed["notifications"]) == 1
+
+
 def test_dry_run_composer_wires_dry_run_override_to_order_execution(strategy_module, monkeypatch):
     observed = {}
 
@@ -223,7 +265,7 @@ def test_handle_monitor_dispatch_post_dispatches_due_targets(strategy_module, mo
     def fake_dispatch(targets, **kwargs):
         observed["targets"] = targets
         observed["kwargs"] = kwargs
-        return {"dispatches_due": 1, "dispatches_sent": 1, "results": [{"service_name": "svc"}]}
+        return {"ok": True, "dispatches_due": 1, "dispatches_sent": 1, "results": [{"service_name": "svc"}]}
 
     monkeypatch.setattr(strategy_module, "dispatch_due_monitor_targets", fake_dispatch)
     monkeypatch.setattr(
@@ -239,6 +281,28 @@ def test_handle_monitor_dispatch_post_dispatches_due_targets(strategy_module, mo
     assert body["dispatches_sent"] == 1
     assert observed["targets"] == [{"service_name": "svc"}]
     assert observed["events"][0][0] == "monitor_dispatch_completed"
+
+
+def test_handle_monitor_dispatch_returns_bad_gateway_when_a_target_fails(strategy_module, monkeypatch):
+    monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace(run_id="run-001"))
+    monkeypatch.setattr(strategy_module, "load_monitor_targets", lambda: [{"service_name": "svc"}])
+    monkeypatch.setattr(
+        strategy_module,
+        "dispatch_due_monitor_targets",
+        lambda *_args, **_kwargs: {
+            "ok": False,
+            "dispatches_due": 1,
+            "dispatches_sent": 1,
+            "results": [{"service_name": "svc", "status_code": 503, "ok": False}],
+        },
+    )
+    monkeypatch.setattr(strategy_module, "log_runtime_event", lambda *_args, **_kwargs: None)
+
+    with strategy_module.app.test_request_context("/monitor-dispatch", method="POST"):
+        body, status = strategy_module.handle_monitor_dispatch()
+
+    assert status == 502
+    assert body["ok"] is False
 
 
 def test_handle_probe_checks_account_snapshot_without_success_notification(strategy_module, monkeypatch):

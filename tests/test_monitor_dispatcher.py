@@ -1,6 +1,19 @@
 import datetime as dt
 
-from application.monitor_dispatcher import dispatch_due_monitor_targets
+from application.monitor_dispatcher import (
+    dispatch_due_monitor_targets,
+    due_monitor_dispatches,
+    load_monitor_targets,
+)
+
+
+def test_load_monitor_targets_reads_ibkr_specific_env(monkeypatch):
+    monkeypatch.setenv(
+        "IBKR_MONITOR_DISPATCH_TARGETS_JSON",
+        '{"targets":[{"service_name":"svc-tqqq"}]}',
+    )
+
+    assert load_monitor_targets() == [{"service_name": "svc-tqqq"}]
 
 
 def test_due_monitor_dispatches_selects_due_window_and_skips_disabled_target():
@@ -75,8 +88,63 @@ def test_dispatch_due_monitor_targets_posts_with_identity_token():
             "https://svc-tqqq.example.run.app/probe",
             {
                 "Authorization": "Bearer token-for:https://svc-tqqq.example.run.app",
-                "User-Agent": "ibkr-monitor-dispatcher",
+                "User-Agent": "platform-monitor-dispatcher",
             },
             12,
         )
     ]
+
+
+def test_dispatch_failure_is_exposed_in_result():
+    def failing_request(_url, *, headers, timeout):
+        raise TimeoutError(f"request exceeded {timeout}s")
+
+    result = dispatch_due_monitor_targets(
+        [
+            {
+                "service_name": "svc-tqqq",
+                "service_url": "https://svc-tqqq.example.run.app",
+                "scheduler": {
+                    "timezone": "America/New_York",
+                    "precheck_time": "45 9 * * *",
+                },
+            }
+        ],
+        now="2026-06-18T13:45:00+00:00",
+        request_fn=failing_request,
+        token_fetcher=lambda _audience: "token",
+        timeout_seconds=12,
+    )
+
+    assert result["ok"] is False
+    assert result["dispatches_sent"] == 1
+    assert result["results"][0]["error_type"] == "TimeoutError"
+
+
+def test_local_target_dispatches_in_process_without_self_http_call():
+    http_calls = []
+    local_calls = []
+
+    result = dispatch_due_monitor_targets(
+        [
+            {
+                "service_name": "host-service",
+                "service_url": "https://host-service.example.run.app",
+                "scheduler": {
+                    "timezone": "America/New_York",
+                    "precheck_time": "45 9 * * *",
+                },
+            }
+        ],
+        now="2026-06-18T13:45:00+00:00",
+        request_fn=lambda *args, **kwargs: http_calls.append((args, kwargs)),
+        local_service_name="host-service",
+        local_dispatch_fn=lambda dispatch: local_calls.append(dispatch) or {"status_code": 200},
+    )
+
+    assert result["ok"] is True
+    assert result["dispatches_due"] == 1
+    assert result["dispatches_sent"] == 1
+    assert result["results"][0]["dispatch_mode"] == "in_process"
+    assert local_calls[0]["window"] == "precheck"
+    assert http_calls == []
