@@ -31,7 +31,12 @@ def max_workers_from_env() -> int:
 
 def load_monitor_targets(raw_json: str | None = None) -> list[dict[str, Any]]:
     """Read target config from env or from a direct JSON string."""
-    raw = str(raw_json or os.environ.get("IBKR_MONITOR_DISPATCH_TARGETS_JSON") or "").strip()
+    raw = str(
+        raw_json
+        or os.environ.get("IBKR_MONITOR_DISPATCH_TARGETS_JSON")
+        or os.environ.get("MONITOR_DISPATCH_TARGETS_JSON")
+        or ""
+    ).strip()
     if not raw:
         return []
     payload = json.loads(raw)

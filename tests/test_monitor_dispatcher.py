@@ -18,6 +18,29 @@ def test_load_monitor_targets_reads_ibkr_specific_env(monkeypatch):
     assert load_monitor_targets() == [{"service_name": "svc-tqqq"}]
 
 
+def test_load_monitor_targets_falls_back_to_generic_env(monkeypatch):
+    monkeypatch.delenv("IBKR_MONITOR_DISPATCH_TARGETS_JSON", raising=False)
+    monkeypatch.setenv(
+        "MONITOR_DISPATCH_TARGETS_JSON",
+        '{"targets":[{"service_name":"generic-service"}]}',
+    )
+
+    assert load_monitor_targets() == [{"service_name": "generic-service"}]
+
+
+def test_load_monitor_targets_prefers_ibkr_specific_env(monkeypatch):
+    monkeypatch.setenv(
+        "IBKR_MONITOR_DISPATCH_TARGETS_JSON",
+        '{"targets":[{"service_name":"ibkr-service"}]}',
+    )
+    monkeypatch.setenv(
+        "MONITOR_DISPATCH_TARGETS_JSON",
+        '{"targets":[{"service_name":"generic-service"}]}',
+    )
+
+    assert load_monitor_targets() == [{"service_name": "ibkr-service"}]
+
+
 def test_load_monitor_targets_rejects_non_object_items():
     with pytest.raises(ValueError, match="target at index 1 must be an object"):
         load_monitor_targets('{"targets":[{"service_name":"svc-tqqq"},"bad-target"]}')
