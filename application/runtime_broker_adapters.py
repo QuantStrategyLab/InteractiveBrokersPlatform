@@ -10,6 +10,10 @@ from application.cycle_result import StrategyCycleResult
 from quant_platform_kit.common.models import OrderIntent, PortfolioSnapshot, Position
 
 
+class IBKRGatewayUnavailableError(ConnectionError):
+    """Raised after retryable IBKR gateway connection attempts are exhausted."""
+
+
 @dataclass(frozen=True)
 class IBKRRuntimeBrokerAdapters:
     host_resolver: Any
@@ -51,6 +55,7 @@ class IBKRRuntimeBrokerAdapters:
     execution_mode: str = "paper"
     limit_buy_premium_by_symbol: dict[str, float] | None = None
     printer: Any = print
+    refresh_host_fn: Any = None
 
     def validate_configured_accounts(self, ib):
         if not self.account_ids:
@@ -119,9 +124,23 @@ class IBKRRuntimeBrokerAdapters:
                     f"error={exc})",
                     flush=True,
                 )
-                if attempt < self.connect_attempts and self.connect_retry_delay_seconds > 0:
-                    self.sleep_fn(self.connect_retry_delay_seconds)
-        raise last_error
+                if attempt < self.connect_attempts:
+                    if callable(self.refresh_host_fn):
+                        try:
+                            host = self.refresh_host_fn()
+                        except Exception as refresh_exc:
+                            self.printer(
+                                "IB gateway host refresh failed; retrying last-known-good host "
+                                f"(host={host}, error_type={type(refresh_exc).__name__}, "
+                                f"error={refresh_exc})",
+                                flush=True,
+                            )
+                    if self.connect_retry_delay_seconds > 0:
+                        self.sleep_fn(self.connect_retry_delay_seconds)
+        raise IBKRGatewayUnavailableError(
+            "IB gateway unavailable after "
+            f"{self.connect_attempts} attempt(s) to {host}:{self.ib_port}: {last_error}"
+        ) from last_error
 
     def get_current_portfolio(self, ib):
         snapshot = self.fetch_account_portfolio_snapshot(ib)
@@ -300,6 +319,7 @@ def build_runtime_broker_adapters(
     execution_mode: str = "paper",
     limit_buy_premium_by_symbol: dict[str, float] | None = None,
     printer=print,
+    refresh_host_fn=None,
 ) -> IBKRRuntimeBrokerAdapters:
     return IBKRRuntimeBrokerAdapters(
         host_resolver=host_resolver,
@@ -341,4 +361,5 @@ def build_runtime_broker_adapters(
         market_currency=str(market_currency or "USD").upper(),
         execution_mode=str(execution_mode or "paper").strip().lower().replace("-", "_"),
         printer=printer,
+        refresh_host_fn=refresh_host_fn,
     )
