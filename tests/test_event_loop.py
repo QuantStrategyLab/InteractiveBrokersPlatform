@@ -150,8 +150,28 @@ def test_get_ib_host_refreshes_zoned_gateway_ip(strategy_module_factory, monkeyp
     monkeypatch.setattr(module, "resolve_gce_instance_ip", lambda *_args: next(resolved))
 
     assert module.get_ib_host() == "10.0.0.8"
-    assert module.get_ib_host() == "10.0.0.9"
+    assert module.get_ib_host() == "10.0.0.8"
+    assert module.refresh_ib_host() == "10.0.0.9"
     assert module.IB_HOST == "10.0.0.9"
+
+
+def test_refresh_ib_host_keeps_cached_ip_when_gce_lookup_fails(strategy_module_factory, monkeypatch):
+    module = strategy_module_factory(
+        IB_GATEWAY_ZONE="us-central1-a",
+        IB_ACCOUNT_GROUP_CONFIG_JSON=(
+            '{"groups":{"default":{"ib_gateway_instance_name":"ib-gateway",'
+            '"ib_gateway_mode":"live","ib_client_id":1}}}'
+        ),
+    )
+    module.IB_HOST = "10.0.0.8"
+    monkeypatch.setattr(
+        module,
+        "resolve_gce_instance_ip",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("compute API unavailable")),
+    )
+
+    assert module.refresh_ib_host() == "10.0.0.8"
+    assert module.IB_HOST == "10.0.0.8"
 
 
 def test_ib_gateway_mode_derives_paper_port(strategy_module_factory):

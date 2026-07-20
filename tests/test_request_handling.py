@@ -911,7 +911,9 @@ def test_handle_request_classifies_gateway_connection_failure_as_unavailable(str
         strategy_module,
         "run_strategy_core",
         lambda **_kwargs: (_ for _ in ()).throw(
-            ConnectionRefusedError("TCP preflight failed: connection refused")
+            strategy_module.IBKRGatewayUnavailableError(
+                "TCP preflight failed: connection refused"
+            )
         ),
     )
     monkeypatch.setattr(
@@ -942,6 +944,36 @@ def test_handle_request_classifies_gateway_connection_failure_as_unavailable(str
     assert observed["events"][-1][0] == "ibkr_gateway_connect_failed"
     assert observed["events"][-1][1]["failure_category"] == "ibkr_gateway_unavailable"
     assert len(observed["notifications"]) == 1
+
+
+def test_handle_request_does_not_misclassify_unrelated_timeout_as_gateway_failure(strategy_module, monkeypatch):
+    observed = {"events": []}
+
+    monkeypatch.setattr(strategy_module, "is_market_open_now", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        strategy_module,
+        "run_strategy_core",
+        lambda **_kwargs: (_ for _ in ()).throw(TimeoutError("snapshot storage timed out")),
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "persist_execution_report",
+        lambda report: observed.setdefault("report", dict(report)) or "/tmp/runtime-report.json",
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "log_runtime_event",
+        lambda _context, event, **fields: observed["events"].append((event, fields)),
+    )
+    monkeypatch.setattr(strategy_module, "publish_notification", lambda **_kwargs: None)
+
+    with strategy_module.app.test_request_context("/run", method="POST"):
+        body, status = strategy_module.handle_request()
+
+    assert status == 500
+    assert body == "Error"
+    assert observed["report"]["errors"][0]["stage"] == "strategy_cycle"
+    assert observed["events"][-1][0] == "strategy_cycle_failed"
 
 
 def test_run_strategy_core_allows_multiple_runs_in_same_process(strategy_module, monkeypatch):

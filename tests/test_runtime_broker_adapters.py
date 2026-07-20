@@ -2,7 +2,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from application.runtime_broker_adapters import build_runtime_broker_adapters
+from application.runtime_broker_adapters import (
+    IBKRGatewayUnavailableError,
+    build_runtime_broker_adapters,
+)
 
 
 def _build_adapters(*, account_ids=("U1234567",), execution_mode="paper"):
@@ -54,13 +57,16 @@ def test_connect_ib_accepts_configured_managed_account():
 
 
 def test_connect_ib_resolves_gateway_host_again_for_each_retry():
-    observed = {"hosts": [], "resolved": []}
-    resolved_hosts = iter(("10.0.0.8", "10.0.0.9"))
+    observed = {"hosts": [], "refreshes": 0}
+    current_host = {"value": "10.0.0.8"}
 
     def resolve_host():
-        host = next(resolved_hosts)
-        observed["resolved"].append(host)
-        return host
+        return current_host["value"]
+
+    def refresh_host():
+        observed["refreshes"] += 1
+        current_host["value"] = "10.0.0.9"
+        return current_host["value"]
 
     def connect(host, *_args, **_kwargs):
         observed["hosts"].append(host)
@@ -73,6 +79,7 @@ def test_connect_ib_resolves_gateway_host_again_for_each_retry():
         **{
             **adapters.__dict__,
             "host_resolver": resolve_host,
+            "refresh_host_fn": refresh_host,
             "connect_ib_fn": connect,
             "connect_attempts": 2,
         }
@@ -82,8 +89,26 @@ def test_connect_ib_resolves_gateway_host_again_for_each_retry():
 
     assert observed == {
         "hosts": ["10.0.0.8", "10.0.0.9"],
-        "resolved": ["10.0.0.8", "10.0.0.9"],
+        "refreshes": 1,
     }
+
+
+def test_connect_ib_raises_dedicated_error_after_retries_are_exhausted():
+    adapters = _build_adapters()
+    adapters = adapters.__class__(
+        **{
+            **adapters.__dict__,
+            "connect_ib_fn": lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                TimeoutError("handshake timeout")
+            ),
+            "connect_attempts": 2,
+        }
+    )
+
+    with pytest.raises(IBKRGatewayUnavailableError, match="unavailable after 2 attempt") as exc_info:
+        adapters.connect_ib()
+
+    assert isinstance(exc_info.value.__cause__, TimeoutError)
 
 
 def test_connect_ib_rejects_configured_account_not_visible_to_gateway_username():

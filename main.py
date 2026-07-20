@@ -19,7 +19,10 @@ except ImportError:
     get_compute_discovery = None
 
 from application.cycle_result import coerce_strategy_cycle_result
-from application.runtime_broker_adapters import build_runtime_broker_adapters
+from application.runtime_broker_adapters import (
+    IBKRGatewayUnavailableError,
+    build_runtime_broker_adapters,
+)
 from application.runtime_composer import build_runtime_composer
 from application.runtime_deadline import (
     RuntimeDeadlineExceeded,
@@ -131,18 +134,34 @@ def resolve_gce_instance_ip(instance_name, zone):
 
 def get_ib_host():
     global IB_HOST
+    if IB_HOST:
+        return IB_HOST
     host = RUNTIME_SETTINGS.ib_gateway_instance_name
     zone = RUNTIME_SETTINGS.ib_gateway_zone
     if zone:
-        # A restarted GCE gateway can receive a new internal IP. The broker
-        # adapter calls this resolver for every retry, so refresh zoned hosts.
         host = resolve_gce_instance_ip(host, zone)
-        IB_HOST = host
-        return host
-    if IB_HOST:
-        return IB_HOST
     IB_HOST = host
     return host
+
+
+def refresh_ib_host():
+    """Refresh a zoned gateway address while retaining last-known-good state."""
+    global IB_HOST
+    instance_name = RUNTIME_SETTINGS.ib_gateway_instance_name
+    zone = RUNTIME_SETTINGS.ib_gateway_zone
+    if not zone:
+        return get_ib_host()
+
+    cached_host = IB_HOST
+    try:
+        resolved_host = resolve_gce_instance_ip(instance_name, zone)
+    except Exception as exc:
+        print(f"GCE host refresh failed for {instance_name}: {exc}", flush=True)
+        resolved_host = cached_host or instance_name
+    if cached_host and resolved_host == instance_name:
+        resolved_host = cached_host
+    IB_HOST = resolved_host
+    return resolved_host
 
 
 def get_ib_gateway_mode():
@@ -518,6 +537,7 @@ def build_broker_adapters(*, dry_run_only_override: bool | None = None):
     effective_dry_run_only = RUNTIME_SETTINGS.dry_run_only if dry_run_only_override is None else bool(dry_run_only_override)
     return build_runtime_broker_adapters(
         host_resolver=get_ib_host,
+        refresh_host_fn=refresh_ib_host,
         ib_port=IB_PORT,
         ib_client_id=IB_CLIENT_ID,
         connect_timeout_seconds=IB_CONNECT_TIMEOUT_SECONDS,
@@ -1313,7 +1333,7 @@ def _handle_request(
             },
         )
         raise
-    except (ConnectionError, TimeoutError) as exc:
+    except IBKRGatewayUnavailableError as exc:
         append_runtime_report_error(
             report,
             stage="ibkr_connect",
@@ -1326,19 +1346,10 @@ def _handle_request(
             status="error",
             diagnostics={"failure_category": "ibkr_gateway_unavailable"},
         )
-        event = (
-            "ibkr_gateway_connect_timeout"
-            if isinstance(exc, TimeoutError)
-            else "ibkr_gateway_connect_failed"
-        )
         log_runtime_event(
             log_context,
-            event,
-            message=(
-                "IBKR gateway handshake timed out"
-                if isinstance(exc, TimeoutError)
-                else "IBKR gateway connection failed"
-            ),
+            "ibkr_gateway_connect_failed",
+            message="IBKR gateway connection attempts exhausted",
             severity="ERROR",
             error_type=type(exc).__name__,
             error_message=str(exc),
