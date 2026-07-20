@@ -154,7 +154,7 @@ def test_handle_dry_run_post_uses_dry_run_override(strategy_module, monkeypatch)
 
 
 def test_handle_dry_run_returns_service_unavailable_before_platform_timeout(strategy_module, monkeypatch):
-    observed = {"events": [], "notifications": []}
+    observed = {"recycles": 0}
 
     class ExpiredDeadline:
         def __enter__(self):
@@ -163,26 +163,11 @@ def test_handle_dry_run_returns_service_unavailable_before_platform_timeout(stra
         def __exit__(self, *_args):
             return False
 
-    monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace(run_id="run-001"))
-    monkeypatch.setattr(strategy_module, "build_execution_report", lambda *_args, **_kwargs: {"status": "pending", "errors": []})
-    monkeypatch.setattr(
-        strategy_module,
-        "persist_execution_report",
-        lambda report, **_kwargs: observed.setdefault("report", dict(report)) or "/tmp/runtime-report.json",
-    )
-    monkeypatch.setattr(strategy_module, "is_market_open_now", lambda **_kwargs: True)
-    monkeypatch.setattr(strategy_module, "load_strategy_plugin_signals", lambda: ((), None))
-    monkeypatch.setattr(strategy_module, "attach_strategy_plugin_report", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(strategy_module, "enforce_runtime_deadline", lambda *_args, **_kwargs: ExpiredDeadline())
     monkeypatch.setattr(
         strategy_module,
-        "log_runtime_event",
-        lambda _context, event, **fields: observed["events"].append((event, fields)),
-    )
-    monkeypatch.setattr(
-        strategy_module,
-        "_publish_runtime_failure_notification",
-        lambda **kwargs: observed["notifications"].append(kwargs) or True,
+        "recycle_current_process_after_response",
+        lambda: observed.__setitem__("recycles", observed["recycles"] + 1),
     )
 
     with strategy_module.app.test_request_context("/dry-run", method="POST"):
@@ -190,9 +175,43 @@ def test_handle_dry_run_returns_service_unavailable_before_platform_timeout(stra
 
     assert status == 503
     assert body == "Error"
-    assert observed["report"]["errors"][0]["stage"] == "strategy_deadline"
-    assert observed["events"][-1][0] == "strategy_cycle_deadline_exceeded"
-    assert len(observed["notifications"]) == 1
+    assert observed["recycles"] == 1
+
+
+def test_handle_dry_run_deadline_from_strategy_skips_persistence_and_recycles(strategy_module, monkeypatch):
+    observed = {"persist_calls": 0, "recycles": 0}
+
+    monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace(run_id="run-001"))
+    monkeypatch.setattr(strategy_module, "build_execution_report", lambda *_args, **_kwargs: {"status": "pending"})
+    monkeypatch.setattr(strategy_module, "is_market_open_now", lambda **_kwargs: True)
+    monkeypatch.setattr(strategy_module, "load_strategy_plugin_signals", lambda: ((), None))
+    monkeypatch.setattr(strategy_module, "attach_strategy_plugin_report", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(strategy_module, "log_runtime_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        strategy_module,
+        "run_strategy_core",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            strategy_module.RuntimeDeadlineExceeded("strategy deadline exceeded")
+        ),
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "persist_execution_report",
+        lambda *_args, **_kwargs: observed.__setitem__("persist_calls", observed["persist_calls"] + 1),
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "recycle_current_process_after_response",
+        lambda: observed.__setitem__("recycles", observed["recycles"] + 1),
+    )
+
+    with strategy_module.app.test_request_context("/dry-run", method="POST"):
+        body, status = strategy_module.handle_dry_run()
+
+    assert status == 503
+    assert body == "Error"
+    assert observed["persist_calls"] == 0
+    assert observed["recycles"] == 1
 
 
 def test_dry_run_composer_wires_dry_run_override_to_order_execution(strategy_module, monkeypatch):
