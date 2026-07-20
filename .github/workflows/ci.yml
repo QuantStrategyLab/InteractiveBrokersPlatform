@@ -100,6 +100,9 @@ jobs:
           assert resolve_hk_canonical_profile("hk_global_etf_tactical_rotation") == "hk_global_etf_tactical_rotation"
           PY
 
+      - name: Validate production Cloud Run startup
+        run: uv run --no-sync python scripts/validate_cloud_run_startup.py
+
       - name: Install editable shared repositories
         run: |
           set -euo pipefail

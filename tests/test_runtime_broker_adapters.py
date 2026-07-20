@@ -53,6 +53,39 @@ def test_connect_ib_accepts_configured_managed_account():
     assert ib.managedAccounts() == ["U1234567"]
 
 
+def test_connect_ib_resolves_gateway_host_again_for_each_retry():
+    observed = {"hosts": [], "resolved": []}
+    resolved_hosts = iter(("10.0.0.8", "10.0.0.9"))
+
+    def resolve_host():
+        host = next(resolved_hosts)
+        observed["resolved"].append(host)
+        return host
+
+    def connect(host, *_args, **_kwargs):
+        observed["hosts"].append(host)
+        if len(observed["hosts"]) == 1:
+            raise ConnectionRefusedError("gateway restarting")
+        return SimpleNamespace(managedAccounts=lambda: ["U1234567"])
+
+    adapters = _build_adapters()
+    adapters = adapters.__class__(
+        **{
+            **adapters.__dict__,
+            "host_resolver": resolve_host,
+            "connect_ib_fn": connect,
+            "connect_attempts": 2,
+        }
+    )
+
+    adapters.connect_ib()
+
+    assert observed == {
+        "hosts": ["10.0.0.8", "10.0.0.9"],
+        "resolved": ["10.0.0.8", "10.0.0.9"],
+    }
+
+
 def test_connect_ib_rejects_configured_account_not_visible_to_gateway_username():
     observed = {"disconnects": 0}
 

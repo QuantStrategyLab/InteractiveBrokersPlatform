@@ -131,12 +131,16 @@ def resolve_gce_instance_ip(instance_name, zone):
 
 def get_ib_host():
     global IB_HOST
-    if IB_HOST:
-        return IB_HOST
     host = RUNTIME_SETTINGS.ib_gateway_instance_name
     zone = RUNTIME_SETTINGS.ib_gateway_zone
     if zone:
+        # A restarted GCE gateway can receive a new internal IP. The broker
+        # adapter calls this resolver for every retry, so refresh zoned hosts.
         host = resolve_gce_instance_ip(host, zone)
+        IB_HOST = host
+        return host
+    if IB_HOST:
+        return IB_HOST
     IB_HOST = host
     return host
 
@@ -1309,21 +1313,36 @@ def _handle_request(
             },
         )
         raise
-    except TimeoutError as exc:
+    except (ConnectionError, TimeoutError) as exc:
         append_runtime_report_error(
             report,
             stage="ibkr_connect",
             message=str(exc),
             error_type=type(exc).__name__,
+            failure_category="ibkr_gateway_unavailable",
         )
-        finalize_runtime_report(report, status="error")
+        finalize_runtime_report(
+            report,
+            status="error",
+            diagnostics={"failure_category": "ibkr_gateway_unavailable"},
+        )
+        event = (
+            "ibkr_gateway_connect_timeout"
+            if isinstance(exc, TimeoutError)
+            else "ibkr_gateway_connect_failed"
+        )
         log_runtime_event(
             log_context,
-            "ibkr_gateway_connect_timeout",
-            message="IBKR gateway handshake timed out",
+            event,
+            message=(
+                "IBKR gateway handshake timed out"
+                if isinstance(exc, TimeoutError)
+                else "IBKR gateway connection failed"
+            ),
             severity="ERROR",
             error_type=type(exc).__name__,
             error_message=str(exc),
+            failure_category="ibkr_gateway_unavailable",
         )
         error_msg = f"🚨 【IBKR 连接异常】\n{str(exc)}"
         _publish_runtime_failure_notification(
@@ -1331,7 +1350,7 @@ def _handle_request(
             compact_text=error_msg,
             exc=exc,
         )
-        return "Error", 500
+        return "Error", 503
     except Exception as exc:
         append_runtime_report_error(
             report,

@@ -82,9 +82,11 @@ class IBKRRuntimeBrokerAdapters:
 
     def connect_ib(self):
         self.ensure_event_loop_fn()
-        host = self.host_resolver()
         last_error = None
         for attempt in range(1, self.connect_attempts + 1):
+            # Resolve on every retry. GCE-backed gateways can receive a new
+            # internal IP after restart, so retries must not pin the first one.
+            host = self.host_resolver()
             client_id = self.ib_client_id + ((attempt - 1) * self.client_id_retry_offset)
             self.printer(
                 "Connecting to IB gateway "

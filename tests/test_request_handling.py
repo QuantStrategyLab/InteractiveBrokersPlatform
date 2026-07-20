@@ -903,6 +903,47 @@ def test_handle_request_error_persists_machine_readable_report(strategy_module, 
     assert len(observed["messages"]) == 1
 
 
+def test_handle_request_classifies_gateway_connection_failure_as_unavailable(strategy_module, monkeypatch):
+    observed = {"events": [], "notifications": []}
+
+    monkeypatch.setattr(strategy_module, "is_market_open_now", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        strategy_module,
+        "run_strategy_core",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            ConnectionRefusedError("TCP preflight failed: connection refused")
+        ),
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "persist_execution_report",
+        lambda report: observed.setdefault("report", dict(report)) or "/tmp/runtime-report.json",
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "log_runtime_event",
+        lambda _context, event, **fields: observed["events"].append((event, fields)),
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "publish_notification",
+        lambda **kwargs: observed["notifications"].append(kwargs),
+    )
+
+    with strategy_module.app.test_request_context("/run", method="POST"):
+        body, status = strategy_module.handle_request()
+
+    assert status == 503
+    assert body == "Error"
+    assert observed["report"]["status"] == "error"
+    assert observed["report"]["errors"][0]["stage"] == "ibkr_connect"
+    assert observed["report"]["errors"][0]["failure_category"] == "ibkr_gateway_unavailable"
+    assert observed["report"]["diagnostics"]["failure_category"] == "ibkr_gateway_unavailable"
+    assert observed["events"][-1][0] == "ibkr_gateway_connect_failed"
+    assert observed["events"][-1][1]["failure_category"] == "ibkr_gateway_unavailable"
+    assert len(observed["notifications"]) == 1
+
+
 def test_run_strategy_core_allows_multiple_runs_in_same_process(strategy_module, monkeypatch):
     observed = {"connect_calls": 0, "disconnect_calls": 0, "messages": []}
 

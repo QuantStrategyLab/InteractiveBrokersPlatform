@@ -16,6 +16,7 @@ RUN apt-get update \
 COPY . .
 RUN python -m pip install --upgrade pip uv \
     && uv sync --frozen --no-dev \
+    && python scripts/validate_cloud_run_startup.py \
     && apt-get purge -y git \
     && apt-get autoremove -y --purge \
     && rm -rf /var/lib/apt/lists/* \
