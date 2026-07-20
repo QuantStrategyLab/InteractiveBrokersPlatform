@@ -134,16 +134,7 @@ SCHEDULER_TIME_ENV = {
     "probe_time": "CLOUD_SCHEDULER_PROBE_TIME",
     "precheck_time": "CLOUD_SCHEDULER_PRECHECK_TIME",
 }
-NEAR_RUN_WARMUP_SCHEDULE = "43 9,15 * * 1-5"
 RUN_SCHEDULER_ATTEMPT_DEADLINE = "330s"
-NEAR_RUN_WARMUP_SERVICES = frozenset(
-    {
-        "interactive-brokers-quant-live-u15998061-service",
-        "interactive-brokers-quant-live-u16608560-service",
-        "interactive-brokers-quant-live-u18336562-service",
-        "interactive-brokers-quant-live-u18308207-service",
-    }
-)
 
 # Strategy-derived vars: auto-populated from platform-config.json defaults.
 def _derive_strategy_env_defaults(strategy_config: dict) -> dict[str, str]:
@@ -468,9 +459,8 @@ def _build_target_plan(
         env_values=env_values,
         per_service_mode=per_service_mode,
     )
-    if service_name in NEAR_RUN_WARMUP_SERVICES:
+    if _requires_extended_run_deadline(runtime_target, env_values):
         scheduler["attempt_deadline"] = RUN_SCHEDULER_ATTEMPT_DEADLINE
-    _validate_near_run_warmup_schedule(service_name, scheduler)
 
     return {
         "service_name": service_name,
@@ -512,18 +502,18 @@ def _build_scheduler_plan(
     return scheduler
 
 
-def _validate_near_run_warmup_schedule(
-    service_name: str,
-    scheduler: Mapping[str, str],
-) -> None:
-    if service_name not in NEAR_RUN_WARMUP_SERVICES:
-        return
-    if scheduler.get("timezone") != "America/New_York":
-        raise ValueError(f"{service_name} warmup timezone must be America/New_York")
-    if scheduler.get("probe_time") != NEAR_RUN_WARMUP_SCHEDULE:
-        raise ValueError(
-            f"{service_name} warmup schedule must be {NEAR_RUN_WARMUP_SCHEDULE!r}"
-        )
+def _requires_extended_run_deadline(
+    runtime_target: Mapping[str, object],
+    env_values: Mapping[str, str],
+) -> bool:
+    """Reserve enough scheduler time for any live target backed by IB Gateway."""
+    backend = str(env_values.get("IBKR_EXECUTION_BACKEND") or "gateway").strip().lower()
+    raw_dry_run = runtime_target.get("dry_run_only")
+    if raw_dry_run is None:
+        raw_dry_run = env_values.get("IBKR_DRY_RUN_ONLY")
+    dry_run_only = str(raw_dry_run or "").strip().lower() in {"1", "true", "yes", "on"}
+    execution_mode = str(runtime_target.get("execution_mode") or "").strip().lower()
+    return backend == "gateway" and execution_mode != "paper" and not dry_run_only
 
 
 def _validate_profile_inputs(
