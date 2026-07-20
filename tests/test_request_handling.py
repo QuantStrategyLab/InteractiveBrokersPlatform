@@ -214,6 +214,41 @@ def test_handle_dry_run_deadline_from_strategy_persists_once_and_recycles(strate
     assert observed["recycles"] == 1
 
 
+def test_handle_dry_run_deadline_during_plugin_setup_persists_report(strategy_module, monkeypatch):
+    observed = {"reports": [], "recycles": 0}
+
+    monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace(run_id="run-001"))
+    monkeypatch.setattr(strategy_module, "build_execution_report", lambda *_args, **_kwargs: {"status": "pending"})
+    monkeypatch.setattr(
+        strategy_module,
+        "load_strategy_plugin_signals",
+        lambda: (_ for _ in ()).throw(
+            strategy_module.RuntimeDeadlineExceeded("plugin setup deadline exceeded")
+        ),
+    )
+    monkeypatch.setattr(strategy_module, "log_runtime_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        strategy_module,
+        "persist_execution_report",
+        lambda report, **_kwargs: observed["reports"].append(dict(report)) or "/tmp/runtime-report.json",
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "recycle_current_process_after_response",
+        lambda: observed.__setitem__("recycles", observed["recycles"] + 1),
+    )
+
+    with strategy_module.app.test_request_context("/dry-run", method="POST"):
+        body, status = strategy_module.handle_dry_run()
+
+    assert status == 503
+    assert body == "Error"
+    assert observed["recycles"] == 1
+    assert len(observed["reports"]) == 1
+    assert observed["reports"][0]["status"] == "error"
+    assert observed["reports"][0]["diagnostics"]["failure_category"] == "strategy_deadline"
+
+
 def test_successful_dry_run_report_timeout_does_not_flip_strategy_result(strategy_module, monkeypatch):
     observed = {"persist_calls": 0, "recycles": 0}
 

@@ -1112,16 +1112,21 @@ def _handle_request(
 
     log_context = build_request_log_context()
     report = build_execution_report(log_context, dry_run_only_override=dry_run_only_override)
-    strategy_plugin_signals, strategy_plugin_error = load_strategy_plugin_signals()
-    attach_strategy_plugin_report(
-        report,
-        signals=strategy_plugin_signals,
-        error=strategy_plugin_error,
-    )
+    if report_collector is not None:
+        # Register the mutable report before any deadline-bound setup work so a
+        # timeout while loading strategy plugins still leaves a report to persist.
+        report_collector.append(report)
     execution_window = "dry_run" if dry_run_only_override else "execution"
-    lock_acquired = STRATEGY_RUN_LOCK.acquire(blocking=False)
+    lock_acquired = False
     deadline_exceeded = False
     try:
+        strategy_plugin_signals, strategy_plugin_error = load_strategy_plugin_signals()
+        attach_strategy_plugin_report(
+            report,
+            signals=strategy_plugin_signals,
+            error=strategy_plugin_error,
+        )
+        lock_acquired = STRATEGY_RUN_LOCK.acquire(blocking=False)
         log_runtime_event(
             log_context,
             "strategy_cycle_received",
@@ -1353,8 +1358,6 @@ def _handle_request(
     finally:
         if lock_acquired:
             STRATEGY_RUN_LOCK.release()
-        if report_collector is not None:
-            report_collector.append(report)
         if not deadline_exceeded and persist_report:
             try:
                 if dry_run_only_override is None:
