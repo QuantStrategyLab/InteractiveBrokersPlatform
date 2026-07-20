@@ -212,6 +212,7 @@ IB_CONNECT_ATTEMPTS = get_positive_int_env("IBKR_CONNECT_ATTEMPTS", 3)
 IB_CONNECT_RETRY_DELAY_SECONDS = get_non_negative_float_env("IBKR_CONNECT_RETRY_DELAY_SECONDS", 5.0)
 IB_CLIENT_ID_RETRY_OFFSET = get_positive_int_env("IBKR_CLIENT_ID_RETRY_OFFSET", 100)
 IBKR_DRY_RUN_DEADLINE_SECONDS = get_positive_int_env("IBKR_DRY_RUN_DEADLINE_SECONDS", 105)
+IBKR_DEADLINE_REPORT_GRACE_SECONDS = get_positive_int_env("IBKR_DEADLINE_REPORT_GRACE_SECONDS", 5)
 STRATEGY_PROFILE = RUNTIME_SETTINGS.strategy_profile
 STRATEGY_DISPLAY_NAME = RUNTIME_SETTINGS.strategy_display_name
 
@@ -1284,8 +1285,36 @@ def _handle_request(
             result=cycle_result.result,
         )
         return (response_body if dry_run_only_override else cycle_result.result), 200
-    except RuntimeDeadlineExceeded:
+    except RuntimeDeadlineExceeded as exc:
         deadline_exceeded = True
+        append_runtime_report_error(
+            report,
+            stage="strategy_deadline",
+            message=str(exc),
+            error_type=type(exc).__name__,
+        )
+        finalize_runtime_report(
+            report,
+            status="error",
+            diagnostics={
+                "failure_category": "strategy_deadline",
+                "timeout_seconds": IBKR_DRY_RUN_DEADLINE_SECONDS,
+            },
+        )
+        try:
+            with enforce_runtime_deadline(
+                IBKR_DEADLINE_REPORT_GRACE_SECONDS,
+                operation="IBKR deadline report persistence",
+            ):
+                report_path = persist_execution_report(
+                    report,
+                    dry_run_only_override=dry_run_only_override,
+                )
+                print(f"execution_report {report_path}", flush=True)
+        except RuntimeDeadlineExceeded as persist_exc:
+            print(f"deadline report persistence timed out: {persist_exc}", flush=True)
+        except Exception as persist_exc:
+            print(f"failed to persist deadline report: {persist_exc}", flush=True)
         raise
     except TimeoutError as exc:
         append_runtime_report_error(
@@ -1480,6 +1509,8 @@ def _handle_monitor_dispatch():
         dispatches_sent=result.get("dispatches_sent"),
         dispatch_results=result.get("results") or [],
     )
+    if any(bool(item.get("worker_recycle_required")) for item in (result.get("results") or [])):
+        recycle_current_process_after_response()
     return result, 200 if result.get("ok") else 502
 
 
@@ -1487,11 +1518,20 @@ def _dispatch_local_monitor(dispatch):
     window = str(dispatch.get("window") or "").strip()
     if window == "probe":
         _body, status_code = _handle_probe()
+        recycle_required = False
     elif window == "precheck":
-        _body, status_code = _handle_dry_run_with_deadline()
+        timeout_state: dict[str, bool] = {}
+        _body, status_code = _handle_dry_run_with_deadline(
+            recycle_on_timeout=False,
+            timeout_state=timeout_state,
+        )
+        recycle_required = bool(timeout_state.get("worker_recycle_required"))
     else:
         raise ValueError(f"Unsupported local monitor window: {window!r}")
-    return {"status_code": int(status_code)}
+    return {
+        "status_code": int(status_code),
+        "worker_recycle_required": recycle_required,
+    }
 
 
 @app.route("/run", methods=["POST", "GET"])
@@ -1499,7 +1539,11 @@ def handle_request():
     return _route_with_runtime_error_fallback(_handle_request)
 
 
-def _handle_dry_run_with_deadline():
+def _handle_dry_run_with_deadline(
+    *,
+    recycle_on_timeout: bool = True,
+    timeout_state: dict[str, bool] | None = None,
+):
     try:
         with enforce_runtime_deadline(
             IBKR_DRY_RUN_DEADLINE_SECONDS,
@@ -1521,14 +1565,18 @@ def _handle_dry_run_with_deadline():
                     "service_name": SERVICE_NAME or os.getenv("K_SERVICE"),
                     "strategy_profile": STRATEGY_PROFILE,
                     "timeout_seconds": IBKR_DRY_RUN_DEADLINE_SECONDS,
-                    "worker_recycle_scheduled": True,
+                    "worker_recycle_required": True,
+                    "worker_recycle_scheduled": recycle_on_timeout,
                 },
                 ensure_ascii=False,
                 separators=(",", ":"),
             ),
             flush=True,
         )
-        recycle_current_process_after_response()
+        if timeout_state is not None:
+            timeout_state["worker_recycle_required"] = True
+        if recycle_on_timeout:
+            recycle_current_process_after_response()
         return "Error", 503
 
 
