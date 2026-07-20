@@ -1,5 +1,7 @@
 import datetime as dt
 
+import pytest
+
 from application.monitor_dispatcher import (
     dispatch_due_monitor_targets,
     due_monitor_dispatches,
@@ -14,6 +16,11 @@ def test_load_monitor_targets_reads_ibkr_specific_env(monkeypatch):
     )
 
     assert load_monitor_targets() == [{"service_name": "svc-tqqq"}]
+
+
+def test_load_monitor_targets_rejects_non_object_items():
+    with pytest.raises(ValueError, match="target at index 1 must be an object"):
+        load_monitor_targets('{"targets":[{"service_name":"svc-tqqq"},"bad-target"]}')
 
 
 def test_due_monitor_dispatches_selects_due_window_and_skips_disabled_target():

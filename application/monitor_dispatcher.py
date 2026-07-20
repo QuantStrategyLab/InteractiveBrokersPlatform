@@ -38,7 +38,10 @@ def load_monitor_targets(raw_json: str | None = None) -> list[dict[str, Any]]:
     targets = payload.get("targets") if isinstance(payload, dict) else payload
     if not isinstance(targets, list):
         raise ValueError("IBKR monitor dispatch targets must be a JSON array or an object with targets")
-    return [dict(target) for target in targets if isinstance(target, dict)]
+    for index, target in enumerate(targets):
+        if not isinstance(target, dict):
+            raise ValueError(f"IBKR monitor dispatch target at index {index} must be an object")
+    return [dict(target) for target in targets]
 
 
 def due_monitor_dispatches(

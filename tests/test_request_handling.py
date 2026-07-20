@@ -214,6 +214,51 @@ def test_handle_dry_run_deadline_from_strategy_persists_once_and_recycles(strate
     assert observed["recycles"] == 1
 
 
+def test_successful_dry_run_report_timeout_does_not_flip_strategy_result(strategy_module, monkeypatch):
+    observed = {"persist_calls": 0, "recycles": 0}
+
+    class DeadlineContext:
+        def __init__(self, operation):
+            self.operation = operation
+
+        def __enter__(self):
+            if "report persistence" in self.operation:
+                raise strategy_module.RuntimeDeadlineExceeded("report persistence deadline exceeded")
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(
+        strategy_module,
+        "enforce_runtime_deadline",
+        lambda _seconds, *, operation: DeadlineContext(operation),
+    )
+    monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace(run_id="run-001"))
+    monkeypatch.setattr(strategy_module, "build_execution_report", lambda *_args, **_kwargs: {"status": "pending"})
+    monkeypatch.setattr(strategy_module, "is_market_open_now", lambda **_kwargs: True)
+    monkeypatch.setattr(strategy_module, "load_strategy_plugin_signals", lambda: ((), None))
+    monkeypatch.setattr(strategy_module, "attach_strategy_plugin_report", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(strategy_module, "log_runtime_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(strategy_module, "run_strategy_core", lambda **_kwargs: "OK - dry-run")
+    monkeypatch.setattr(
+        strategy_module,
+        "persist_execution_report",
+        lambda *_args, **_kwargs: observed.__setitem__("persist_calls", observed["persist_calls"] + 1),
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "recycle_current_process_after_response",
+        lambda: observed.__setitem__("recycles", observed["recycles"] + 1),
+    )
+
+    with strategy_module.app.test_request_context("/dry-run", method="POST"):
+        body, status = strategy_module.handle_dry_run()
+
+    assert status == 200
+    assert body == "Dry Run OK"
+    assert observed == {"persist_calls": 0, "recycles": 0}
+
+
 def test_dry_run_composer_wires_dry_run_override_to_order_execution(strategy_module, monkeypatch):
     observed = {}
 
