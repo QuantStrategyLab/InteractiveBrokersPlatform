@@ -10,15 +10,21 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "sync-cloud-run-env.yml"
 
 
-def test_four_gateway_run_deadline_exceeds_cloud_run_timeout() -> None:
-    expected_services = {
-        "interactive-brokers-quant-live-u15998061-service",
-        "interactive-brokers-quant-live-u16608560-service",
-        "interactive-brokers-quant-live-u18336562-service",
-        "interactive-brokers-quant-live-u18308207-service",
-    }
-    assert sync_plan.NEAR_RUN_WARMUP_SERVICES == expected_services
+def test_live_gateway_run_deadline_exceeds_cloud_run_timeout() -> None:
     assert sync_plan.RUN_SCHEDULER_ATTEMPT_DEADLINE == "330s"
+
+    assert sync_plan._requires_extended_run_deadline(
+        {"execution_mode": "live", "dry_run_only": False},
+        {"IBKR_EXECUTION_BACKEND": "gateway"},
+    )
+    assert not sync_plan._requires_extended_run_deadline(
+        {"execution_mode": "paper", "dry_run_only": True},
+        {"IBKR_EXECUTION_BACKEND": "gateway"},
+    )
+    assert not sync_plan._requires_extended_run_deadline(
+        {"execution_mode": "live", "dry_run_only": False},
+        {"IBKR_EXECUTION_BACKEND": "quantconnect"},
+    )
 
     workflow = WORKFLOW.read_text(encoding="utf-8")
     cloud_run_timeout = re.search(r"--timeout=(\d+)s", workflow)

@@ -1136,6 +1136,7 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
         "main_time": "10 16",
         "probe_time": "40 9,15",
         "precheck_time": "45 9",
+        "attempt_deadline": "330s",
     }
     assert "IBKR_FEATURE_SNAPSHOT_PATH" not in slot_a["env"]
     assert "IBKR_FEATURE_SNAPSHOT_PATH" in slot_a["remove_env_vars"]
@@ -1151,6 +1152,7 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
         "main_time": "45 15 1-7 * *",
         "probe_time": "35 9,15 1-7 * *",
         "precheck_time": "45 9 1-7 * *",
+        "attempt_deadline": "330s",
     }
     assert u7654_mega["env"]["IBKR_FEATURE_SNAPSHOT_PATH"] == "gs://runtime/mega/snapshot.csv"
     assert (
@@ -1225,7 +1227,7 @@ def _four_gateway_warmup_payload(probe_time: str) -> dict[str, object]:
             "runtime_target": {
                 **json.loads(
                     runtime_target_json(
-                        "us_equity_combo_leveraged",
+                        "tqqq_growth_income",
                         dry_run_only=True,
                         deployment_selector="us-combo-shadow",
                         account_scope="us-combo-shadow",
@@ -1252,7 +1254,7 @@ def _four_gateway_warmup_payload(probe_time: str) -> dict[str, object]:
     }
 
 
-def test_build_cloud_run_env_sync_plan_generates_four_gateway_near_run_warmups() -> None:
+def test_build_cloud_run_env_sync_plan_generates_live_gateway_deadlines() -> None:
     payload = _four_gateway_warmup_payload("43 9,15 * * 1-5")
     result = subprocess.run(
         [sys.executable, str(SYNC_PLAN_SCRIPT_PATH), "--json"],
@@ -1284,19 +1286,36 @@ def test_build_cloud_run_env_sync_plan_generates_four_gateway_near_run_warmups()
     assert "attempt_deadline" not in by_service["interactive-brokers-us-combo-shadow-service"]["scheduler"]
 
 
-def test_build_cloud_run_env_sync_plan_rejects_stale_gateway_warmup_schedule() -> None:
+def test_build_cloud_run_env_sync_plan_accepts_strategy_defined_gateway_schedule() -> None:
     payload = _four_gateway_warmup_payload("35 9,15 * * 1-5")
+    first_target = payload["targets"][0]
+    first_target["runtime_target"]["scheduler"] = {
+        "timezone": "Asia/Hong_Kong",
+        "main_time": "45 15 * * 1-5",
+        "probe_time": "35 9,15 * * 1-5",
+        "precheck_time": "45 9 * * 1-5",
+    }
     result = subprocess.run(
         [sys.executable, str(SYNC_PLAN_SCRIPT_PATH), "--json"],
-        check=False,
+        check=True,
         capture_output=True,
         text=True,
         env={**os.environ, "CLOUD_RUN_SERVICE_TARGETS_JSON": json.dumps(payload)},
     )
 
-    assert result.returncode != 0
-    assert "interactive-brokers-quant-live-u15998061-service" in result.stderr
-    assert "43 9,15 * * 1-5" in result.stderr
+    plan = json.loads(result.stdout)
+    first_plan = next(
+        target
+        for target in plan["targets"]
+        if target["service_name"] == "interactive-brokers-quant-live-u15998061-service"
+    )
+    assert first_plan["scheduler"] == {
+        "timezone": "Asia/Hong_Kong",
+        "main_time": "45 15 * * 1-5",
+        "probe_time": "35 9,15 * * 1-5",
+        "precheck_time": "45 9 * * 1-5",
+        "attempt_deadline": "330s",
+    }
 
 
 def test_build_cloud_run_env_sync_plan_requires_target_snapshot_in_per_service_mode():
