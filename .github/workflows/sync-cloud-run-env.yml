@@ -907,13 +907,19 @@ jobs:
           plan = json.loads(os.environ["SYNC_PLAN_JSON"])
           target = plan["targets"][int(os.environ["SYNC_TARGET_INDEX"])]
           env = target.get("env") or {}
+          scheduler = target.get("scheduler") or {}
           payload = {
               "service_name": target["service_name"],
               "service_url": os.environ["SERVICE_URL"].rstrip("/"),
               "strategy_profile": target.get("strategy_profile") or env.get("STRATEGY_PROFILE"),
               "account_group": env.get("ACCOUNT_GROUP"),
               "runtime_target_enabled": env.get("RUNTIME_TARGET_ENABLED", "true"),
-              "scheduler": target.get("scheduler") or {},
+              # Dedicated Cloud Scheduler jobs already own /health warmups and
+              # /run execution. The shared dispatcher only owns prechecks.
+              "scheduler": {
+                  "timezone": scheduler.get("timezone"),
+                  "precheck_time": scheduler.get("precheck_time"),
+              },
           }
           print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
           PY

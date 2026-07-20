@@ -153,6 +153,147 @@ def test_handle_dry_run_post_uses_dry_run_override(strategy_module, monkeypatch)
     assert observed["events"][0][1]["execution_window"] == "dry_run"
 
 
+def test_handle_dry_run_returns_service_unavailable_before_platform_timeout(strategy_module, monkeypatch):
+    observed = {"recycles": 0}
+
+    class ExpiredDeadline:
+        def __enter__(self):
+            raise strategy_module.RuntimeDeadlineExceeded("dry-run deadline exceeded")
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(strategy_module, "enforce_runtime_deadline", lambda *_args, **_kwargs: ExpiredDeadline())
+    monkeypatch.setattr(
+        strategy_module,
+        "recycle_current_process_after_response",
+        lambda: observed.__setitem__("recycles", observed["recycles"] + 1),
+    )
+
+    with strategy_module.app.test_request_context("/dry-run", method="POST"):
+        body, status = strategy_module.handle_dry_run()
+
+    assert status == 503
+    assert body == "Error"
+    assert observed["recycles"] == 1
+
+
+def test_handle_dry_run_deadline_from_strategy_persists_once_and_recycles(strategy_module, monkeypatch):
+    observed = {"persist_calls": 0, "recycles": 0}
+
+    monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace(run_id="run-001"))
+    monkeypatch.setattr(strategy_module, "build_execution_report", lambda *_args, **_kwargs: {"status": "pending"})
+    monkeypatch.setattr(strategy_module, "is_market_open_now", lambda **_kwargs: True)
+    monkeypatch.setattr(strategy_module, "load_strategy_plugin_signals", lambda: ((), None))
+    monkeypatch.setattr(strategy_module, "attach_strategy_plugin_report", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(strategy_module, "log_runtime_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        strategy_module,
+        "run_strategy_core",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            strategy_module.RuntimeDeadlineExceeded("strategy deadline exceeded")
+        ),
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "persist_execution_report",
+        lambda *_args, **_kwargs: observed.__setitem__("persist_calls", observed["persist_calls"] + 1),
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "recycle_current_process_after_response",
+        lambda: observed.__setitem__("recycles", observed["recycles"] + 1),
+    )
+
+    with strategy_module.app.test_request_context("/dry-run", method="POST"):
+        body, status = strategy_module.handle_dry_run()
+
+    assert status == 503
+    assert body == "Error"
+    assert observed["persist_calls"] == 1
+    assert observed["recycles"] == 1
+
+
+def test_handle_dry_run_deadline_during_plugin_setup_persists_report(strategy_module, monkeypatch):
+    observed = {"reports": [], "recycles": 0}
+
+    monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace(run_id="run-001"))
+    monkeypatch.setattr(strategy_module, "build_execution_report", lambda *_args, **_kwargs: {"status": "pending"})
+    monkeypatch.setattr(
+        strategy_module,
+        "load_strategy_plugin_signals",
+        lambda: (_ for _ in ()).throw(
+            strategy_module.RuntimeDeadlineExceeded("plugin setup deadline exceeded")
+        ),
+    )
+    monkeypatch.setattr(strategy_module, "log_runtime_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        strategy_module,
+        "persist_execution_report",
+        lambda report, **_kwargs: observed["reports"].append(dict(report)) or "/tmp/runtime-report.json",
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "recycle_current_process_after_response",
+        lambda: observed.__setitem__("recycles", observed["recycles"] + 1),
+    )
+
+    with strategy_module.app.test_request_context("/dry-run", method="POST"):
+        body, status = strategy_module.handle_dry_run()
+
+    assert status == 503
+    assert body == "Error"
+    assert observed["recycles"] == 1
+    assert len(observed["reports"]) == 1
+    assert observed["reports"][0]["status"] == "error"
+    assert observed["reports"][0]["diagnostics"]["failure_category"] == "strategy_deadline"
+
+
+def test_successful_dry_run_report_timeout_does_not_flip_strategy_result(strategy_module, monkeypatch):
+    observed = {"persist_calls": 0, "recycles": 0}
+
+    class DeadlineContext:
+        def __init__(self, operation):
+            self.operation = operation
+
+        def __enter__(self):
+            if "report persistence" in self.operation:
+                raise strategy_module.RuntimeDeadlineExceeded("report persistence deadline exceeded")
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(
+        strategy_module,
+        "enforce_runtime_deadline",
+        lambda _seconds, *, operation: DeadlineContext(operation),
+    )
+    monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace(run_id="run-001"))
+    monkeypatch.setattr(strategy_module, "build_execution_report", lambda *_args, **_kwargs: {"status": "pending"})
+    monkeypatch.setattr(strategy_module, "is_market_open_now", lambda **_kwargs: True)
+    monkeypatch.setattr(strategy_module, "load_strategy_plugin_signals", lambda: ((), None))
+    monkeypatch.setattr(strategy_module, "attach_strategy_plugin_report", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(strategy_module, "log_runtime_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(strategy_module, "run_strategy_core", lambda **_kwargs: "OK - dry-run")
+    monkeypatch.setattr(
+        strategy_module,
+        "persist_execution_report",
+        lambda *_args, **_kwargs: observed.__setitem__("persist_calls", observed["persist_calls"] + 1),
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "recycle_current_process_after_response",
+        lambda: observed.__setitem__("recycles", observed["recycles"] + 1),
+    )
+
+    with strategy_module.app.test_request_context("/dry-run", method="POST"):
+        body, status = strategy_module.handle_dry_run()
+
+    assert status == 200
+    assert body == "Dry Run OK"
+    assert observed == {"persist_calls": 0, "recycles": 0}
+
+
 def test_dry_run_composer_wires_dry_run_override_to_order_execution(strategy_module, monkeypatch):
     observed = {}
 
@@ -223,7 +364,7 @@ def test_handle_monitor_dispatch_post_dispatches_due_targets(strategy_module, mo
     def fake_dispatch(targets, **kwargs):
         observed["targets"] = targets
         observed["kwargs"] = kwargs
-        return {"dispatches_due": 1, "dispatches_sent": 1, "results": [{"service_name": "svc"}]}
+        return {"ok": True, "dispatches_due": 1, "dispatches_sent": 1, "results": [{"service_name": "svc"}]}
 
     monkeypatch.setattr(strategy_module, "dispatch_due_monitor_targets", fake_dispatch)
     monkeypatch.setattr(
@@ -239,6 +380,89 @@ def test_handle_monitor_dispatch_post_dispatches_due_targets(strategy_module, mo
     assert body["dispatches_sent"] == 1
     assert observed["targets"] == [{"service_name": "svc"}]
     assert observed["events"][0][0] == "monitor_dispatch_completed"
+
+
+def test_handle_monitor_dispatch_returns_bad_gateway_when_a_target_fails(strategy_module, monkeypatch):
+    monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace(run_id="run-001"))
+    monkeypatch.setattr(strategy_module, "load_monitor_targets", lambda: [{"service_name": "svc"}])
+    monkeypatch.setattr(
+        strategy_module,
+        "dispatch_due_monitor_targets",
+        lambda *_args, **_kwargs: {
+            "ok": False,
+            "dispatches_due": 1,
+            "dispatches_sent": 1,
+            "results": [{"service_name": "svc", "status_code": 503, "ok": False}],
+        },
+    )
+    monkeypatch.setattr(strategy_module, "log_runtime_event", lambda *_args, **_kwargs: None)
+
+    with strategy_module.app.test_request_context("/monitor-dispatch", method="POST"):
+        body, status = strategy_module.handle_monitor_dispatch()
+
+    assert status == 502
+    assert body["ok"] is False
+
+
+def test_handle_monitor_dispatch_recycles_only_after_local_timeout_is_aggregated(strategy_module, monkeypatch):
+    observed = {"recycles": 0, "logged": False}
+
+    monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace(run_id="run-001"))
+    monkeypatch.setattr(strategy_module, "load_monitor_targets", lambda: [{"service_name": "host-service"}])
+    monkeypatch.setattr(
+        strategy_module,
+        "dispatch_due_monitor_targets",
+        lambda *_args, **_kwargs: {
+            "ok": False,
+            "dispatches_due": 1,
+            "dispatches_sent": 1,
+            "results": [
+                {
+                    "service_name": "host-service",
+                    "status_code": 503,
+                    "ok": False,
+                    "worker_recycle_required": True,
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "log_runtime_event",
+        lambda *_args, **_kwargs: observed.__setitem__("logged", True),
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "recycle_current_process_after_response",
+        lambda: observed.__setitem__("recycles", observed["recycles"] + 1),
+    )
+
+    with strategy_module.app.test_request_context("/monitor-dispatch", method="POST"):
+        body, status = strategy_module.handle_monitor_dispatch()
+
+    assert status == 502
+    assert body["results"][0]["worker_recycle_required"] is True
+    assert observed == {"recycles": 1, "logged": True}
+
+
+def test_local_precheck_defers_worker_recycle_to_monitor_dispatch(strategy_module, monkeypatch):
+    observed = {"calls": 0}
+
+    def fake_dry_run(*, recycle_on_timeout, timeout_state):
+        observed["calls"] += 1
+        assert recycle_on_timeout is False
+        timeout_state["worker_recycle_required"] = True
+        return "Error", 503
+
+    monkeypatch.setattr(strategy_module, "_handle_dry_run_with_deadline", fake_dry_run)
+
+    result = strategy_module._dispatch_local_monitor({"window": "precheck"})
+
+    assert result == {
+        "status_code": 503,
+        "worker_recycle_required": True,
+    }
+    assert observed["calls"] == 1
 
 
 def test_handle_probe_checks_account_snapshot_without_success_notification(strategy_module, monkeypatch):

@@ -299,6 +299,7 @@ def _legacy_jobs_for_target(platform: str, target: RuntimeTarget) -> list[str]:
             suffix = suffix[: -len("-service")]
         if suffix.startswith("u"):
             jobs.append(f"ibkr-{suffix}-backup-execution")
+            jobs.append(f"ibkr-{suffix}-pre-market-dry-run")
 
     return list(dict.fromkeys(jobs))
 

@@ -21,6 +21,11 @@ except ImportError:
 from application.cycle_result import coerce_strategy_cycle_result
 from application.runtime_broker_adapters import build_runtime_broker_adapters
 from application.runtime_composer import build_runtime_composer
+from application.runtime_deadline import (
+    RuntimeDeadlineExceeded,
+    enforce_runtime_deadline,
+    recycle_current_process_after_response,
+)
 from application.runtime_strategy_adapters import (
     build_runtime_strategy_adapters,
     fetch_yfinance_historical_candles,
@@ -206,6 +211,8 @@ IB_CONNECT_TIMEOUT_SECONDS = get_ib_connect_timeout_seconds()
 IB_CONNECT_ATTEMPTS = get_positive_int_env("IBKR_CONNECT_ATTEMPTS", 3)
 IB_CONNECT_RETRY_DELAY_SECONDS = get_non_negative_float_env("IBKR_CONNECT_RETRY_DELAY_SECONDS", 5.0)
 IB_CLIENT_ID_RETRY_OFFSET = get_positive_int_env("IBKR_CLIENT_ID_RETRY_OFFSET", 100)
+IBKR_DRY_RUN_DEADLINE_SECONDS = get_positive_int_env("IBKR_DRY_RUN_DEADLINE_SECONDS", 105)
+IBKR_DEADLINE_REPORT_GRACE_SECONDS = get_positive_int_env("IBKR_DEADLINE_REPORT_GRACE_SECONDS", 5)
 STRATEGY_PROFILE = RUNTIME_SETTINGS.strategy_profile
 STRATEGY_DISPLAY_NAME = RUNTIME_SETTINGS.strategy_display_name
 
@@ -1093,6 +1100,8 @@ def _handle_request(
     dry_run_only_override: bool | None = None,
     response_body: str = "OK",
     dry_run_label: str = "strategy dry-run",
+    persist_report: bool = True,
+    report_collector: list[dict] | None = None,
 ):
     if request.method == "GET":
         if dry_run_only_override is None:
@@ -1103,15 +1112,21 @@ def _handle_request(
 
     log_context = build_request_log_context()
     report = build_execution_report(log_context, dry_run_only_override=dry_run_only_override)
-    strategy_plugin_signals, strategy_plugin_error = load_strategy_plugin_signals()
-    attach_strategy_plugin_report(
-        report,
-        signals=strategy_plugin_signals,
-        error=strategy_plugin_error,
-    )
+    if report_collector is not None:
+        # Register the mutable report before any deadline-bound setup work so a
+        # timeout while loading strategy plugins still leaves a report to persist.
+        report_collector.append(report)
     execution_window = "dry_run" if dry_run_only_override else "execution"
-    lock_acquired = STRATEGY_RUN_LOCK.acquire(blocking=False)
+    lock_acquired = False
+    deadline_exceeded = False
     try:
+        strategy_plugin_signals, strategy_plugin_error = load_strategy_plugin_signals()
+        attach_strategy_plugin_report(
+            report,
+            signals=strategy_plugin_signals,
+            error=strategy_plugin_error,
+        )
+        lock_acquired = STRATEGY_RUN_LOCK.acquire(blocking=False)
         log_runtime_event(
             log_context,
             "strategy_cycle_received",
@@ -1277,6 +1292,23 @@ def _handle_request(
             result=cycle_result.result,
         )
         return (response_body if dry_run_only_override else cycle_result.result), 200
+    except RuntimeDeadlineExceeded as exc:
+        deadline_exceeded = True
+        append_runtime_report_error(
+            report,
+            stage="strategy_deadline",
+            message=str(exc),
+            error_type=type(exc).__name__,
+        )
+        finalize_runtime_report(
+            report,
+            status="error",
+            diagnostics={
+                "failure_category": "strategy_deadline",
+                "timeout_seconds": IBKR_DRY_RUN_DEADLINE_SECONDS,
+            },
+        )
+        raise
     except TimeoutError as exc:
         append_runtime_report_error(
             report,
@@ -1326,14 +1358,15 @@ def _handle_request(
     finally:
         if lock_acquired:
             STRATEGY_RUN_LOCK.release()
-        try:
-            if dry_run_only_override is None:
-                report_path = persist_execution_report(report)
-            else:
-                report_path = persist_execution_report(report, dry_run_only_override=dry_run_only_override)
-            print(f"execution_report {report_path}", flush=True)
-        except Exception as persist_exc:
-            print(f"failed to persist execution report: {persist_exc}", flush=True)
+        if not deadline_exceeded and persist_report:
+            try:
+                if dry_run_only_override is None:
+                    report_path = persist_execution_report(report)
+                else:
+                    report_path = persist_execution_report(report, dry_run_only_override=dry_run_only_override)
+                print(f"execution_report {report_path}", flush=True)
+            except Exception as persist_exc:
+                print(f"failed to persist execution report: {persist_exc}", flush=True)
 
 
 def _handle_probe(*, response_body: str = "Probe OK"):
@@ -1457,6 +1490,8 @@ def _handle_monitor_dispatch():
         lookback_minutes=lookback_minutes_from_env(),
         timeout_seconds=timeout_seconds_from_env(),
         max_workers=max_workers_from_env(),
+        local_service_name=SERVICE_NAME or os.getenv("K_SERVICE"),
+        local_dispatch_fn=_dispatch_local_monitor,
     )
     log_runtime_event(
         log_context,
@@ -1467,7 +1502,29 @@ def _handle_monitor_dispatch():
         dispatches_sent=result.get("dispatches_sent"),
         dispatch_results=result.get("results") or [],
     )
-    return result, 200
+    if any(bool(item.get("worker_recycle_required")) for item in (result.get("results") or [])):
+        recycle_current_process_after_response()
+    return result, 200 if result.get("ok") else 502
+
+
+def _dispatch_local_monitor(dispatch):
+    window = str(dispatch.get("window") or "").strip()
+    if window == "probe":
+        _body, status_code = _handle_probe()
+        recycle_required = False
+    elif window == "precheck":
+        timeout_state: dict[str, bool] = {}
+        _body, status_code = _handle_dry_run_with_deadline(
+            recycle_on_timeout=False,
+            timeout_state=timeout_state,
+        )
+        recycle_required = bool(timeout_state.get("worker_recycle_required"))
+    else:
+        raise ValueError(f"Unsupported local monitor window: {window!r}")
+    return {
+        "status_code": int(status_code),
+        "worker_recycle_required": recycle_required,
+    }
 
 
 @app.route("/run", methods=["POST", "GET"])
@@ -1475,14 +1532,81 @@ def handle_request():
     return _route_with_runtime_error_fallback(_handle_request)
 
 
+def _handle_dry_run_with_deadline(
+    *,
+    recycle_on_timeout: bool = True,
+    timeout_state: dict[str, bool] | None = None,
+):
+    reports: list[dict] = []
+    try:
+        with enforce_runtime_deadline(
+            IBKR_DRY_RUN_DEADLINE_SECONDS,
+            operation="IBKR strategy dry-run request",
+        ):
+            response = _route_with_runtime_error_fallback(
+                _handle_request,
+                dry_run_only_override=True,
+                response_body="Dry Run OK",
+                dry_run_label="strategy dry-run",
+                persist_report=False,
+                report_collector=reports,
+            )
+    except RuntimeDeadlineExceeded as exc:
+        _persist_dry_run_report_with_grace(reports, timeout_context=True)
+        print(
+            json.dumps(
+                {
+                    "severity": "ERROR",
+                    "event": "strategy_cycle_deadline_exceeded",
+                    "message": str(exc),
+                    "service_name": SERVICE_NAME or os.getenv("K_SERVICE"),
+                    "strategy_profile": STRATEGY_PROFILE,
+                    "timeout_seconds": IBKR_DRY_RUN_DEADLINE_SECONDS,
+                    "worker_recycle_required": True,
+                    "worker_recycle_scheduled": recycle_on_timeout,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
+        if timeout_state is not None:
+            timeout_state["worker_recycle_required"] = True
+        if recycle_on_timeout:
+            recycle_current_process_after_response()
+        return "Error", 503
+    else:
+        _persist_dry_run_report_with_grace(reports, timeout_context=False)
+        return response
+
+
+def _persist_dry_run_report_with_grace(
+    reports: list[dict],
+    *,
+    timeout_context: bool,
+) -> None:
+    if not reports:
+        return
+    operation = "IBKR timeout report persistence" if timeout_context else "IBKR dry-run report persistence"
+    try:
+        with enforce_runtime_deadline(
+            IBKR_DEADLINE_REPORT_GRACE_SECONDS,
+            operation=operation,
+        ):
+            report_path = persist_execution_report(
+                reports[-1],
+                dry_run_only_override=True,
+            )
+            print(f"execution_report {report_path}", flush=True)
+    except RuntimeDeadlineExceeded as persist_exc:
+        print(f"dry-run report persistence timed out: {persist_exc}", flush=True)
+    except Exception as persist_exc:
+        print(f"failed to persist dry-run report: {persist_exc}", flush=True)
+
+
 @app.route("/dry-run", methods=["POST", "GET"])
 def handle_dry_run():
-    return _route_with_runtime_error_fallback(
-        _handle_request,
-        dry_run_only_override=True,
-        response_body="Dry Run OK",
-        dry_run_label="strategy dry-run",
-    )
+    return _handle_dry_run_with_deadline()
 
 
 @app.route("/probe", methods=["POST", "GET"])
