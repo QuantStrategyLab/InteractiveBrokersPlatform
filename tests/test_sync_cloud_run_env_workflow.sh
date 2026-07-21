@@ -119,9 +119,9 @@ grep -Fq -- '--max-instances 1' "$workflow_file"
 grep -Fq -- '--remove-env-vars "$(IFS=,; echo "${remove_env_vars[*]}")' "$workflow_file"
 grep -Fq -- '--update-env-vars "^|^$(join_by_delimiter "|" "${env_pairs[@]}")' "$workflow_file"
 grep -Fq -- '--update-labels "$(IFS=,; echo "${target_label_pairs[*]}")' "$workflow_file"
-grep -Fq 'monitor_dispatch_targets_json="$(jq -sc '\''{targets:.}'\'' "${monitor_dispatch_targets_file}")"' "$workflow_file"
-grep -Fq 'shared_env_pairs+=("IBKR_MONITOR_DISPATCH_TARGETS_JSON=${monitor_dispatch_targets_json}")' "$workflow_file"
-grep -Fq '"precheck_time": scheduler.get("precheck_time")' "$workflow_file"
+grep -Fq '"IBKR_MONITOR_DISPATCH_TARGETS_JSON"' "$workflow_file"
+test "$(grep -Fc 'monitor_dispatch_targets_file=' "$workflow_file")" -eq 0
+test "$(grep -Fc 'shared_env_pairs+=("IBKR_MONITOR_DISPATCH_TARGETS_JSON=' "$workflow_file")" -eq 0
 test "$(grep -Fc '"probe_time": scheduler.get("probe_time")' "$workflow_file")" -eq 0
 grep -Fq 'Sync Cloud Scheduler schedule' "$workflow_file"
 grep -Fq 'scheduler_location="${CLOUD_SCHEDULER_LOCATION:-${CLOUD_RUN_REGION}}"' "$workflow_file"
@@ -134,7 +134,8 @@ grep -Fq 'scheduler = target.get("scheduler") or {}' "$workflow_file"
 grep -Fq 'timezone = str(scheduler.get("timezone") or env.get("IBKR_MARKET_TIMEZONE") or "").strip()' "$workflow_file"
 grep -Fq 'timezone = "Asia/Hong_Kong" if market == "HK" else "America/New_York"' "$workflow_file"
 grep -Fq 'configured_time("CLOUD_SCHEDULER_MAIN_TIME", "45 15")' "$workflow_file"
-grep -Fq 'IFS=$'\''\t'\'' read -r cloud_run_service market_timezone main_time warmup_time main_attempt_deadline <<< "${update}"' "$workflow_file"
+grep -Fq 'str(scheduler.get("precheck_time") or configured_time("CLOUD_SCHEDULER_PRECHECK_TIME", "45 9"))' "$workflow_file"
+grep -Fq 'IFS=$'\''\t'\'' read -r cloud_run_service market_timezone main_time warmup_time precheck_time runtime_target_enabled main_attempt_deadline <<< "${update}"' "$workflow_file"
 grep -Fq 'scheduler_job_candidates+=("${cloud_run_service%-service}-scheduler")' "$workflow_file"
 grep -Fq 'scheduler_job_candidates+=("${cloud_run_service}-scheduler")' "$workflow_file"
 grep -Fq 'for candidate_job in "${scheduler_job_candidates[@]}"; do' "$workflow_file"
@@ -154,9 +155,16 @@ grep -Fq 'main_attempt_deadline_args+=(--attempt-deadline="${main_attempt_deadli
 test "$(grep -Fc '"${main_attempt_deadline_args[@]}"' "$workflow_file")" -eq 2
 grep -Fq -- '--oidc-service-account-email="${GCP_SCHEDULER_SERVICE_ACCOUNT}"' "$workflow_file"
 grep -Fq -- '--oidc-token-audience="${service_url}"' "$workflow_file"
-grep -Fq 'monitor_job_name="interactive-brokers-monitor-dispatcher-scheduler"' "$workflow_file"
-grep -Fq 'monitor_uri="${monitor_dispatch_base_url}/monitor-dispatch"' "$workflow_file"
-grep -Fq -- '--schedule="*/5 * * * *"' "$workflow_file"
+grep -Fq 'desired_precheck_schedule="$(CURRENT_SCHEDULE="${desired_schedule}" SCHEDULE_TIME="${precheck_time}" python - <<' "$workflow_file"
+grep -Fq 'precheck_job_name="${cloud_run_service%-service}-precheck-scheduler"' "$workflow_file"
+grep -Fq 'precheck_uri="${service_url}/dry-run"' "$workflow_file"
+grep -Fq 'gcloud scheduler jobs update http "${precheck_job_name}"' "$workflow_file"
+grep -Fq 'gcloud scheduler jobs create http "${precheck_job_name}"' "$workflow_file"
+test "$(grep -Fc -- '--attempt-deadline=120s' "$workflow_file")" -eq 2
+test "$(grep -Fc -- '--max-retry-attempts=0' "$workflow_file")" -eq 2
+grep -Fq 'gcloud scheduler jobs resume "${precheck_job_name}"' "$workflow_file"
+grep -Fq 'gcloud scheduler jobs pause "${precheck_job_name}"' "$workflow_file"
+test "$(grep -Fc 'monitor_job_name="interactive-brokers-monitor-dispatcher-scheduler"' "$workflow_file")" -eq 0
 
 grep -Fq '"CRISIS_ALERT_GOOGLE_VOICE_TO"' "$workflow_file"
 grep -Fq '"CRISIS_ALERT_GOOGLE_VOICE_SENDER_PASSWORD"' "$workflow_file"

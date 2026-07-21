@@ -614,6 +614,7 @@ jobs:
           shared_remove_env_vars=(
             "IB_GATEWAY_HOST"
             "IB_GATEWAY_PORT"
+            "IBKR_MONITOR_DISPATCH_TARGETS_JSON"
             "TELEGRAM_CHAT_ID"
             "IB_CLIENT_ID"
             "IB_GATEWAY_INSTANCE_NAME"
@@ -889,44 +890,6 @@ jobs:
             shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_BODY_MAX_CHARS")
           fi
 
-          monitor_dispatch_targets_file="$(mktemp)"
-          for target_index in "${!target_services[@]}"; do
-            cloud_run_service="${target_services[${target_index}]}"
-            service_url="$(gcloud run services describe "${cloud_run_service}" \
-              --project="${GCP_PROJECT_ID}" \
-              --region="${CLOUD_RUN_REGION}" \
-              --format='value(status.url)' 2>/dev/null || true)"
-            if [ -z "${service_url}" ]; then
-              echo "Unable to resolve Cloud Run service URL for ${cloud_run_service}; cannot build monitor dispatcher targets." >&2
-              exit 1
-            fi
-            SYNC_TARGET_INDEX="${target_index}" SERVICE_URL="${service_url}" python - <<'PY' >> "${monitor_dispatch_targets_file}"
-          import json
-          import os
-
-          plan = json.loads(os.environ["SYNC_PLAN_JSON"])
-          target = plan["targets"][int(os.environ["SYNC_TARGET_INDEX"])]
-          env = target.get("env") or {}
-          scheduler = target.get("scheduler") or {}
-          payload = {
-              "service_name": target["service_name"],
-              "service_url": os.environ["SERVICE_URL"].rstrip("/"),
-              "strategy_profile": target.get("strategy_profile") or env.get("STRATEGY_PROFILE"),
-              "account_group": env.get("ACCOUNT_GROUP"),
-              "runtime_target_enabled": env.get("RUNTIME_TARGET_ENABLED", "true"),
-              # Dedicated Cloud Scheduler jobs already own /health warmups and
-              # /run execution. The shared dispatcher only owns prechecks.
-              "scheduler": {
-                  "timezone": scheduler.get("timezone"),
-                  "precheck_time": scheduler.get("precheck_time"),
-              },
-          }
-          print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
-          PY
-          done
-          monitor_dispatch_targets_json="$(jq -sc '{targets:.}' "${monitor_dispatch_targets_file}")"
-          shared_env_pairs+=("IBKR_MONITOR_DISPATCH_TARGETS_JSON=${monitor_dispatch_targets_json}")
-
           for target_index in "${!target_services[@]}"; do
             cloud_run_service="${target_services[${target_index}]}"
             mapfile -t target_env_pairs < <(emit_target_env_pairs "${target_index}")
@@ -1022,6 +985,8 @@ jobs:
                           timezone,
                           str(scheduler.get("main_time") or configured_time("CLOUD_SCHEDULER_MAIN_TIME", "45 15")),
                           str(scheduler.get("probe_time") or configured_time("CLOUD_SCHEDULER_PROBE_TIME", "35 9,15")),
+                          str(scheduler.get("precheck_time") or configured_time("CLOUD_SCHEDULER_PRECHECK_TIME", "45 9")),
+                          str(env.get("RUNTIME_TARGET_ENABLED", "true")).strip().lower() or "true",
                           str(scheduler.get("attempt_deadline") or ""),
                       ]
                   )
@@ -1030,7 +995,7 @@ jobs:
           )
 
           for update in "${scheduler_updates[@]}"; do
-            IFS=$'\t' read -r cloud_run_service market_timezone main_time warmup_time main_attempt_deadline <<< "${update}"
+            IFS=$'\t' read -r cloud_run_service market_timezone main_time warmup_time precheck_time runtime_target_enabled main_attempt_deadline <<< "${update}"
             if [ -z "${cloud_run_service}" ] || [ -z "${market_timezone}" ]; then
               continue
             fi
@@ -1118,6 +1083,24 @@ jobs:
           PY
             )"
 
+            desired_precheck_schedule="$(CURRENT_SCHEDULE="${desired_schedule}" SCHEDULE_TIME="${precheck_time}" python - <<'PY'
+          import os
+
+          current_fields = os.environ["CURRENT_SCHEDULE"].split()
+          time_fields = os.environ["SCHEDULE_TIME"].split()
+          if len(current_fields) != 5:
+              raise SystemExit(f"Cloud Scheduler schedule must have 5 fields: {os.environ['CURRENT_SCHEDULE']!r}")
+          if len(time_fields) == 5:
+              print(" ".join(time_fields))
+          elif len(time_fields) == 2:
+              print(" ".join([*time_fields, *current_fields[2:]]))
+          else:
+              raise SystemExit(
+                  f"Cloud Scheduler override must have 2 time fields or 5 cron fields: {os.environ['SCHEDULE_TIME']!r}"
+              )
+          PY
+            )"
+
             scheduler_uri="${service_url}/run"
             main_attempt_deadline_args=()
             if [ -n "${main_attempt_deadline}" ]; then
@@ -1187,49 +1170,62 @@ jobs:
                 --max-doublings=2 \
                 --quiet
             fi
-          done
 
-          monitor_dispatch_service="$(printf '%s\n' "${scheduler_updates[@]}" | head -n 1 | cut -f1)"
-          if [ -z "${monitor_dispatch_service}" ]; then
-            echo "Unable to resolve monitor dispatch service." >&2
-            exit 1
-          fi
-          monitor_dispatch_base_url="$(gcloud run services describe "${monitor_dispatch_service}" \
-            --project="${GCP_PROJECT_ID}" \
-            --region="${CLOUD_RUN_REGION}" \
-            --format='value(status.url)' 2>/dev/null || true)"
-          if [ -z "${monitor_dispatch_base_url}" ]; then
-            echo "Unable to resolve monitor dispatch URL for ${monitor_dispatch_service}." >&2
-            exit 1
-          fi
-          monitor_job_name="interactive-brokers-monitor-dispatcher-scheduler"
-          monitor_uri="${monitor_dispatch_base_url}/monitor-dispatch"
-          if gcloud scheduler jobs describe "${monitor_job_name}" \
-            --project="${GCP_PROJECT_ID}" \
-            --location="${scheduler_location}" >/dev/null 2>&1; then
-            echo "Updating Cloud Scheduler job ${monitor_job_name} to ${monitor_uri}."
-            gcloud scheduler jobs update http "${monitor_job_name}" \
+            precheck_job_name="${cloud_run_service%-service}-precheck-scheduler"
+            precheck_uri="${service_url}/dry-run"
+            precheck_state="$(gcloud scheduler jobs describe "${precheck_job_name}" \
               --project="${GCP_PROJECT_ID}" \
               --location="${scheduler_location}" \
-              --uri="${monitor_uri}" \
-              --schedule="*/5 * * * *" \
-              --time-zone="UTC" \
-              --oidc-service-account-email="${GCP_SCHEDULER_SERVICE_ACCOUNT}" \
-              --oidc-token-audience="${monitor_dispatch_base_url}" \
-              --quiet
-          else
-            echo "Creating Cloud Scheduler job ${monitor_job_name} at ${monitor_uri}."
-            gcloud scheduler jobs create http "${monitor_job_name}" \
-              --project="${GCP_PROJECT_ID}" \
-              --location="${scheduler_location}" \
-              --uri="${monitor_uri}" \
-              --schedule="*/5 * * * *" \
-              --time-zone="UTC" \
-              --http-method=POST \
-              --oidc-service-account-email="${GCP_SCHEDULER_SERVICE_ACCOUNT}" \
-              --oidc-token-audience="${monitor_dispatch_base_url}" \
-              --quiet
-          fi
+              --format='value(state)' 2>/dev/null || true)"
+            case "${runtime_target_enabled}" in
+              1|true|yes|on)
+                if [ -n "${precheck_state}" ]; then
+                  echo "Updating Cloud Scheduler precheck ${precheck_job_name} to ${desired_precheck_schedule}."
+                  gcloud scheduler jobs update http "${precheck_job_name}" \
+                    --project="${GCP_PROJECT_ID}" \
+                    --location="${scheduler_location}" \
+                    --uri="${precheck_uri}" \
+                    --schedule="${desired_precheck_schedule}" \
+                    --time-zone="${market_timezone}" \
+                    --http-method=POST \
+                    --oidc-service-account-email="${GCP_SCHEDULER_SERVICE_ACCOUNT}" \
+                    --oidc-token-audience="${service_url}" \
+                    --attempt-deadline=120s \
+                    --max-retry-attempts=0 \
+                    --quiet
+                else
+                  echo "Creating Cloud Scheduler precheck ${precheck_job_name} at ${desired_precheck_schedule}."
+                  gcloud scheduler jobs create http "${precheck_job_name}" \
+                    --project="${GCP_PROJECT_ID}" \
+                    --location="${scheduler_location}" \
+                    --uri="${precheck_uri}" \
+                    --schedule="${desired_precheck_schedule}" \
+                    --time-zone="${market_timezone}" \
+                    --http-method=POST \
+                    --oidc-service-account-email="${GCP_SCHEDULER_SERVICE_ACCOUNT}" \
+                    --oidc-token-audience="${service_url}" \
+                    --attempt-deadline=120s \
+                    --max-retry-attempts=0 \
+                    --quiet
+                fi
+                if [ "${precheck_state}" = "PAUSED" ]; then
+                  gcloud scheduler jobs resume "${precheck_job_name}" \
+                    --project="${GCP_PROJECT_ID}" \
+                    --location="${scheduler_location}" \
+                    --quiet
+                fi
+                ;;
+              *)
+                if [ -n "${precheck_state}" ] && [ "${precheck_state}" != "PAUSED" ]; then
+                  echo "Pausing Cloud Scheduler precheck ${precheck_job_name} because ${cloud_run_service} is disabled."
+                  gcloud scheduler jobs pause "${precheck_job_name}" \
+                    --project="${GCP_PROJECT_ID}" \
+                    --location="${scheduler_location}" \
+                    --quiet
+                fi
+                ;;
+            esac
+          done
 
           python3 scripts/reconcile_cloud_runtime.py \
             --platform=ibkr \

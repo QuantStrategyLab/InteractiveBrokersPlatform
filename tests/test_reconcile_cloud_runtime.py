@@ -60,9 +60,9 @@ class ReconcileCloudRuntimeTests(unittest.TestCase):
                 "interactive-brokers-quant-live-u1234-service-probe-scheduler",
                 "interactive-brokers-quant-live-u1234-service-precheck-scheduler",
                 "interactive-brokers-quant-live-u1234-probe-scheduler",
-                "interactive-brokers-quant-live-u1234-precheck-scheduler",
                 "ibkr-u1234-backup-execution",
                 "ibkr-u1234-pre-market-dry-run",
+                "interactive-brokers-monitor-dispatcher-scheduler",
             },
         )
 
@@ -181,9 +181,9 @@ class ReconcileCloudRuntimeTests(unittest.TestCase):
             "interactive-brokers-quant-live-u1234-service-probe-scheduler",
             "interactive-brokers-quant-live-u1234-service-precheck-scheduler",
             "interactive-brokers-quant-live-u1234-probe-scheduler",
-            "interactive-brokers-quant-live-u1234-precheck-scheduler",
             "ibkr-u1234-backup-execution",
             "ibkr-u1234-pre-market-dry-run",
+            "interactive-brokers-monitor-dispatcher-scheduler",
         }
         describe_calls: list[list[str]] = []
         delete_calls: list[list[str]] = []

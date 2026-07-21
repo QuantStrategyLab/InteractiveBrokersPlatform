@@ -291,6 +291,9 @@ def _legacy_jobs_for_target(platform: str, target: RuntimeTarget) -> list[str]:
         if scope and scope != service:
             jobs.append(f"lb-{scope}-backup-execution")
     elif platform == "ibkr":
+        canonical_precheck = f"{service.removesuffix('-service')}-precheck-scheduler"
+        jobs.remove(canonical_precheck)
+        jobs.append("interactive-brokers-monitor-dispatcher-scheduler")
         prefix = "interactive-brokers-quant-live-"
         suffix = service
         if suffix.startswith(prefix):
