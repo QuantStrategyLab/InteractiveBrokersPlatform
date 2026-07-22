@@ -422,6 +422,17 @@ jobs:
           project_id: ${{ env.GCP_PROJECT_ID }}
           version: ">= 416.0.0"
 
+      - name: Require configured scheduler migration before HK verify
+        if: steps.config.outputs.env_sync_enabled == 'true' && env.WORKFLOW_TARGET == 'hk-verify'
+        run: |
+          set -euo pipefail
+          scheduler_location="${CLOUD_SCHEDULER_LOCATION:-${CLOUD_RUN_REGION}}"
+          if gcloud scheduler jobs describe "interactive-brokers-monitor-dispatcher-scheduler" \
+            --project="${GCP_PROJECT_ID}" \
+            --location="${scheduler_location}" >/dev/null 2>&1; then
+            echo "HK verify scheduler migration requires the configured migration first." >&2
+            exit 1
+          fi
 
       - name: Build, push, and deploy Cloud Run image
         run: |
@@ -1170,11 +1181,6 @@ jobs:
                 --quiet
             fi
 
-            if [ "${WORKFLOW_TARGET:-configured}" = "hk-verify" ]; then
-              echo "Skipping precheck scheduler migration for the isolated HK verify target."
-              continue
-            fi
-
             precheck_job_name="${cloud_run_service%-service}-precheck-scheduler"
             precheck_uri="${service_url}/dry-run"
             precheck_state="$(gcloud scheduler jobs describe "${precheck_job_name}" \
@@ -1232,10 +1238,6 @@ jobs:
                 ;;
             esac
           done
-
-          if [ "${WORKFLOW_TARGET:-configured}" = "hk-verify" ]; then
-            exit 0
-          fi
 
           reconcile_args=(
             --platform=ibkr

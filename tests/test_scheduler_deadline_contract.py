@@ -81,11 +81,12 @@ def test_legacy_dispatcher_is_retired_after_replacement_jobs_are_ready() -> None
 
     env_sync_start = workflow.index("shared_remove_env_vars=(")
     env_sync_end = workflow.index("shared_remove_secret_vars=(")
+    hk_migration_guard = workflow.index("HK verify scheduler migration requires the configured migration first.")
     replacement_jobs = workflow.index('precheck_job_name="${cloud_run_service%-service}-precheck-scheduler"')
     retire_legacy = workflow.index('python3 scripts/reconcile_cloud_runtime.py "${reconcile_args[@]}"')
     remove_targets = workflow.index("--remove-env-vars=IBKR_MONITOR_DISPATCH_TARGETS_JSON")
 
     assert "IBKR_MONITOR_DISPATCH_TARGETS_JSON" not in workflow[env_sync_start:env_sync_end]
-    assert replacement_jobs < retire_legacy < remove_targets
-    assert 'Skipping precheck scheduler migration for the isolated HK verify target.' in workflow
+    assert hk_migration_guard < replacement_jobs < retire_legacy < remove_targets
+    assert 'Skipping precheck scheduler migration for the isolated HK verify target.' not in workflow
     assert 'reconcile_args+=(--preserve-shared-monitor-dispatcher)' not in workflow
