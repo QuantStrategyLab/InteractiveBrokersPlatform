@@ -90,7 +90,8 @@ grep -Fq -- '--platform=ibkr' "$workflow_file"
 grep -Fq -- '--ensure-latest-traffic' "$workflow_file"
 grep -Fq -- '--delete-legacy-schedulers' "$workflow_file"
 grep -Fq '            --delete-legacy-schedulers' "$workflow_file"
-grep -Fq 'reconcile_args+=(--preserve-shared-monitor-dispatcher)' "$workflow_file"
+grep -Fq 'Skipping precheck scheduler migration for the isolated HK verify target.' "$workflow_file"
+test "$(grep -Fc -- '--preserve-shared-monitor-dispatcher' "$workflow_file")" -eq 0
 grep -Fq -- '--remove-env-vars=IBKR_MONITOR_DISPATCH_TARGETS_JSON' "$workflow_file"
 
 grep -Fq 'emit_target_env_pairs()' "$workflow_file"

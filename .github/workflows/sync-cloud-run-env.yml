@@ -1170,6 +1170,11 @@ jobs:
                 --quiet
             fi
 
+            if [ "${WORKFLOW_TARGET:-configured}" = "hk-verify" ]; then
+              echo "Skipping precheck scheduler migration for the isolated HK verify target."
+              continue
+            fi
+
             precheck_job_name="${cloud_run_service%-service}-precheck-scheduler"
             precheck_uri="${service_url}/dry-run"
             precheck_state="$(gcloud scheduler jobs describe "${precheck_job_name}" \
@@ -1228,6 +1233,10 @@ jobs:
             esac
           done
 
+          if [ "${WORKFLOW_TARGET:-configured}" = "hk-verify" ]; then
+            exit 0
+          fi
+
           reconcile_args=(
             --platform=ibkr
             --project="${GCP_PROJECT_ID}"
@@ -1235,9 +1244,6 @@ jobs:
             --scheduler-location="${scheduler_location}"
             --delete-legacy-schedulers
           )
-          if [ "${WORKFLOW_TARGET:-configured}" = "hk-verify" ]; then
-            reconcile_args+=(--preserve-shared-monitor-dispatcher)
-          fi
           python3 scripts/reconcile_cloud_runtime.py "${reconcile_args[@]}"
 
           for update in "${scheduler_updates[@]}"; do

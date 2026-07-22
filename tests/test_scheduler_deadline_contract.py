@@ -76,4 +76,5 @@ def test_legacy_dispatcher_is_retired_after_replacement_jobs_are_ready() -> None
 
     assert "IBKR_MONITOR_DISPATCH_TARGETS_JSON" not in workflow[env_sync_start:env_sync_end]
     assert replacement_jobs < retire_legacy < remove_targets
-    assert 'reconcile_args+=(--preserve-shared-monitor-dispatcher)' in workflow
+    assert 'Skipping precheck scheduler migration for the isolated HK verify target.' in workflow
+    assert 'reconcile_args+=(--preserve-shared-monitor-dispatcher)' not in workflow
