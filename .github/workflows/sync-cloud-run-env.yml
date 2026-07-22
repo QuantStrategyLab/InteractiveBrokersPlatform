@@ -1181,39 +1181,39 @@ jobs:
               --project="${GCP_PROJECT_ID}" \
               --location="${scheduler_location}" \
               --format='value(state)' 2>/dev/null || true)"
+            if [ -n "${precheck_state}" ]; then
+              echo "Updating Cloud Scheduler precheck ${precheck_job_name} to ${desired_precheck_schedule}."
+              gcloud scheduler jobs update http "${precheck_job_name}" \
+                --project="${GCP_PROJECT_ID}" \
+                --location="${scheduler_location}" \
+                --uri="${precheck_uri}" \
+                --schedule="${desired_precheck_schedule}" \
+                --time-zone="${market_timezone}" \
+                --http-method=POST \
+                --oidc-service-account-email="${GCP_SCHEDULER_SERVICE_ACCOUNT}" \
+                --oidc-token-audience="${service_url}" \
+                --attempt-deadline=120s \
+                --max-retry-attempts=0 \
+                --max-retry-duration=0s \
+                --quiet
+            else
+              echo "Creating Cloud Scheduler precheck ${precheck_job_name} at ${desired_precheck_schedule}."
+              gcloud scheduler jobs create http "${precheck_job_name}" \
+                --project="${GCP_PROJECT_ID}" \
+                --location="${scheduler_location}" \
+                --uri="${precheck_uri}" \
+                --schedule="${desired_precheck_schedule}" \
+                --time-zone="${market_timezone}" \
+                --http-method=POST \
+                --oidc-service-account-email="${GCP_SCHEDULER_SERVICE_ACCOUNT}" \
+                --oidc-token-audience="${service_url}" \
+                --attempt-deadline=120s \
+                --max-retry-attempts=0 \
+                --max-retry-duration=0s \
+                --quiet
+            fi
             case "${runtime_target_enabled}" in
               1|true|yes|on)
-                if [ -n "${precheck_state}" ]; then
-                  echo "Updating Cloud Scheduler precheck ${precheck_job_name} to ${desired_precheck_schedule}."
-                  gcloud scheduler jobs update http "${precheck_job_name}" \
-                    --project="${GCP_PROJECT_ID}" \
-                    --location="${scheduler_location}" \
-                    --uri="${precheck_uri}" \
-                    --schedule="${desired_precheck_schedule}" \
-                    --time-zone="${market_timezone}" \
-                    --http-method=POST \
-                    --oidc-service-account-email="${GCP_SCHEDULER_SERVICE_ACCOUNT}" \
-                    --oidc-token-audience="${service_url}" \
-                    --attempt-deadline=120s \
-                    --max-retry-attempts=0 \
-                    --max-retry-duration=0s \
-                    --quiet
-                else
-                  echo "Creating Cloud Scheduler precheck ${precheck_job_name} at ${desired_precheck_schedule}."
-                  gcloud scheduler jobs create http "${precheck_job_name}" \
-                    --project="${GCP_PROJECT_ID}" \
-                    --location="${scheduler_location}" \
-                    --uri="${precheck_uri}" \
-                    --schedule="${desired_precheck_schedule}" \
-                    --time-zone="${market_timezone}" \
-                    --http-method=POST \
-                    --oidc-service-account-email="${GCP_SCHEDULER_SERVICE_ACCOUNT}" \
-                    --oidc-token-audience="${service_url}" \
-                    --attempt-deadline=120s \
-                    --max-retry-attempts=0 \
-                    --max-retry-duration=0s \
-                    --quiet
-                fi
                 if [ "${precheck_state}" = "PAUSED" ]; then
                   gcloud scheduler jobs resume "${precheck_job_name}" \
                     --project="${GCP_PROJECT_ID}" \
@@ -1222,7 +1222,7 @@ jobs:
                 fi
                 ;;
               *)
-                if [ -n "${precheck_state}" ] && [ "${precheck_state}" != "PAUSED" ]; then
+                if [ "${precheck_state}" != "PAUSED" ]; then
                   echo "Pausing Cloud Scheduler precheck ${precheck_job_name} because ${cloud_run_service} is disabled."
                   gcloud scheduler jobs pause "${precheck_job_name}" \
                     --project="${GCP_PROJECT_ID}" \

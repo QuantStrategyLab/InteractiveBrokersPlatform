@@ -65,6 +65,17 @@ def test_precheck_uses_per_service_scheduler_with_bounded_deadline() -> None:
     assert 120 > int(strategy_deadline.group(1)) + int(report_grace.group(1))
 
 
+def test_disabled_target_gets_a_paused_canonical_precheck_before_legacy_cleanup() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    ensure_precheck = workflow.index('if [ -n "${precheck_state}" ]; then')
+    enabled_state = workflow.index('case "${runtime_target_enabled}" in')
+    pause_precheck = workflow.index('gcloud scheduler jobs pause "${precheck_job_name}"')
+    retire_legacy = workflow.index('python3 scripts/reconcile_cloud_runtime.py "${reconcile_args[@]}"')
+
+    assert ensure_precheck < enabled_state < pause_precheck < retire_legacy
+
+
 def test_legacy_dispatcher_is_retired_after_replacement_jobs_are_ready() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
