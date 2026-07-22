@@ -65,14 +65,15 @@ def test_precheck_uses_per_service_scheduler_with_bounded_deadline() -> None:
     assert 120 > int(strategy_deadline.group(1)) + int(report_grace.group(1))
 
 
-def test_legacy_dispatcher_is_paused_before_removing_its_targets() -> None:
+def test_legacy_dispatcher_is_retired_after_replacement_jobs_are_ready() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
-    pause_step = workflow.index("- name: Pause legacy monitor dispatcher")
-    remove_targets = workflow.index('"IBKR_MONITOR_DISPATCH_TARGETS_JSON"')
+    env_sync_start = workflow.index("shared_remove_env_vars=(")
+    env_sync_end = workflow.index("shared_remove_secret_vars=(")
+    replacement_jobs = workflow.index('precheck_job_name="${cloud_run_service%-service}-precheck-scheduler"')
+    retire_legacy = workflow.index('python3 scripts/reconcile_cloud_runtime.py "${reconcile_args[@]}"')
+    remove_targets = workflow.index("--remove-env-vars=IBKR_MONITOR_DISPATCH_TARGETS_JSON")
 
-    assert pause_step < remove_targets
-    assert 'gcloud scheduler jobs pause "${legacy_monitor_job}"' in workflow
-    assert 'if [ "${WORKFLOW_TARGET:-configured}" = "hk-verify" ]; then' in workflow
-    assert 'if [ "${WORKFLOW_TARGET:-configured}" != "hk-verify" ]; then' in workflow
-    assert 'reconcile_args+=(--delete-legacy-schedulers)' in workflow
+    assert "IBKR_MONITOR_DISPATCH_TARGETS_JSON" not in workflow[env_sync_start:env_sync_end]
+    assert replacement_jobs < retire_legacy < remove_targets
+    assert 'reconcile_args+=(--preserve-shared-monitor-dispatcher)' in workflow

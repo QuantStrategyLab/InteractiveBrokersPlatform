@@ -328,6 +328,7 @@ def delete_legacy_schedulers(
     targets: Sequence[RuntimeTarget],
     env: Mapping[str, str],
     dry_run: bool,
+    preserve_shared_monitor_dispatcher: bool = False,
 ) -> None:
     locations = _scheduler_locations(
         region=region,
@@ -337,6 +338,8 @@ def delete_legacy_schedulers(
     )
     for target in targets:
         for job in _legacy_jobs_for_target(platform, target):
+            if preserve_shared_monitor_dispatcher and job == "interactive-brokers-monitor-dispatcher-scheduler":
+                continue
             for location in locations:
                 if not _run_optional(
                     [
@@ -376,6 +379,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--expected-commit", default=os.environ.get("GITHUB_SHA", ""))
     parser.add_argument("--ensure-latest-traffic", action="store_true")
     parser.add_argument("--delete-legacy-schedulers", action="store_true")
+    parser.add_argument("--preserve-shared-monitor-dispatcher", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args(argv)
 
@@ -404,6 +408,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             targets=targets,
             env=os.environ,
             dry_run=args.dry_run,
+            preserve_shared_monitor_dispatcher=args.preserve_shared_monitor_dispatcher,
         )
     return 0
 

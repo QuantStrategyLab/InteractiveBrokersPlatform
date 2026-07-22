@@ -89,11 +89,9 @@ grep -Fq 'python3 scripts/reconcile_cloud_runtime.py' "$workflow_file"
 grep -Fq -- '--platform=ibkr' "$workflow_file"
 grep -Fq -- '--ensure-latest-traffic' "$workflow_file"
 grep -Fq -- '--delete-legacy-schedulers' "$workflow_file"
-grep -Fq 'Pause legacy monitor dispatcher' "$workflow_file"
-grep -Fq 'gcloud scheduler jobs pause "${legacy_monitor_job}"' "$workflow_file"
-grep -Fq 'if [ "${WORKFLOW_TARGET:-configured}" = "hk-verify" ]; then' "$workflow_file"
-grep -Fq 'if [ "${WORKFLOW_TARGET:-configured}" != "hk-verify" ]; then' "$workflow_file"
-grep -Fq 'reconcile_args+=(--delete-legacy-schedulers)' "$workflow_file"
+grep -Fq '            --delete-legacy-schedulers' "$workflow_file"
+grep -Fq 'reconcile_args+=(--preserve-shared-monitor-dispatcher)' "$workflow_file"
+grep -Fq -- '--remove-env-vars=IBKR_MONITOR_DISPATCH_TARGETS_JSON' "$workflow_file"
 
 grep -Fq 'emit_target_env_pairs()' "$workflow_file"
 grep -Fq 'emit_target_remove_env_vars()' "$workflow_file"
@@ -124,7 +122,7 @@ grep -Fq -- '--max-instances 1' "$workflow_file"
 grep -Fq -- '--remove-env-vars "$(IFS=,; echo "${remove_env_vars[*]}")' "$workflow_file"
 grep -Fq -- '--update-env-vars "^|^$(join_by_delimiter "|" "${env_pairs[@]}")' "$workflow_file"
 grep -Fq -- '--update-labels "$(IFS=,; echo "${target_label_pairs[*]}")' "$workflow_file"
-grep -Fq '"IBKR_MONITOR_DISPATCH_TARGETS_JSON"' "$workflow_file"
+test "$(grep -Fc '"IBKR_MONITOR_DISPATCH_TARGETS_JSON"' "$workflow_file")" -eq 0
 test "$(grep -Fc 'monitor_dispatch_targets_file=' "$workflow_file")" -eq 0
 test "$(grep -Fc 'shared_env_pairs+=("IBKR_MONITOR_DISPATCH_TARGETS_JSON=' "$workflow_file")" -eq 0
 test "$(grep -Fc '"probe_time": scheduler.get("probe_time")' "$workflow_file")" -eq 0

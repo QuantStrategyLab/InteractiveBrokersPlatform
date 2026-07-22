@@ -221,6 +221,37 @@ class ReconcileCloudRuntimeTests(unittest.TestCase):
         self.assertEqual({call[4] for call in describe_calls}, expected_jobs)
         self.assertEqual({call[4] for call in delete_calls}, expected_jobs)
 
+    def test_delete_legacy_schedulers_can_preserve_shared_dispatcher(self) -> None:
+        target = rcr.RuntimeTarget(service_name="interactive-brokers-hk-verify-service")
+        described_jobs: list[str] = []
+        deleted_jobs: list[str] = []
+
+        def fake_run_optional(args, *, dry_run=False):
+            described_jobs.append(args[4])
+            return True
+
+        def fake_run(args, *, json_output=False, dry_run=False):
+            deleted_jobs.append(args[4])
+            return ""
+
+        with mock.patch.object(rcr, "_run_optional", side_effect=fake_run_optional), mock.patch.object(
+            rcr, "_run", side_effect=fake_run
+        ):
+            rcr.delete_legacy_schedulers(
+                platform="ibkr",
+                project="interactivebrokersquant",
+                region="us-central1",
+                scheduler_location="us-central1",
+                targets=[target],
+                env={},
+                dry_run=False,
+                preserve_shared_monitor_dispatcher=True,
+            )
+
+        self.assertNotIn("interactive-brokers-monitor-dispatcher-scheduler", described_jobs)
+        self.assertNotIn("interactive-brokers-monitor-dispatcher-scheduler", deleted_jobs)
+        self.assertIn("interactive-brokers-hk-verify-service-precheck-scheduler", deleted_jobs)
+
 
 if __name__ == "__main__":
     unittest.main()
