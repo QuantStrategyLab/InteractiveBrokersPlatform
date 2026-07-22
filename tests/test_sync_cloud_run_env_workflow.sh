@@ -89,6 +89,11 @@ grep -Fq 'python3 scripts/reconcile_cloud_runtime.py' "$workflow_file"
 grep -Fq -- '--platform=ibkr' "$workflow_file"
 grep -Fq -- '--ensure-latest-traffic' "$workflow_file"
 grep -Fq -- '--delete-legacy-schedulers' "$workflow_file"
+grep -Fq 'Pause legacy monitor dispatcher' "$workflow_file"
+grep -Fq 'gcloud scheduler jobs pause "${legacy_monitor_job}"' "$workflow_file"
+grep -Fq 'if [ "${WORKFLOW_TARGET:-configured}" = "hk-verify" ]; then' "$workflow_file"
+grep -Fq 'if [ "${WORKFLOW_TARGET:-configured}" != "hk-verify" ]; then' "$workflow_file"
+grep -Fq 'reconcile_args+=(--delete-legacy-schedulers)' "$workflow_file"
 
 grep -Fq 'emit_target_env_pairs()' "$workflow_file"
 grep -Fq 'emit_target_remove_env_vars()' "$workflow_file"
@@ -162,6 +167,7 @@ grep -Fq 'gcloud scheduler jobs update http "${precheck_job_name}"' "$workflow_f
 grep -Fq 'gcloud scheduler jobs create http "${precheck_job_name}"' "$workflow_file"
 test "$(grep -Fc -- '--attempt-deadline=120s' "$workflow_file")" -eq 2
 test "$(grep -Fc -- '--max-retry-attempts=0' "$workflow_file")" -eq 2
+test "$(grep -Fc -- '--max-retry-duration=0s' "$workflow_file")" -eq 2
 grep -Fq 'gcloud scheduler jobs resume "${precheck_job_name}"' "$workflow_file"
 grep -Fq 'gcloud scheduler jobs pause "${precheck_job_name}"' "$workflow_file"
 test "$(grep -Fc 'monitor_job_name="interactive-brokers-monitor-dispatcher-scheduler"' "$workflow_file")" -eq 0

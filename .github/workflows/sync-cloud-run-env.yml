@@ -536,6 +536,32 @@ jobs:
             done
           done
 
+      - name: Pause legacy monitor dispatcher
+        if: steps.config.outputs.env_sync_enabled == 'true'
+        run: |
+          set -euo pipefail
+
+          if [ "${WORKFLOW_TARGET:-configured}" = "hk-verify" ]; then
+            echo "Skipping global dispatcher retirement for the isolated HK verify target."
+            exit 0
+          fi
+
+          scheduler_location="${CLOUD_SCHEDULER_LOCATION:-${CLOUD_RUN_REGION}}"
+          legacy_monitor_job="interactive-brokers-monitor-dispatcher-scheduler"
+          legacy_monitor_state="$(gcloud scheduler jobs describe "${legacy_monitor_job}" \
+            --project="${GCP_PROJECT_ID}" \
+            --location="${scheduler_location}" \
+            --format='value(state)' 2>/dev/null || true)"
+          if [ -z "${legacy_monitor_state}" ] || [ "${legacy_monitor_state}" = "PAUSED" ]; then
+            exit 0
+          fi
+
+          echo "Pausing legacy Cloud Scheduler job ${legacy_monitor_job} before removing its target configuration."
+          gcloud scheduler jobs pause "${legacy_monitor_job}" \
+            --project="${GCP_PROJECT_ID}" \
+            --location="${scheduler_location}" \
+            --quiet
+
       - name: Sync Cloud Run environment
         if: steps.config.outputs.env_sync_enabled == 'true'
         env:
@@ -1192,6 +1218,7 @@ jobs:
                     --oidc-token-audience="${service_url}" \
                     --attempt-deadline=120s \
                     --max-retry-attempts=0 \
+                    --max-retry-duration=0s \
                     --quiet
                 else
                   echo "Creating Cloud Scheduler precheck ${precheck_job_name} at ${desired_precheck_schedule}."
@@ -1206,6 +1233,7 @@ jobs:
                     --oidc-token-audience="${service_url}" \
                     --attempt-deadline=120s \
                     --max-retry-attempts=0 \
+                    --max-retry-duration=0s \
                     --quiet
                 fi
                 if [ "${precheck_state}" = "PAUSED" ]; then
@@ -1227,12 +1255,16 @@ jobs:
             esac
           done
 
-          python3 scripts/reconcile_cloud_runtime.py \
-            --platform=ibkr \
-            --project="${GCP_PROJECT_ID}" \
-            --region="${CLOUD_RUN_REGION}" \
-            --scheduler-location="${scheduler_location}" \
-            --delete-legacy-schedulers
+          reconcile_args=(
+            --platform=ibkr
+            --project="${GCP_PROJECT_ID}"
+            --region="${CLOUD_RUN_REGION}"
+            --scheduler-location="${scheduler_location}"
+          )
+          if [ "${WORKFLOW_TARGET:-configured}" != "hk-verify" ]; then
+            reconcile_args+=(--delete-legacy-schedulers)
+          fi
+          python3 scripts/reconcile_cloud_runtime.py "${reconcile_args[@]}"
 
       - name: Prune old Cloud Run revisions
         if: steps.config.outputs.enabled == 'true'

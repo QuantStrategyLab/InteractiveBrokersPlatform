@@ -52,6 +52,7 @@ def test_precheck_uses_per_service_scheduler_with_bounded_deadline() -> None:
     assert 'precheck_uri="${service_url}/dry-run"' in workflow
     assert workflow.count("--attempt-deadline=120s") == 2
     assert workflow.count("--max-retry-attempts=0") == 2
+    assert workflow.count("--max-retry-duration=0s") == 2
     assert 'gcloud scheduler jobs resume "${precheck_job_name}"' in workflow
     assert 'gcloud scheduler jobs pause "${precheck_job_name}"' in workflow
     assert 'monitor_job_name="interactive-brokers-monitor-dispatcher-scheduler"' not in workflow
@@ -62,3 +63,16 @@ def test_precheck_uses_per_service_scheduler_with_bounded_deadline() -> None:
     assert strategy_deadline is not None
     assert report_grace is not None
     assert 120 > int(strategy_deadline.group(1)) + int(report_grace.group(1))
+
+
+def test_legacy_dispatcher_is_paused_before_removing_its_targets() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    pause_step = workflow.index("- name: Pause legacy monitor dispatcher")
+    remove_targets = workflow.index('"IBKR_MONITOR_DISPATCH_TARGETS_JSON"')
+
+    assert pause_step < remove_targets
+    assert 'gcloud scheduler jobs pause "${legacy_monitor_job}"' in workflow
+    assert 'if [ "${WORKFLOW_TARGET:-configured}" = "hk-verify" ]; then' in workflow
+    assert 'if [ "${WORKFLOW_TARGET:-configured}" != "hk-verify" ]; then' in workflow
+    assert 'reconcile_args+=(--delete-legacy-schedulers)' in workflow
