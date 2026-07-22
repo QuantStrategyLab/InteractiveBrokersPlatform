@@ -53,8 +53,7 @@ def test_precheck_uses_per_service_scheduler_with_bounded_deadline() -> None:
     assert workflow.count("--attempt-deadline=120s") == 2
     assert workflow.count("--max-retry-attempts=0") == 2
     assert workflow.count("--max-retry-duration=0s") == 2
-    assert 'gcloud scheduler jobs resume "${precheck_job_name}"' in workflow
-    assert 'gcloud scheduler jobs pause "${precheck_job_name}"' in workflow
+    assert 'managed_scheduler_jobs=("${job_name}" "${warmup_job_name}" "${precheck_job_name}")' in workflow
     assert 'monitor_job_name="interactive-brokers-monitor-dispatcher-scheduler"' not in workflow
     assert 'shared_env_pairs+=("IBKR_MONITOR_DISPATCH_TARGETS_JSON=' not in workflow
 
@@ -70,10 +69,20 @@ def test_disabled_target_gets_a_paused_canonical_precheck_before_legacy_cleanup(
 
     ensure_precheck = workflow.index('if [ -n "${precheck_state}" ]; then')
     enabled_state = workflow.index('case "${runtime_target_enabled}" in')
-    pause_precheck = workflow.index('gcloud scheduler jobs pause "${precheck_job_name}"')
+    pause_precheck = workflow.index('gcloud scheduler jobs pause "${managed_job_name}"')
     retire_legacy = workflow.index('python3 scripts/reconcile_cloud_runtime.py "${reconcile_args[@]}"')
 
     assert ensure_precheck < enabled_state < pause_precheck < retire_legacy
+
+
+def test_runtime_target_state_controls_all_per_service_schedulers() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    assert 'managed_scheduler_jobs=("${job_name}" "${warmup_job_name}" "${precheck_job_name}")' in workflow
+    assert 'for managed_job_name in "${managed_scheduler_jobs[@]}"; do' in workflow
+    assert 'gcloud scheduler jobs resume "${managed_job_name}"' in workflow
+    assert 'gcloud scheduler jobs pause "${managed_job_name}"' in workflow
+    assert 'gcloud scheduler jobs pause "${precheck_job_name}"' not in workflow
 
 
 def test_legacy_dispatcher_is_retired_after_replacement_jobs_are_ready() -> None:

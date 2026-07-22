@@ -168,8 +168,10 @@ grep -Fq 'gcloud scheduler jobs create http "${precheck_job_name}"' "$workflow_f
 test "$(grep -Fc -- '--attempt-deadline=120s' "$workflow_file")" -eq 2
 test "$(grep -Fc -- '--max-retry-attempts=0' "$workflow_file")" -eq 2
 test "$(grep -Fc -- '--max-retry-duration=0s' "$workflow_file")" -eq 2
-grep -Fq 'gcloud scheduler jobs resume "${precheck_job_name}"' "$workflow_file"
-grep -Fq 'gcloud scheduler jobs pause "${precheck_job_name}"' "$workflow_file"
+grep -Fq 'managed_scheduler_jobs=("${job_name}" "${warmup_job_name}" "${precheck_job_name}")' "$workflow_file"
+grep -Fq 'for managed_job_name in "${managed_scheduler_jobs[@]}"; do' "$workflow_file"
+grep -Fq 'gcloud scheduler jobs resume "${managed_job_name}"' "$workflow_file"
+grep -Fq 'gcloud scheduler jobs pause "${managed_job_name}"' "$workflow_file"
 test "$(grep -Fc 'monitor_job_name="interactive-brokers-monitor-dispatcher-scheduler"' "$workflow_file")" -eq 0
 
 grep -Fq '"CRISIS_ALERT_GOOGLE_VOICE_TO"' "$workflow_file"
