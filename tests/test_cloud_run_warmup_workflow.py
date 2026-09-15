@@ -166,3 +166,13 @@ def test_single_target_sync_skips_global_cleanup_before_other_service_mutation()
         result = subprocess.run(["/bin/bash", "-c", script], env={"WORKFLOW_TARGET": target, "INPUT_CONFIGURED_SERVICE": selector}, capture_output=True)
         assert result.returncode == expected
     assert workflow.index("Resolve admissible Cloud Run targets") < workflow.index("Verify deployed runtime target admission before traffic shift")
+
+
+def test_lifecycle_observes_production_drift_without_optimization() -> None:
+    workflow = Path(".github/workflows/runtime-target-lifecycle.yml").read_text(encoding="utf-8")
+
+    assert "scripts/production_drift_health_observe.py" in workflow
+    assert "id: production_drift" in workflow
+    assert "LIFECYCLE_PERFORMANCE_BUCKET" in workflow
+    assert "| Production drift |" in workflow
+    assert "run_research_promotion_cycle" not in workflow

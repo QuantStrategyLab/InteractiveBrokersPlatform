@@ -7,7 +7,6 @@ import os
 import re
 import threading
 import time
-import traceback
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -117,6 +116,13 @@ from runtime_config_support import (
     resolve_ib_gateway_ip_mode,
 )
 from strategy_runtime import load_strategy_runtime
+from application.http_routes import (
+    _dispatch_local_monitor,
+    _handle_monitor_dispatch,
+    _handle_probe,
+    _handle_reconciliation,
+    health_impl,
+)
 
 app = Flask(__name__)
 ensure_event_loop = ibkr_ensure_event_loop
@@ -818,39 +824,20 @@ def _runtime_error_notification_targets() -> tuple[tuple[str, str], ...]:
 
 
 def _runtime_error_notification_message(exc: Exception, *, route_label: str | None = None) -> str:
-    error_text = f"{type(exc).__name__}: {exc}"
-    if len(error_text) > 1200:
-        error_text = error_text[:1197] + "..."
-    route = route_label or f"{request.method} {request.path}"
-    if str(NOTIFY_LANG or "").strip().lower().startswith("zh"):
-        return "\n".join(
-            (
-                "IBKR 策略运行失败",
-                f"服务: {SERVICE_NAME or os.getenv('K_SERVICE', 'interactive-brokers-platform')}",
-                f"版本: {os.getenv('K_REVISION') or '<unknown>'}",
-                f"路由: {route}",
-                f"策略: {STRATEGY_PROFILE}",
-                f"账户组: {ACCOUNT_GROUP}",
-                f"错误: {error_text}",
-            )
-        )
-    return "\n".join(
-        (
-            "IBKR strategy run failed",
-            f"service: {SERVICE_NAME or os.getenv('K_SERVICE', 'interactive-brokers-platform')}",
-            f"revision: {os.getenv('K_REVISION') or '<unknown>'}",
-            f"route: {route}",
-            f"strategy: {STRATEGY_PROFILE}",
-            f"account_group: {ACCOUNT_GROUP}",
-            f"error: {error_text}",
-        )
-    )
+    title = "runtime_failure_title"
+    return "\n".join((
+        t(title),
+        t("strategy_label", name=strategy_display_name or STRATEGY_PROFILE),
+        t("runtime_failure_context", context=ACCOUNT_GROUP),
+        t("runtime_failure_result"),
+        t("runtime_failure_action"),
+    ))
 
 
 def _notify_runtime_error(exc: Exception, *, route_label: str | None = None) -> bool:
     targets = _runtime_error_notification_targets()
     if not targets:
-        print("IBKR runtime error notification skipped: no Telegram target configured.", flush=True)
+        print(t("runtime_notification_missing_target"), flush=True)
         return False
     message = _runtime_error_notification_message(exc, route_label=route_label)
     outcomes = []
@@ -869,14 +856,13 @@ def _publish_runtime_failure_notification(*, detailed_text: str, compact_text: s
         if publish_notification(detailed_text=detailed_text, compact_text=compact_text):
             return True
         return _notify_runtime_error(exc)
-    except Exception as notification_exc:
-        print(f"IBKR runtime error notification fallback: {notification_exc}", flush=True)
+    except Exception:
+        print(t("runtime_notification_delivery_failed"), flush=True)
         return _notify_runtime_error(exc)
 
 
 def _handle_route_runtime_error(exc: Exception, *, route_label: str | None = None):
-    print(f"IBKR route failed before strategy-cycle handling: {type(exc).__name__}: {exc}", flush=True)
-    traceback.print_exc()
+    print(t("runtime_failure_log"), flush=True)
     _notify_runtime_error(exc, route_label=route_label)
     return "Error", 500
 
@@ -915,10 +901,6 @@ def connect_ib(
         validate_trading_permissions=validate_trading_permissions,
         redact_connection_diagnostics=read_only,
     )
-
-
-def _build_health_probe_connection_error_message(exc: Exception) -> str:
-    return f"{t('health_probe_title')}\n{t('ibkr_connection_error_prefix')}{str(exc)}"
 
 
 def log_runtime_event(log_context, event, **fields):
@@ -1731,19 +1713,19 @@ def _handle_request(
         append_runtime_report_error(
             report,
             stage="strategy_cycle",
-            message=str(exc),
+            message="strategy_cycle_failed",
             error_type=type(exc).__name__,
         )
         finalize_runtime_report(report, status="error")
         log_runtime_event(
             log_context,
             "strategy_cycle_failed",
-            message="Strategy execution failed",
+            message=t("runtime_failure_log"),
             severity="ERROR",
             error_type=type(exc).__name__,
-            error_message=str(exc),
+            error_message="strategy_cycle_failed",
         )
-        error_msg = f"{t('error_title')}\n{traceback.format_exc()}"
+        error_msg = _runtime_error_notification_message(exc)
         _publish_runtime_failure_notification(
             detailed_text=error_msg,
             compact_text=error_msg,
@@ -1769,335 +1751,6 @@ def _handle_request(
                 print(f"execution_report {report_path}", flush=True)
             except Exception as persist_exc:
                 print(f"failed to persist execution report: {persist_exc}", flush=True)
-
-
-def _handle_probe(*, response_body: str = "Probe OK"):
-    ib = None
-    log_context = None
-    report = None
-    try:
-        log_context = build_request_log_context()
-        report = build_execution_report(log_context, dry_run_only_override=True)
-        log_runtime_event(
-            log_context,
-            "health_probe_received",
-            message="Received health probe request",
-            http_method=request.method,
-            execution_window="probe",
-        )
-        ib = connect_ib(
-            read_only=True,
-            validate_trading_permissions=False,
-        )
-        snapshot = build_portfolio_snapshot(ib)
-        positions = tuple(getattr(snapshot, "positions", ()) or ())
-        buying_power = float(getattr(snapshot, "buying_power", 0.0) or 0.0)
-        total_equity = float(getattr(snapshot, "total_equity", 0.0) or 0.0)
-        finalize_runtime_report(
-            report,
-            status="ok",
-            summary={
-                "buying_power": buying_power,
-                "total_equity": total_equity,
-                "positions_count": len(positions),
-            },
-        )
-        log_runtime_event(
-            log_context,
-            "health_probe_completed",
-            message="Health probe completed",
-            execution_window="probe",
-            buying_power=buying_power,
-            total_equity=total_equity,
-            positions_count=len(positions),
-        )
-        return response_body, 200
-    except (ConnectionError, TimeoutError) as exc:
-        if report is not None:
-            append_runtime_report_error(
-                report,
-                stage="health_probe",
-                message=str(exc),
-                error_type=type(exc).__name__,
-                failure_category="ibkr_connection",
-            )
-            finalize_runtime_report(
-                report,
-                status="error",
-                diagnostics={"probe_failure_category": "ibkr_connection"},
-            )
-        if log_context is not None:
-            log_runtime_event(
-                log_context,
-                "health_probe_failed",
-                message="Health probe IBKR connection failed",
-                severity="ERROR",
-                execution_window="probe",
-                error_type=type(exc).__name__,
-                error_message=str(exc),
-                failure_category="ibkr_connection",
-            )
-        error_msg = _build_health_probe_connection_error_message(exc)
-        _publish_runtime_failure_notification(
-            detailed_text=error_msg,
-            compact_text=error_msg,
-            exc=exc,
-        )
-        return "Error", 500
-    except Exception as exc:
-        if report is not None:
-            append_runtime_report_error(
-                report,
-                stage="health_probe",
-                message=str(exc),
-                error_type=type(exc).__name__,
-            )
-            finalize_runtime_report(report, status="error")
-        if log_context is not None:
-            log_runtime_event(
-                log_context,
-                "health_probe_failed",
-                message="Health probe failed",
-                severity="ERROR",
-                execution_window="probe",
-                error_type=type(exc).__name__,
-                error_message=str(exc),
-            )
-        error_msg = f"{t('health_probe_title')}\n{t('health_probe_error_prefix')}{traceback.format_exc()}"
-        _publish_runtime_failure_notification(
-            detailed_text=error_msg,
-            compact_text=error_msg,
-            exc=exc,
-        )
-        return "Error", 500
-    finally:
-        if ib is not None and hasattr(ib, "disconnect"):
-            try:
-                ib.disconnect()
-            except Exception as disconnect_exc:
-                print(f"failed to disconnect IBKR probe client: {disconnect_exc}", flush=True)
-        try:
-            if report is not None:
-                report_path = persist_execution_report(report, dry_run_only_override=True)
-                print(f"execution_report {report_path}", flush=True)
-        except Exception as persist_exc:
-            print(f"failed to persist execution report: {persist_exc}", flush=True)
-
-
-_SCHEDULER_JOB_NAME_PATTERN = re.compile(
-    r"projects/[A-Za-z0-9-]+/locations/[A-Za-z0-9-]+/jobs/[A-Za-z0-9_-]+"
-)
-
-
-def _scheduler_job_identity_sha256() -> str | None:
-    job_name = request.headers.get("X-CloudScheduler-JobName")
-    if not isinstance(job_name, str):
-        return None
-    normalized = job_name.strip()
-    if not _SCHEDULER_JOB_NAME_PATTERN.fullmatch(normalized):
-        return None
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-
-
-def _handle_reconciliation():
-    """Build a read-only, fail-closed candidate for one frozen live baseline."""
-
-    ib = None
-    log_context = None
-    report = None
-    scheduler_job_sha256 = _scheduler_job_identity_sha256()
-    if scheduler_job_sha256 is None:
-        reason = (
-            "missing_scheduler_identity"
-            if request.headers.get("X-CloudScheduler-JobName") is None
-            else "invalid_scheduler_identity"
-        )
-        print(json.dumps({"event": "broker_reconciliation_rejected", "reason": reason}), flush=True)
-        return "Error", 400
-    reconciliation_request_id = normalize_reconciliation_request_id(
-        request.headers.get("X-QSL-Reconciliation-Request-Id")
-    )
-    try:
-        log_context = build_request_log_context()
-        report = build_execution_report(log_context, dry_run_only_override=True)
-        report.setdefault("diagnostics", {})["reconciliation_scheduler_job_sha256"] = scheduler_job_sha256
-        if reconciliation_request_id is not None:
-            report.setdefault("diagnostics", {})["reconciliation_request_id"] = reconciliation_request_id
-        runtime_target = RUNTIME_SETTINGS.runtime_target
-        if runtime_target is None:
-            raise IBKRReconciliationReadError(
-                "IBKR reconciliation requires an explicit runtime target."
-            )
-        log_runtime_event(
-            log_context,
-            "broker_reconciliation_received",
-            message="Received broker reconciliation request",
-            execution_window="reconciliation",
-        )
-        ib = connect_ib(
-            read_only=True,
-            validate_trading_permissions=False,
-        )
-        observations = collect_read_only_reconciliation_observations(
-            ib,
-            account_ids=ACCOUNT_IDS,
-            fetch_portfolio_snapshot=fetch_portfolio_snapshot,
-            market_currency=MARKET_CURRENCY,
-            cash_only_execution=CASH_ONLY_EXECUTION,
-        )
-        candidate = build_reconciliation_candidate(
-            observations=observations,
-            runtime_target=runtime_target,
-            platform_id=runtime_target.platform_id,
-            strategy_profile=STRATEGY_PROFILE,
-            account_group=ACCOUNT_GROUP,
-            project_id=PROJECT_ID,
-        )
-        payload = candidate.to_safe_dict()
-        finalize_runtime_report(
-            report,
-            status="ok",
-            summary={
-                "broker_reconciliation_permits_active_lkg": candidate.permits_active_lkg,
-                "broker_reconciliation_blockers_count": len(candidate.recovery_blockers),
-                "broker_reconciliation_ledger_records_count": candidate.execution_ledger_records_count,
-            },
-            diagnostics={"broker_reconciliation": payload},
-        )
-        log_runtime_event(
-            log_context,
-            "broker_reconciliation_completed",
-            message="Broker reconciliation candidate completed",
-            execution_window="reconciliation",
-            permits_active_lkg=candidate.permits_active_lkg,
-            blockers=[finding.value for finding in candidate.recovery_blockers],
-            expected_digests_configured=candidate.expected_digests_configured,
-            execution_ledger_records_count=candidate.execution_ledger_records_count,
-        )
-        return json.dumps(payload, ensure_ascii=False), 200, {"Content-Type": "application/json"}
-    except (IBKRReconciliationReadError, ConnectionError, TimeoutError) as exc:
-        if report is not None:
-            append_runtime_report_error(
-                report,
-                stage="broker_reconciliation",
-                message="Broker reconciliation failed.",
-                error_type=type(exc).__name__,
-                failure_category="broker_reconciliation",
-            )
-            finalize_runtime_report(
-                report,
-                status="error",
-                diagnostics={"broker_reconciliation_failure": type(exc).__name__},
-            )
-        if log_context is not None:
-            log_runtime_event(
-                log_context,
-                "broker_reconciliation_failed",
-                message="Broker reconciliation failed",
-                severity="ERROR",
-                execution_window="reconciliation",
-                error_type=type(exc).__name__,
-            )
-        return "Error", 503
-    except Exception as exc:
-        if report is not None:
-            append_runtime_report_error(
-                report,
-                stage="broker_reconciliation",
-                message="Broker reconciliation failed.",
-                error_type=type(exc).__name__,
-            )
-            finalize_runtime_report(report, status="error")
-        if log_context is not None:
-            log_runtime_event(
-                log_context,
-                "broker_reconciliation_failed",
-                message="Broker reconciliation failed",
-                severity="ERROR",
-                execution_window="reconciliation",
-                error_type=type(exc).__name__,
-            )
-        return "Error", 500
-    finally:
-        if ib is not None and hasattr(ib, "disconnect"):
-            try:
-                ib.disconnect()
-            except Exception as disconnect_exc:
-                print(
-                    "failed to disconnect IBKR reconciliation client "
-                    f"(error_type={type(disconnect_exc).__name__})",
-                    flush=True,
-                )
-        try:
-            if report is not None:
-                report_path = persist_reconciliation_report(report)
-                if (
-                    isinstance(report_path, str)
-                    and report_path.startswith("gs://")
-                    and not any(character.isspace() for character in report_path)
-                ):
-                    print(f"execution_report {report_path}", flush=True)
-                    print(
-                        "reconciliation_receipt_ready "
-                        f"scheduler_job_sha256={scheduler_job_sha256} report_uri={report_path}",
-                        flush=True,
-                    )
-                else:
-                    print("broker reconciliation report persisted", flush=True)
-        except Exception as persist_exc:
-            print(
-                "failed to persist reconciliation report "
-                f"(error_type={type(persist_exc).__name__})",
-                flush=True,
-            )
-
-
-def _handle_monitor_dispatch():
-    if request.method == "GET":
-        return "Monitor Dispatch OK - use POST to dispatch due monitor checks", 200
-
-    log_context = build_request_log_context()
-    targets = load_monitor_targets()
-    result = dispatch_due_monitor_targets(
-        targets,
-        lookback_minutes=lookback_minutes_from_env(),
-        timeout_seconds=timeout_seconds_from_env(),
-        max_workers=max_workers_from_env(),
-        local_service_name=SERVICE_NAME or os.getenv("K_SERVICE"),
-        local_dispatch_fn=_dispatch_local_monitor,
-    )
-    log_runtime_event(
-        log_context,
-        "monitor_dispatch_completed",
-        message="Monitor dispatch completed",
-        monitor_targets_count=len(targets),
-        dispatches_due=result.get("dispatches_due"),
-        dispatches_sent=result.get("dispatches_sent"),
-        dispatch_results=result.get("results") or [],
-    )
-    if any(bool(item.get("worker_recycle_required")) for item in (result.get("results") or [])):
-        recycle_current_process_after_response()
-    return result, 200 if result.get("ok") else 502
-
-
-def _dispatch_local_monitor(dispatch):
-    window = str(dispatch.get("window") or "").strip()
-    if window == "probe":
-        _body, status_code = _handle_probe()
-        recycle_required = False
-    elif window == "precheck":
-        timeout_state: dict[str, bool] = {}
-        _body, status_code = _handle_dry_run_with_deadline(
-            recycle_on_timeout=False,
-            timeout_state=timeout_state,
-        )
-        recycle_required = bool(timeout_state.get("worker_recycle_required"))
-    else:
-        raise ValueError(f"Unsupported local monitor window: {window!r}")
-    return {
-        "status_code": int(status_code),
-        "worker_recycle_required": recycle_required,
-    }
 
 
 @app.route("/run", methods=["POST"])
@@ -2221,20 +1874,7 @@ def handle_monitor_dispatch():
 @app.route("/healthz", methods=["GET"])
 @app.route("/health", methods=["GET"])
 def health():
-    critical_errors: list[str] = []
-    for module_path in (
-        "application.runtime_composer",
-        "application.runtime_reporting_adapters",
-        "application.runtime_strategy_adapters",
-        "runtime_execution_policy",
-    ):
-        try:
-            importlib.import_module(module_path)
-        except Exception as exc:
-            critical_errors.append(f"{module_path}: {type(exc).__name__}: {exc}")
-    if critical_errors:
-        return json.dumps({"status": "unhealthy", "errors": critical_errors}, ensure_ascii=False), 500
-    return "OK", 200
+    return health_impl()
 
 
 if __name__ == "__main__":
