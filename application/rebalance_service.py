@@ -943,8 +943,14 @@ def run_strategy_core(
 
         if target_weights is None:
             decision = signal_metadata.get("snapshot_guard_decision")
+            execution_blocked_reason = str(signal_metadata.get("execution_blocked_reason") or "").strip()
             no_op_reason = signal_metadata.get("no_op_reason")
             fail_reason = signal_metadata.get("fail_reason")
+            blocked_summary = (
+                {"execution_status": "blocked", "no_op_reason": execution_blocked_reason}
+                if execution_blocked_reason
+                else None
+            )
             notification_context = signal_metadata.get("notification_context")
             status_context = (
                 notification_context.get("status")
@@ -967,14 +973,21 @@ def run_strategy_core(
                             value=_translate_snapshot_guard_decision(decision, translator=config.translator),
                         )
                     )
-                if no_op_reason:
+                notification_reason = execution_blocked_reason or no_op_reason
+                if notification_reason:
                     no_op_segments.append(
-                        _localize_notification_text(f"reason={no_op_reason}", translator=config.translator)
+                        _localize_notification_text(f"reason={notification_reason}", translator=config.translator)
                     )
                 if fail_reason:
                     no_op_segments.append(
                         _localize_notification_text(f"fail_reason={fail_reason}", translator=config.translator)
                     )
+            if execution_blocked_reason:
+                blocked_reason_text = _localize_notification_text(
+                    f"reason={execution_blocked_reason}", translator=config.translator
+                )
+                if blocked_reason_text not in no_op_segments:
+                    no_op_segments.append(blocked_reason_text)
             no_op_text = " | ".join(segment for segment in no_op_segments if str(segment).strip())
             no_op_text = "\n".join(_split_labeled_text(no_op_text))
             record = build_reconciliation_record(
@@ -984,8 +997,8 @@ def run_strategy_core(
                 snapshot_as_of=signal_metadata.get("snapshot_as_of"),
                 signal_metadata=signal_metadata,
                 target_weights=None,
-                execution_summary=None,
-                no_op_reason=no_op_reason or fail_reason or decision,
+                execution_summary=blocked_summary,
+                no_op_reason=execution_blocked_reason or no_op_reason or fail_reason or decision,
             )
             record_path = write_reconciliation_record(record, output_path=config.reconciliation_output_path)
             print(
@@ -994,7 +1007,7 @@ def run_strategy_core(
                 flush=True,
             )
             order_count = len(orders) if 'orders' in dir() and orders else 0
-            has_error = bool(fail_reason)
+            has_error = bool(fail_reason or execution_blocked_reason)
             notification_suppressed = _should_suppress_noop_notification(
                 signal_metadata,
                 order_count=order_count,
@@ -1006,7 +1019,7 @@ def run_strategy_core(
                     "notification_suppressed "
                     + json.dumps(
                         {
-                            "reason": no_op_reason or fail_reason or decision,
+                            "reason": execution_blocked_reason or no_op_reason or fail_reason or decision,
                             "strategy_profile": signal_metadata.get("strategy_profile"),
                         },
                         ensure_ascii=False,
@@ -1028,12 +1041,12 @@ def run_strategy_core(
                         extra_notification_lines=config.extra_notification_lines,
                     )
                 )
-            _record_platform_execution_telemetry(signal_metadata, {})
+            _record_platform_execution_telemetry(signal_metadata, blocked_summary or {})
             return StrategyCycleResult(
-                result="OK - no-op" if notification_suppressed else "OK - heartbeat",
+                result=f"Blocked - {execution_blocked_reason}" if execution_blocked_reason else ("OK - no-op" if notification_suppressed else "OK - heartbeat"),
                 signal_metadata=dict(signal_metadata or {}),
                 target_weights=None,
-                execution_summary={},
+                execution_summary=dict(blocked_summary or {}),
                 reconciliation_record=dict(record),
                 reconciliation_record_path=str(record_path),
             )

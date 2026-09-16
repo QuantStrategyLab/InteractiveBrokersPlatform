@@ -6,6 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 from application.execution_service import execute_rebalance
+from application.reconciliation_service import build_reconciliation_record
 from application.runtime_broker_adapters import build_runtime_broker_adapters
 from quant_platform_kit.common.execution_state import ExecutionMarkerStore
 
@@ -40,6 +41,7 @@ def _build_test_translator():
         "heartbeat_title": "heartbeat",
         "rebalance_title": "rebalance",
         "no_trades": "no trades",
+        "existing_status": "pre-existing status",
         "equity": "equity",
         "buying_power": "buying_power",
         "empty_positions": "(empty positions)",
@@ -499,6 +501,58 @@ def test_run_strategy_core_writes_reconciliation_record(tmp_path):
     assert "目标差异" not in observed["messages"][0]
 
 
+def test_run_strategy_core_persists_risk_block_without_execution_or_claim(tmp_path):
+    class FakeIB:
+        def isConnected(self):
+            return True
+
+        def disconnect(self):
+            return None
+
+    def execution_must_not_run(*_args, **_kwargs):
+        raise AssertionError("risk rejection must not execute or claim")
+
+    output_path = tmp_path / "reconciliation.json"
+    notifications = []
+    claim_store = Mock(has_marker=Mock(return_value=False), claim_marker=Mock(side_effect=AssertionError("risk rejection must not claim")))
+    result = run_strategy_core(
+        connect_ib=lambda: FakeIB(),
+        get_current_portfolio=lambda _ib: ({}, {"equity": 1000.0, "buying_power": 1000.0}),
+        compute_signals=lambda _ib, _holdings: (
+            None,
+            "risk blocked",
+            False,
+            "risk gate rejected",
+            {
+                "strategy_profile": "soxl_soxx_trend_income",
+                "execution_blocked_reason": "rejected:too_many_positions",
+                "notification_context": {"status": {"code": "existing_status"}},
+            },
+        ),
+        execute_rebalance=execution_must_not_run,
+        send_tg_message=notifications.append,
+        config=IBKRRebalanceConfig(
+            translator=_build_test_translator(),
+            separator="---",
+            execution_dedup_enabled=True,
+            execution_state_store=claim_store,
+            reconciliation_output_path=output_path,
+        ),
+    )
+
+    assert result.result == "Blocked - rejected:too_many_positions"
+    claim_store.claim_marker.assert_not_called()
+    assert notifications and "pre-existing status" in notifications[0]
+    assert "rejected:too_many_positions" in notifications[0]
+    assert result.execution_summary == {
+        "execution_status": "blocked",
+        "no_op_reason": "rejected:too_many_positions",
+    }
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["execution_status"] == "blocked"
+    assert payload["no_op_reason"] == "rejected:too_many_positions"
+
+
 def test_run_strategy_core_propagates_blocked_execution_status(tmp_path):
     class FakeIB:
         def isConnected(self):
@@ -951,3 +1005,17 @@ def test_cycle_non_submission_paths_do_not_claim(claim_cycle, case):
         assert result.execution_summary["orders_submitted"][0]["status"] == "dry_run"
     elif case == "admission_rejected":
         assert result.execution_summary["execution_status"] == "blocked"
+
+
+def test_reconciliation_unknown_target_without_summary_is_noop():
+    record = build_reconciliation_record(
+        strategy_profile="soxl_soxx_trend_income",
+        mode="live",
+        trade_date="2026-09-17",
+        snapshot_as_of=None,
+        signal_metadata={},
+        target_weights=None,
+        execution_summary=None,
+    )
+    assert record["execution_status"] == "no_op"
+    assert record["no_op_reason"] is None

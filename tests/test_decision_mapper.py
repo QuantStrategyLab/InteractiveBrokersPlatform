@@ -189,3 +189,32 @@ def test_map_strategy_decision_allows_deleverage_when_cash_only_net_equity_negat
     assert metadata["actionable"] is True
     assert metadata["cash_only_deleverage_mode"] is True
     assert metadata["portfolio_total_equity"] == 2500.0
+
+
+def test_map_strategy_decision_preserves_risk_gate_rejection_reason():
+    target_weights, _signal_desc, _is_emergency, _status_desc, metadata = map_strategy_decision(
+        StrategyDecision(
+            risk_flags=("rejected:too_many_positions",),
+            diagnostics={"risk_gate": "REJECT", "reason": "private diagnostic must not be reported"},
+        ),
+        strategy_profile="soxl_soxx_trend_income",
+        runtime_metadata={"managed_symbols": ("SOXL",)},
+    )
+
+    assert target_weights is None
+    assert metadata["execution_blocked_reason"] == "rejected:too_many_positions"
+    assert "no_execute" in metadata["risk_flags"]
+
+
+def test_map_strategy_decision_does_not_expose_unknown_rejection_flag():
+    target_weights, _signal_desc, _is_emergency, _status_desc, metadata = map_strategy_decision(
+        StrategyDecision(
+            risk_flags=("rejected:secret-canary",),
+            diagnostics={"risk_gate": "REJECT"},
+        ),
+        strategy_profile="soxl_soxx_trend_income",
+    )
+
+    assert target_weights is None
+    assert metadata["execution_blocked_reason"] == "rejected:risk_gate"
+    assert "secret-canary" not in metadata["execution_blocked_reason"]

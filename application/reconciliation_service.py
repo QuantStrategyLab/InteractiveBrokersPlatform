@@ -40,6 +40,7 @@ def build_reconciliation_record(
     no_op_reason: str | None = None,
 ) -> dict[str, Any]:
     signal_metadata = dict(signal_metadata or {})
+    has_target_weights = target_weights is not None
     execution_summary = dict(execution_summary or {})
     target_weights = dict(target_weights or {})
     allocation = dict(signal_metadata.get("allocation") or {})
@@ -89,7 +90,7 @@ def build_reconciliation_record(
         "snapshot_price_fallback_used": execution_summary.get("snapshot_price_fallback_used"),
         "snapshot_price_fallback_count": execution_summary.get("snapshot_price_fallback_count"),
         "snapshot_price_fallback_symbols": execution_summary.get("snapshot_price_fallback_symbols") or [],
-        "execution_status": execution_summary.get("execution_status") or ("no_op" if no_op_reason else "executed"),
+        "execution_status": execution_summary.get("execution_status") or ("no_op" if no_op_reason or not has_target_weights else "executed"),
         "lock_path": execution_summary.get("lock_path"),
         "no_op_reason": no_op_reason or execution_summary.get("no_op_reason"),
         "fail_reason": signal_metadata.get("fail_reason"),

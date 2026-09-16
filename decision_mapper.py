@@ -149,7 +149,18 @@ def map_strategy_decision(
     if runtime_metadata.get("consecutive_losses") is not None:
         diagnostics["consecutive_losses"] = int(runtime_metadata["consecutive_losses"])
     risk_flags = tuple(str(flag) for flag in decision.risk_flags)
-    no_execute = bool(_NO_EXECUTE_FLAGS & set(risk_flags))
+    rejected_risk_flag = next((flag for flag in risk_flags if flag.startswith("rejected:")), None)
+    risk_gate_rejected = str(diagnostics.get("risk_gate") or "").upper() == "REJECT" or rejected_risk_flag is not None
+    no_execute = bool(_NO_EXECUTE_FLAGS & set(risk_flags)) or risk_gate_rejected
+    if risk_gate_rejected:
+        # Only the known public gate code may reach execution reporting.
+        # Arbitrary flag suffixes and diagnostics remain internal.
+        risk_flags = tuple(dict.fromkeys((*risk_flags, "no_execute")))
+        diagnostics["execution_blocked_reason"] = (
+            "rejected:too_many_positions"
+            if rejected_risk_flag == "rejected:too_many_positions"
+            else "rejected:risk_gate"
+        )
     if not no_execute and not decision.positions:
         # An empty position set is not a safe implicit liquidation instruction.
         # It can result from a degraded strategy plug-in or missing inputs, so
