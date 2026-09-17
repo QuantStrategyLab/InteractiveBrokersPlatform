@@ -206,54 +206,6 @@ def test_fetch_portfolio_snapshot_prefers_usd_net_liquidation_over_base():
     assert snapshot.metadata["broker_net_liquidation"] == 371.93
 
 
-def test_fetch_portfolio_snapshot_accepts_base_net_liquidation_when_usd_absent():
-    class BaseNetLiquidationIB(FakeIB):
-        def positions(self):
-            return []
-
-        def accountValues(self):
-            return [
-                SimpleNamespace(account="U15998061", currency="BASE", tag="NetLiquidation", value="371.93"),
-                SimpleNamespace(account="U15998061", currency="USD", tag="CashBalance", value="371.93"),
-                SimpleNamespace(account="U15998061", currency="USD", tag="AvailableFunds", value="371.93"),
-            ]
-
-    snapshot = fetch_portfolio_snapshot(
-        BaseNetLiquidationIB(),
-        account_ids=("U15998061",),
-        wait_seconds=0,
-        currency="USD",
-    )
-
-    assert snapshot.metadata["total_equity_source"] == "broker_net_liquidation"
-    assert snapshot.metadata["broker_net_liquidation"] == 371.93
-    assert snapshot.metadata["account_hash"] == "U15998061"
-    assert isinstance(snapshot.metadata["source_digest_sha256"], str)
-    assert len(snapshot.metadata["source_digest_sha256"]) == 64
-
-
-def test_fetch_portfolio_snapshot_prefers_usd_net_liquidation_over_base():
-    class DualNetLiquidationIB(FakeIB):
-        def positions(self):
-            return []
-
-        def accountValues(self):
-            return [
-                SimpleNamespace(account="U15998061", currency="BASE", tag="NetLiquidation", value="999.0"),
-                SimpleNamespace(account="U15998061", currency="USD", tag="NetLiquidation", value="371.93"),
-                SimpleNamespace(account="U15998061", currency="USD", tag="CashBalance", value="371.93"),
-            ]
-
-    snapshot = fetch_portfolio_snapshot(
-        DualNetLiquidationIB(),
-        account_ids=("U15998061",),
-        wait_seconds=0,
-        currency="USD",
-    )
-
-    assert snapshot.metadata["broker_net_liquidation"] == 371.93
-
-
 def test_fetch_portfolio_snapshot_allows_negative_cash_balance():
     class NegativeCashIB(FakeIB):
         def positions(self):
