@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping
 from importlib import metadata as importlib_metadata
 import json
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -27,8 +28,8 @@ from quant_platform_kit.ibkr import (
     build_market_history_inputs,
     build_semiconductor_rotation_inputs,
     fetch_option_chain_snapshot,
-    fetch_portfolio_snapshot,
 )
+from application.ibkr_portfolio import fetch_portfolio_snapshot
 from quant_platform_kit.common.strategy_contracts import (
     StrategyDecision,
     StrategyEntrypoint,
@@ -42,7 +43,7 @@ from quant_platform_kit.common.runtime_inputs import (
     build_portfolio_snapshot_from_account_state,
     build_strategy_evaluation_inputs,
 )
-from quant_platform_kit.risk.contracts import RuntimeRiskLimits
+from quant_platform_kit.risk.contracts import RuntimeRiskLimits, SmallAccountRiskHoldPolicy
 from runtime_config_support import PlatformRuntimeSettings
 from us_equity_strategies.signals import resolve_external_market_signal_inputs
 from strategy_loader import (
@@ -53,20 +54,133 @@ from strategy_loader import (
 
 
 
+def _parse_small_account_hold_policy(raw: Any) -> SmallAccountRiskHoldPolicy | None:
+    """Parse optional deployment hold policy; invalid shapes return None."""
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        return None
+    try:
+        return SmallAccountRiskHoldPolicy(
+            enabled=raw["enabled"],
+            hold_below_nav=raw["hold_below_nav"],
+            require_cash_only=raw.get("require_cash_only", True),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def _installed_ues_revision() -> str | None:
     """Read the VCS revision of the installed UES distribution."""
+    candidates: list[str] = []
     try:
         distribution = importlib_metadata.distribution("us-equity-strategies")
         raw_direct_url = distribution.read_text("direct_url.json")
-        if not raw_direct_url:
-            return None
-        payload = json.loads(raw_direct_url)
-        revision = payload.get("vcs_info", {}).get("commit_id")
+        if raw_direct_url:
+            candidates.append(raw_direct_url)
+        locate_file = getattr(distribution, "locate_file", None)
+        if callable(locate_file):
+            direct_url_path = Path(str(locate_file("direct_url.json")))
+            if direct_url_path.is_file():
+                candidates.append(direct_url_path.read_text(encoding="utf-8"))
     except (ImportError, OSError, TypeError, ValueError, AttributeError):
-        return None
-    if not isinstance(revision, str) or not revision.strip():
-        return None
-    return revision.strip()
+        pass
+    stamped = Path("/app/UES_REVISION")
+    if stamped.is_file():
+        stamped_revision = stamped.read_text(encoding="utf-8").strip()
+        if stamped_revision:
+            return stamped_revision
+    for raw_direct_url in candidates:
+        try:
+            payload = json.loads(raw_direct_url)
+        except (TypeError, ValueError):
+            continue
+        revision = payload.get("vcs_info", {}).get("commit_id")
+        if isinstance(revision, str) and revision.strip():
+            return revision.strip()
+    return None
+
+
+def _runtime_risk_binding_mismatch_reasons(
+    *,
+    policy_binding: Mapping[str, Any],
+    policy: Mapping[str, Any],
+    account_scope: str,
+    runtime_scope: str,
+    actual_account_hash: str,
+    profile: str,
+    target_release: Any,
+    actual_ues_revision: str | None,
+    execution_mode: str,
+    cash_only_execution: bool,
+    reserved_cash_ratio: Any,
+    merged_runtime_config: Mapping[str, Any],
+    actual_exit_buffer: Any,
+) -> tuple[str, ...]:
+    """Return stable reason codes for SOXL runtime-risk binding mismatches."""
+    reasons: list[str] = []
+    if not account_scope:
+        reasons.append("missing_account_scope")
+    if not runtime_scope:
+        reasons.append("missing_runtime_scope")
+    if not actual_account_hash:
+        reasons.append("missing_account_hash")
+    if target_release is None:
+        reasons.append("missing_strategy_release")
+    if str(policy_binding.get("account_scope") or "").strip() != account_scope:
+        reasons.append("account_scope_mismatch")
+    if str(policy_binding.get("runtime_scope") or "").strip() != runtime_scope:
+        reasons.append("runtime_scope_mismatch")
+    if str(policy_binding.get("account_hash") or "").strip() != actual_account_hash:
+        reasons.append("account_hash_mismatch")
+    if str(policy_binding.get("strategy_profile") or "").strip() != profile:
+        reasons.append("strategy_profile_mismatch")
+    expected_ues = str(policy_binding.get("ues_revision") or "").strip()
+    release_ues = (
+        str(getattr(target_release, "strategy_revision", "") or "").strip()
+        if target_release is not None
+        else ""
+    )
+    if expected_ues != release_ues:
+        reasons.append("ues_revision_release_mismatch")
+    if actual_ues_revision is None:
+        reasons.append("ues_revision_unavailable")
+    elif actual_ues_revision != expected_ues:
+        reasons.append("ues_revision_installed_mismatch")
+    if str(policy_binding.get("execution_mode") or "").strip().lower() != execution_mode:
+        reasons.append("execution_mode_mismatch")
+    if policy_binding.get("cash_only_execution") is not True:
+        reasons.append("policy_cash_only_mismatch")
+    if cash_only_execution is not True:
+        reasons.append("settings_cash_only_mismatch")
+    if policy_binding.get("reserved_cash_ratio") != merged_runtime_config.get("cash_reserve_ratio"):
+        reasons.append("reserved_cash_merged_mismatch")
+    if policy_binding.get("reserved_cash_ratio") != reserved_cash_ratio:
+        reasons.append("reserved_cash_settings_mismatch")
+    if policy_binding.get("reserved_cash_ratio") != 0.03:
+        reasons.append("reserved_cash_ratio_mismatch")
+    if policy_binding.get("options_enabled") is not False:
+        reasons.append("options_enabled_mismatch")
+    if any(
+        merged_runtime_config.get(key) is not False
+        for key in (
+            "option_overlay_enabled",
+            "option_growth_overlay_enabled",
+            "option_income_overlay_enabled",
+        )
+    ):
+        reasons.append("option_overlay_mismatch")
+    if not isinstance(policy.get("exit_parameters"), Mapping):
+        reasons.append("exit_parameters_missing")
+    if actual_exit_buffer is None:
+        reasons.append("trend_exit_buffer_missing")
+    elif actual_exit_buffer != 0.02:
+        reasons.append("trend_exit_buffer_mismatch")
+    if dict(policy.get("exit_parameters") or {}) != {"trend_exit_buffer": 0.02}:
+        reasons.append("exit_parameters_mismatch")
+    elif dict(policy.get("exit_parameters") or {}) != {"trend_exit_buffer": actual_exit_buffer}:
+        reasons.append("exit_parameters_buffer_mismatch")
+    return tuple(reasons)
 
 
 DEFAULT_CASH_RESERVE_RATIO = 0.0
@@ -191,14 +305,20 @@ class LoadedStrategyRuntime:
         if ib is None and not required:
             return None
         account_ids = tuple(self.runtime_settings.account_ids or ())
+        snapshot_kwargs = {
+            "currency": str(getattr(self.runtime_settings, "market_currency", "USD") or "USD"),
+            "cash_only_execution": bool(
+                getattr(self.runtime_settings, "cash_only_execution", True)
+            ),
+        }
         if required:
             if account_ids:
-                return fetch_portfolio_snapshot(ib, account_ids=account_ids)
-            return fetch_portfolio_snapshot(ib)
+                return fetch_portfolio_snapshot(ib, account_ids=account_ids, **snapshot_kwargs)
+            return fetch_portfolio_snapshot(ib, **snapshot_kwargs)
         try:
             if account_ids:
-                return fetch_portfolio_snapshot(ib, account_ids=account_ids)
-            return fetch_portfolio_snapshot(ib)
+                return fetch_portfolio_snapshot(ib, account_ids=account_ids, **snapshot_kwargs)
+            return fetch_portfolio_snapshot(ib, **snapshot_kwargs)
         except Exception as exc:
             self.logger(
                 "strategy_dashboard_portfolio_snapshot_failed | "
@@ -330,7 +450,13 @@ class LoadedStrategyRuntime:
             "max_positions",
             "exit_parameters",
         }
-        if set(policy) != expected_policy_keys or not isinstance(policy.get("binding"), Mapping):
+        optional_policy_keys = {"small_account_hold"}
+        policy_keys = set(policy)
+        if (
+            not expected_policy_keys.issubset(policy_keys)
+            or (policy_keys - expected_policy_keys - optional_policy_keys)
+            or not isinstance(policy.get("binding"), Mapping)
+        ):
             return {**capabilities, "runtime_risk_limits": object()}, "unavailable:invalid_runtime_risk_policy"
 
         target_release = runtime_target.strategy_release
@@ -354,39 +480,30 @@ class LoadedStrategyRuntime:
         actual_account_hash = str(metadata.get("account_hash") or "").strip() if isinstance(metadata, Mapping) else ""
         actual_ues_revision = _installed_ues_revision()
         actual_exit_buffer = self.merged_runtime_config.get("trend_exit_buffer")
-        if (
-            not account_scope
-            or not runtime_scope
-            or not actual_account_hash
-            or target_release is None
-            or str(policy_binding["account_scope"]).strip() != account_scope
-            or str(policy_binding["runtime_scope"]).strip() != runtime_scope
-            or str(policy_binding["account_hash"]).strip() != actual_account_hash
-            or str(policy_binding["strategy_profile"]).strip() != self.profile
-            or str(policy_binding["ues_revision"]).strip() != str(target_release.strategy_revision).strip()
-            or actual_ues_revision is None
-            or actual_ues_revision != str(policy_binding["ues_revision"]).strip()
-            or str(policy_binding["execution_mode"]).strip().lower() != runtime_target.execution_mode
-            or policy_binding["cash_only_execution"] is not True
-            or self.runtime_settings.cash_only_execution is not True
-            or policy_binding["reserved_cash_ratio"] != self.merged_runtime_config.get("cash_reserve_ratio")
-            or policy_binding["reserved_cash_ratio"] != self.runtime_settings.reserved_cash_ratio
-            or policy_binding["reserved_cash_ratio"] != 0.03
-            or policy_binding["options_enabled"] is not False
-            or any(
-                self.merged_runtime_config.get(key) is not False
-                for key in (
-                    "option_overlay_enabled",
-                    "option_growth_overlay_enabled",
-                    "option_income_overlay_enabled",
-                )
+        mismatch_reasons = _runtime_risk_binding_mismatch_reasons(
+            policy_binding=policy_binding,
+            policy=policy,
+            account_scope=account_scope,
+            runtime_scope=runtime_scope,
+            actual_account_hash=actual_account_hash,
+            profile=self.profile,
+            target_release=target_release,
+            actual_ues_revision=actual_ues_revision,
+            execution_mode=str(runtime_target.execution_mode or ""),
+            cash_only_execution=self.runtime_settings.cash_only_execution,
+            reserved_cash_ratio=self.runtime_settings.reserved_cash_ratio,
+            merged_runtime_config=self.merged_runtime_config,
+            actual_exit_buffer=actual_exit_buffer,
+        )
+        if mismatch_reasons:
+            self.logger(
+                "strategy_runtime_binding_mismatch | "
+                f"profile={self.profile} reasons={','.join(mismatch_reasons)} "
+                f"installed_ues_revision={actual_ues_revision!r} "
+                f"policy_ues_revision={str(policy_binding.get('ues_revision') or '').strip()!r} "
+                f"account_hash={actual_account_hash!r} "
+                f"trend_exit_buffer={actual_exit_buffer!r}"
             )
-            or not isinstance(policy.get("exit_parameters"), Mapping)
-            or actual_exit_buffer is None
-            or actual_exit_buffer != 0.02
-            or dict(policy["exit_parameters"]) != {"trend_exit_buffer": 0.02}
-            or dict(policy["exit_parameters"]) != {"trend_exit_buffer": actual_exit_buffer}
-        ):
             return {**capabilities, "runtime_risk_limits": object()}, "unavailable:runtime_binding_mismatch"
         try:
             limits = RuntimeRiskLimits(
@@ -399,7 +516,25 @@ class LoadedStrategyRuntime:
             )
         except (TypeError, ValueError):
             return {**capabilities, "runtime_risk_limits": object()}, "unavailable:invalid_runtime_risk_limits"
-        return {**capabilities, "runtime_risk_limits": limits}, "verified:runtime_risk_limits"
+        capability_payload: dict[str, Any] = {
+            **capabilities,
+            "runtime_risk_limits": limits,
+            "cash_only_execution": bool(self.runtime_settings.cash_only_execution),
+        }
+        hold_policy = _parse_small_account_hold_policy(policy.get("small_account_hold"))
+        if isinstance(policy.get("small_account_hold"), Mapping) and hold_policy is None:
+            return {
+                **capabilities,
+                "runtime_risk_limits": object(),
+            }, "unavailable:invalid_small_account_hold"
+        if hold_policy is not None:
+            if hold_policy.require_cash_only and self.runtime_settings.cash_only_execution is not True:
+                return {
+                    **capabilities,
+                    "runtime_risk_limits": object(),
+                }, "unavailable:small_account_hold_cash_only"
+            capability_payload["small_account_hold_policy"] = hold_policy
+        return capability_payload, "verified:runtime_risk_limits"
 
     def _build_context_capabilities(
         self,
