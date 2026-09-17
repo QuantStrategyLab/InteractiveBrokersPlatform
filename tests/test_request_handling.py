@@ -1286,8 +1286,14 @@ def test_run_strategy_core_allows_multiple_runs_in_same_process(strategy_module,
         def disconnect(self):
             observed["disconnect_calls"] += 1
 
-    def fake_connect_ib():
+    def fake_connect_ib(*, read_only=False, validate_trading_permissions=True):
         observed["connect_calls"] += 1
+        observed.setdefault("connection_options", []).append(
+            {
+                "read_only": read_only,
+                "validate_trading_permissions": validate_trading_permissions,
+            }
+        )
         return FakeIB()
 
     monkeypatch.setattr(strategy_module, "connect_ib", fake_connect_ib)
