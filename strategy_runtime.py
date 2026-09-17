@@ -418,14 +418,20 @@ class LoadedStrategyRuntime:
             {"portfolio_snapshot": portfolio_snapshot},
             capabilities,
         )
-        object.__setattr__(
-            self,
-            "_last_capability_status",
-            {
-                "capital_base_status": capital_status,
-                "runtime_risk_status": risk_status,
-            },
-        )
+        status = {
+            "capital_base_status": capital_status,
+            "runtime_risk_status": risk_status,
+        }
+        object.__setattr__(self, "_last_capability_status", status)
+        if not (
+            capital_status.startswith("verified:")
+            and risk_status.startswith("verified:")
+        ):
+            self.logger(
+                "strategy_runtime_capability_status | "
+                f"profile={self.profile} capital_base_status={capital_status} "
+                f"runtime_risk_status={risk_status}"
+            )
         return capabilities
 
     def _capability_status_metadata(self, portfolio_snapshot: Any | None = None) -> dict[str, str]:
