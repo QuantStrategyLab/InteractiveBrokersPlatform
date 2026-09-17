@@ -267,8 +267,17 @@ class LoadedStrategyRuntime:
         if not source_digest:
             return {}, "unavailable:source_digest"
         try:
+            from dataclasses import replace as dc_replace
+
+            capital_snapshot = portfolio_snapshot
+            broker_nlv = metadata.get("broker_net_liquidation")
+            if broker_nlv is not None:
+                capital_snapshot = dc_replace(
+                    portfolio_snapshot,
+                    total_equity=float(broker_nlv),
+                )
             capital_base = build_capital_base_snapshot(
-                portfolio_snapshot,
+                capital_snapshot,
                 account_scope=account_scope,
                 runtime_scope=runtime_scope,
                 strategy_scope=self.profile,

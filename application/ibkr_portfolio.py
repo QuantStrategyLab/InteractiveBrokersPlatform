@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import math
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from typing import Any
@@ -67,6 +70,48 @@ def _cash_value_for_currency(
                 matched = True
                 break
     return total if matched else None
+
+
+def _broker_net_liquidation_evidence(
+    account_values: Iterable[Any],
+    *,
+    selected_account_ids: tuple[str, ...],
+) -> tuple[float | None, str | None]:
+    """Return account-scope USD NetLiquidation and a stable source digest."""
+
+    if not selected_account_ids:
+        return None, None
+    rows: list[dict[str, object]] = []
+    for account_value in account_values:
+        account_id = str(getattr(account_value, "account", "") or "").strip()
+        if account_id not in selected_account_ids:
+            continue
+        if str(getattr(account_value, "tag", "") or "").strip() != "NetLiquidation":
+            continue
+        if str(getattr(account_value, "currency", "") or "").strip().upper() != "USD":
+            continue
+        try:
+            value = float(getattr(account_value, "value", None))
+        except (TypeError, ValueError):
+            return None, None
+        if not math.isfinite(value) or value <= 0.0:
+            return None, None
+        rows.append({"account_id": account_id, "currency": "USD", "value": value})
+
+    if len(rows) != len(selected_account_ids):
+        return None, None
+    if {str(row["account_id"]) for row in rows} != set(selected_account_ids):
+        return None, None
+    canonical_rows = sorted(rows, key=lambda row: str(row["account_id"]))
+    source_digest = hashlib.sha256(
+        json.dumps(
+            canonical_rows,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    return sum(float(row["value"]) for row in canonical_rows), source_digest
 
 
 def fetch_portfolio_snapshot(
@@ -139,7 +184,8 @@ def fetch_portfolio_snapshot(
     matched_account_value_count = 0
     matched_market_currency_value_count = 0
     values_by_account_currency: dict[tuple[str | None, str], dict[str, float]] = {}
-    for account_value in ib.accountValues():
+    account_values = tuple(ib.accountValues())
+    for account_value in account_values:
         account_id = str(getattr(account_value, "account", "") or "").strip() or None
         if not _matches_account(account_id, selected_account_ids):
             continue
@@ -192,30 +238,46 @@ def fetch_portfolio_snapshot(
             float(market_currency_cash or 0.0) if market_currency_cash is not None else 0.0
         )
 
+    verified_nlv, source_digest = _broker_net_liquidation_evidence(
+        account_values,
+        selected_account_ids=selected_account_ids,
+    )
+    metadata: dict[str, Any] = {
+        "account_ids": selected_account_ids,
+        "option_positions": tuple(option_positions),
+        "currency": market_currency,
+        "market_currency_cash": market_currency_cash,
+        "available_funds": available_funds,
+        "cash_only_execution": cash_only_execution,
+        "cash_balances": tuple(
+            {
+                "account_id": account_id,
+                "currency": currency,
+                **tag_values,
+            }
+            for (account_id, currency), tag_values in sorted(
+                values_by_account_currency.items(),
+                key=lambda item: ((item[0][0] or ""), item[0][1]),
+            )
+        ),
+        "total_equity_source": (
+            "broker_net_liquidation"
+            if source_digest is not None
+            else "unverified_net_liquidation"
+        ),
+    }
+    if len(selected_account_ids) == 1:
+        metadata["account_hash"] = selected_account_ids[0]
+    if verified_nlv is not None and source_digest is not None:
+        metadata["broker_net_liquidation"] = float(verified_nlv)
+        metadata["source_digest_sha256"] = source_digest
+
     return PortfolioSnapshot(
         as_of=datetime.now(timezone.utc),
         total_equity=total_equity,
         buying_power=buying_power,
         positions=tuple(positions),
-        metadata={
-            "account_ids": selected_account_ids,
-            "option_positions": tuple(option_positions),
-            "currency": market_currency,
-            "market_currency_cash": market_currency_cash,
-            "available_funds": available_funds,
-            "cash_only_execution": cash_only_execution,
-            "cash_balances": tuple(
-                {
-                    "account_id": account_id,
-                    "currency": currency,
-                    **tag_values,
-                }
-                for (account_id, currency), tag_values in sorted(
-                    values_by_account_currency.items(),
-                    key=lambda item: ((item[0][0] or ""), item[0][1]),
-                )
-            ),
-        },
+        metadata=metadata,
     )
 
 

@@ -71,6 +71,11 @@ def test_fetch_portfolio_snapshot_filters_account_and_market_currency():
     assert snapshot.positions[0].currency == "HKD"
     assert snapshot.metadata["currency"] == "HKD"
     assert snapshot.metadata["account_ids"] == ("UHK123",)
+    assert snapshot.metadata["account_hash"] == "UHK123"
+    assert snapshot.metadata["total_equity_source"] == "broker_net_liquidation"
+    assert snapshot.metadata["broker_net_liquidation"] == 999.0
+    assert isinstance(snapshot.metadata["source_digest_sha256"], str)
+    assert len(snapshot.metadata["source_digest_sha256"]) == 64
     assert snapshot.metadata["option_positions"][0]["currency"] == "HKD"
 
 
