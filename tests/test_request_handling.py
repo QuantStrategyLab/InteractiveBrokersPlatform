@@ -409,6 +409,24 @@ def test_dry_run_composer_wires_dry_run_override_to_order_execution(strategy_mod
     assert observed["dry_run_only_override"] is True
 
 
+def test_dry_run_composer_connects_read_only_without_permission_probe(
+    strategy_module, monkeypatch
+):
+    observed = {}
+
+    def fake_connect_ib(*, read_only=False, validate_trading_permissions=True):
+        observed["read_only"] = read_only
+        observed["validate_trading_permissions"] = validate_trading_permissions
+        return object()
+
+    monkeypatch.setattr(strategy_module, "connect_ib", fake_connect_ib)
+
+    runtime = strategy_module.build_composer(dry_run_only_override=True).build_rebalance_runtime()
+    runtime.connect_ib()
+
+    assert observed == {"read_only": True, "validate_trading_permissions": False}
+
+
 def test_probe_market_order_write_access_uses_safe_haven_not_growth_symbol(
     strategy_module, monkeypatch
 ):

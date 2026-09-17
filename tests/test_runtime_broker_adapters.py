@@ -225,6 +225,42 @@ def test_connect_ib_rejects_live_gateway_read_only_mode_without_retry():
     }
 
 
+def test_connect_ib_accepts_margin_rejection_as_write_access_proof():
+    class FakeEvent:
+        def __iadd__(self, handler):
+            return self
+
+        def __isub__(self, handler):
+            return self
+
+    class FakeIB:
+        RaiseRequestErrors = False
+        RequestTimeout = 0
+
+        def __init__(self):
+            self.errorEvent = FakeEvent()
+
+        def managedAccounts(self):
+            return ["U1234567"]
+
+        def whatIfOrder(self, _contract, _order):
+            raise RuntimeError(
+                "Error 201, reqId 21: Order rejected - reason:YOUR ORDER IS NOT ACCEPTED. "
+                "IN ORDER TO OBTAIN THE DESIRED POSITION YOUR EQUITY WITH LOAN VALUE "
+                "[390.06 USD] MUST EXCEED THE INITIAL MARGIN [434.70 USD]"
+            )
+
+    adapters = _build_adapters(account_ids=("U1234567",), execution_mode="live")
+    adapters = adapters.__class__(
+        **{
+            **adapters.__dict__,
+            "connect_ib_fn": lambda *_args, **_kwargs: FakeIB(),
+        }
+    )
+
+    assert adapters.connect_ib().managedAccounts() == ["U1234567"]
+
+
 def test_connect_ib_retries_when_trading_permission_probe_loses_connection():
     observed = {
         "connects": 0,

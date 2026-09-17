@@ -695,6 +695,14 @@ def build_composer(*, dry_run_only_override: bool | None = None, strategy_plugin
             )
         return compute_signals(ib, current_holdings)
 
+    def connect_ib_for_cycle():
+        # Dry-run/shadow must use a read-only Gateway session and must not run the
+        # live what-if write probe (that path can emit Error 201 on small accounts).
+        return connect_ib(
+            read_only=bool(effective_dry_run_only),
+            validate_trading_permissions=not bool(effective_dry_run_only),
+        )
+
     return build_runtime_composer(
         service_name=SERVICE_NAME or os.getenv("K_SERVICE", "interactive-brokers-platform"),
         strategy_profile=STRATEGY_PROFILE,
@@ -728,7 +736,7 @@ def build_composer(*, dry_run_only_override: bool | None = None, strategy_plugin
         separator=SEPARATOR,
         send_message=send_tg_message,
         notification_channel=_NOTIFICATION_CHANNEL,
-        connect_ib_fn=connect_ib,
+        connect_ib_fn=connect_ib_for_cycle,
         build_portfolio_snapshot_fn=build_portfolio_snapshot,
         compute_signals_fn=compute_signals_fn,
         execute_rebalance_fn=lambda ib, target_weights, positions, account_values, **kwargs: execute_rebalance(

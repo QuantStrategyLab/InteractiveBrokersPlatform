@@ -112,6 +112,11 @@ class IBKRRuntimeBrokerAdapters:
             normalized = str(message).lower().replace("-", " ").replace("_", " ")
             return "read only" in " ".join(normalized.split())
 
+        def is_margin_probe_rejection(message: Any) -> bool:
+            """Margin rejection still proves the API accepted a non-transmitting order."""
+            normalized = str(message).upper()
+            return "INITIAL MARGIN" in normalized or "EQUITY WITH LOAN VALUE" in normalized
+
         def capture_api_error(_request_id, error_code, error_message, _contract):
             if is_read_only_error(error_message):
                 read_only_errors.append((error_code, str(error_message)))
@@ -146,6 +151,9 @@ class IBKRRuntimeBrokerAdapters:
                 raise IBKRTradingPermissionError(
                     "IB Gateway API is in Read-Only mode; live execution is disabled."
                 ) from exc
+            if is_margin_probe_rejection(exc):
+                # Write path reached the broker; small accounts may reject the probe size.
+                return
             raise IBKRTradingPermissionError(
                 "IB Gateway live execution could not verify non-transmitting order-write access "
                 f"(error_type={type(exc).__name__})."
