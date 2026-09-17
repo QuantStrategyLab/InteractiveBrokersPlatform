@@ -409,6 +409,30 @@ def test_dry_run_composer_wires_dry_run_override_to_order_execution(strategy_mod
     assert observed["dry_run_only_override"] is True
 
 
+def test_probe_market_order_write_access_uses_safe_haven_not_growth_symbol(
+    strategy_module, monkeypatch
+):
+    observed = {}
+
+    def fake_probe(_ib, *, symbol, account_id, **_kwargs):
+        observed["symbol"] = symbol
+        observed["account_id"] = account_id
+        return types.SimpleNamespace(warningText="")
+
+    monkeypatch.setattr(strategy_module, "probe_order_write_access", fake_probe)
+    monkeypatch.setattr(strategy_module, "SAFE_HAVEN", "BIL")
+    monkeypatch.setattr(strategy_module, "ACCOUNT_IDS", ["U1234567"])
+    monkeypatch.setattr(
+        strategy_module,
+        "resolve_reporting_managed_symbols",
+        lambda: ("SOXL", "SOXX", "BIL"),
+    )
+
+    strategy_module.probe_market_order_write_access(object())
+
+    assert observed == {"symbol": "BIL", "account_id": "U1234567"}
+
+
 def test_handle_dry_run_ignores_paper_liquidate_only(strategy_module, monkeypatch):
     observed = {"called": False}
 

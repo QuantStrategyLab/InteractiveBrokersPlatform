@@ -576,14 +576,19 @@ def submit_market_order_intent(ib, order_intent, **kwargs):
 
 
 def probe_market_order_write_access(ib):
-    managed_symbols = resolve_reporting_managed_symbols()
-    if len(ACCOUNT_IDS) != 1 or not managed_symbols:
+    """Probe order-write access with a low-notional safe-haven what-if buy.
+
+    Do not use the first managed growth symbol (e.g. SOXL): one share can exceed
+    small-account initial margin and emit Error 201 even though write access is OK.
+    """
+    if len(ACCOUNT_IDS) != 1:
         raise RuntimeError(
-            "IBKR what-if permission probe requires one account_id and one managed symbol"
+            "IBKR what-if permission probe requires exactly one account_id"
         )
+    probe_symbol = str(SAFE_HAVEN or "BIL").strip().upper() or "BIL"
     return probe_order_write_access(
         ib,
-        symbol=managed_symbols[0],
+        symbol=probe_symbol,
         account_id=ACCOUNT_IDS[0],
         stock_exchange=MARKET_EXCHANGE,
         stock_currency=MARKET_CURRENCY,
