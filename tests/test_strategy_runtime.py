@@ -1369,3 +1369,152 @@ def test_with_consecutive_loss_metadata_preserves_explicit_value(monkeypatch):
 
     assert stamped is snapshot
     assert called["count"] == 0
+
+
+def _soxl_runtime_policy(*, account_hash: str = "account-hash") -> dict[str, object]:
+    symbols = ("SOXL", "SOXX", "BOXX", "SCHD", "DGRO", "SGOV", "SPYI", "QQQI")
+    return {
+        "binding": {
+            "account_scope": "paper-account-scope",
+            "runtime_scope": "ibkr-paper-service",
+            "account_hash": account_hash,
+            "strategy_profile": "soxl_soxx_trend_income",
+            "ues_revision": "ues-revision",
+            "execution_mode": "live",
+            "cash_only_execution": True,
+            "reserved_cash_ratio": 0.03,
+            "options_enabled": False,
+        },
+        "allowed_symbols": list(symbols),
+        "product_leverage_factors": {"SOXL": 3, **{symbol: 1 for symbol in symbols[1:]}},
+        "nominal_caps": {"SOXL": 0.679, "SOXX": 0.873, **{symbol: 0.97 for symbol in symbols[2:]}},
+        "total_nominal_exposure_cap": 0.97,
+        "total_effective_exposure_cap": 2.328,
+        "max_positions": 8,
+        "exit_parameters": {"trend_exit_buffer": 0.02},
+    }
+
+
+def test_soxl_runtime_binds_explicit_limits_to_broker_and_installed_ues(monkeypatch):
+    from quant_platform_kit.risk.contracts import RuntimeRiskLimits
+
+    policy = _soxl_runtime_policy()
+    entrypoint = SimpleNamespace(manifest=SimpleNamespace(profile="soxl_soxx_trend_income"))
+    runtime = strategy_runtime_module.LoadedStrategyRuntime(
+        entrypoint=entrypoint,
+        runtime_settings=replace(
+            _build_runtime_settings(profile="soxl_soxx_trend_income"),
+            runtime_target=build_runtime_target(
+                platform_id="ibkr",
+                strategy_profile="soxl_soxx_trend_income",
+                dry_run_only=False,
+                account_scope="paper-account-scope",
+                service_name="ibkr-paper-service",
+                strategy_release={
+                    "release_id": "soxl-release",
+                    "manifest_sha256": "a" * 64,
+                    "strategy_revision": "ues-revision",
+                    "config_sha256": "b" * 64,
+                    "risk_policy_sha256": "c" * 64,
+                    "evidence_sha256": "d" * 64,
+                    "plugin_bundle_sha256": "e" * 64,
+                    "effective_session": "2026-09-17",
+                },
+            ),
+            trusted_runtime_risk_policy=policy,
+            cash_only_execution=True,
+            reserved_cash_ratio=0.03,
+        ),
+        runtime_adapter=StrategyRuntimeAdapter(),
+        merged_runtime_config={
+            "cash_reserve_ratio": 0.03,
+            "trend_exit_buffer": 0.02,
+            "option_overlay_enabled": False,
+            "option_growth_overlay_enabled": False,
+            "option_income_overlay_enabled": False,
+            "managed_symbols": ("SOXL", "SOXX", "BOXX", "SCHD", "DGRO", "SGOV", "SPYI", "QQQI"),
+        },
+        logger=lambda _message: None,
+    )
+    snapshot = PortfolioSnapshot(
+        as_of=strategy_runtime_module.pd.Timestamp("2026-08-27", tz="UTC").to_pydatetime(),
+        total_equity=1_000.0,
+        metadata={
+            "account_hash": "account-hash",
+            "total_equity_source": "broker_net_liquidation",
+            "source_digest_sha256": "b" * 64,
+        },
+    )
+    monkeypatch.setattr(strategy_runtime_module, "_installed_ues_revision", lambda: "ues-revision")
+    capabilities = runtime._build_context_capabilities(ib=None, portfolio_snapshot=snapshot)
+    assert runtime._last_capability_status["runtime_risk_status"] == "verified:runtime_risk_limits"
+    assert isinstance(capabilities["runtime_risk_limits"], RuntimeRiskLimits)
+    assert capabilities["runtime_risk_limits"].max_positions == 8
+
+
+def test_soxl_runtime_rejects_policy_bound_to_wrong_account(monkeypatch):
+    from quant_platform_kit.risk.contracts import RuntimeRiskLimits
+
+    policy = _soxl_runtime_policy(account_hash="other-account")
+    entrypoint = SimpleNamespace(manifest=SimpleNamespace(profile="soxl_soxx_trend_income"))
+    runtime = strategy_runtime_module.LoadedStrategyRuntime(
+        entrypoint=entrypoint,
+        runtime_settings=replace(
+            _build_runtime_settings(profile="soxl_soxx_trend_income"),
+            runtime_target=build_runtime_target(
+                platform_id="ibkr",
+                strategy_profile="soxl_soxx_trend_income",
+                dry_run_only=False,
+                account_scope="paper-account-scope",
+                service_name="ibkr-paper-service",
+                strategy_release={
+                    "release_id": "soxl-release",
+                    "manifest_sha256": "a" * 64,
+                    "strategy_revision": "ues-revision",
+                    "config_sha256": "b" * 64,
+                    "risk_policy_sha256": "c" * 64,
+                    "evidence_sha256": "d" * 64,
+                    "plugin_bundle_sha256": "e" * 64,
+                    "effective_session": "2026-09-17",
+                },
+            ),
+            trusted_runtime_risk_policy=policy,
+            cash_only_execution=True,
+            reserved_cash_ratio=0.03,
+        ),
+        runtime_adapter=StrategyRuntimeAdapter(),
+        merged_runtime_config={
+            "cash_reserve_ratio": 0.03,
+            "trend_exit_buffer": 0.02,
+            "option_overlay_enabled": False,
+            "option_growth_overlay_enabled": False,
+            "option_income_overlay_enabled": False,
+        },
+        logger=lambda _message: None,
+    )
+    snapshot = PortfolioSnapshot(
+        as_of=strategy_runtime_module.pd.Timestamp("2026-08-27", tz="UTC").to_pydatetime(),
+        total_equity=1_000.0,
+        metadata={
+            "account_hash": "account-hash",
+            "total_equity_source": "broker_net_liquidation",
+            "source_digest_sha256": "b" * 64,
+        },
+    )
+    monkeypatch.setattr(strategy_runtime_module, "_installed_ues_revision", lambda: "ues-revision")
+    capabilities = runtime._build_context_capabilities(ib=None, portfolio_snapshot=snapshot)
+    assert runtime._last_capability_status["runtime_risk_status"] == "unavailable:runtime_binding_mismatch"
+    assert not isinstance(capabilities["runtime_risk_limits"], RuntimeRiskLimits)
+
+
+def test_cash_only_runtime_overrides_force_option_overlays_off():
+    settings = replace(
+        _build_runtime_settings(profile="soxl_soxx_trend_income"),
+        cash_only_execution=True,
+        reserved_cash_ratio=0.03,
+    )
+    overrides = strategy_runtime_module._build_runtime_overrides(settings)
+    assert overrides["option_overlay_enabled"] is False
+    assert overrides["option_growth_overlay_enabled"] is False
+    assert overrides["option_income_overlay_enabled"] is False
+    assert overrides["cash_reserve_ratio"] == 0.03
