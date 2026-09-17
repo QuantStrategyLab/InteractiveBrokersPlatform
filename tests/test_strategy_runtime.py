@@ -284,7 +284,7 @@ def test_loaded_strategy_runtime_attaches_strategy_plugin_metadata_to_portfolio(
     monkeypatch.setattr(
         strategy_runtime_module,
         "fetch_portfolio_snapshot",
-        lambda _ib: PortfolioSnapshot(
+        lambda _ib, **_kwargs: PortfolioSnapshot(
             as_of=strategy_runtime_module.pd.Timestamp("2026-04-07").to_pydatetime(),
             total_equity=100000.0,
             metadata={"account_hash": "demo"},
@@ -699,7 +699,7 @@ def test_feature_snapshot_runtime_prefers_unified_runtime_adapter_metadata(monke
 
     monkeypatch.setattr(strategy_runtime_module, "load_feature_snapshot_guarded", fake_guard)
     portfolio_snapshot = SimpleNamespace(total_equity=25000.0)
-    monkeypatch.setattr(strategy_runtime_module, "fetch_portfolio_snapshot", lambda _ib: portfolio_snapshot)
+    monkeypatch.setattr(strategy_runtime_module, "fetch_portfolio_snapshot", lambda _ib, **_kwargs: portfolio_snapshot)
 
     result = runtime.evaluate(
         ib="fake-ib",
@@ -781,7 +781,7 @@ def test_feature_snapshot_runtime_can_add_daily_market_benchmark_and_portfolio_i
         ),
     )
     portfolio_snapshot = SimpleNamespace(total_equity=50000.0)
-    monkeypatch.setattr(strategy_runtime_module, "fetch_portfolio_snapshot", lambda _ib: portfolio_snapshot)
+    monkeypatch.setattr(strategy_runtime_module, "fetch_portfolio_snapshot", lambda _ib, **_kwargs: portfolio_snapshot)
 
     def close_loader(_ib, symbol, **_kwargs):
         return [100.0, 101.0] if symbol == "NVDA" else []
@@ -845,7 +845,7 @@ def test_market_history_runtime_uses_canonical_market_history_key(monkeypatch):
         logger=lambda _message: None,
     )
     portfolio_snapshot = SimpleNamespace(total_equity=1200.0)
-    monkeypatch.setattr(strategy_runtime_module, "fetch_portfolio_snapshot", lambda _ib: portfolio_snapshot)
+    monkeypatch.setattr(strategy_runtime_module, "fetch_portfolio_snapshot", lambda _ib, **_kwargs: portfolio_snapshot)
 
     result = runtime.evaluate(
         ib="fake-ib",
@@ -974,7 +974,7 @@ def test_market_history_value_runtime_requires_portfolio_snapshot(monkeypatch):
     )
     portfolio_snapshot = SimpleNamespace(total_equity=10000.0)
 
-    def fetch_snapshot(ib):
+    def fetch_snapshot(ib, **_kwargs):
         assert ib == "fake-ib"
         return portfolio_snapshot
 
@@ -1115,7 +1115,7 @@ def test_value_target_runtime_builds_semiconductor_inputs(monkeypatch):
         cash_balance=50000.0,
         positions=(),
     )
-    monkeypatch.setattr(strategy_runtime_module, "fetch_portfolio_snapshot", lambda _ib: portfolio_snapshot)
+    monkeypatch.setattr(strategy_runtime_module, "fetch_portfolio_snapshot", lambda _ib, **_kwargs: portfolio_snapshot)
 
     def fake_loader(_ib, symbol, duration="2 Y", bar_size="1 day"):
         if symbol == "SOXL":
@@ -1207,7 +1207,7 @@ def test_value_target_runtime_builds_tqqq_inputs(monkeypatch):
         cash_balance=50000.0,
         positions=(),
     )
-    monkeypatch.setattr(strategy_runtime_module, "fetch_portfolio_snapshot", lambda _ib: portfolio_snapshot)
+    monkeypatch.setattr(strategy_runtime_module, "fetch_portfolio_snapshot", lambda _ib, **_kwargs: portfolio_snapshot)
 
     def fake_candle_loader(_ib, symbol, duration="2 Y", bar_size="1 day"):
         assert symbol == "QQQ"
