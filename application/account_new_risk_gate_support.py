@@ -19,8 +19,14 @@ from quant_platform_kit.risk.cycle_new_risk_health import (
     CycleNewRiskHealthEvidence,
     apply_cycle_new_risk_health_axes,
 )
+from quant_platform_kit.risk.production_drift_new_risk import (
+    resolve_production_drift_status_from_store,
+)
 
 ACCOUNT_NEW_RISK_GATE_ENV = "ACCOUNT_NEW_RISK_GATE"
+
+_DEFAULT_STRATEGY_PROFILE = "soxl_soxx_trend_income"
+_DEFAULT_DOMAIN = "us_equity"
 
 _cycle_snapshot: InjectedReconciliationSnapshot | None = None
 
@@ -133,6 +139,51 @@ def build_portfolio_from_account_values(
     return portfolio
 
 
+def _resolve_strategy_profile(portfolio: Mapping[str, Any], projection: Mapping[str, Any]) -> str:
+    for source in (projection, portfolio, _portfolio_metadata(portfolio)):
+        value = source.get("strategy_profile")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    env = str(os.environ.get("STRATEGY_PROFILE") or "").strip()
+    return env or _DEFAULT_STRATEGY_PROFILE
+
+
+def _resolve_domain(portfolio: Mapping[str, Any], projection: Mapping[str, Any]) -> str:
+    for source in (projection, portfolio, _portfolio_metadata(portfolio)):
+        value = source.get("strategy_domain") or source.get("domain")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    env = str(os.environ.get("STRATEGY_DOMAIN") or "").strip()
+    return env or _DEFAULT_DOMAIN
+
+
+def _resolve_production_drift_status(
+    portfolio: Mapping[str, Any], projection: Mapping[str, Any]
+) -> str | None:
+    """Prefer explicit inject; else read-only PerformanceStore (Policy A). Fail-soft on store errors."""
+    for source in (projection, portfolio, _portfolio_metadata(portfolio)):
+        raw = source.get("production_drift_status")
+        if raw is not None and raw != "":
+            return str(raw).strip()
+    return resolve_production_drift_status_from_store(
+        strategy_profile=_resolve_strategy_profile(portfolio, projection),
+        domain=_resolve_domain(portfolio, projection),
+    )
+
+
+def _resolve_drawdown_from_peak(
+    *,
+    equity_usd: float | None,
+    peak_equity_usd: float | None,
+    explicit: float | None,
+) -> float | None:
+    if explicit is not None:
+        return explicit
+    if equity_usd is None or peak_equity_usd is None or peak_equity_usd <= 0.0:
+        return None
+    return max(0.0, 1.0 - (equity_usd / peak_equity_usd))
+
+
 def build_snapshot_from_portfolio(
     portfolio: Mapping[str, Any],
     *,
@@ -143,20 +194,31 @@ def build_snapshot_from_portfolio(
     equity_usd = _coerce_optional_float(projection.get("equity_usd"))
     if equity_usd is None:
         equity_usd = _resolve_equity_usd(portfolio, execution)
+    peak_equity_usd = (
+        _coerce_optional_float(projection.get("peak_equity_usd"))
+        if "peak_equity_usd" in projection
+        else _coerce_optional_float(portfolio.get("peak_equity_usd"))
+    )
+    explicit_dd = (
+        _coerce_optional_float(projection.get("drawdown_from_peak"))
+        if "drawdown_from_peak" in projection
+        else _coerce_optional_float(portfolio.get("drawdown_from_peak"))
+    )
     return InjectedReconciliationSnapshot(
         observation_status=str(projection.get("observation_status") or "UNAVAILABLE"),
         reconciliation_status=str(projection.get("reconciliation_status") or "UNVERIFIED"),
         circuit_breaker_state=str(projection.get("circuit_breaker_state") or "OPEN"),
         equity_usd=equity_usd,
-        peak_equity_usd=_coerce_optional_float(projection.get("peak_equity_usd"))
-        if "peak_equity_usd" in projection
-        else _coerce_optional_float(portfolio.get("peak_equity_usd")),
-        drawdown_from_peak=_coerce_optional_float(projection.get("drawdown_from_peak"))
-        if "drawdown_from_peak" in projection
-        else _coerce_optional_float(portfolio.get("drawdown_from_peak")),
+        peak_equity_usd=peak_equity_usd,
+        drawdown_from_peak=_resolve_drawdown_from_peak(
+            equity_usd=equity_usd,
+            peak_equity_usd=peak_equity_usd,
+            explicit=explicit_dd,
+        ),
         realized_vol=_coerce_optional_float(projection.get("realized_vol"))
         if "realized_vol" in projection
         else _coerce_optional_float(portfolio.get("realized_vol")),
+        production_drift_status=_resolve_production_drift_status(portfolio, projection),
     )
 
 

@@ -79,7 +79,50 @@ def test_healthy_equity_without_explicit_snapshot_allows_new_risk():
         "total_equity": 100_000.0,
         "peak_equity_usd": 100_000.0,
     }
+    with mock.patch(
+        "application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
+        return_value=None,
+    ):
+        result = evaluate_portfolio_new_risk_admission(portfolio)
+    assert result.disposition == NewRiskDisposition.ALLOW_NEW_RISK
+
+
+def test_explicit_critical_production_drift_prohibits_new_risk():
+    portfolio = {
+        "total_equity": 100_000.0,
+        "peak_equity_usd": 100_000.0,
+        "production_drift_status": "critical",
+    }
     result = evaluate_portfolio_new_risk_admission(portfolio)
+    assert result.disposition == NewRiskDisposition.NEW_RISK_PROHIBITED
+    assert "PRODUCTION_DRIFT_CRITICAL" in result.reason_codes
+
+
+def test_store_critical_production_drift_prohibits_new_risk():
+    portfolio = {
+        "total_equity": 100_000.0,
+        "peak_equity_usd": 100_000.0,
+    }
+    with mock.patch(
+        "application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
+        return_value="critical",
+    ) as store_mock:
+        result = evaluate_portfolio_new_risk_admission(portfolio)
+    store_mock.assert_called_once()
+    assert result.disposition == NewRiskDisposition.NEW_RISK_PROHIBITED
+    assert "PRODUCTION_DRIFT_CRITICAL" in result.reason_codes
+
+
+def test_store_probe_failure_is_fail_soft_not_invented_ban():
+    portfolio = {
+        "total_equity": 100_000.0,
+        "peak_equity_usd": 100_000.0,
+    }
+    with mock.patch(
+        "application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
+        return_value=None,
+    ):
+        result = evaluate_portfolio_new_risk_admission(portfolio)
     assert result.disposition == NewRiskDisposition.ALLOW_NEW_RISK
 
 
