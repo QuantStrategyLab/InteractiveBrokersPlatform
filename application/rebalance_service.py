@@ -998,7 +998,13 @@ def run_strategy_core(
                 signal_metadata=signal_metadata,
                 target_weights=None,
                 execution_summary=blocked_summary,
-                no_op_reason=execution_blocked_reason or no_op_reason or fail_reason or decision,
+                no_op_reason=(
+                    execution_blocked_reason
+                    or no_op_reason
+                    or fail_reason
+                    or decision
+                    or "no_signal"
+                ),
             )
             record_path = write_reconciliation_record(record, output_path=config.reconciliation_output_path)
             print(
@@ -1019,7 +1025,13 @@ def run_strategy_core(
                     "notification_suppressed "
                     + json.dumps(
                         {
-                            "reason": execution_blocked_reason or no_op_reason or fail_reason or decision,
+                            "reason": (
+                                execution_blocked_reason
+                                or no_op_reason
+                                or fail_reason
+                                or decision
+                                or "no_signal"
+                            ),
                             "strategy_profile": signal_metadata.get("strategy_profile"),
                         },
                         ensure_ascii=False,

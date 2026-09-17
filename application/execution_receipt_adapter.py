@@ -16,6 +16,10 @@ _PENDING_KEYS = ("orders_pending", "option_orders_pending")
 _PARTIAL_FILL_KEYS = ("orders_partially_filled", "option_orders_partially_filled")
 _FILLED_KEYS = ("orders_filled", "option_orders_filled")
 _FAILURE_STATUSES = frozenset({"error", "failed", "failure"})
+# Only promote these explicit cycle reasons. Broad no-ops stay ``no_action``
+# so existing digests and projections keep digest-compatible outcomes.
+_NO_SIGNAL_REASON_HEADS = frozenset({"no_signal"})
+_NO_REBALANCE_REASON_HEADS = frozenset({"no_rebalance", "target_diff_below_threshold"})
 
 
 def attach_cycle_execution_receipt(
@@ -54,6 +58,11 @@ def attach_cycle_execution_receipt(
         risk_blocked=status == "blocked" and not execution_failed,
         failed=execution_failed or status in _FAILURE_STATUSES,
     )
+    if outcome == "no_action" and not bool(report.get("dry_run")):
+        explicit = _explicit_non_action_outcome(summary)
+        if explicit is not None:
+            outcome = explicit
+            confirmation = "not_applicable"
     return attach_runtime_execution_receipt(
         report,
         outcome=outcome,
@@ -82,6 +91,20 @@ def _combined_summary(
     reconciliation_record: Mapping[str, Any],
 ) -> dict[str, Any]:
     return {**dict(reconciliation_record or {}), **dict(execution_summary or {})}
+
+
+def _explicit_non_action_outcome(summary: Mapping[str, Any]) -> str | None:
+    """Map only explicit cycle reasons to no_signal / no_rebalance."""
+
+    reason = str(summary.get("no_op_reason") or "").strip().lower()
+    if not reason:
+        return None
+    head = reason.split(":", 1)[0].strip()
+    if head in _NO_SIGNAL_REASON_HEADS:
+        return "no_signal"
+    if head in _NO_REBALANCE_REASON_HEADS:
+        return "no_rebalance"
+    return None
 
 
 def _has_any(summary: Mapping[str, Any], keys: tuple[str, ...]) -> bool:
