@@ -14,6 +14,7 @@ for candidate in (ROOT, QPK_SRC, UES_SRC, HES_SRC):
     if candidate.exists() and str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
+import runtime_config_support as runtime_config_support_module
 from runtime_config_support import (
     DEFAULT_MARKET,
     DEFAULT_MARKET_CALENDAR,
@@ -2139,3 +2140,14 @@ def test_load_platform_runtime_settings_rejects_legacy_cash_buffer_profile(monke
 
     with pytest.raises(ValueError, match="Unsupported STRATEGY_PROFILE"):
         load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
+
+def test_load_trusted_runtime_risk_policy_from_runtime_target_json(monkeypatch):
+    policy = {"max_positions": 8, "binding": {"account_hash": "x"}}
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", json.dumps({"runtime_risk_limits": policy, "platform_id": "ibkr"}))
+    loaded = runtime_config_support_module._load_trusted_runtime_risk_policy()
+    assert loaded == policy
+
+
+def test_load_trusted_runtime_risk_policy_absent_when_missing(monkeypatch):
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", json.dumps({"platform_id": "ibkr"}))
+    assert runtime_config_support_module._load_trusted_runtime_risk_policy() is None
