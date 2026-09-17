@@ -18,10 +18,12 @@ from application.account_new_risk_gate_support import (
     apply_combined_scale,
     build_account_new_risk_snapshot,
     build_portfolio_from_account_values,
+    build_snapshot_from_portfolio,
     evaluate_account_values_new_risk_admission,
     evaluate_cycle_new_risk_admission,
     evaluate_portfolio_new_risk_admission,
     is_account_new_risk_gate_enabled,
+    new_risk_buy_prohibited,
     set_cycle_snapshot,
 )
 from application.ibkr_order_execution import submit_order_intent
@@ -30,8 +32,20 @@ from application.ibkr_order_execution import submit_order_intent
 @pytest.fixture(autouse=True)
 def _clear_cycle_snapshot():
     set_cycle_snapshot(None)
+    for key in (
+        "IBKR_MAX_DAILY_LOSS_USD",
+        "MAX_DAILY_LOSS_USD",
+        "RUNTIME_TARGET_JSON",
+    ):
+        os.environ.pop(key, None)
     yield
     set_cycle_snapshot(None)
+    for key in (
+        "IBKR_MAX_DAILY_LOSS_USD",
+        "MAX_DAILY_LOSS_USD",
+        "RUNTIME_TARGET_JSON",
+    ):
+        os.environ.pop(key, None)
 
 
 def test_gate_enabled_by_default():
@@ -139,6 +153,60 @@ def test_explicit_healthy_snapshot_allows_new_risk():
     result = evaluate_portfolio_new_risk_admission(portfolio)
     assert result.disposition == NewRiskDisposition.ALLOW_NEW_RISK
     assert result.live_authority_granted is False
+
+
+def test_explicit_daily_loss_at_limit_prohibits_buy():
+    portfolio = {
+        "total_equity": 50_000.0,
+        "peak_equity_usd": 50_000.0,
+        "account_new_risk_snapshot": {
+            "daily_loss_usd": 100.0,
+            "max_daily_loss_usd": 100.0,
+        },
+    }
+    with mock.patch(
+        "application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
+        return_value=None,
+    ):
+        snapshot = build_snapshot_from_portfolio(portfolio)
+        result = evaluate_portfolio_new_risk_admission(portfolio)
+    assert snapshot.daily_loss_usd == 100.0
+    assert result.disposition == NewRiskDisposition.NEW_RISK_PROHIBITED
+    assert "DAILY_LOSS_LIMIT_EXCEEDED" in result.reason_codes
+    assert new_risk_buy_prohibited(result)
+
+
+def test_unconfigured_daily_loss_limit_omits_axis():
+    portfolio = {
+        "total_equity": 50_000.0,
+        "peak_equity_usd": 50_000.0,
+        # daily_loss fact absent / invalid must not invent a prohibit when
+        # no max_daily_loss_usd is configured.
+        "account_new_risk_snapshot": {"daily_loss_usd": float("nan")},
+    }
+    with mock.patch(
+        "application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
+        return_value=None,
+    ):
+        result = evaluate_portfolio_new_risk_admission(portfolio)
+    assert result.disposition == NewRiskDisposition.ALLOW_NEW_RISK
+    assert "DAILY_LOSS_UNKNOWN_FAIL_CLOSED" not in result.reason_codes
+    assert "DAILY_LOSS_LIMIT_EXCEEDED" not in result.reason_codes
+
+
+def test_configured_limit_without_daily_loss_fact_fails_closed():
+    portfolio = {
+        "total_equity": 50_000.0,
+        "peak_equity_usd": 50_000.0,
+        "account_new_risk_snapshot": {"max_daily_loss_usd": 100.0},
+    }
+    with mock.patch(
+        "application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
+        return_value=None,
+    ):
+        result = evaluate_portfolio_new_risk_admission(portfolio)
+    assert result.disposition == NewRiskDisposition.NEW_RISK_PROHIBITED
+    assert "DAILY_LOSS_UNKNOWN_FAIL_CLOSED" in result.reason_codes
 
 
 def test_unknown_pending_orders_prohibits_and_opens_breaker():
