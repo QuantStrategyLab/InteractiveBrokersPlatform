@@ -50,9 +50,12 @@ def test_precheck_uses_per_service_scheduler_with_bounded_deadline() -> None:
 
     assert 'precheck_job_name="${cloud_run_service%-service}-precheck-scheduler"' in workflow
     assert 'precheck_uri="${service_url}/dry-run"' in workflow
-    assert workflow.count("--attempt-deadline=120s") == 2
-    assert workflow.count("--max-retry-attempts=0") == 2
-    assert workflow.count("--max-retry-duration=0s") == 2
+    assert workflow.count("--attempt-deadline=180s") == 2
+    assert workflow.count("--max-retry-attempts=3") == 2
+    assert workflow.count("--min-backoff=120s") == 2
+    assert workflow.count("--max-backoff=300s") == 2
+    assert workflow.count("--max-retry-duration=900s") == 2
+    assert workflow.count("--max-retry-attempts=0") == 0
     assert 'managed_scheduler_jobs=("${job_name}" "${warmup_job_name}" "${precheck_job_name}")' in workflow
     assert 'monitor_job_name="interactive-brokers-monitor-dispatcher-scheduler"' not in workflow
     assert 'shared_env_pairs+=("IBKR_MONITOR_DISPATCH_TARGETS_JSON=' not in workflow
