@@ -1510,6 +1510,7 @@ def test_soxl_runtime_rejects_policy_bound_to_wrong_account(monkeypatch):
 def test_cash_only_runtime_overrides_force_option_overlays_off():
     settings = replace(
         _build_runtime_settings(profile="soxl_soxx_trend_income"),
+        strategy_profile="soxl_soxx_trend_income",
         cash_only_execution=True,
         reserved_cash_ratio=0.03,
     )

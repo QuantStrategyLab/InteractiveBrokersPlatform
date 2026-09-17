@@ -1461,7 +1461,10 @@ def _build_runtime_overrides(runtime_settings: PlatformRuntimeSettings) -> dict[
     if reserved_cash_ratio is not None and float(reserved_cash_ratio or 0.0) > 0.0:
         overrides["reserved_cash_ratio"] = float(reserved_cash_ratio)
         overrides["cash_reserve_ratio"] = float(reserved_cash_ratio)
-    if bool(getattr(runtime_settings, "cash_only_execution", True)):
+    if (
+        str(getattr(runtime_settings, "strategy_profile", "") or "").strip() == _SOXL_PROFILE
+        and bool(getattr(runtime_settings, "cash_only_execution", True))
+    ):
         overrides["option_overlay_enabled"] = False
         overrides["option_growth_overlay_enabled"] = False
         overrides["option_income_overlay_enabled"] = False
