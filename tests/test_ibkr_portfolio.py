@@ -179,9 +179,45 @@ def test_fetch_portfolio_snapshot_accepts_base_net_liquidation_when_usd_absent()
 
     assert snapshot.metadata["total_equity_source"] == "broker_net_liquidation"
     assert snapshot.metadata["broker_net_liquidation"] == 371.93
+    assert snapshot.total_equity == 371.93
     assert snapshot.metadata["account_hash"] == "U15998061"
     assert isinstance(snapshot.metadata["source_digest_sha256"], str)
     assert len(snapshot.metadata["source_digest_sha256"]) == 64
+
+
+def test_fetch_portfolio_snapshot_aligns_cash_only_equity_to_verified_usd_nlv():
+    class DriftedMarksIB(FakeIB):
+        def positions(self):
+            return [
+                SimpleNamespace(
+                    account="U15998061",
+                    contract=SimpleNamespace(secType="STK", symbol="SOXL", currency="USD"),
+                    position=3,
+                    avgCost=150.0,
+                )
+            ]
+
+        def accountValues(self):
+            return [
+                SimpleNamespace(account="U15998061", currency="USD", tag="NetLiquidation", value="472.0"),
+                SimpleNamespace(account="U15998061", currency="USD", tag="CashBalance", value="40.0"),
+                SimpleNamespace(account="U15998061", currency="USD", tag="AvailableFunds", value="40.0"),
+            ]
+
+    snapshot = fetch_portfolio_snapshot(
+        DriftedMarksIB(),
+        account_ids=("U15998061",),
+        wait_seconds=0,
+        currency="USD",
+        cash_only_execution=True,
+    )
+
+    # Position marks sum to 450 + cash 40 = 490 before align; gate uses NLV 472.
+    assert snapshot.metadata["broker_net_liquidation"] == 472.0
+    assert snapshot.metadata["strategy_equity_before_nlv_align"] == 490.0
+    assert snapshot.total_equity == 472.0
+    assert snapshot.metadata["market_currency_cash"] == 22.0
+    assert snapshot.buying_power == 22.0
 
 
 def test_fetch_portfolio_snapshot_prefers_usd_net_liquidation_over_base():
