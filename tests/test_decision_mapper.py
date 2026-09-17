@@ -218,3 +218,18 @@ def test_map_strategy_decision_does_not_expose_unknown_rejection_flag():
     assert target_weights is None
     assert metadata["execution_blocked_reason"] == "rejected:risk_gate"
     assert "secret-canary" not in metadata["execution_blocked_reason"]
+
+
+def test_map_strategy_decision_preserves_runtime_risk_limits_rejection_reason():
+    target_weights, _signal_desc, _is_emergency, _status_desc, metadata = map_strategy_decision(
+        StrategyDecision(
+            risk_flags=("rejected:runtime_risk_limits",),
+            diagnostics={"risk_gate": "REJECT"},
+        ),
+        strategy_profile="soxl_soxx_trend_income",
+        runtime_metadata={"managed_symbols": ("SOXL",)},
+    )
+
+    assert target_weights is None
+    assert metadata["execution_blocked_reason"] == "rejected:runtime_risk_limits"
+    assert "no_execute" in metadata["risk_flags"]

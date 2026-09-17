@@ -153,12 +153,16 @@ def map_strategy_decision(
     risk_gate_rejected = str(diagnostics.get("risk_gate") or "").upper() == "REJECT" or rejected_risk_flag is not None
     no_execute = bool(_NO_EXECUTE_FLAGS & set(risk_flags)) or risk_gate_rejected
     if risk_gate_rejected:
-        # Only the known public gate code may reach execution reporting.
+        # Only the known public gate codes may reach execution reporting.
         # Arbitrary flag suffixes and diagnostics remain internal.
         risk_flags = tuple(dict.fromkeys((*risk_flags, "no_execute")))
+        public_rejection_reasons = {
+            "rejected:too_many_positions",
+            "rejected:runtime_risk_limits",
+        }
         diagnostics["execution_blocked_reason"] = (
-            "rejected:too_many_positions"
-            if rejected_risk_flag == "rejected:too_many_positions"
+            rejected_risk_flag
+            if rejected_risk_flag in public_rejection_reasons
             else "rejected:risk_gate"
         )
     if not no_execute and not decision.positions:

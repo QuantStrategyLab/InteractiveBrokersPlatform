@@ -77,18 +77,29 @@ def _broker_net_liquidation_evidence(
     *,
     selected_account_ids: tuple[str, ...],
 ) -> tuple[float | None, str | None]:
-    """Return account-scope USD NetLiquidation and a stable source digest."""
+    """Return account-scope USD NetLiquidation and a stable source digest.
+
+    Prefer an explicit USD NetLiquidation row.  IBKR also publishes a BASE
+    NetLiquidation for single-currency USD accounts; accept that only when USD
+    is absent so cash-only lanes can still bind capital evidence.
+    """
 
     if not selected_account_ids:
         return None, None
-    rows: list[dict[str, object]] = []
+    # account_id -> (priority, value). Lower priority wins (USD=0, BASE=1).
+    selected: dict[str, tuple[int, float]] = {}
     for account_value in account_values:
         account_id = str(getattr(account_value, "account", "") or "").strip()
         if account_id not in selected_account_ids:
             continue
         if str(getattr(account_value, "tag", "") or "").strip() != "NetLiquidation":
             continue
-        if str(getattr(account_value, "currency", "") or "").strip().upper() != "USD":
+        currency = str(getattr(account_value, "currency", "") or "").strip().upper()
+        if currency == "USD":
+            priority = 0
+        elif currency == "BASE":
+            priority = 1
+        else:
             continue
         try:
             value = float(getattr(account_value, "value", None))
@@ -96,13 +107,16 @@ def _broker_net_liquidation_evidence(
             return None, None
         if not math.isfinite(value) or value <= 0.0:
             return None, None
-        rows.append({"account_id": account_id, "currency": "USD", "value": value})
+        current = selected.get(account_id)
+        if current is None or priority < current[0]:
+            selected[account_id] = (priority, value)
 
-    if len(rows) != len(selected_account_ids):
+    if set(selected) != set(selected_account_ids):
         return None, None
-    if {str(row["account_id"]) for row in rows} != set(selected_account_ids):
-        return None, None
-    canonical_rows = sorted(rows, key=lambda row: str(row["account_id"]))
+    canonical_rows = [
+        {"account_id": account_id, "currency": "USD", "value": selected[account_id][1]}
+        for account_id in sorted(selected)
+    ]
     source_digest = hashlib.sha256(
         json.dumps(
             canonical_rows,
