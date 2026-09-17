@@ -1324,6 +1324,31 @@ class LoadedStrategyRuntime:
             ),
         )
         decision = self.entrypoint.evaluate(ctx)
+        capability_status = self._capability_status_metadata(portfolio_snapshot)
+        if any(str(flag).startswith("rejected:runtime_risk") for flag in decision.risk_flags):
+            diagnostics = decision.diagnostics if isinstance(decision.diagnostics, Mapping) else {}
+            snapshot_metadata = getattr(portfolio_snapshot, "metadata", None)
+            broker_nlv = (
+                snapshot_metadata.get("broker_net_liquidation")
+                if isinstance(snapshot_metadata, Mapping)
+                else None
+            )
+            target_value_sum = sum(
+                float(position.target_value)
+                for position in decision.positions
+                if position.target_value is not None
+            )
+            self.logger(
+                "strategy_runtime_risk_reject | "
+                f"profile={self.profile} "
+                f"capital_base_status={capability_status.get('capital_base_status')} "
+                f"runtime_risk_status={capability_status.get('runtime_risk_status')} "
+                f"risk_flags={','.join(str(flag) for flag in decision.risk_flags)} "
+                f"hold={diagnostics.get('runtime_risk_small_account_hold')} "
+                f"broker_nlv={broker_nlv} "
+                f"portfolio_total_equity={getattr(portfolio_snapshot, 'total_equity', None)} "
+                f"target_value_sum={target_value_sum}"
+            )
         safe_haven_symbol = next(
             (position.symbol for position in decision.positions if position.role == "safe_haven"),
             None,
@@ -1340,7 +1365,7 @@ class LoadedStrategyRuntime:
         metadata = self._enrich_portfolio_metadata(
             {
             "strategy_profile": self.profile,
-            **self._capability_status_metadata(portfolio_snapshot),
+            **capability_status,
             "managed_symbols": managed_symbols,
             "status_icon": self.status_icon,
             "dry_run_only": self.runtime_settings.dry_run_only,

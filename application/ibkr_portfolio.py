@@ -285,6 +285,20 @@ def fetch_portfolio_snapshot(
     if verified_nlv is not None and source_digest is not None:
         metadata["broker_net_liquidation"] = float(verified_nlv)
         metadata["source_digest_sha256"] = source_digest
+        # Cash-only SOXL sizes value targets from positions+cash, while RRL
+        # divides by capital_base NLV. When sleeve marks exceed NetLiquidation,
+        # in-cap weights inflate and fail closed. Shrink the cash sleeve so
+        # strategy equity matches the verified USD NLV used by the gate.
+        if cash_only_execution and market_currency == "USD":
+            position_mv_sum = sum(float(position.market_value) for position in positions)
+            strategy_equity = float(total_equity)
+            nlv = float(verified_nlv)
+            if strategy_equity > nlv + 1e-6:
+                metadata["strategy_equity_before_nlv_align"] = strategy_equity
+                aligned_cash = nlv - position_mv_sum
+                metadata["market_currency_cash"] = aligned_cash
+                total_equity = nlv
+                buying_power = aligned_cash
 
     return PortfolioSnapshot(
         as_of=datetime.now(timezone.utc),
