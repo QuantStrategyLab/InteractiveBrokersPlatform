@@ -180,9 +180,14 @@ grep -Fq 'precheck_job_name="${cloud_run_service%-service}-precheck-scheduler"' 
 grep -Fq 'precheck_uri="${service_url}/dry-run"' "$workflow_file"
 grep -Fq 'gcloud scheduler jobs update http "${precheck_job_name}"' "$workflow_file"
 grep -Fq 'gcloud scheduler jobs create http "${precheck_job_name}"' "$workflow_file"
-test "$(grep -Fc -- '--attempt-deadline=120s' "$workflow_file")" -eq 2
-test "$(grep -Fc -- '--max-retry-attempts=0' "$workflow_file")" -eq 2
-test "$(grep -Fc -- '--max-retry-duration=0s' "$workflow_file")" -eq 2
+# Precheck may collide with other dry-runs on maxScale=1; retry transient 429s.
+# Keep /run without these retries to avoid duplicate live submits.
+test "$(grep -Fc -- '--attempt-deadline=180s' "$workflow_file")" -eq 2
+test "$(grep -Fc -- '--max-retry-attempts=3' "$workflow_file")" -eq 2
+test "$(grep -Fc -- '--min-backoff=120s' "$workflow_file")" -eq 2
+test "$(grep -Fc -- '--max-backoff=300s' "$workflow_file")" -eq 2
+test "$(grep -Fc -- '--max-retry-duration=900s' "$workflow_file")" -eq 2
+test "$(grep -Fc -- '--max-retry-attempts=0' "$workflow_file")" -eq 0
 grep -Fq 'managed_scheduler_jobs=("${job_name}" "${warmup_job_name}" "${precheck_job_name}")' "$workflow_file"
 grep -Fq 'for managed_job_name in "${managed_scheduler_jobs[@]}"; do' "$workflow_file"
 grep -Fq 'gcloud scheduler jobs resume "${managed_job_name}"' "$workflow_file"
