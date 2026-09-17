@@ -542,6 +542,10 @@ def test_reserved_cash_policy_overrides_apply_to_runtime_config():
     assert strategy_runtime_module._build_runtime_overrides(settings) == {
         "reserved_cash_floor_usd": 150.0,
         "reserved_cash_ratio": 0.03,
+        "cash_reserve_ratio": 0.03,
+        "option_overlay_enabled": False,
+        "option_growth_overlay_enabled": False,
+        "option_income_overlay_enabled": False,
     }
 
 
