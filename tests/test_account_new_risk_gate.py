@@ -15,7 +15,7 @@ from quant_platform_kit.risk.account_new_risk_gate import (
 
 from application.account_new_risk_gate_support import (
     ACCOUNT_NEW_RISK_GATE_ENV,
-    apply_combined_scale,
+    apply_combined_scale_to_target_weights,
     build_account_new_risk_snapshot,
     build_portfolio_from_account_values,
     build_snapshot_from_portfolio,
@@ -23,7 +23,9 @@ from application.account_new_risk_gate_support import (
     evaluate_cycle_new_risk_admission,
     evaluate_portfolio_new_risk_admission,
     is_account_new_risk_gate_enabled,
+    maybe_publish_attention_for_admission,
     new_risk_buy_prohibited,
+    reset_attention_sent_keys_for_tests,
     set_cycle_snapshot,
 )
 from application.ibkr_order_execution import submit_order_intent
@@ -32,6 +34,7 @@ from application.ibkr_order_execution import submit_order_intent
 @pytest.fixture(autouse=True)
 def _clear_cycle_snapshot():
     set_cycle_snapshot(None)
+    reset_attention_sent_keys_for_tests()
     for key in (
         "IBKR_MAX_DAILY_LOSS_USD",
         "MAX_DAILY_LOSS_USD",
@@ -251,8 +254,15 @@ def test_build_portfolio_from_account_values_maps_equity():
     }
 
 
-def test_missing_combined_scale_is_no_op():
-    assert apply_combined_scale(4.0, None) == 4.0
+def test_combined_scale_halves_target_weights():
+    assert apply_combined_scale_to_target_weights({"TQQQ": 0.8, "QQQ": 0.2}, 0.5) == {
+        "TQQQ": 0.4,
+        "QQQ": 0.1,
+    }
+
+
+def test_missing_combined_scale_leaves_target_weights():
+    assert apply_combined_scale_to_target_weights({"TQQQ": 0.8}, None) == {"TQQQ": 0.8}
 
 
 def test_submit_order_intent_rejects_buy_when_gate_prohibits():
@@ -278,7 +288,8 @@ def test_submit_order_intent_rejects_buy_when_gate_prohibits():
     assert "EQUITY_UNKNOWN_FAIL_CLOSED" in report.raw_payload.get("reason_codes", [])
 
 
-def test_submit_order_intent_halves_buy_quantity_for_half_scale():
+def test_submit_order_intent_does_not_scale_buy_quantity():
+    """Envelope scale applies to target weights, not submit-time quantity."""
     set_cycle_snapshot(
         InjectedReconciliationSnapshot(
             observation_status="COMPLETE",
@@ -297,7 +308,7 @@ def test_submit_order_intent_halves_buy_quantity_for_half_scale():
             SimpleNamespace(),
             OrderIntent(symbol="SPY", side="buy", quantity=4.0),
         )
-    assert submit_mock.call_args.args[1].quantity == 2.0
+    assert submit_mock.call_args.args[1].quantity == 4.0
 
 
 def test_submit_order_intent_allows_sell_when_gate_prohibits():
@@ -350,3 +361,47 @@ def test_cycle_gate_without_snapshot_is_fail_closed():
     result = evaluate_cycle_new_risk_admission()
     assert result.disposition == NewRiskDisposition.NEW_RISK_PROHIBITED
     assert "EQUITY_UNKNOWN_FAIL_CLOSED" in result.reason_codes
+
+def test_attention_notify_on_new_risk_prohibit_dedupes(monkeypatch):
+    import sys
+    from pathlib import Path
+
+    qpk = Path("/Users/lisiyi/Projects/.worktrees/qpk-attention-wire-20260918/src")
+    if qpk.exists() and str(qpk) not in sys.path:
+        sys.path.insert(0, str(qpk))
+
+    reset_attention_sent_keys_for_tests()
+    portfolio = {
+        "total_equity": 50_000.0,
+        "strategy_profile": "soxl_soxx_trend_income",
+        "account_id": "U1599999",
+        "account_new_risk_snapshot": {"production_drift_status": "critical"},
+    }
+    admission = evaluate_portfolio_new_risk_admission(portfolio)
+    assert new_risk_buy_prohibited(admission)
+    snapshot = build_snapshot_from_portfolio(portfolio)
+    payloads: list[str] = []
+
+    def _sender(*, text: str, alert_key: str | None = None, **_kwargs) -> bool:
+        payloads.append(text)
+        return True
+
+    counts = maybe_publish_attention_for_admission(
+        admission,
+        portfolio=portfolio,
+        snapshot=snapshot,
+        telegram_sender=_sender,
+        log_message=lambda *_a, **_k: None,
+    )
+    assert counts.get("sent") == 1
+    counts2 = maybe_publish_attention_for_admission(
+        admission,
+        portfolio=portfolio,
+        snapshot=snapshot,
+        telegram_sender=_sender,
+        log_message=lambda *_a, **_k: None,
+    )
+    assert counts2.get("sent") == 0
+    assert counts2.get("skipped") == 1
+    assert len(payloads) == 1
+
