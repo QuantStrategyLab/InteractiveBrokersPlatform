@@ -347,11 +347,14 @@ def new_risk_buy_prohibited(result: NewRiskAdmissionResult) -> bool:
     return result.disposition == NewRiskDisposition.NEW_RISK_PROHIBITED
 
 
-def apply_combined_scale(value: float, scale: float | None) -> float:
-    """Apply a valid reducing scale; missing or out-of-range values are a no-op."""
-    if scale is None or not math.isfinite(scale) or not 0.0 < scale <= 1.0:
-        return value
-    return value * scale
+def apply_combined_scale_to_target_weights(
+    target_weights: Mapping[str, Any] | None,
+    combined_scale: float | None,
+) -> dict[str, float]:
+    """Shrink target weights by admission combined_scale; omit when scale missing."""
+    from quant_platform_kit.risk.capital_risk_envelope import apply_combined_scale_to_targets
+
+    return apply_combined_scale_to_targets(target_weights, combined_scale)
 
 
 

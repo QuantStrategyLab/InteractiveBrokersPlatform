@@ -14,6 +14,7 @@ from typing import Any
 
 import pandas as pd
 from application.account_new_risk_gate_support import (
+    apply_combined_scale_to_target_weights,
     build_portfolio_from_account_values,
     build_snapshot_from_portfolio,
     evaluate_account_values_new_risk_admission,
@@ -1431,6 +1432,16 @@ def execute_rebalance(
             f"failed={attention_counts.get('failed', 0)}",
             flush=True,
         )
+        target_weights = apply_combined_scale_to_target_weights(
+            target_weights,
+            admission.combined_scale,
+        )
+        if admission.combined_scale is not None:
+            print(
+                f"[Envelope scale] combined_scale={admission.combined_scale} "
+                "applied_to_target_weights",
+                flush=True,
+            )
     else:
         set_cycle_snapshot(None)
 
