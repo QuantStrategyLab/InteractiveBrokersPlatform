@@ -23,7 +23,9 @@ from application.account_new_risk_gate_support import (
     evaluate_cycle_new_risk_admission,
     evaluate_portfolio_new_risk_admission,
     is_account_new_risk_gate_enabled,
+    maybe_publish_attention_for_admission,
     new_risk_buy_prohibited,
+    reset_attention_sent_keys_for_tests,
     set_cycle_snapshot,
 )
 from application.ibkr_order_execution import submit_order_intent
@@ -32,6 +34,7 @@ from application.ibkr_order_execution import submit_order_intent
 @pytest.fixture(autouse=True)
 def _clear_cycle_snapshot():
     set_cycle_snapshot(None)
+    reset_attention_sent_keys_for_tests()
     for key in (
         "IBKR_MAX_DAILY_LOSS_USD",
         "MAX_DAILY_LOSS_USD",
@@ -350,3 +353,47 @@ def test_cycle_gate_without_snapshot_is_fail_closed():
     result = evaluate_cycle_new_risk_admission()
     assert result.disposition == NewRiskDisposition.NEW_RISK_PROHIBITED
     assert "EQUITY_UNKNOWN_FAIL_CLOSED" in result.reason_codes
+
+def test_attention_notify_on_new_risk_prohibit_dedupes(monkeypatch):
+    import sys
+    from pathlib import Path
+
+    qpk = Path("/Users/lisiyi/Projects/.worktrees/qpk-attention-wire-20260918/src")
+    if qpk.exists() and str(qpk) not in sys.path:
+        sys.path.insert(0, str(qpk))
+
+    reset_attention_sent_keys_for_tests()
+    portfolio = {
+        "total_equity": 50_000.0,
+        "strategy_profile": "soxl_soxx_trend_income",
+        "account_id": "U1599999",
+        "account_new_risk_snapshot": {"production_drift_status": "critical"},
+    }
+    admission = evaluate_portfolio_new_risk_admission(portfolio)
+    assert new_risk_buy_prohibited(admission)
+    snapshot = build_snapshot_from_portfolio(portfolio)
+    payloads: list[str] = []
+
+    def _sender(*, text: str, alert_key: str | None = None, **_kwargs) -> bool:
+        payloads.append(text)
+        return True
+
+    counts = maybe_publish_attention_for_admission(
+        admission,
+        portfolio=portfolio,
+        snapshot=snapshot,
+        telegram_sender=_sender,
+        log_message=lambda *_a, **_k: None,
+    )
+    assert counts.get("sent") == 1
+    counts2 = maybe_publish_attention_for_admission(
+        admission,
+        portfolio=portfolio,
+        snapshot=snapshot,
+        telegram_sender=_sender,
+        log_message=lambda *_a, **_k: None,
+    )
+    assert counts2.get("sent") == 0
+    assert counts2.get("skipped") == 1
+    assert len(payloads) == 1
+

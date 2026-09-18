@@ -18,6 +18,7 @@ from application.account_new_risk_gate_support import (
     build_snapshot_from_portfolio,
     evaluate_account_values_new_risk_admission,
     is_account_new_risk_gate_enabled,
+    maybe_publish_attention_for_admission,
     new_risk_buy_prohibited,
     set_cycle_snapshot,
 )
@@ -1416,7 +1417,20 @@ def execute_rebalance(
         account_new_risk_buy_blocked = new_risk_buy_prohibited(admission)
         account_new_risk_reason_codes = tuple(admission.reason_codes)
         portfolio = build_portfolio_from_account_values(account_values, signal_metadata=signal_metadata)
-        set_cycle_snapshot(build_snapshot_from_portfolio(portfolio))
+        cycle_snapshot = build_snapshot_from_portfolio(portfolio)
+        set_cycle_snapshot(cycle_snapshot)
+        attention_counts = maybe_publish_attention_for_admission(
+            admission,
+            portfolio=portfolio,
+            snapshot=cycle_snapshot,
+        )
+        print(
+            "[Attention notify] "
+            f"sent={attention_counts.get('sent', 0)} "
+            f"skipped={attention_counts.get('skipped', 0)} "
+            f"failed={attention_counts.get('failed', 0)}",
+            flush=True,
+        )
     else:
         set_cycle_snapshot(None)
 
