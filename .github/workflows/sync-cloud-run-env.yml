@@ -12,7 +12,7 @@ on:
           - configured
           - hk-verify
       configured_service:
-        description: "Optional exact inventory service_name for configured target; blank keeps all configured targets."
+        description: "Exact inventory service_name required for configured target."
         required: false
         type: string
       cloud_run_region:
@@ -39,10 +39,20 @@ on:
         type: boolean
         default: true
       sync_env:
-        description: "Sync hk-verify Cloud Run environment variables."
+        description: "Sync hk-verify Cloud Run environment variables without shifting traffic or Scheduler state."
         required: true
         type: boolean
         default: true
+      approve_traffic_shift:
+        description: "Explicitly shift Cloud Run traffic to the candidate revision after no-traffic prep."
+        required: true
+        type: boolean
+        default: false
+      approve_scheduler_sync:
+        description: "Explicitly create/update Cloud Scheduler jobs and apply pause/resume for the selected target."
+        required: true
+        type: boolean
+        default: false
 
 env:
   GCP_PROJECT_ID: interactivebrokersquant
@@ -81,6 +91,8 @@ jobs:
       INPUT_ACCOUNT_GROUP_CONFIG_SECRET_NAME: ${{ inputs.account_group_config_secret_name }}
       INPUT_DEPLOY_IMAGE: ${{ inputs.deploy_image }}
       INPUT_SYNC_ENV: ${{ inputs.sync_env }}
+      INPUT_APPROVE_TRAFFIC_SHIFT: ${{ inputs.approve_traffic_shift }}
+      INPUT_APPROVE_SCHEDULER_SYNC: ${{ inputs.approve_scheduler_sync }}
       GCP_ARTIFACT_REGISTRY_HOSTNAME: ${{ vars.GCP_ARTIFACT_REGISTRY_HOSTNAME }}
       CLOUD_RUN_REGION: ${{ vars.CLOUD_RUN_REGION }}
       CLOUD_RUN_SERVICE: ${{ secrets.CLOUD_RUN_SERVICE }}
@@ -195,6 +207,8 @@ jobs:
 
           deploy_enabled=false
           env_sync_enabled=false
+          traffic_shift_enabled=false
+          scheduler_sync_enabled=false
 
           # QSL_ENABLE_CLOUD_RUN_AUTOMATION overrides ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION
           ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION="${QSL_ENABLE_CLOUD_RUN_AUTOMATION:-$ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION}"
@@ -202,6 +216,8 @@ jobs:
             write_github_output \
               "deploy_enabled=false" \
               "env_sync_enabled=false" \
+              "traffic_shift_enabled=false" \
+              "scheduler_sync_enabled=false" \
               "enabled=false"
             echo "Skipping Cloud Run automation on push because ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION is not true." >&2
             exit 0
@@ -224,11 +240,27 @@ jobs:
             fi
           fi
 
+          if [ "${INPUT_APPROVE_TRAFFIC_SHIFT:-false}" = "true" ]; then
+            traffic_shift_enabled=true
+          fi
+          if [ "${INPUT_APPROVE_SCHEDULER_SYNC:-false}" = "true" ]; then
+            scheduler_sync_enabled=true
+          fi
+
+          if [ "${WORKFLOW_TARGET:-configured}" = "configured" ] && [ -z "${INPUT_CONFIGURED_SERVICE:-}" ]; then
+            if [ "${deploy_enabled}" = "true" ] || [ "${env_sync_enabled}" = "true" ] || [ "${traffic_shift_enabled}" = "true" ] || [ "${scheduler_sync_enabled}" = "true" ]; then
+              echo "configured target requires exact configured_service; refusing multi-service default mutations." >&2
+              exit 1
+            fi
+          fi
+
           write_github_output \
             "deploy_enabled=${deploy_enabled}" \
-            "env_sync_enabled=${env_sync_enabled}"
+            "env_sync_enabled=${env_sync_enabled}" \
+            "traffic_shift_enabled=${traffic_shift_enabled}" \
+            "scheduler_sync_enabled=${scheduler_sync_enabled}"
 
-          if [ "${deploy_enabled}" != "true" ] && [ "${env_sync_enabled}" != "true" ]; then
+          if [ "${deploy_enabled}" != "true" ] && [ "${env_sync_enabled}" != "true" ] && [ "${traffic_shift_enabled}" != "true" ] && [ "${scheduler_sync_enabled}" != "true" ]; then
             write_github_output "enabled=false"
             echo "Skipping Cloud Run automation because ENABLE_GITHUB_CLOUD_RUN_DEPLOY and ENABLE_GITHUB_ENV_SYNC are not true." >&2
             exit 0
@@ -356,7 +388,9 @@ jobs:
 
           plan = json.loads(os.environ["SYNC_PLAN_JSON"])
           selected = os.environ.get("INPUT_CONFIGURED_SERVICE", "")
-          if os.environ.get("WORKFLOW_TARGET", "configured") == "configured" and selected:
+          if os.environ.get("WORKFLOW_TARGET", "configured") == "configured":
+              if not selected:
+                  raise SystemExit("configured target requires exact configured_service matching one admitted inventory service_name")
               if not re.fullmatch(r"[a-z][a-z0-9-]{0,62}", selected) or plan.get("mode") != "per_service":
                   raise SystemExit("configured_service requires an exact private inventory service_name")
               matches = [target for target in plan["targets"] if target.get("service_name") == selected]
@@ -479,6 +513,35 @@ jobs:
             exit 1
           fi
 
+      - name: Capture no-traffic deployment baseline
+        if: steps.config.outputs.deploy_enabled == 'true'
+        env:
+          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
+          DEPLOY_READBACK_DIR: ${{ runner.temp }}/cloud-run-no-traffic-baseline
+        run: |
+          set -euo pipefail
+          mkdir -p "${DEPLOY_READBACK_DIR}"
+          mapfile -t target_services < <(python - <<'PY'
+          import json
+          import os
+          plan = json.loads(os.environ["SYNC_PLAN_JSON"])
+          for target in plan["targets"]:
+              print(target["service_name"])
+          PY
+          )
+          if [ "${#target_services[@]}" -eq 0 ]; then
+            echo "Cloud Run deploy did not resolve any targets." >&2
+            exit 1
+          fi
+          for cloud_run_service in "${target_services[@]}"; do
+            python3 scripts/verify_cloud_run_no_traffic_deploy.py capture \
+              --project="${GCP_PROJECT_ID}" \
+              --region="${CLOUD_RUN_REGION}" \
+              --service="${cloud_run_service}" \
+              --scheduler-location="${CLOUD_SCHEDULER_LOCATION:-${CLOUD_RUN_REGION}}" \
+              --output="${DEPLOY_READBACK_DIR}/${cloud_run_service}.json"
+          done
+
       - name: Verify deployed runtime target admission before traffic shift
         if: steps.config.outputs.deploy_enabled == 'true'
         env:
@@ -490,13 +553,25 @@ jobs:
             --region="${CLOUD_RUN_REGION}"
 
       - name: Build, push, and deploy Cloud Run image
+        id: deploy
         if: steps.config.outputs.deploy_enabled == 'true'
+        env:
+          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
         run: |
           set -euo pipefail
 
           mapfile -t target_services < <(python - <<'PY'
           import json
           import os
+
+          raw_plan = os.environ.get("SYNC_PLAN_JSON", "").strip()
+          if raw_plan:
+              plan = json.loads(raw_plan)
+              for target in plan["targets"]:
+                  service = str(target.get("service_name") or "").strip()
+                  if service:
+                      print(service)
+              raise SystemExit(0)
 
           raw_targets = os.environ.get("CLOUD_RUN_SERVICE_TARGETS_JSON", "").strip()
           if raw_targets:
@@ -525,6 +600,10 @@ jobs:
                   print(service)
           PY
           )
+          if [ "${#target_services[@]}" -eq 0 ]; then
+            echo "Cloud Run deploy did not resolve any targets." >&2
+            exit 1
+          fi
 
           artifact_registry_hostname="${GCP_ARTIFACT_REGISTRY_HOSTNAME:-${CLOUD_RUN_REGION}-docker.pkg.dev}"
           image_repo="${artifact_registry_hostname}/${GCP_PROJECT_ID}/${GCP_ARTIFACT_REGISTRY_REPOSITORY}/interactivebrokersplatform/cloud-run"
@@ -533,13 +612,20 @@ jobs:
           gcloud auth configure-docker "${artifact_registry_hostname}" --quiet
           docker build --pull -t "${image}" .
           docker push "${image}"
+          image_digest="$(gcloud artifacts docker images describe "${image}" --project="${GCP_PROJECT_ID}" --format='value(image_summary.digest)')"
+          if [[ ! "${image_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Artifact Registry did not return a valid image digest." >&2
+            exit 1
+          fi
+          immutable_image="${image_repo}@${image_digest}"
+          echo "image_digest=${image_digest}" >> "${GITHUB_OUTPUT}"
 
           for cloud_run_service in "${target_services[@]}"; do
             gcloud run deploy "${cloud_run_service}" \
               --project="${GCP_PROJECT_ID}" \
               --region="${CLOUD_RUN_REGION}" \
               --platform=managed \
-              --image="${image}" \
+              --image="${immutable_image}" \
               --service-account="${GCP_RUNTIME_SERVICE_ACCOUNT}" \
               --no-allow-unauthenticated \
               --ingress=internal \
@@ -552,7 +638,35 @@ jobs:
               --subnet=default \
               --vpc-egress=private-ranges-only \
               --labels="managed-by=github-actions,commit-sha=${GITHUB_SHA},github-run-id=${GITHUB_RUN_ID}" \
+              --no-traffic \
               --quiet
+          done
+
+      - name: Verify no-traffic deployment readback
+        if: steps.config.outputs.deploy_enabled == 'true'
+        env:
+          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
+          DEPLOY_READBACK_DIR: ${{ runner.temp }}/cloud-run-no-traffic-baseline
+          EXPECTED_IMAGE_DIGEST: ${{ steps.deploy.outputs.image_digest }}
+        run: |
+          set -euo pipefail
+          mapfile -t target_services < <(python - <<'PY'
+          import json
+          import os
+          plan = json.loads(os.environ["SYNC_PLAN_JSON"])
+          for target in plan["targets"]:
+              print(target["service_name"])
+          PY
+          )
+          for cloud_run_service in "${target_services[@]}"; do
+            python3 scripts/verify_cloud_run_no_traffic_deploy.py verify \
+              --project="${GCP_PROJECT_ID}" \
+              --region="${CLOUD_RUN_REGION}" \
+              --service="${cloud_run_service}" \
+              --scheduler-location="${CLOUD_SCHEDULER_LOCATION:-${CLOUD_RUN_REGION}}" \
+              --before="${DEPLOY_READBACK_DIR}/${cloud_run_service}.json" \
+              --expected-sha="${GITHUB_SHA}" \
+              --expected-image-digest="${EXPECTED_IMAGE_DIGEST}"
           done
 
       - name: Wait for Cloud Run deployment of current commit
@@ -972,6 +1086,7 @@ jobs:
               --region "${CLOUD_RUN_REGION}"
               --concurrency 1
               --max-instances 1
+              --no-traffic
               --remove-env-vars "$(IFS=,; echo "${remove_env_vars[*]}")"
               --update-env-vars "^|^$(join_by_delimiter "|" "${env_pairs[@]}")"
             )
@@ -992,7 +1107,7 @@ jobs:
           done
 
       - name: Reconcile Cloud Run traffic
-        if: steps.config.outputs.env_sync_enabled == 'true'
+        if: steps.config.outputs.traffic_shift_enabled == 'true'
         env:
           SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
         run: |
@@ -1013,7 +1128,7 @@ jobs:
           python3 scripts/verify_cloud_run_strategy_plugin_mounts.py
 
       - name: Sync Cloud Scheduler schedule
-        if: steps.config.outputs.env_sync_enabled == 'true'
+        if: steps.config.outputs.scheduler_sync_enabled == 'true'
         env:
           SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
         run: |
@@ -1297,6 +1412,7 @@ jobs:
                       --location="${scheduler_location}" \
                       --quiet
                   fi
+                  desired_scheduler_state="ENABLED"
                   ;;
                 *)
                   if [ "${managed_job_state}" != "PAUSED" ]; then
@@ -1306,8 +1422,17 @@ jobs:
                       --location="${scheduler_location}" \
                       --quiet
                   fi
+                  desired_scheduler_state="PAUSED"
                   ;;
               esac
+              managed_job_state_after="$(gcloud scheduler jobs describe "${managed_job_name}" \
+                --project="${GCP_PROJECT_ID}" \
+                --location="${scheduler_location}" \
+                --format='value(state)')"
+              if [ "${managed_job_state_after}" != "${desired_scheduler_state}" ]; then
+                echo "Scheduler state readback failed for ${managed_job_name}: expected ${desired_scheduler_state}, got ${managed_job_state_after:-<none>}." >&2
+                exit 1
+              fi
             done
           done
 

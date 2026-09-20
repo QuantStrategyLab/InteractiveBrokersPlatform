@@ -116,10 +116,12 @@ gh workflow run sync-cloud-run-env.yml \
   -f account_group=hk-verify \
   -f account_group_config_secret_name=ibkr-account-groups \
   -f deploy_image=true \
-  -f sync_env=true
+  -f sync_env=true \
+  -f approve_traffic_shift=false \
+  -f approve_scheduler_sync=false
 ```
 
-如果只想同步环境变量、不重新部署镜像，可以设置 `-f deploy_image=false -f sync_env=true`；workflow 会跳过 commit wait，避免等待一个并未部署的新 revision。
+如果只想同步环境变量、不重新部署镜像，可以设置 `-f deploy_image=false -f sync_env=true`；workflow 会跳过 commit wait，避免等待一个并未部署的新 revision。镜像与 env 更新默认无流量；需要承接流量或改 Scheduler 启停时再显式打开 `approve_traffic_shift` / `approve_scheduler_sync`。
 
 执行前确认：
 
