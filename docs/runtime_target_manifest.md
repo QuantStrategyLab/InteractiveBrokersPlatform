@@ -4,7 +4,7 @@
 
 `config/runtime_targets.manifest.json` 是 InteractiveBrokersPlatform 的公开、非敏感 runtime-target 清单。它用标准库 JSON 表达现有 4 个 live 目标与 1 个 `us_combo_shadow` 的必要字段，并提供严格校验。
 
-本文件**不是**当前生产启停真相源。Cloud Run / GitHub Environment 变量（尤其 `RUNTIME_TARGET_ENABLED`）、Secret Manager 内容和实际部署保持不变；本批也没有把 workflow matrix 改成动态读取该 manifest。
+本文件**不是**当前生产启停真相源。Cloud Run / GitHub Environment 变量（尤其 `RUNTIME_TARGET_ENABLED`）、Secret Manager 内容和实际部署保持不变；`collect-reconciliation-evidence.yml` 已按 `include_reconciliation` 从校验后的 manifest 生成与既有硬编码一致的 4 个 live 矩阵行（不使用 `enabled`），其余 workflow 仍硬编码。
 
 ## 字段契约
 

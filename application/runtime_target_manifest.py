@@ -220,6 +220,67 @@ def iter_enabled_targets(
             yield target
 
 
+# GitHub Actions matrix profiles. Manifest ``enabled`` never filters rows and is
+# never emitted: Environment / Cloud Run ``RUNTIME_TARGET_ENABLED`` remains the
+# production enablement authority. This batch only wires reconciliation.
+MATRIX_PROFILES = frozenset({"reconciliation"})
+
+
+def build_github_actions_matrix(
+    manifest: RuntimeTargetManifest,
+    *,
+    profile: str,
+) -> dict[str, list[dict[str, str]]]:
+    """Build a GitHub Actions strategy matrix from a validated manifest.
+
+    Returns ``{"include": [...]}`` so ``collect-reconciliation-evidence.yml`` keeps
+    using ``matrix.profile`` / ``matrix.service``. Every reconciliation-eligible
+    target is included regardless of manifest ``enabled``; empty inventories and
+    unknown profiles fail closed. Shadow targets stay out via
+    ``include_reconciliation``.
+    """
+    normalized = str(profile or "").strip().lower()
+    if normalized not in MATRIX_PROFILES:
+        raise RuntimeTargetManifestError(
+            f"Unknown matrix profile {profile!r}; expected one of {sorted(MATRIX_PROFILES)}"
+        )
+    if not manifest.targets:
+        raise RuntimeTargetManifestError(
+            "Cannot render workflow matrix: validated manifest has no targets"
+        )
+
+    if normalized == "reconciliation":
+        rows = [
+            _reconciliation_matrix_row(target)
+            for target in manifest.targets
+            if target.include_reconciliation
+        ]
+        if not rows:
+            raise RuntimeTargetManifestError(
+                "Cannot render reconciliation matrix: no targets with "
+                "include_reconciliation=true"
+            )
+        return {"include": rows}
+
+    raise RuntimeTargetManifestError(f"Unhandled matrix profile: {normalized!r}")
+
+
+def _reconciliation_matrix_row(target: RuntimeTargetEntry) -> dict[str, str]:
+    if target.execution_mode != "live":
+        raise RuntimeTargetManifestError(
+            f"Target {target.id!r} has include_reconciliation=true but "
+            f"execution_mode={target.execution_mode!r}; only live is allowed"
+        )
+    profile = target.strategy_profile.strip()
+    service = target.service.strip()
+    if not profile or not service:
+        raise RuntimeTargetManifestError(
+            f"Target {target.id!r} is missing strategy_profile or service for "
+            "reconciliation matrix"
+        )
+    return {"profile": profile, "service": service}
+
+
 def _validate_target(raw_target: Any, *, path: str) -> RuntimeTargetEntry:
     if not isinstance(raw_target, Mapping):
         raise RuntimeTargetManifestError(f"{path} must be a JSON object")
