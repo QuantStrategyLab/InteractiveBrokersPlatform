@@ -9,6 +9,21 @@ WORKFLOW = (
 )
 
 
+def test_reconciliation_evidence_matrix_comes_from_validated_manifest() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "resolve-matrix:" in workflow
+    assert "render_runtime_target_matrix.py --profile reconciliation --github-output" in workflow
+    assert "needs: resolve-matrix" in workflow
+    assert "matrix: ${{ fromJSON(needs.resolve-matrix.outputs.matrix) }}" in workflow
+    # Hardcoded live inventory must live in the public manifest, not the workflow.
+    assert "interactive-brokers-quant-live-u15998061-service" not in workflow
+    assert "interactive-brokers-quant-live-u16608560-service" not in workflow
+    assert "interactive-brokers-quant-live-u18308207-service" not in workflow
+    assert "interactive-brokers-quant-live-u18336562-service" not in workflow
+    assert "- profile: soxl_soxx_trend_income\n            service:" not in workflow
+
+
 def test_reconciliation_evidence_uses_internal_one_shot_scheduler_and_cleans_up() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
