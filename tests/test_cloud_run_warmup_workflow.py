@@ -136,16 +136,23 @@ def test_configured_service_rejects_unmatched_duplicate_or_noninventory(tmp_path
         assert "service-b" not in result.stderr
 
 
-def test_empty_selector_and_hk_verify_preserve_existing_targets(tmp_path, monkeypatch) -> None:
+def test_empty_selector_rejected_for_configured_and_hk_verify_preserves_targets(tmp_path, monkeypatch) -> None:
     import json
 
-    for index, kwargs in enumerate(({"selector": ""}, {"target": "hk-verify"})):
-        case_path = tmp_path / str(index)
-        case_path.mkdir()
-        result, output, github_env, original = _resolve_sync_plan(case_path, monkeypatch, **kwargs)
-        assert result.returncode == 0, result.stderr
-        assert json.loads(output.split("\n", 1)[1].split("\n", 1)[0]) == original
-        assert github_env == ""
+    empty_path = tmp_path / "empty"
+    empty_path.mkdir()
+    empty = _resolve_sync_plan(empty_path, monkeypatch, selector="")
+    assert empty[0].returncode != 0
+    assert "configured target requires exact configured_service" in empty[0].stderr
+    assert empty[1] == ""
+    assert empty[2] == ""
+
+    hk_path = tmp_path / "hk"
+    hk_path.mkdir()
+    result, output, github_env, original = _resolve_sync_plan(hk_path, monkeypatch, target="hk-verify")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(output.split("\n", 1)[1].split("\n", 1)[0]) == original
+    assert github_env == ""
 
 
 def test_single_target_sync_skips_global_cleanup_before_other_service_mutation() -> None:
@@ -155,6 +162,7 @@ def test_single_target_sync_skips_global_cleanup_before_other_service_mutation()
     workflow = Path(".github/workflows/sync-cloud-run-env.yml").read_text(encoding="utf-8")
     assert "      configured_service:\n" in workflow
     assert "INPUT_CONFIGURED_SERVICE: ${{ inputs.configured_service }}" in workflow
+    assert "Exact inventory service_name required for configured target." in workflow
     scope_guard = "(env.WORKFLOW_TARGET != 'configured' || env.INPUT_CONFIGURED_SERVICE == '')"
     for name in ("Prune old Cloud Run revisions", "Clean up old Cloud Run images"):
         step = workflow.split(f"      - name: {name}\n", 1)[1].split("      - name:", 1)[0]
