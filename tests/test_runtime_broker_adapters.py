@@ -104,6 +104,32 @@ def test_connect_ib_resolves_gateway_host_again_for_each_retry():
     }
 
 
+def test_connect_ib_stops_retry_when_gateway_project_lookup_fails():
+    attempted_hosts = []
+
+    def connect(host, *_args, **_kwargs):
+        attempted_hosts.append(host)
+        raise ConnectionRefusedError("gateway restarting")
+
+    def refresh_host():
+        raise IBKRGatewayUnavailableError("configured Gateway project lookup unavailable")
+
+    adapters = _build_adapters()
+    adapters = adapters.__class__(
+        **{
+            **adapters.__dict__,
+            "host_resolver": lambda: "10.0.0.8",
+            "refresh_host_fn": refresh_host,
+            "connect_ib_fn": connect,
+            "connect_attempts": 3,
+        }
+    )
+
+    with pytest.raises(IBKRGatewayUnavailableError, match="project lookup unavailable"):
+        adapters.connect_ib()
+    assert attempted_hosts == ["10.0.0.8"]
+
+
 def test_connect_ib_raises_dedicated_error_after_retries_are_exhausted():
     adapters = _build_adapters()
     adapters = adapters.__class__(

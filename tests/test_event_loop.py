@@ -3,6 +3,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from application.runtime_broker_adapters import IBKRGatewayUnavailableError
+
 
 def test_ensure_event_loop_creates_loop_in_worker_thread(strategy_module):
     def worker():
@@ -157,6 +159,63 @@ def test_get_ib_host_resolves_lazily(strategy_module_factory, monkeypatch):
     assert module.IB_HOST == "10.0.0.8"
 
 
+def test_get_ib_host_uses_configured_gateway_project(strategy_module_factory, monkeypatch):
+    module = strategy_module_factory(
+        IB_ACCOUNT_GROUP_CONFIG_JSON=(
+            '{"groups":{"default":{"ib_gateway_instance_name":"ib-gateway",'
+            '"ib_gateway_project_id":"gateway-project-1",'
+            '"ib_gateway_zone":"us-central1-a",'
+            '"ib_gateway_mode":"live","ib_client_id":1}}}'
+        ),
+    )
+
+    class FakeComputeDiscovery:
+        def resolve_instance_ip(self, instance, zone, *, project_id, prefer_internal):
+            assert (instance, zone, project_id, prefer_internal) == (
+                "ib-gateway", "us-central1-a", "gateway-project-1", True,
+            )
+            return "10.0.0.8"
+
+    monkeypatch.setattr(module, "get_compute_discovery", FakeComputeDiscovery)
+
+    assert module.get_ib_host() == "10.0.0.8"
+
+
+def test_cross_project_gateway_lookup_fails_closed(strategy_module_factory, monkeypatch):
+    module = strategy_module_factory(
+        IB_ACCOUNT_GROUP_CONFIG_JSON=(
+            '{"groups":{"default":{"ib_gateway_instance_name":"ib-gateway",'
+            '"ib_gateway_project_id":"gateway-project-1",'
+            '"ib_gateway_zone":"us-central1-a",'
+            '"ib_gateway_mode":"live","ib_client_id":1}}}'
+        ),
+    )
+
+    class FailedComputeDiscovery:
+        def resolve_instance_ip(self, *_args, **_kwargs):
+            raise PermissionError("compute.instances.get denied")
+
+    monkeypatch.setattr(module, "get_compute_discovery", FailedComputeDiscovery)
+
+    with pytest.raises(IBKRGatewayUnavailableError, match="configured project gateway-project-1"):
+        module.get_ib_host()
+    assert module.IB_HOST is None
+
+
+def test_cross_project_gateway_requires_zone(strategy_module_factory):
+    module = strategy_module_factory(
+        IB_ACCOUNT_GROUP_CONFIG_JSON=(
+            '{"groups":{"default":{"ib_gateway_instance_name":"ib-gateway",'
+            '"ib_gateway_project_id":"gateway-project-1",'
+            '"ib_gateway_mode":"live","ib_client_id":1}}}'
+        ),
+    )
+
+    with pytest.raises(IBKRGatewayUnavailableError, match="zone is required"):
+        module.get_ib_host()
+    assert module.IB_HOST is None
+
+
 def test_get_ib_host_refreshes_zoned_gateway_ip(strategy_module_factory, monkeypatch):
     module = strategy_module_factory(
         IB_GATEWAY_ZONE="us-central1-a",
@@ -191,6 +250,27 @@ def test_refresh_ib_host_keeps_cached_ip_when_gce_lookup_fails(strategy_module_f
 
     assert module.refresh_ib_host() == "10.0.0.8"
     assert module.IB_HOST == "10.0.0.8"
+
+
+def test_cross_project_gateway_refresh_drops_cached_host_on_failure(strategy_module_factory, monkeypatch):
+    module = strategy_module_factory(
+        IB_ACCOUNT_GROUP_CONFIG_JSON=(
+            '{"groups":{"default":{"ib_gateway_instance_name":"ib-gateway",'
+            '"ib_gateway_project_id":"gateway-project-1",'
+            '"ib_gateway_zone":"us-central1-a",'
+            '"ib_gateway_mode":"live","ib_client_id":1}}}'
+        ),
+    )
+    module.IB_HOST = "10.0.0.8"
+    monkeypatch.setattr(
+        module,
+        "resolve_gce_instance_ip",
+        lambda *_args: (_ for _ in ()).throw(IBKRGatewayUnavailableError("lookup unavailable")),
+    )
+
+    with pytest.raises(IBKRGatewayUnavailableError, match="lookup unavailable"):
+        module.refresh_ib_host()
+    assert module.IB_HOST is None
 
 
 def test_ib_gateway_mode_derives_paper_port(strategy_module_factory):

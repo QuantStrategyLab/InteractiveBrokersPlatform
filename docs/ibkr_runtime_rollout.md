@@ -44,6 +44,7 @@ Gateway 后端至少放这些字段：
 建议一起放进去：
 
 - `ib_gateway_zone`
+- `ib_gateway_project_id`：仅在 Gateway VM 位于另一个 GCP 项目时填写。
 - `ib_gateway_port`：同一台 VM 上跑多个 Gateway 时填写；不填则 live 默认 `4001`，paper 默认 `4002`。
 - `ib_gateway_ip_mode`
 
@@ -90,6 +91,7 @@ cp docs/examples/ibkr-account-groups.paper.json /tmp/ibkr-account-groups.json
 - `execution_backend`：`gateway` 表示继续通过自托管 IB Gateway 连接和下单；`quantconnect` 表示该账号组交给 QuantConnect 路径，当前服务不会误连 Gateway。
 - `ib_gateway_instance_name`：GCE 上 IB Gateway 实例名。
 - `ib_gateway_zone`：建议现在就配上。当前推荐是按实例名解析内网 IP，这样 Cloud Run 不用手填固定私网 IP。
+- `ib_gateway_project_id`：可选，只改变 Gateway VM 的 Compute API 查询项目；不填时沿用 Cloud Run 所在项目。跨项目填写时必须同时提供 `ib_gateway_zone`。查询失败会阻断 Gateway 连接，不会把实例名当成可用地址。
 - `ib_gateway_mode`：`paper` 或 `live`。
 - `ib_gateway_port`：Cloud Run 连接 Gateway VM 的 host port。多个 IBKR 用户名分别跑 Gateway 时，每个 Gateway 要用不同 port。
 - `ib_gateway_ip_mode`：推荐 `internal`。
@@ -182,6 +184,8 @@ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --member="serviceAccount:${RUNTIME_SA}" \
   --role="roles/compute.viewer"
 ```
+
+若设置了 `ib_gateway_project_id`，须在 **Gateway 所在项目** 向原 Cloud Run runtime service account 授予 Compute 查看权限，至少允许只读 `compute.instances.get`；Secret 读取权限仍按 Secret 所在项目授予。使用 `internal` IP 时，还须单独核实 Cloud Run 到新项目 Gateway 私网的路由与防火墙，跨项目查询到 IP 不代表网络可达。权限、查询或连通性未核实时不要切换运行目标。
 
 如果你后面改成直接配固定私网 host，而且代码不再走实例名解析，这个权限可以再收回。**但按现在这套推荐部署，先给上更稳。**
 

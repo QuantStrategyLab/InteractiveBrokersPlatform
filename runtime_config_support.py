@@ -135,6 +135,7 @@ def normalize_market_data_symbol_suffix(raw_value: str | None) -> str:
 class AccountGroupConfig:
     execution_backend: str | None = None
     ib_gateway_instance_name: str | None = None
+    ib_gateway_project_id: str | None = None
     ib_gateway_zone: str | None = None
     ib_gateway_mode: str | None = None
     ib_gateway_port: int | None = None
@@ -171,6 +172,7 @@ class PlatformRuntimeSettings:
     strategy_config_source: str | None
     reconciliation_output_path: str | None
     dry_run_only: bool
+    ib_gateway_project_id: str | None = None
     feature_snapshot_fallback_mode: str | None = None
     feature_snapshot_fallback_cache_dir: str | None = None
     feature_snapshot_fallback_max_stale_days: int | None = None
@@ -386,6 +388,7 @@ def load_platform_runtime_settings(
         project_id=project_id,
         execution_backend=execution_backend,
         ib_gateway_instance_name=instance_name,
+        ib_gateway_project_id=group_config.ib_gateway_project_id,
         ib_gateway_zone=first_non_empty(
             group_config.ib_gateway_zone,
             os.getenv("IB_GATEWAY_ZONE", "").strip(),
@@ -753,6 +756,7 @@ def parse_account_group_configs(payload: str) -> dict[str, AccountGroupConfig]:
         parsed[str(group_name)] = AccountGroupConfig(
             execution_backend=normalize_optional_string(group_payload.get("execution_backend")),
             ib_gateway_instance_name=normalize_optional_string(group_payload.get("ib_gateway_instance_name")),
+            ib_gateway_project_id=normalize_optional_string(group_payload.get("ib_gateway_project_id")),
             ib_gateway_zone=normalize_optional_string(group_payload.get("ib_gateway_zone")),
             ib_gateway_mode=normalize_optional_string(group_payload.get("ib_gateway_mode")),
             ib_gateway_port=parse_optional_int(group_payload.get("ib_gateway_port")),
