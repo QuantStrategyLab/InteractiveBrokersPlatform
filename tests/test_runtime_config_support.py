@@ -170,6 +170,7 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     assert settings.project_id == "project-1"
     assert settings.execution_backend == EXECUTION_BACKEND_GATEWAY
     assert settings.ib_gateway_instance_name == "ib-gateway"
+    assert settings.ib_gateway_project_id is None
     assert settings.ib_gateway_zone == ""
     assert settings.ib_gateway_mode == "paper"
     assert settings.ib_gateway_ip_mode == "internal"
@@ -2047,6 +2048,7 @@ def test_load_platform_runtime_settings_uses_account_group_secret(monkeypatch):
       "groups": {
         "paper": {
           "ib_gateway_instance_name": "ib-gateway-paper",
+          "ib_gateway_project_id": "gateway-project-1",
           "ib_gateway_zone": "us-central1-a",
           "ib_gateway_mode": "live",
           "ib_gateway_port": 4011,
@@ -2074,6 +2076,7 @@ def test_load_platform_runtime_settings_uses_account_group_secret(monkeypatch):
     )
 
     assert settings.ib_gateway_instance_name == "ib-gateway-paper"
+    assert settings.ib_gateway_project_id == "gateway-project-1"
     assert settings.ib_gateway_zone == "us-central1-a"
     assert settings.ib_gateway_mode == "live"
     assert settings.ib_gateway_port == 4011

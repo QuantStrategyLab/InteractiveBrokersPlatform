@@ -165,19 +165,31 @@ def get_ib_gateway_ip_mode():
 
 
 def resolve_gce_instance_ip(instance_name, zone):
+    gateway_project = RUNTIME_SETTINGS.ib_gateway_project_id
     if not get_compute_discovery:
+        if gateway_project:
+            raise IBKRGatewayUnavailableError(
+                f"GCE Gateway discovery unavailable for configured project {gateway_project}"
+            )
         print(f"quant_platform_kit.cloud not installed, using {instance_name} as host directly", flush=True)
         return instance_name
     try:
         ip_mode = get_ib_gateway_ip_mode()
-        project = get_project_id()
-        return get_compute_discovery().resolve_instance_ip(
+        project = gateway_project or get_project_id()
+        host = get_compute_discovery().resolve_instance_ip(
             instance_name,
             zone,
             project_id=project,
             prefer_internal=ip_mode == "internal",
         )
+        if gateway_project and (not host or host == instance_name):
+            raise ValueError("GCE Gateway discovery returned no address")
+        return host
     except Exception as exc:
+        if gateway_project:
+            raise IBKRGatewayUnavailableError(
+                f"GCE Gateway address unavailable in configured project {gateway_project}"
+            ) from None
         print(f"GCE resolve failed for {instance_name}: {exc}, using as hostname", flush=True)
     return instance_name
 
@@ -188,6 +200,10 @@ def get_ib_host():
         return IB_HOST
     host = RUNTIME_SETTINGS.ib_gateway_instance_name
     zone = RUNTIME_SETTINGS.ib_gateway_zone
+    if RUNTIME_SETTINGS.ib_gateway_project_id and not zone:
+        raise IBKRGatewayUnavailableError(
+            "GCE Gateway zone is required when a Gateway project is configured"
+        )
     if zone:
         host = resolve_gce_instance_ip(host, zone)
     IB_HOST = host
@@ -205,6 +221,9 @@ def refresh_ib_host():
     cached_host = IB_HOST
     try:
         resolved_host = resolve_gce_instance_ip(instance_name, zone)
+    except IBKRGatewayUnavailableError:
+        IB_HOST = None
+        raise
     except Exception as exc:
         print(f"GCE host refresh failed for {instance_name}: {exc}", flush=True)
         resolved_host = cached_host or instance_name

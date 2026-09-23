@@ -236,6 +236,8 @@ class IBKRRuntimeBrokerAdapters:
                     if callable(self.refresh_host_fn):
                         try:
                             host = self.refresh_host_fn()
+                        except IBKRGatewayUnavailableError:
+                            raise
                         except Exception as refresh_exc:
                             if redact_connection_diagnostics:
                                 self.printer(
