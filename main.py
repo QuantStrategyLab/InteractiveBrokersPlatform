@@ -165,7 +165,7 @@ def get_ib_gateway_ip_mode():
 
 
 def resolve_gce_instance_ip(instance_name, zone):
-    gateway_project = RUNTIME_SETTINGS.ib_gateway_project_id
+    gateway_project = getattr(RUNTIME_SETTINGS, "ib_gateway_project_id", None)
     if not get_compute_discovery:
         if gateway_project:
             raise IBKRGatewayUnavailableError(
@@ -200,7 +200,7 @@ def get_ib_host():
         return IB_HOST
     host = RUNTIME_SETTINGS.ib_gateway_instance_name
     zone = RUNTIME_SETTINGS.ib_gateway_zone
-    if RUNTIME_SETTINGS.ib_gateway_project_id and not zone:
+    if getattr(RUNTIME_SETTINGS, "ib_gateway_project_id", None) and not zone:
         raise IBKRGatewayUnavailableError(
             "GCE Gateway zone is required when a Gateway project is configured"
         )
