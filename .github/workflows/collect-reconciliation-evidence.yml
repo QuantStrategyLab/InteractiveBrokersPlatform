@@ -133,10 +133,10 @@ jobs:
             --max-retry-duration=0s \
             --quiet >/dev/null
           scheduler_job_config="$(gcloud scheduler jobs describe "$job_name" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json)"
-          scheduler_job_identity="$(jq -er '.name | select(type == "string" and length > 0)' <<< "$scheduler_job_config")"
+          jq -e --arg expected "projects/${GCP_PROJECT_ID}/locations/${GCP_REGION}/jobs/${job_name}" '.name == $expected' <<< "$scheduler_job_config" >/dev/null
           configured_request_id="$(jq -er '.httpTarget.headers["X-QSL-Reconciliation-Request-Id"] | select(type == "string" and length > 0)' <<< "$scheduler_job_config")"
           test "$configured_request_id" = "$request_id"
-          scheduler_job_sha256="$(printf '%s' "$scheduler_job_identity" | sha256sum | awk '{print $1}')"
+          scheduler_job_sha256="$(printf '%s' "$job_name" | sha256sum | awk '{print $1}')"
           test "${#scheduler_job_sha256}" -eq 64
           {
             echo "job_name=$job_name"

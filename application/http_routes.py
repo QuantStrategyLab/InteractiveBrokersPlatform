@@ -54,7 +54,7 @@ main = _MainModuleProxy()
 
 
 _SCHEDULER_JOB_NAME_PATTERN = re.compile(
-    r"projects/[A-Za-z0-9-]+/locations/[A-Za-z0-9-]+/jobs/[A-Za-z0-9_-]+"
+    r"(?:projects/[A-Za-z0-9-]+/locations/[A-Za-z0-9-]+/jobs/[A-Za-z0-9_-]+|ibkr-reconcile-[A-Za-z0-9_-]+)"
 )
 
 
@@ -182,7 +182,9 @@ def _scheduler_job_identity_sha256() -> str | None:
     normalized = job_name.strip()
     if not _SCHEDULER_JOB_NAME_PATTERN.fullmatch(normalized):
         return None
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    # Cloud Scheduler sends the short job ID in this header, while its API returns the full resource name.
+    job_id = normalized.rsplit("/", 1)[-1]
+    return hashlib.sha256(job_id.encode("utf-8")).hexdigest()
 
 
 def _handle_reconciliation():

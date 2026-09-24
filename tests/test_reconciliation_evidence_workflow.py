@@ -107,7 +107,7 @@ def test_reconciliation_evidence_binds_scheduler_job_to_exact_receipt() -> None:
 
     required_markers = (
         "scheduler_job_config=\"$(gcloud scheduler jobs describe",
-        "scheduler_job_sha256=\"$(printf '%s' \"$scheduler_job_identity\" | sha256sum",
+        "scheduler_job_sha256=\"$(printf '%s' \"$job_name\" | sha256sum",
         "SCHEDULER_JOB_SHA256: ${{ steps.scheduler.outputs.scheduler_job_sha256 }}",
         "scheduler_job_sha256=\" + $scheduler_job_sha256 + \" report_uri=gs://",
         "--arg scheduler_job_sha256 \"$SCHEDULER_JOB_SHA256\"",

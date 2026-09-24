@@ -1500,7 +1500,7 @@ def test_handle_reconciliation_persists_and_logs_only_redacted_failure_fields(
         method="POST",
         headers={
             "X-QSL-Reconciliation-Request-Id": "853a2e08-9396-4fe8-89ee-59fb17e40a1d",
-            "X-CloudScheduler-JobName": "projects/example/locations/example/jobs/reconcile-001",
+            "X-CloudScheduler-JobName": "ibkr-reconcile-example-001",
         },
     ):
         body, status = strategy_module.handle_reconciliation()
@@ -1529,7 +1529,7 @@ def test_handle_reconciliation_persists_and_logs_only_redacted_failure_fields(
         "reconciliation_receipt_ready "
         "scheduler_job_sha256="
         + hashlib.sha256(
-            b"projects/example/locations/example/jobs/reconcile-001"
+            b"ibkr-reconcile-example-001"
         ).hexdigest()
         + " report_uri=gs://private-reports/reconciliation.json\n"
     )
