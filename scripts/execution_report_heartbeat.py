@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from quant_platform_kit.common.operational_notification_localization import (
     format_operational_alert,
+    format_operational_heartbeat_status,
     operational_notification_text,
     resolve_operational_notification_locale,
 )
@@ -1024,6 +1025,27 @@ def _send_telegram(message: str) -> bool:
     return ok
 
 
+def _notify_normal_heartbeat(name: str, detail: str) -> None:
+    if not _env_bool("RUNTIME_HEARTBEAT_NOTIFY_ON_SUCCESS", False):
+        return
+    message = format_operational_heartbeat_status(
+        locale=_notification_locale(),
+        name=name,
+        detail=detail,
+    )
+    if not _send_telegram(message):
+        raise RuntimeError("Execution report heartbeat summary was not acknowledged")
+
+
+def _no_due_detail() -> str:
+    reason = (
+        "休市或非计划日："
+        if _notification_locale() == "zh"
+        else "Market closed or no run scheduled: "
+    )
+    return reason + _notice("heartbeat_no_scheduled_window_due")
+
+
 def main(now: dt.datetime | None = None) -> int:
     project = (
         os.environ.get("RUNTIME_HEARTBEAT_GCP_PROJECT_ID")
@@ -1052,6 +1074,7 @@ def main(now: dt.datetime | None = None) -> int:
         now = now.replace(tzinfo=dt.timezone.utc)
     now = now.astimezone(dt.timezone.utc)
     since = now - dt.timedelta(hours=lookback_hours)
+    schedule_since = max(since, now.replace(hour=0, minute=0, second=0, microsecond=0))
     runtime_targets = load_runtime_targets(os.environ)
     try:
         runtime_targets = _hydrate_runtime_target_schedules(
@@ -1077,14 +1100,14 @@ def main(now: dt.datetime | None = None) -> int:
         raise ValueError("RUNTIME_HEARTBEAT_PUBLICATION_GRACE_MINUTES must be non-negative")
     due_targets, target_schedule_evaluated = filter_due_targets(
         runtime_targets,
-        since=since,
+        since=schedule_since,
         now=now,
         market_aware=_env_bool("RUNTIME_HEARTBEAT_MARKET_AWARE", True),
         publication_grace=dt.timedelta(minutes=publication_grace_minutes),
     )
     if runtime_targets and target_schedule_evaluated and not due_targets:
         target_names = ", ".join(target_label(target) for target in runtime_targets)
-        schedule_reason = _runtime_target_scheduler_skip_reason(since, now)
+        schedule_reason = _runtime_target_scheduler_skip_reason(schedule_since, now)
         print(
             f"Execution report heartbeat skipped for {name}: "
             + (
@@ -1093,16 +1116,18 @@ def main(now: dt.datetime | None = None) -> int:
                 f"({target_names})"
             )
         )
+        _notify_normal_heartbeat(name, _no_due_detail())
         return 0
     if not runtime_targets:
-        runtime_target_skip_reason = _runtime_target_scheduler_skip_reason(since, now)
+        runtime_target_skip_reason = _runtime_target_scheduler_skip_reason(schedule_since, now)
         if runtime_target_skip_reason:
             print(f"Execution report heartbeat skipped for {name}: {runtime_target_skip_reason}")
+            _notify_normal_heartbeat(name, _no_due_detail())
             return 0
 
     required_services, scheduler_skip_reason, _scheduler_checked = _resolve_required_services(
         project=project,
-        since=since,
+        since=schedule_since,
         now=now,
     )
     if scheduler_skip_reason:
@@ -1200,12 +1225,17 @@ def main(now: dt.datetime | None = None) -> int:
                 for key in required_keys
             )
             print(f"Execution report heartbeat OK for {name}: {details}")
+            _notify_normal_heartbeat(name, _notice("heartbeat_accepted_report", detail=details))
             return 0
     if accepted:
         uri, updated, reason, execution_backend = accepted[0]
         print(
             f"Execution report heartbeat OK for {name}: {reason}, updated={updated.isoformat()}, "
             f"backend={execution_backend}, uri={uri}"
+        )
+        _notify_normal_heartbeat(
+            name,
+            _notice("heartbeat_accepted_report", detail=f"{reason}@{updated.isoformat()}"),
         )
         return 0
 
