@@ -314,21 +314,21 @@ jobs:
             --arg service_deploy_run_id "$SERVICE_DEPLOY_RUN_ID" \
             --arg scheduler_job_sha256 "$SCHEDULER_JOB_SHA256" \
             '{
-              schema_version,
-              repository,
-              workflow_path,
-              workflow_run_id,
-              workflow_run_attempt,
-              workflow_head_sha,
-              artifact_id,
-              artifact_name,
-              artifact_sha256,
-              evidence_sha256,
-              service_name,
-              service_revision,
-              service_revision_commit_sha,
-              service_deploy_run_id,
-              scheduler_job_sha256
+              schema_version: $schema_version,
+              repository: $repository,
+              workflow_path: $workflow_path,
+              workflow_run_id: $workflow_run_id,
+              workflow_run_attempt: $workflow_run_attempt,
+              workflow_head_sha: $workflow_head_sha,
+              artifact_id: $artifact_id,
+              artifact_name: $artifact_name,
+              artifact_sha256: $artifact_sha256,
+              evidence_sha256: $evidence_sha256,
+              service_name: $service_name,
+              service_revision: $service_revision,
+              service_revision_commit_sha: $service_revision_commit_sha,
+              service_deploy_run_id: $service_deploy_run_id,
+              scheduler_job_sha256: $scheduler_job_sha256
             }' > "$source_record"
           jq -e '
             (keys | sort) == [
