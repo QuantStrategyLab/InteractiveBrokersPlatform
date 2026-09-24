@@ -193,12 +193,25 @@ def _handle_reconciliation():
     report = None
     scheduler_job_sha256 = _scheduler_job_identity_sha256()
     if scheduler_job_sha256 is None:
+        job_name = request.headers.get("X-CloudScheduler-JobName")
         reason = (
             "missing_scheduler_identity"
-            if request.headers.get("X-CloudScheduler-JobName") is None
+            if job_name is None
             else "invalid_scheduler_identity"
         )
-        print(json.dumps({"event": "broker_reconciliation_rejected", "reason": reason}), flush=True)
+        rejection = {"event": "broker_reconciliation_rejected", "reason": reason}
+        if isinstance(job_name, str):
+            normalized = job_name.strip()
+            rejection.update(
+                {
+                    "scheduler_job_name_length": len(normalized),
+                    "scheduler_job_name_sha256": hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
+                    "scheduler_job_name_slashes": normalized.count("/"),
+                    "scheduler_job_name_has_comma": "," in normalized,
+                    "scheduler_job_name_has_whitespace": any(char.isspace() for char in normalized),
+                }
+            )
+        print(json.dumps(rejection), flush=True)
         return "Error", 400
     reconciliation_request_id = main.normalize_reconciliation_request_id(
         request.headers.get("X-QSL-Reconciliation-Request-Id")
