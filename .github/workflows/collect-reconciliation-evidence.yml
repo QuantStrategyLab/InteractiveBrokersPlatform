@@ -201,8 +201,8 @@ jobs:
           report_uri="$(jq -er '.uri' <<< "$receipt")"
           serving_revision="$(jq -er '.resource.labels.revision_name | select(type == "string" and length > 0)' <<< "$log_entry")"
           revision_labels="$(gcloud run revisions describe "$serving_revision" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='json(metadata.labels)')"
-          service_revision_commit_sha="$(jq -er '."commit-sha" | select(type == "string" and test("^[0-9a-f]{40}$"))' <<< "$revision_labels")"
-          service_deploy_run_id="$(jq -er '."github-run-id" | select(type == "string" and test("^[0-9]+$"))' <<< "$revision_labels")"
+          service_revision_commit_sha="$(jq -er '.metadata.labels."commit-sha" | select(type == "string" and test("^[0-9a-f]{40}$"))' <<< "$revision_labels")"
+          service_deploy_run_id="$(jq -er '.metadata.labels."github-run-id" | select(type == "string" and test("^[0-9]+$"))' <<< "$revision_labels")"
           gcloud storage cat "$report_uri" | jq --arg profile "$PROFILE" --arg scheduler_job_sha256 "$SCHEDULER_JOB_SHA256" '
             .diagnostics.broker_reconciliation as $candidate
             | {
