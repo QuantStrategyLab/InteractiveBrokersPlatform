@@ -195,7 +195,7 @@ def test_live_rebalance_never_submits_without_matching_riskengine_authority(
         risk_flags=("risk_gate:passed",),
         risk_authority={
             "strategy_profile": "tqqq_growth_income",
-            "account_ids": ("U16608560",),
+            "account_ids": ("U00000002",),
             "trade_date": "2026-09-25",
             "signal_date": None,
             "effective_date": effective_date,
@@ -214,7 +214,7 @@ def test_live_rebalance_never_submits_without_matching_riskengine_authority(
     elif invalid_authority == "changed_profile":
         metadata["risk_authority"]["strategy_profile"] = "other_profile"
     elif invalid_authority == "changed_account":
-        metadata["risk_authority"]["account_ids"] = ("U15998061",)
+        metadata["risk_authority"]["account_ids"] = ("U00000001",)
     elif invalid_authority == "changed_date":
         metadata["risk_authority"]["trade_date"] = "2026-09-24"
     elif invalid_authority == "changed_cap":
@@ -240,7 +240,7 @@ def test_live_rebalance_never_submits_without_matching_riskengine_authority(
             translator=translate,
             acquire_execution_claim=lambda: True,
             strategy_profile="tqqq_growth_income",
-            account_ids=("U16608560",),
+            account_ids=("U00000002",),
             signal_metadata=metadata,
             dry_run_only=dry_run_only,
             cash_reserve_ratio=0.0,

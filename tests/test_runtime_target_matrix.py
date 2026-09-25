@@ -15,23 +15,23 @@ from application.runtime_target_manifest import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# Frozen parity with the pre-manifest hardcoded collect-reconciliation-evidence matrix.
+# Synthetic public matrix examples; production bindings come from protected inventory.
 EXPECTED_RECONCILIATION = [
     {
         "profile": "soxl_soxx_trend_income",
-        "service": "interactive-brokers-quant-live-u15998061-service",
+        "service": "interactive-brokers-quant-live-u00000001-service",
     },
     {
         "profile": "tqqq_growth_income",
-        "service": "interactive-brokers-quant-live-u16608560-service",
+        "service": "interactive-brokers-quant-live-u00000002-service",
     },
     {
         "profile": "global_etf_rotation",
-        "service": "interactive-brokers-quant-live-u18308207-service",
+        "service": "interactive-brokers-quant-live-u00000003-service",
     },
     {
         "profile": "russell_top50_leader_rotation",
-        "service": "interactive-brokers-quant-live-u18336562-service",
+        "service": "interactive-brokers-quant-live-u00000004-service",
     },
 ]
 

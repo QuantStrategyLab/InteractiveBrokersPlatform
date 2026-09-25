@@ -1600,14 +1600,14 @@ def test_fetch_portfolio_snapshot_for_context_uses_account_scoped_helper(monkeyp
         return PortfolioSnapshot(
             as_of=strategy_runtime_module.pd.Timestamp("2026-09-17", tz="UTC").to_pydatetime(),
             total_equity=500.0,
-            metadata={"account_hash": "U15998061"},
+            metadata={"account_hash": "U00000001"},
         )
 
     runtime = strategy_runtime_module.LoadedStrategyRuntime(
         entrypoint=SimpleNamespace(manifest=SimpleNamespace(profile="soxl_soxx_trend_income")),
         runtime_settings=replace(
             _build_runtime_settings(profile="soxl_soxx_trend_income"),
-            account_ids=("U15998061",),
+            account_ids=("U00000001",),
             market_currency="USD",
             cash_only_execution=True,
         ),
@@ -1616,8 +1616,8 @@ def test_fetch_portfolio_snapshot_for_context_uses_account_scoped_helper(monkeyp
     )
     monkeypatch.setattr(strategy_runtime_module, "fetch_portfolio_snapshot", fake_fetch)
     snapshot = runtime._fetch_portfolio_snapshot_for_context(object(), required=True)
-    assert snapshot.metadata["account_hash"] == "U15998061"
-    assert observed["kwargs"]["account_ids"] == ("U15998061",)
+    assert snapshot.metadata["account_hash"] == "U00000001"
+    assert observed["kwargs"]["account_ids"] == ("U00000001",)
     assert observed["kwargs"]["currency"] == "USD"
     assert observed["kwargs"]["cash_only_execution"] is True
 

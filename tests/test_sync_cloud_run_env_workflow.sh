@@ -160,7 +160,7 @@ grep -Fq 'configured_time("CLOUD_SCHEDULER_MAIN_TIME", "45 15 * * 1-5")' "$workf
 grep -Fq 'configured_time("CLOUD_SCHEDULER_PROBE_TIME", "35 9,15 * * 1-5")' "$workflow_file"
 grep -Fq 'str(scheduler.get("precheck_time") or configured_time("CLOUD_SCHEDULER_PRECHECK_TIME", "45 9 * * 1-5"))' "$workflow_file"
 grep -Fq 'str(bool(target.get("standard_execution_enabled", False))).lower()' "$workflow_file"
-grep -Fq 'IFS=$'\''\t'\'' read -r cloud_run_service market_timezone main_time warmup_time precheck_time standard_execution_enabled main_attempt_deadline <<< "${update}"' "$workflow_file"
+grep -Fq 'IFS=$'\''\t'\'' read -r cloud_run_service market_timezone main_time warmup_time precheck_time standard_execution_enabled drill_precheck_enabled main_attempt_deadline <<< "${update}"' "$workflow_file"
 grep -Fq 'scheduler_job_candidates+=("${cloud_run_service%-service}-scheduler")' "$workflow_file"
 grep -Fq 'scheduler_job_candidates+=("${cloud_run_service}-scheduler")' "$workflow_file"
 grep -Fq 'for candidate_job in "${scheduler_job_candidates[@]}"; do' "$workflow_file"
@@ -188,10 +188,10 @@ grep -Fq 'gcloud scheduler jobs create http "${precheck_job_name}"' "$workflow_f
 # Precheck may collide with other dry-runs on maxScale=1; retry transient 429s.
 # Keep /run without these retries to avoid duplicate live submits.
 test "$(grep -Fc -- '--attempt-deadline=180s' "$workflow_file")" -eq 2
-test "$(grep -Fc -- '--max-retry-attempts=3' "$workflow_file")" -eq 2
+test "$(grep -Fc -- '--max-retry-attempts="${precheck_retry_attempts}"' "$workflow_file")" -eq 2
 test "$(grep -Fc -- '--min-backoff=120s' "$workflow_file")" -eq 2
 test "$(grep -Fc -- '--max-backoff=300s' "$workflow_file")" -eq 2
-test "$(grep -Fc -- '--max-retry-duration=900s' "$workflow_file")" -eq 2
+test "$(grep -Fc -- '--max-retry-duration="${precheck_retry_duration}"' "$workflow_file")" -eq 2
 test "$(grep -Fc -- '--max-retry-attempts=0' "$workflow_file")" -eq 0
 grep -Fq 'managed_scheduler_jobs=("${job_name}" "${warmup_job_name}" "${precheck_job_name}")' "$workflow_file"
 grep -Fq 'for managed_job_name in "${managed_scheduler_jobs[@]}"; do' "$workflow_file"

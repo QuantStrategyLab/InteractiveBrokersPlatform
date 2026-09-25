@@ -20,26 +20,26 @@ MANIFEST_PATH = REPO_ROOT / "config" / "runtime_targets.manifest.json"
 EXPECTED_LIVE_TARGETS = {
     "soxl_soxx_trend_income": {
         "label": "SOXL/SOXX trend income",
-        "service": "interactive-brokers-quant-live-u15998061-service",
-        "account_group": "live-u15998061",
+        "service": "interactive-brokers-quant-live-u00000001-service",
+        "account_group": "live-u00000001",
         "strategy_profile": "soxl_soxx_trend_income",
     },
     "tqqq_growth_income": {
         "label": "TQQQ growth income",
-        "service": "interactive-brokers-quant-live-u16608560-service",
-        "account_group": "live-u16608560",
+        "service": "interactive-brokers-quant-live-u00000002-service",
+        "account_group": "live-u00000002",
         "strategy_profile": "tqqq_growth_income",
     },
     "global_etf_rotation": {
         "label": "Global ETF rotation",
-        "service": "interactive-brokers-quant-live-u18308207-service",
-        "account_group": "live-u18308207",
+        "service": "interactive-brokers-quant-live-u00000003-service",
+        "account_group": "live-u00000003",
         "strategy_profile": "global_etf_rotation",
     },
     "russell_top50_leader_rotation": {
         "label": "Russell top-50 leader rotation",
-        "service": "interactive-brokers-quant-live-u18336562-service",
-        "account_group": "live-u18336562",
+        "service": "interactive-brokers-quant-live-u00000004-service",
+        "account_group": "live-u00000004",
         "strategy_profile": "russell_top50_leader_rotation",
     },
 }
@@ -53,9 +53,9 @@ def _valid_payload() -> dict:
             {
                 "id": "soxl_soxx_trend_income",
                 "label": "SOXL/SOXX trend income",
-                "service": "interactive-brokers-quant-live-u15998061-service",
+                "service": "interactive-brokers-quant-live-u00000001-service",
                 "region": "us-central1",
-                "account_group": "live-u15998061",
+                "account_group": "live-u00000001",
                 "strategy_profile": "soxl_soxx_trend_income",
                 "execution_mode": "live",
                 "lifecycle_role": "live",

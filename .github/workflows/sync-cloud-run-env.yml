@@ -1169,6 +1169,7 @@ jobs:
                           str(scheduler.get("probe_time") or configured_time("CLOUD_SCHEDULER_PROBE_TIME", "35 9,15 * * 1-5")),
                           str(scheduler.get("precheck_time") or configured_time("CLOUD_SCHEDULER_PRECHECK_TIME", "45 9 * * 1-5")),
                           str(bool(target.get("standard_execution_enabled", False))).lower(),
+                          str(bool(target.get("drill_precheck_enabled", False))).lower(),
                           str(scheduler.get("attempt_deadline") or ""),
                       ]
                   )
@@ -1177,7 +1178,7 @@ jobs:
           )
 
           for update in "${scheduler_updates[@]}"; do
-            IFS=$'\t' read -r cloud_run_service market_timezone main_time warmup_time precheck_time standard_execution_enabled main_attempt_deadline <<< "${update}"
+            IFS=$'\t' read -r cloud_run_service market_timezone main_time warmup_time precheck_time standard_execution_enabled drill_precheck_enabled main_attempt_deadline <<< "${update}"
             if [ -z "${cloud_run_service}" ] || [ -z "${market_timezone}" ]; then
               continue
             fi
@@ -1358,6 +1359,12 @@ jobs:
 
             precheck_job_name="${cloud_run_service%-service}-precheck-scheduler"
             precheck_uri="${service_url}/dry-run"
+            precheck_retry_attempts=3
+            precheck_retry_duration=900s
+            if [ "${drill_precheck_enabled}" = "true" ]; then
+              precheck_retry_attempts=0
+              precheck_retry_duration=0s
+            fi
             precheck_state="$(gcloud scheduler jobs describe "${precheck_job_name}" \
               --project="${GCP_PROJECT_ID}" \
               --location="${scheduler_location}" \
@@ -1374,10 +1381,10 @@ jobs:
                 --oidc-service-account-email="${GCP_SCHEDULER_SERVICE_ACCOUNT}" \
                 --oidc-token-audience="${service_url}" \
                 --attempt-deadline=180s \
-                --max-retry-attempts=3 \
+                --max-retry-attempts="${precheck_retry_attempts}" \
                 --min-backoff=120s \
                 --max-backoff=300s \
-                --max-retry-duration=900s \
+                --max-retry-duration="${precheck_retry_duration}" \
                 --quiet
             else
               echo "Creating Cloud Scheduler precheck ${precheck_job_name} at ${desired_precheck_schedule}."
@@ -1391,10 +1398,10 @@ jobs:
                 --oidc-service-account-email="${GCP_SCHEDULER_SERVICE_ACCOUNT}" \
                 --oidc-token-audience="${service_url}" \
                 --attempt-deadline=180s \
-                --max-retry-attempts=3 \
+                --max-retry-attempts="${precheck_retry_attempts}" \
                 --min-backoff=120s \
                 --max-backoff=300s \
-                --max-retry-duration=900s \
+                --max-retry-duration="${precheck_retry_duration}" \
                 --quiet
             fi
             managed_scheduler_jobs=("${job_name}" "${warmup_job_name}" "${precheck_job_name}")
@@ -1403,10 +1410,14 @@ jobs:
                 --project="${GCP_PROJECT_ID}" \
                 --location="${scheduler_location}" \
                 --format='value(state)')"
-              case "${standard_execution_enabled}" in
+              job_enabled="${standard_execution_enabled}"
+              if [ "${managed_job_name}" = "${precheck_job_name}" ] && [ "${drill_precheck_enabled}" = "true" ]; then
+                job_enabled=true
+              fi
+              case "${job_enabled}" in
                 1|true|yes|on)
                   if [ "${managed_job_state}" = "PAUSED" ]; then
-                    echo "Resuming Cloud Scheduler job ${managed_job_name} because ${cloud_run_service} permits standard execution."
+                    echo "Resuming approved Cloud Scheduler job ${managed_job_name}."
                     gcloud scheduler jobs resume "${managed_job_name}" \
                       --project="${GCP_PROJECT_ID}" \
                       --location="${scheduler_location}" \
@@ -1416,7 +1427,7 @@ jobs:
                   ;;
                 *)
                   if [ "${managed_job_state}" != "PAUSED" ]; then
-                    echo "Pausing Cloud Scheduler job ${managed_job_name} because ${cloud_run_service} does not permit standard execution."
+                    echo "Pausing Cloud Scheduler job ${managed_job_name} because it is not approved for this target."
                     gcloud scheduler jobs pause "${managed_job_name}" \
                       --project="${GCP_PROJECT_ID}" \
                       --location="${scheduler_location}" \
