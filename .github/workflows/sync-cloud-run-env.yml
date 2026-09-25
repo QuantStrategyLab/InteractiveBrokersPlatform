@@ -231,11 +231,13 @@ jobs:
               env_sync_enabled=true
             fi
           else
-            if [ "${ENABLE_GITHUB_CLOUD_RUN_DEPLOY:-}" = "true" ]; then
+            if [ "${ENABLE_GITHUB_CLOUD_RUN_DEPLOY:-}" = "true" ] \
+              && { [ "${GITHUB_EVENT_NAME:-}" != "workflow_dispatch" ] || [ "${INPUT_DEPLOY_IMAGE:-true}" = "true" ]; }; then
               deploy_enabled=true
             fi
 
-            if [ "${ENABLE_GITHUB_ENV_SYNC:-}" = "true" ]; then
+            if [ "${ENABLE_GITHUB_ENV_SYNC:-}" = "true" ] \
+              && { [ "${GITHUB_EVENT_NAME:-}" != "workflow_dispatch" ] || [ "${INPUT_SYNC_ENV:-true}" = "true" ]; }; then
               env_sync_enabled=true
             fi
           fi
