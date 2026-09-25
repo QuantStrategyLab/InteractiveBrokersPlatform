@@ -852,6 +852,21 @@ def claim_cycle(tmp_path, monkeypatch, strategy_module):
 
     def execute_with_observed_claim(*args, **kwargs):
         state.claim_callback = kwargs.get("acquire_execution_claim")
+        signal_metadata = dict(kwargs["signal_metadata"])
+        targets = dict(signal_metadata["allocation"]["targets"])
+        equity = float(args[3]["equity"])
+        signal_metadata["risk_gate"] = "APPROVE"
+        signal_metadata["risk_flags"] = ("risk_gate:passed",)
+        signal_metadata["risk_authority"] = {
+            "strategy_profile": kwargs["strategy_profile"],
+            "account_ids": tuple(kwargs.get("account_ids") or ()),
+            "trade_date": signal_metadata.get("trade_date"),
+            "snapshot_as_of": signal_metadata.get("snapshot_as_of"),
+            "portfolio_equity": equity,
+            "targets": targets,
+            "max_target_values": {symbol: weight * equity for symbol, weight in targets.items()},
+        }
+        kwargs["signal_metadata"] = signal_metadata
         return execute_rebalance(*args, execution_lock_dir=tmp_path / "locks", **kwargs)
 
     adapters = build_runtime_broker_adapters(

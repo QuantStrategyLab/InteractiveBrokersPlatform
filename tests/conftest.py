@@ -101,6 +101,11 @@ def strategy_module_factory(monkeypatch):
         google_cloud_module = types.ModuleType("google.cloud")
         google_cloud_module.__path__ = []
         compute_v1_module = types.ModuleType("google.cloud.compute_v1")
+        storage_module = types.ModuleType("google.cloud.storage")
+        api_core_module = types.ModuleType("google.api_core")
+        api_core_module.__path__ = []
+        api_core_exceptions_module = types.ModuleType("google.api_core.exceptions")
+        api_core_exceptions_module.PreconditionFailed = type("PreconditionFailed", (Exception,), {})
 
         google_module.auth = google_auth_module
         google_module.oauth2 = google_oauth2_module
@@ -108,6 +113,9 @@ def strategy_module_factory(monkeypatch):
         google_auth_transport_module.requests = google_auth_transport_requests_module
         google_oauth2_module.id_token = google_oauth2_id_token_module
         google_cloud_module.compute_v1 = compute_v1_module
+        google_cloud_module.storage = storage_module
+        google_module.api_core = api_core_module
+        api_core_module.exceptions = api_core_exceptions_module
 
         monkeypatch.setitem(sys.modules, "google", google_module)
         monkeypatch.setitem(sys.modules, "google.auth", google_auth_module)
@@ -117,6 +125,9 @@ def strategy_module_factory(monkeypatch):
         monkeypatch.setitem(sys.modules, "google.oauth2.id_token", google_oauth2_id_token_module)
         monkeypatch.setitem(sys.modules, "google.cloud", google_cloud_module)
         monkeypatch.setitem(sys.modules, "google.cloud.compute_v1", compute_v1_module)
+        monkeypatch.setitem(sys.modules, "google.cloud.storage", storage_module)
+        monkeypatch.setitem(sys.modules, "google.api_core", api_core_module)
+        monkeypatch.setitem(sys.modules, "google.api_core.exceptions", api_core_exceptions_module)
 
         market_calendars_module = types.ModuleType("pandas_market_calendars")
         market_calendars_module.get_calendar = lambda name: None

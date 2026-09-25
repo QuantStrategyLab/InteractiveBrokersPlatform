@@ -6,13 +6,29 @@ from quant_platform_kit.common.strategy_contracts import (
 from decision_mapper import map_strategy_decision
 
 
+def test_map_strategy_decision_blocks_positions_without_riskengine_approval():
+    weights, _signal, _emergency, _status, metadata = map_strategy_decision(
+        StrategyDecision(positions=(PositionTarget(symbol="TQQQ", target_weight=1.0),)),
+        strategy_profile="tqqq_growth_income",
+        runtime_metadata={"portfolio_total_equity": 1000.0},
+    )
+
+    assert weights is None
+    assert metadata["execution_blocked_reason"] == "missing_risk_approval"
+    assert metadata["actionable"] is False
+    assert "allocation" not in metadata
+    assert "risk_authority" not in metadata
+
+
 def test_map_strategy_decision_maps_weight_positions_and_safe_haven():
     decision = StrategyDecision(
+        risk_flags=("risk_gate:passed",),
         positions=(
             PositionTarget(symbol="AAA", target_weight=0.6),
             PositionTarget(symbol="BOXX", target_weight=0.4, role="safe_haven"),
         ),
         diagnostics={
+            "risk_gate": "APPROVE",
             "signal_description": "risk on",
             "status_description": "breadth=60.0%",
             "execution_annotations": {"dashboard_text": "strategy dashboard"},
@@ -22,7 +38,7 @@ def test_map_strategy_decision_maps_weight_positions_and_safe_haven():
     target_weights, signal_desc, is_emergency, status_desc, metadata = map_strategy_decision(
         decision,
         strategy_profile="russell_top50_leader_rotation",
-        runtime_metadata={"status_icon": "🧲", "dry_run_only": True},
+        runtime_metadata={"status_icon": "🧲", "dry_run_only": True, "portfolio_total_equity": 1000.0},
     )
 
     assert target_weights == {"AAA": 0.6, "BOXX": 0.4}
@@ -84,12 +100,13 @@ def test_map_strategy_decision_fails_closed_for_unflagged_empty_positions():
     assert target_weights is None
     assert metadata["actionable"] is False
     assert metadata["execution_blocked_reason"] == "empty_position_decision"
-    assert metadata["risk_flags"] == ("no_execute",)
+    assert "no_execute" in metadata["risk_flags"]
     assert "allocation" not in metadata
 
 
 def test_map_strategy_decision_translates_value_targets_for_semiconductor_strategy():
     decision = StrategyDecision(
+        risk_flags=("risk_gate:passed",),
         positions=(
             PositionTarget(symbol="SOXL", target_value=30000.0),
             PositionTarget(symbol="SOXX", target_value=0.0),
@@ -98,6 +115,7 @@ def test_map_strategy_decision_translates_value_targets_for_semiconductor_strate
             PositionTarget(symbol="BOXX", target_value=15000.0, role="safe_haven"),
         ),
         diagnostics={
+            "risk_gate": "APPROVE",
             "signal_description": "risk on",
             "status_description": "soxl>ma150",
         },
@@ -131,11 +149,13 @@ def test_map_strategy_decision_translates_value_targets_for_semiconductor_strate
 
 def test_map_strategy_decision_no_executes_value_targets_when_total_equity_zero():
     decision = StrategyDecision(
+        risk_flags=("risk_gate:passed",),
         positions=(
             PositionTarget(symbol="SOXL", target_value=30000.0),
             PositionTarget(symbol="BOXX", target_value=15000.0, role="safe_haven"),
         ),
         diagnostics={
+            "risk_gate": "APPROVE",
             "signal_description": "risk on",
             "status_description": "soxl>ma150",
         },
@@ -156,18 +176,20 @@ def test_map_strategy_decision_no_executes_value_targets_when_total_equity_zero(
     assert is_emergency is False
     assert status_desc == "soxl>ma150"
     assert metadata["actionable"] is False
-    assert metadata["risk_flags"] == ("no_execute",)
+    assert "no_execute" in metadata["risk_flags"]
     assert metadata["execution_blocked_reason"] == "non_positive_total_equity"
     assert "allocation" not in metadata
 
 
 def test_map_strategy_decision_allows_deleverage_when_cash_only_net_equity_negative():
     decision = StrategyDecision(
+        risk_flags=("risk_gate:passed",),
         positions=(
             PositionTarget(symbol="SOXL", target_weight=0.6),
             PositionTarget(symbol="BOXX", target_weight=0.4, role="safe_haven"),
         ),
         diagnostics={
+            "risk_gate": "APPROVE",
             "signal_description": "risk on",
             "status_description": "soxl>ma150",
         },

@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from application.execution_service import check_order_submitted, execute_rebalance, get_available_buying_power
+from application.execution_service import check_order_submitted, execute_rebalance as _execute_rebalance, get_available_buying_power
 from notifications.telegram import build_translator
 from quant_platform_kit.common.models import OrderIntent
 from quant_platform_kit.common.strategy_release import build_runtime_loaded_receipt
@@ -44,6 +44,34 @@ def _signal_metadata(
         safe_haven_symbols=safe_haven_symbols,
     )
     return payload
+
+
+def execute_rebalance(*args, **kwargs):
+    """Give legacy order-plan fixtures a synthetic approved decision envelope."""
+    metadata = kwargs.get("signal_metadata")
+    if metadata and isinstance(metadata.get("allocation"), dict):
+        metadata = dict(metadata)
+        targets = dict(metadata["allocation"].get("targets") or {})
+        equity = float(args[3].get("equity") or 0.0)
+        metadata.setdefault("risk_gate", "APPROVE")
+        metadata.setdefault("risk_flags", ("risk_gate:passed",))
+        metadata.setdefault(
+            "risk_authority",
+            {
+                "strategy_profile": kwargs.get("strategy_profile"),
+                "account_ids": tuple(kwargs.get("account_ids") or ()),
+                "trade_date": metadata.get("trade_date"),
+                "snapshot_as_of": metadata.get("snapshot_as_of"),
+                "portfolio_equity": equity,
+                "targets": targets,
+                "max_target_values": {
+                    symbol: max(0.0, float(weight) * equity)
+                    for symbol, weight in targets.items()
+                },
+            },
+        )
+        kwargs["signal_metadata"] = metadata
+    return _execute_rebalance(*args, **kwargs)
 
 
 def translate(key, **kwargs):
@@ -140,6 +168,65 @@ def test_get_available_buying_power_does_not_treat_total_cash_value_as_currency_
             ]
 
     assert get_available_buying_power(FakeIB(), 0.0, currency="USD") == 0.0
+
+
+@pytest.mark.parametrize("dry_run_only", [False, True])
+@pytest.mark.parametrize(
+    "invalid_authority",
+    ["missing", "rejected", "changed_target", "changed_profile", "changed_account", "changed_date", "changed_cap"],
+)
+def test_live_rebalance_never_submits_without_matching_riskengine_authority(
+    tmp_path, invalid_authority, dry_run_only,
+):
+    metadata = _signal_metadata({"TQQQ": 1.0}, risk_symbols=("TQQQ",), trade_date="2026-09-25")
+    metadata.update(
+        risk_gate="APPROVE",
+        risk_flags=("risk_gate:passed",),
+        risk_authority={
+            "strategy_profile": "tqqq_growth_income",
+            "account_ids": ("U16608560",),
+            "trade_date": "2026-09-25",
+            "snapshot_as_of": None,
+            "portfolio_equity": 1000.0,
+            "targets": {"TQQQ": 1.0},
+            "max_target_values": {"TQQQ": 1000.0},
+        },
+    )
+    if invalid_authority == "missing":
+        metadata.pop("risk_authority")
+    elif invalid_authority == "rejected":
+        metadata["risk_gate"] = "REJECT"
+    elif invalid_authority == "changed_target":
+        metadata["allocation"]["targets"]["TQQQ"] = 0.5
+    elif invalid_authority == "changed_profile":
+        metadata["risk_authority"]["strategy_profile"] = "other_profile"
+    elif invalid_authority == "changed_account":
+        metadata["risk_authority"]["account_ids"] = ("U15998061",)
+    elif invalid_authority == "changed_date":
+        metadata["risk_authority"]["trade_date"] = "2026-09-24"
+    else:
+        metadata["risk_authority"]["max_target_values"]["TQQQ"] = 0.0
+    submitted = []
+
+    with pytest.raises(RuntimeError, match="RiskEngine approval|allocation differs|order limit is invalid"):
+        _execute_rebalance(
+            SimpleNamespace(), {}, {}, {"equity": 1000.0, "buying_power": 1000.0},
+            fetch_quote_snapshots=lambda _ib, symbols: {},
+            submit_order_intent=lambda _ib, intent: submitted.append(intent),
+            order_intent_cls=OrderIntent,
+            translator=translate,
+            acquire_execution_claim=lambda: True,
+            strategy_profile="tqqq_growth_income",
+            account_ids=("U16608560",),
+            signal_metadata=metadata,
+            dry_run_only=dry_run_only,
+            cash_reserve_ratio=0.0,
+            rebalance_threshold_ratio=0.0,
+            limit_buy_premium=1.0,
+            sell_settle_delay_sec=0,
+            execution_lock_dir=tmp_path,
+        )
+    assert submitted == []
 
 
 @pytest.mark.parametrize("symbol", ["SOXL", "VOO"])
@@ -513,7 +600,7 @@ def test_execute_rebalance_uses_symbol_specific_limit_buy_premium(monkeypatch, t
     assert submitted[0].limit_price == 101.5
 
 
-def test_execute_rebalance_executes_option_intent_when_stock_targets_are_unchanged(tmp_path):
+def test_execute_rebalance_blocks_option_intent_without_final_risk_limits(tmp_path):
     class FakeIB:
         def openTrades(self):
             return []
@@ -543,7 +630,7 @@ def test_execute_rebalance_executes_option_intent_when_stock_targets_are_unchang
         "max_notional_usd": 6500.0,
     }
 
-    trade_logs, summary = execute_rebalance(
+    error = pytest.raises(RuntimeError, execute_rebalance,
         FakeIB(),
         {"VOO": 0.0},
         {},
@@ -570,13 +657,10 @@ def test_execute_rebalance_executes_option_intent_when_stock_targets_are_unchang
         return_summary=True,
     )
 
-    assert summary["execution_status"] == "executed"
-    assert summary["option_order_intent_count"] == 1
-    assert summary["option_orders_submitted"][0]["symbol"] == "TQQQ 2028-01-21 70C"
-    assert any("DRY_RUN option buy_to_open TQQQ" in log for log in trade_logs)
+    assert "option intents lack final RiskEngine order limits" in str(error.value)
 
 
-def test_execute_rebalance_dry_runs_multi_leg_option_intent_as_combo(tmp_path):
+def test_execute_rebalance_blocks_multi_leg_option_without_final_risk_limits(tmp_path):
     class FakeIB:
         def openTrades(self):
             return []
@@ -584,7 +668,7 @@ def test_execute_rebalance_dry_runs_multi_leg_option_intent_as_combo(tmp_path):
         def accountValues(self):
             return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1000000")]
 
-    trade_logs, summary = execute_rebalance(
+    error = pytest.raises(RuntimeError, execute_rebalance,
         FakeIB(),
         {"VOO": 0.0},
         {},
@@ -622,9 +706,7 @@ def test_execute_rebalance_dry_runs_multi_leg_option_intent_as_combo(tmp_path):
         return_summary=True,
     )
 
-    assert trade_logs
-    assert summary["execution_status"] == "executed"
-    assert summary["option_orders_submitted"][0]["symbol"] == "SOXX 2026-07-17 PCS"
+    assert "option intents lack final RiskEngine order limits" in str(error.value)
 
 
 def test_execute_rebalance_hk_profile_dry_run_keeps_whole_share_orders_off_broker(tmp_path):
