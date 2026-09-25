@@ -4,10 +4,12 @@ from collections.abc import Callable, Mapping
 from importlib import metadata as importlib_metadata
 import json
 from dataclasses import dataclass, field, replace
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import pandas_market_calendars as market_calendars
 
 from quant_platform_kit.common.feature_snapshot import load_feature_snapshot_guarded
 from quant_platform_kit.common.feature_snapshot_runtime import (
@@ -51,6 +53,22 @@ from strategy_loader import (
     load_strategy_entrypoint_for_profile,
     load_strategy_runtime_adapter_for_profile,
 )
+
+
+def _tqqq_execution_timing_metadata(signal_date: pd.Timestamp, market_calendar: str) -> dict[str, Any]:
+    sessions = market_calendars.get_calendar(market_calendar).valid_days(
+        start_date=pd.Timestamp(signal_date).date() + timedelta(days=1),
+        end_date=pd.Timestamp(signal_date).date() + timedelta(days=14),
+    )
+    if len(sessions) == 0:
+        raise ValueError("IBKR TQQQ next market session is unavailable")
+    metadata = build_execution_timing_metadata(
+        signal_date=signal_date,
+        signal_effective_after_trading_days=1,
+    )
+    metadata["effective_date"] = pd.Timestamp(sessions[0]).date().isoformat()
+    metadata["execution_calendar_source"] = market_calendar
+    return metadata
 
 
 
@@ -1373,11 +1391,15 @@ class LoadedStrategyRuntime:
             "managed_symbols": managed_symbols,
             "status_icon": self.status_icon,
             "dry_run_only": self.runtime_settings.dry_run_only,
-            **build_execution_timing_metadata(
-                signal_date=run_as_of,
-                signal_effective_after_trading_days=(
-                    self.runtime_adapter.runtime_policy.signal_effective_after_trading_days
-                ),
+            **(
+                _tqqq_execution_timing_metadata(run_as_of, self.runtime_settings.market_calendar)
+                if self.profile == "tqqq_growth_income"
+                else build_execution_timing_metadata(
+                    signal_date=run_as_of,
+                    signal_effective_after_trading_days=(
+                        self.runtime_adapter.runtime_policy.signal_effective_after_trading_days
+                    ),
+                )
             ),
             },
             portfolio_snapshot,
@@ -1427,6 +1449,19 @@ class LoadedStrategyRuntime:
                 historical_candle_loader,
                 benchmark_symbol=benchmark_symbol,
             )
+            if self.profile == "tqqq_growth_income":
+                signal_date = pd.Timestamp(as_of).date()
+                completed_bars = [
+                    bar
+                    for bar in market_inputs["benchmark_history"]
+                    if pd.Timestamp(bar["as_of"]).date() <= signal_date
+                ]
+                if (
+                    not completed_bars
+                    or pd.Timestamp(completed_bars[-1]["as_of"]).date() != signal_date
+                ):
+                    raise ValueError("IBKR TQQQ completed benchmark history is unavailable")
+                market_inputs["benchmark_history"] = completed_bars
             market_inputs["benchmark_symbol"] = benchmark_symbol
             return market_inputs
         raise ValueError(

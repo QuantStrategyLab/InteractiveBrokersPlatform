@@ -1,4 +1,6 @@
 from types import SimpleNamespace
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -51,6 +53,8 @@ def execute_rebalance(*args, **kwargs):
     metadata = kwargs.get("signal_metadata")
     if metadata and isinstance(metadata.get("allocation"), dict):
         metadata = dict(metadata)
+        if kwargs.get("strategy_profile") == "tqqq_growth_income":
+            metadata.setdefault("effective_date", datetime.now(ZoneInfo("America/New_York")).date().isoformat())
         targets = dict(metadata["allocation"].get("targets") or {})
         equity = float(args[3].get("equity") or 0.0)
         metadata.setdefault("risk_gate", "APPROVE")
@@ -61,6 +65,8 @@ def execute_rebalance(*args, **kwargs):
                 "strategy_profile": kwargs.get("strategy_profile"),
                 "account_ids": tuple(kwargs.get("account_ids") or ()),
                 "trade_date": metadata.get("trade_date"),
+                "signal_date": metadata.get("signal_date"),
+                "effective_date": metadata.get("effective_date"),
                 "snapshot_as_of": metadata.get("snapshot_as_of"),
                 "portfolio_equity": equity,
                 "targets": targets,
@@ -173,12 +179,17 @@ def test_get_available_buying_power_does_not_treat_total_cash_value_as_currency_
 @pytest.mark.parametrize("dry_run_only", [False, True])
 @pytest.mark.parametrize(
     "invalid_authority",
-    ["missing", "rejected", "changed_target", "changed_profile", "changed_account", "changed_date", "changed_cap"],
+    [
+        "missing", "rejected", "changed_target", "changed_profile", "changed_account",
+        "changed_date", "changed_cap", "future_effective_date", "missing_effective_date",
+    ],
 )
 def test_live_rebalance_never_submits_without_matching_riskengine_authority(
     tmp_path, invalid_authority, dry_run_only,
 ):
     metadata = _signal_metadata({"TQQQ": 1.0}, risk_symbols=("TQQQ",), trade_date="2026-09-25")
+    effective_date = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+    metadata["effective_date"] = effective_date
     metadata.update(
         risk_gate="APPROVE",
         risk_flags=("risk_gate:passed",),
@@ -186,6 +197,8 @@ def test_live_rebalance_never_submits_without_matching_riskengine_authority(
             "strategy_profile": "tqqq_growth_income",
             "account_ids": ("U16608560",),
             "trade_date": "2026-09-25",
+            "signal_date": None,
+            "effective_date": effective_date,
             "snapshot_as_of": None,
             "portfolio_equity": 1000.0,
             "targets": {"TQQQ": 1.0},
@@ -204,11 +217,21 @@ def test_live_rebalance_never_submits_without_matching_riskengine_authority(
         metadata["risk_authority"]["account_ids"] = ("U15998061",)
     elif invalid_authority == "changed_date":
         metadata["risk_authority"]["trade_date"] = "2026-09-24"
-    else:
+    elif invalid_authority == "changed_cap":
         metadata["risk_authority"]["max_target_values"]["TQQQ"] = 0.0
+    elif invalid_authority == "future_effective_date":
+        future = (datetime.now(ZoneInfo("America/New_York")).date() + timedelta(days=1)).isoformat()
+        metadata["effective_date"] = future
+        metadata["risk_authority"]["effective_date"] = future
+    else:
+        metadata.pop("effective_date")
+        metadata["risk_authority"]["effective_date"] = None
     submitted = []
 
-    with pytest.raises(RuntimeError, match="RiskEngine approval|allocation differs|order limit is invalid"):
+    with pytest.raises(
+        RuntimeError,
+        match="RiskEngine approval|allocation differs|order limit is invalid|effective date|not effective",
+    ):
         _execute_rebalance(
             SimpleNamespace(), {}, {}, {"equity": 1000.0, "buying_power": 1000.0},
             fetch_quote_snapshots=lambda _ib, symbols: {},

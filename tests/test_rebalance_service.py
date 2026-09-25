@@ -861,6 +861,8 @@ def claim_cycle(tmp_path, monkeypatch, strategy_module):
             "strategy_profile": kwargs["strategy_profile"],
             "account_ids": tuple(kwargs.get("account_ids") or ()),
             "trade_date": signal_metadata.get("trade_date"),
+            "signal_date": signal_metadata.get("signal_date"),
+            "effective_date": signal_metadata.get("effective_date"),
             "snapshot_as_of": signal_metadata.get("snapshot_as_of"),
             "portfolio_equity": equity,
             "targets": targets,
