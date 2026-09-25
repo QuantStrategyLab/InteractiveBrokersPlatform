@@ -624,6 +624,16 @@ def _snapshot_to_portfolio_view(snapshot) -> tuple[dict[str, dict[str, float | i
         "market_currency_cash": metadata.get("market_currency_cash"),
         "available_funds": metadata.get("available_funds"),
         "cash_balances": metadata.get("cash_balances") or (),
+        "heartbeat_account_snapshot": {
+            "currency": str(metadata.get("currency") or "").strip().upper(),
+            "observed_at": getattr(snapshot, "as_of", None),
+            "available_cash": metadata.get("market_currency_cash"),
+            "net_assets": (
+                metadata.get("broker_net_liquidation")
+                if metadata.get("total_equity_source") == "broker_net_liquidation"
+                else None
+            ),
+        },
     }
     return positions, account_values
 
@@ -1045,6 +1055,7 @@ def run_strategy_core(
                         separator=config.separator,
                         strategy_display_name=config.strategy_display_name,
                         extra_notification_lines=config.extra_notification_lines,
+                        account_snapshot=account_values.get("heartbeat_account_snapshot"),
                     )
                 )
             _record_platform_execution_telemetry(signal_metadata, blocked_summary or {})
@@ -1130,6 +1141,7 @@ def run_strategy_core(
                         separator=config.separator,
                         strategy_display_name=config.strategy_display_name,
                         extra_notification_lines=config.extra_notification_lines,
+                        account_snapshot=account_values.get("heartbeat_account_snapshot"),
                     )
                 )
             _record_platform_execution_telemetry(
