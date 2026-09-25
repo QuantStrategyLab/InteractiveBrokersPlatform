@@ -14,6 +14,7 @@ from application.rebalance_service import (
     _resolve_reconciliation_mode,
     _should_suppress_noop_notification,
     _should_record_execution_marker,
+    _snapshot_to_portfolio_view,
     _strategy_dashboard_text,
     run_strategy_core,
 )
@@ -24,6 +25,24 @@ from notifications.renderers import (
     render_trade_notification,
 )
 from notifications.telegram import build_translator
+
+
+def test_heartbeat_uses_broker_total_without_changing_strategy_equity():
+    from datetime import datetime, timezone
+
+    snapshot = SimpleNamespace(
+        as_of=datetime(2026, 9, 25, 14, 0, tzinfo=timezone.utc),
+        positions=(), total_equity=250.0, buying_power=100.0,
+        metadata={
+            "currency": "USD", "market_currency_cash": 100.0,
+            "broker_net_liquidation": 2500.0,
+            "total_equity_source": "broker_net_liquidation",
+        },
+    )
+    _positions, account_values = _snapshot_to_portfolio_view(snapshot)
+    assert account_values["equity"] == 250.0
+    assert account_values["heartbeat_account_snapshot"]["net_assets"] == 2500.0
+    assert account_values["heartbeat_account_snapshot"]["available_cash"] == 100.0
 
 
 def test_no_trade_heartbeat_respects_window_and_notification_policy():

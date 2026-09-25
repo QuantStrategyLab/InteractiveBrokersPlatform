@@ -1,6 +1,26 @@
-from notifications.renderers import _build_order_batch_lines, _summarize_skipped_orders, build_dashboard
+from notifications.renderers import _build_order_batch_lines, _summarize_skipped_orders, build_dashboard, render_heartbeat_notification
 from notifications.telegram import build_strategy_display_name, build_translator, send_telegram_message
 from strategy_registry import SUPPORTED_STRATEGY_PROFILES
+
+
+def test_no_trade_heartbeat_labels_verified_account_values_in_both_languages():
+    from datetime import datetime, timezone
+
+    snapshot = {
+        "currency": "USD", "available_cash": 100.0, "net_assets": 2500.0,
+        "observed_at": datetime(2026, 9, 25, 14, 0, tzinfo=timezone.utc),
+    }
+    for language, cash, equity in (
+        ("zh", "可用现金: USD 100.00", "账户总权益: USD 2,500.00"),
+        ("en", "Available cash: USD 100.00", "Total account equity: USD 2,500.00"),
+    ):
+        rendered = render_heartbeat_notification(
+            dashboard="", strategy_dashboard="", no_op_text="no trades",
+            signal_desc="", status_desc="", status_icon="", translator=build_translator(language),
+            separator="---", strategy_display_name="Example", account_snapshot=snapshot,
+        )
+        assert cash in rendered.compact_text
+        assert equity in rendered.compact_text
 
 
 def test_build_translator_supports_chinese():

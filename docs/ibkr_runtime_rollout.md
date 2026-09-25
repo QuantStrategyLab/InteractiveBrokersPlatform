@@ -295,6 +295,7 @@ gcloud storage buckets add-iam-policy-binding "gs://run-sources-${PROJECT_ID}-${
    - 只更新已批准目标的镜像时，明确设置 `deploy_image=true`、`sync_env=false`；只同步配置则设置 `deploy_image=false`、`sync_env=true`。两项仍受仓库级部署/同步开关约束，且必须指定精确 `configured_service`。这样通知等纯代码发布不会顺带改 Secret、运行开关或 Scheduler。
    - `approve_traffic_shift` / `approve_scheduler_sync` 默认 `false`；显式打开后才切流量或启停 Scheduler，并做读回失败停止。
    - 流量切换前会验证已部署目标与待发布策略均仍在准入目录。
+   - 无交易心跳中的可用现金和账户总权益只来自本轮券商账户快照；后者要求已验证的 broker `NetLiquidation`，不使用策略子集权益代替。缺项分别标为「未核实」，只用于展示，不改变风控和下单口径。
    - 不要把临时的 `gcloud run services update --image ...` 当作常规发布方式：它会绕过策略准入、运行身份与 Paper/Shadow/Live 语义校验。
    - 历史 revision 与镜像默认保留；只有显式设置 `CLOUD_RUN_CLEANUP_ENABLED=true` 才允许自动清理，以保证有可回滚版本。
 

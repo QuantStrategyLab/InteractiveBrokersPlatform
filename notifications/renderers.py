@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
+import math
 
 from notifications.events import RenderedNotification
 from quant_platform_kit.common.quantity import format_quantity
@@ -611,9 +613,27 @@ def render_heartbeat_notification(
     separator,
     strategy_display_name,
     extra_notification_lines=(),
+    account_snapshot=None,
 ) -> RenderedNotification:
     extra_lines = _extra_notification_lines(extra_notification_lines)
-    detailed_parts = [translator("heartbeat_title"), *extra_lines, dashboard, separator, no_op_text]
+    snapshot = account_snapshot if isinstance(account_snapshot, Mapping) else {}
+    currency = str(snapshot.get("currency") or "").strip().upper()
+    observed_at = snapshot.get("observed_at")
+    observed_at = observed_at.isoformat() if isinstance(observed_at, datetime) else str(observed_at or "").strip()
+    amount_lines = []
+    verified = False
+    for field, label in (("available_cash", "heartbeat_available_cash"), ("net_assets", "heartbeat_account_equity")):
+        amount = snapshot.get(field)
+        valid = (
+            isinstance(amount, (int, float)) and not isinstance(amount, bool)
+            and math.isfinite(amount) and bool(currency) and bool(observed_at)
+            and (field != "net_assets" or amount > 0)
+        )
+        verified = verified or valid
+        amount_lines.append(translator(label, value=f"{currency} {amount:,.2f}" if valid else translator("heartbeat_unverified")))
+    if verified:
+        amount_lines.append(translator("heartbeat_observed_at", value=observed_at))
+    detailed_parts = [translator("heartbeat_title"), *extra_lines, *amount_lines, dashboard, separator, no_op_text]
     detailed_text = "\n".join(str(part) for part in detailed_parts if str(part).strip())
     compact_text = _build_compact_message(
         title=translator("heartbeat_title"),
@@ -623,7 +643,7 @@ def render_heartbeat_notification(
         status_icon=status_icon,
         translator=translator,
         separator=separator,
-        body_lines=[no_op_text],
+        body_lines=[*amount_lines, no_op_text],
         dashboard_text=strategy_dashboard,
         extra_notification_lines=extra_lines,
         include_dashboard=True,
