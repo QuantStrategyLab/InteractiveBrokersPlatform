@@ -1,5 +1,12 @@
 # IBKR 旧实盘基线：审核材料生成
 
+本流程仅适用于已明确进入 `RECONCILE_ONLY` 的冻结基线恢复。
+对于仍是 `ACTIVE_LKG`、但 `RUNTIME_TARGET_ENABLED=false` 的目标，
+缺少 `IBKR_RECONCILIATION_EXPECTED_DIGESTS_JSON` 本身不是正常 `/run` 的阻断条件，
+也不能据此要求 Flex 令牌或人工导出账单。该目标应先核实当前账户、
+未决订单与旧执行标记，再按现有禁止提交完整周期和启用条件判断；
+不能为了套用本流程而先改写既有基线状态。
+
 ## 独立券商报表来源（接入中，默认不启用）
 
 `application.ibkr_flex_source` 仅提供 IBKR 官方 Flex Web Service v3 的一次性、只读
@@ -8,11 +15,11 @@ XML Activity 报表获取和账户范围校验。它固定访问 IBKR 的 SendRe
 文件或候选回执。请求失败和报表尚未生成时不自动重试。报表原文只在内存中返回，
 不能保存到本机或公开 artifact。
 
-U166 首次旧账接管仍须在券商门户由所属用户名创建 XML Activity Flex Query，覆盖
+若目标已进入 `RECONCILE_ONLY` 且选择以 Flex 报表作为独立来源，须在券商门户由所属用户名创建 XML Activity Flex Query，覆盖
 期末持仓、结算现金、成交、现金变动及相关公司行动，并启用 Flex Web Service。访问令牌
 应由用户在门户生成后存入该目标的私有 Secret Manager，Query ID 可作为目标配置；
 不要把令牌发到聊天、GitHub secret、仓库变量或命令行。当前生产项目尚无这两项配置，
-本模块未接入 `/reconcile` 或启用交易。
+本模块未接入 `/reconcile` 或启用交易；`ACTIVE_LKG` 目标的正常运行不依赖此模块。
 门户配置参见 [IBKR Flex Web Service 官方说明](https://www.interactivebrokers.com/docs/web-api/flex-web-service/client-portal-configuration)。
 
 Flex 报表与 Gateway 当前状态是两份不同的券商视图，但报表摘要本身仍不是内部订单/现金
@@ -111,6 +118,24 @@ URI、部署 Cloud Run、连接券商或提交订单。实际启用仍需要单�
 最小权限 CAS 时能持续证明“异常只能保持冻结，不能意外恢复实盘”。
 
 ## 收集候选收据
+
+手动工作流可选择 `inspect_execution_ledger=true`。该选项在已有 GitHub
+云端身份下读取所选服务对应的私有执行标记与 outcome，只在日志输出
+`execution_claim.v1`、`execution_marker.v1`、`execution_outcome.v1` 的数量及
+缺 outcome 的 claim 数量，不上传原始记录或对象路径。超过 256 条、读取失败或
+对象身份不匹配时诊断失败；常规收据采集默认不运行它。旧
+`execution_marker.v1` 表示本地记录已写入，单凭这个分类仍不能证明券商成交
+或完成账户接管；`execution_claim.v1` 缺 outcome 也只表示需要进一步核对，
+不能直接认定券商已收单。
+
+`broker_reconciliation_completed` 的内部日志将预期摘要未配置标为
+`comparison_status=not_configured`，并仅记录账户身份核验结果及持仓、现金、
+挂单、近期成交的条数。此状态下旧的五项 `*_mismatch` 原因码只表示
+“无法比较”，不证明存在真实账务差异；条数也不能证明旧订单已结清。
+五项摘要只用于这个恢复候选，不是正常 `/run` 每个周期的比较条件；
+`ACTIVE_LKG` 与交易开关是另行判定的状态。
+日志不包含账户明细、金额或订单身份。任何新起点接管仍需核实未决订单、
+旧 claim 及策略所需状态，不能从本日志自动生成预期摘要或启用交易。
 
 `Collect IBKR Reconciliation Evidence` 是显式手动工作流。由于这些 Cloud Run 服务只接受
 内部入口，工作流会以部署身份创建一个名称绑定到本次运行、几分钟后只执行一次的 Cloud
