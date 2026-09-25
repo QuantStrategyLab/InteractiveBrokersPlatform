@@ -46,11 +46,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Render validated matrix from public manifest
+      - name: Resolve reconciliation profiles from private inventory
         id: render
+        env:
+          CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ vars.CLOUD_RUN_SERVICE_TARGETS_JSON || secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}
         run: |
           set -euo pipefail
-          python3 scripts/render_runtime_target_matrix.py --profile reconciliation --github-output
+          python3 scripts/render_runtime_target_matrix.py --profile reconciliation --private-config --github-output
 
   collect:
     needs: resolve-matrix
@@ -78,6 +80,36 @@ jobs:
         if: ${{ steps.selection.outputs.selected == 'true' && inputs.inspect_execution_ledger }}
         uses: actions/checkout@v6
 
+      - name: Resolve selected service from private inventory
+        id: runtime_target
+        if: ${{ steps.selection.outputs.selected == 'true' }}
+        env:
+          CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ vars.CLOUD_RUN_SERVICE_TARGETS_JSON || secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}
+          PROFILE: ${{ matrix.profile }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+
+          payload = json.loads(os.environ["CLOUD_RUN_SERVICE_TARGETS_JSON"])
+          entries = payload.get("targets") if isinstance(payload, dict) else payload
+          matches = []
+          for item in entries:
+              if not isinstance(item, dict) or item.get("include_reconciliation") is not True:
+                  continue
+              runtime = item.get("runtime_target") or {}
+              if isinstance(runtime, str):
+                  runtime = json.loads(runtime)
+              if runtime.get("strategy_profile") == os.environ["PROFILE"]:
+                  service = str(item.get("service") or item.get("service_name") or "").strip()
+                  if service and runtime.get("service_name") == service:
+                      matches.append(service)
+          if len(matches) != 1:
+              raise SystemExit("expected exactly one private reconciliation service")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"service={matches[0]}\n")
+          PY
+
       - name: Authenticate to Google Cloud
         if: ${{ steps.selection.outputs.selected == 'true' }}
         uses: google-github-actions/auth@v3
@@ -93,7 +125,7 @@ jobs:
         id: audience
         if: ${{ steps.selection.outputs.selected == 'true' }}
         env:
-          SERVICE: ${{ matrix.service }}
+          SERVICE: ${{ steps.runtime_target.outputs.service }}
         run: |
           set -euo pipefail
           service_url="$(gcloud run services describe "$SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
@@ -161,7 +193,7 @@ jobs:
         if: ${{ steps.selection.outputs.selected == 'true' }}
         env:
           PROFILE: ${{ matrix.profile }}
-          SERVICE: ${{ matrix.service }}
+          SERVICE: ${{ steps.runtime_target.outputs.service }}
           SCHEDULER_JOB_SHA256: ${{ steps.scheduler.outputs.scheduler_job_sha256 }}
           REQUESTED_AT: ${{ steps.scheduler.outputs.requested_at }}
         run: |
@@ -282,7 +314,7 @@ jobs:
           WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
           WORKFLOW_HEAD_SHA: ${{ github.sha }}
           PROFILE: ${{ matrix.profile }}
-          SERVICE: ${{ matrix.service }}
+          SERVICE: ${{ steps.runtime_target.outputs.service }}
           SERVICE_REVISION: ${{ steps.receipt.outputs.serving_revision }}
           SERVICE_REVISION_COMMIT_SHA: ${{ steps.receipt.outputs.service_revision_commit_sha }}
           SERVICE_DEPLOY_RUN_ID: ${{ steps.receipt.outputs.service_deploy_run_id }}
@@ -373,7 +405,7 @@ jobs:
       - name: Summarize scoped execution record types
         if: ${{ success() && steps.selection.outputs.selected == 'true' && inputs.inspect_execution_ledger }}
         env:
-          SERVICE: ${{ matrix.service }}
+          SERVICE: ${{ steps.runtime_target.outputs.service }}
         run: |
           set -euo pipefail
           python3 scripts/summarize_execution_ledger_cloud.py \

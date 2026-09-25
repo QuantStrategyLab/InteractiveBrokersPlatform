@@ -7,18 +7,18 @@ from scripts import summarize_historical_execution_cloud as diagnostic
 
 
 def test_summarize_selected_private_reports_without_order_details(monkeypatch):
-    root = "gs://private/execution-reports/interactive_brokers/tqqq_growth_income/live-u16608560/2026-08/"
+    root = "gs://private/execution-reports/interactive_brokers/tqqq_growth_income/live-u00000002/2026-08/"
     service = {
         "spec": {"template": {"spec": {"containers": [{"env": [
             {"name": "EXECUTION_REPORT_GCS_URI", "value": "gs://private/execution-reports"},
             {"name": "STRATEGY_PROFILE", "value": "tqqq_growth_income"},
-            {"name": "ACCOUNT_GROUP", "value": "live-u16608560"},
+            {"name": "ACCOUNT_GROUP", "value": "live-u00000002"},
         ]}]}}},
     }
     report = {
         "platform": "interactive_brokers",
         "strategy_profile": "tqqq_growth_income",
-        "account_scope": "live-u16608560",
+        "account_scope": "live-u00000002",
         "started_at": "2026-08-04T19:45:00Z",
         "dry_run": False,
         "status": "ok",
@@ -51,11 +51,11 @@ def test_summarize_selected_private_reports_without_order_details(monkeypatch):
 
 
 def test_summarize_rejects_wrong_account_report(monkeypatch):
-    root = "gs://private/execution-reports/interactive_brokers/tqqq_growth_income/live-u16608560/2026-08/"
+    root = "gs://private/execution-reports/interactive_brokers/tqqq_growth_income/live-u00000002/2026-08/"
     service = {"spec": {"template": {"spec": {"containers": [{"env": [
         {"name": "EXECUTION_REPORT_GCS_URI", "value": "gs://private/execution-reports"},
         {"name": "STRATEGY_PROFILE", "value": "tqqq_growth_income"},
-        {"name": "ACCOUNT_GROUP", "value": "live-u16608560"},
+        {"name": "ACCOUNT_GROUP", "value": "live-u00000002"},
     ]}]}}}}
     report = {
         "platform": "interactive_brokers",

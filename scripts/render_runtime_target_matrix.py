@@ -46,11 +46,39 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Append compact matrix=... to $GITHUB_OUTPUT for workflow jobs.",
     )
+    parser.add_argument(
+        "--private-config",
+        action="store_true",
+        help="Resolve profile names from the protected runtime inventory; omit service identities.",
+    )
     args = parser.parse_args(argv)
 
     try:
-        manifest = load_runtime_target_manifest(args.path or default_manifest_path())
-        matrix = build_github_actions_matrix(manifest, profile=args.profile)
+        if args.private_config:
+            raw = os.environ.get("CLOUD_RUN_SERVICE_TARGETS_JSON") or ""
+            payload = json.loads(raw)
+            entries = payload.get("targets") if isinstance(payload, dict) else payload
+            if not isinstance(entries, list):
+                raise RuntimeTargetManifestError("private runtime inventory is invalid")
+            profiles = []
+            for item in entries:
+                if not isinstance(item, dict) or item.get("include_reconciliation") is not True:
+                    continue
+                runtime = item.get("runtime_target") or {}
+                if isinstance(runtime, str):
+                    runtime = json.loads(runtime)
+                if not isinstance(runtime, dict) or runtime.get("execution_mode") != "live":
+                    raise RuntimeTargetManifestError("reconciliation target must be live")
+                profile = str(runtime.get("strategy_profile") or "").strip()
+                if not profile or profile in profiles:
+                    raise RuntimeTargetManifestError("reconciliation profile is missing or duplicated")
+                profiles.append(profile)
+            if not profiles:
+                raise RuntimeTargetManifestError("no private reconciliation targets are configured")
+            matrix = {"include": [{"profile": profile} for profile in profiles]}
+        else:
+            manifest = load_runtime_target_manifest(args.path or default_manifest_path())
+            matrix = build_github_actions_matrix(manifest, profile=args.profile)
     except RuntimeTargetManifestError as exc:
         print(f"runtime-target matrix render failed: {exc}", file=sys.stderr)
         return 1
@@ -75,7 +103,8 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         with open(github_output, "a", encoding="utf-8") as handle:
             handle.write(f"matrix={payload}\n")
-    print(payload)
+    if not args.private_config:
+        print(payload)
     return 0
 
 

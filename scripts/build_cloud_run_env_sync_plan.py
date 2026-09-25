@@ -575,6 +575,25 @@ def _build_target_plan(
     if _requires_extended_run_deadline(runtime_target, env_values):
         scheduler["attempt_deadline"] = RUN_SCHEDULER_ATTEMPT_DEADLINE
 
+    drill_precheck_enabled = target.get("drill_precheck_enabled") is True
+    if drill_precheck_enabled:
+        continuity = runtime_target.get("live_continuity") or {}
+        if not isinstance(continuity, Mapping):
+            continuity = {}
+        precheck_fields = scheduler["precheck_time"].split()
+        if (
+            _runtime_target_enabled(env_values)
+            or continuity.get("state") != "RECONCILE_ONLY"
+            or str(env_values.get("IBKR_FORCE_RUN") or "").lower() == "true"
+            or len(precheck_fields) != 5
+            or precheck_fields[2] != "*"
+            or precheck_fields[4] != "*"
+        ):
+            raise ValueError(
+                "daily drill requires disabled RECONCILE_ONLY runtime, "
+                "force_run=false, and an every-day precheck schedule"
+            )
+
     return {
         "service_name": service_name,
         "strategy_profile": canonical_profile,
@@ -586,6 +605,7 @@ def _build_target_plan(
         # not receive normal execution schedules.
         "standard_execution_enabled": _runtime_target_enabled(env_values)
         and runtime_target_permits_standard_execution(runtime_target),
+        "drill_precheck_enabled": drill_precheck_enabled,
         "remove_env_vars": sorted(set(remove_env_vars) - set(env_values)),
         "_recovery_state_ledger_applied": recovery_expected_digests is not None,
     }

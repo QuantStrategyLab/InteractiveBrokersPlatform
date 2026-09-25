@@ -399,7 +399,7 @@ def test_runtime_target_service_name_overrides_shared_account_group_service(monk
         "IB_ACCOUNT_GROUP_CONFIG_JSON",
         '{"groups":{"shared-live":{"ib_gateway_instance_name":"ib-gateway",'
         '"ib_gateway_mode":"live","ib_client_id":1,'
-        '"service_name":"interactive-brokers-quant-live-u18336562-service",'
+        '"service_name":"interactive-brokers-quant-live-u00000004-service",'
         '"account_ids":["U123456"]}}}',
     )
 
@@ -1239,26 +1239,26 @@ def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
 def _four_gateway_warmup_payload(probe_time: str) -> dict[str, object]:
     gateway_targets = (
         (
-            "interactive-brokers-quant-live-u15998061-service",
-            "live-u15998061",
+            "interactive-brokers-quant-live-u00000001-service",
+            "live-u00000001",
             "soxl_soxx_trend_income",
             True,
         ),
         (
-            "interactive-brokers-quant-live-u16608560-service",
-            "live-u16608560",
+            "interactive-brokers-quant-live-u00000002-service",
+            "live-u00000002",
             "tqqq_growth_income",
             True,
         ),
         (
-            "interactive-brokers-quant-live-u18336562-service",
-            "live-u18336562",
+            "interactive-brokers-quant-live-u00000004-service",
+            "live-u00000004",
             "russell_top50_leader_rotation",
             False,
         ),
         (
-            "interactive-brokers-quant-live-u18308207-service",
-            "live-u18308207",
+            "interactive-brokers-quant-live-u00000003-service",
+            "live-u00000003",
             "global_etf_rotation",
             False,
         ),
@@ -1341,7 +1341,7 @@ def test_build_cloud_run_env_sync_plan_generates_live_gateway_deadlines() -> Non
 
     plan = json.loads(result.stdout)
     by_service = {target["service_name"]: target for target in plan["targets"]}
-    gateway_accounts = ("u15998061", "u16608560", "u18336562", "u18308207")
+    gateway_accounts = ("u00000001", "u00000002", "u00000004", "u00000003")
     for account in gateway_accounts:
         service_name = f"interactive-brokers-quant-live-{account}-service"
         assert by_service[service_name]["env"]["IBKR_EXECUTION_DEDUP_ENABLED"] == "true"
@@ -1378,7 +1378,7 @@ def test_build_cloud_run_env_sync_plan_pauses_reconcile_only_execution_schedule(
     plan = json.loads(result.stdout)
     by_service = {target["service_name"]: target for target in plan["targets"]}
     assert by_service[protected["service"]]["standard_execution_enabled"] is False
-    assert by_service["interactive-brokers-quant-live-u16608560-service"][
+    assert by_service["interactive-brokers-quant-live-u00000002-service"][
         "standard_execution_enabled"
     ] is True
 
@@ -1718,7 +1718,7 @@ def test_build_cloud_run_env_sync_plan_honors_explicit_dedup_override() -> None:
     plan = json.loads(result.stdout)
     by_service = {target["service_name"]: target for target in plan["targets"]}
     assert (
-        by_service["interactive-brokers-quant-live-u15998061-service"]["env"][
+        by_service["interactive-brokers-quant-live-u00000001-service"]["env"][
             "IBKR_EXECUTION_DEDUP_ENABLED"
         ]
         == "false"
@@ -1768,7 +1768,7 @@ def test_build_cloud_run_env_sync_plan_accepts_strategy_defined_gateway_schedule
     first_plan = next(
         target
         for target in plan["targets"]
-        if target["service_name"] == "interactive-brokers-quant-live-u15998061-service"
+        if target["service_name"] == "interactive-brokers-quant-live-u00000001-service"
     )
     assert first_plan["scheduler"] == {
         "timezone": "Asia/Hong_Kong",
