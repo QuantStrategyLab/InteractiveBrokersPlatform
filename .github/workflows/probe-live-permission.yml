@@ -128,11 +128,11 @@ jobs:
           set -euo pipefail
           for _ in $(seq 1 36); do
             result="$(gcloud logging read \
-              "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${SERVICE}\" AND timestamp>=\"${REQUESTED_AT}\" AND textPayload:\"ibkr_live_permission_probe_\"" \
+              "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${SERVICE}\" AND timestamp>=\"${REQUESTED_AT}\" AND (jsonPayload.event=\"ibkr_live_permission_probe_completed\" OR jsonPayload.event=\"ibkr_live_permission_probe_failed\")" \
               --project "$GCP_PROJECT_ID" --freshness=10m --limit=20 --format=json)"
             outcome="$(jq -r --arg sha "$JOB_SHA256" --arg revision "$EXPECTED_REVISION" '
               [.[] | select(.resource.labels.revision_name == $revision)
-                | (.textPayload? | fromjson? // empty)
+                | (.jsonPayload // empty)
                 | select(.scheduler_job_sha256 == $sha)
                 | select(.event == "ibkr_live_permission_probe_completed" or .event == "ibkr_live_permission_probe_failed")]
               | first // empty | .event // empty
