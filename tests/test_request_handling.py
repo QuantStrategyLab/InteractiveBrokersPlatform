@@ -1318,11 +1318,11 @@ def test_run_strategy_core_allows_multiple_runs_in_same_process(strategy_module,
     first = strategy_module.run_strategy_core()
     second = strategy_module.run_strategy_core()
 
-    assert first.result == "OK - no-op"
-    assert second.result == "OK - no-op"
+    assert first.result == "OK - heartbeat"
+    assert second.result == "OK - heartbeat"
     assert observed["connect_calls"] == 2
     assert observed["disconnect_calls"] == 2
-    assert observed["messages"] == []
+    assert len(observed["messages"]) == 2
 
 
 def test_send_tg_message_uses_cycle_channel_sender(strategy_module, monkeypatch):

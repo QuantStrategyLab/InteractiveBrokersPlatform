@@ -111,8 +111,8 @@ def _should_suppress_noop_notification(
     Suppress when:
     - Outside execution window (monthly/weekly cadence)
     - No orders placed, no errors, and no-trade cycle notifications are disabled
-    - No orders placed, no errors, and signal is idle/waiting
-    - Purely informational 'waiting for signal' runs
+    Waiting for a signal inside an authorized execution window is a completed
+    no-trade cycle when no-trade notifications are enabled.
     """
     metadata = signal_metadata if isinstance(signal_metadata, Mapping) else {}
     if order_count == 0 and not has_error and not notify_no_trade_cycles:
@@ -127,12 +127,6 @@ def _should_suppress_noop_notification(
             "status_monthly_snapshot_waiting_window",
             "status_no_execution_window_after_snapshot",
         }:
-            return True
-    # New: skip if nothing happened (no trades, no errors, idle signal)
-    if order_count == 0 and not has_error:
-        actionable = bool(metadata.get("actionable", True))
-        risk_flags = metadata.get("risk_flags") or ()
-        if not actionable and not risk_flags:
             return True
     return False
 

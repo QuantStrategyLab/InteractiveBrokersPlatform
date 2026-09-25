@@ -106,7 +106,7 @@ def test_runtime_composer_builds_runtime_and_config_from_local_builders():
     assert config.strategy_display_name == "全球 ETF 轮动"
     assert config.reconciliation_output_path == "/tmp/reconciliation.json"
     assert config.extra_notification_lines == ("plugin-line",)
-    assert config.notify_no_trade_cycles is False
+    assert config.notify_no_trade_cycles is True
     assert reporting_adapters == "reporting-adapters"
 
 
