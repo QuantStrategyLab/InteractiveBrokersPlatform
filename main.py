@@ -7,7 +7,7 @@ import os
 import re
 import threading
 import time
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -961,11 +961,26 @@ def build_request_log_context():
     )
 
 
+def _previous_market_session(run_date: date) -> pd.Timestamp:
+    import pandas_market_calendars as market_calendars
+
+    sessions = market_calendars.get_calendar(MARKET_CALENDAR).valid_days(
+        start_date=run_date - timedelta(days=14),
+        end_date=run_date - timedelta(days=1),
+    )
+    if len(sessions) == 0:
+        raise RuntimeError("IBKR previous completed market session is unavailable")
+    return pd.Timestamp(sessions[-1]).tz_localize(None).normalize()
+
+
 def resolve_run_as_of_date() -> pd.Timestamp:
     explicit = os.getenv("IBKR_RUN_AS_OF_DATE")
     if explicit:
         return pd.Timestamp(explicit).normalize()
-    return pd.Timestamp(datetime.now(NEW_YORK_TZ).date())
+    run_date = datetime.now(NEW_YORK_TZ).date()
+    if STRATEGY_PROFILE == "tqqq_growth_income" and RUNTIME_SETTINGS.execution_mode == "live":
+        return _previous_market_session(run_date)
+    return pd.Timestamp(run_date)
 
 
 def get_historical_close(ib, symbol, duration="2 Y", bar_size="1 day"):

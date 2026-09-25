@@ -262,6 +262,8 @@ def map_strategy_decision(
             "strategy_profile": canonical_profile,
             "account_ids": tuple(runtime_metadata.get("account_ids") or ()),
             "trade_date": runtime_metadata.get("trade_date"),
+            "signal_date": runtime_metadata.get("signal_date"),
+            "effective_date": runtime_metadata.get("effective_date"),
             "snapshot_as_of": runtime_metadata.get("snapshot_as_of"),
             "portfolio_equity": float(runtime_metadata.get("portfolio_total_equity") or 0.0),
             "targets": dict(target_weights or {}),

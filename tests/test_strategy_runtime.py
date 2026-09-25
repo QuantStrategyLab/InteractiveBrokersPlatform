@@ -1,7 +1,10 @@
 import sys
 from dataclasses import replace
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 QPK_SRC = ROOT.parent / "QuantPlatformKit" / "src"
@@ -206,6 +209,39 @@ def test_main_compute_signals_uses_strategy_runtime_decision(strategy_module, mo
     assert observed["pacing_sec"] == strategy_module.HIST_DATA_PACING_SEC
     assert observed["translator_sample"]
     assert callable(observed["historical_candle_loader"])
+
+
+@pytest.mark.parametrize(
+    ("run_date", "expected_session"),
+    [
+        (date(2026, 9, 25), "2026-09-24"),
+        (date(2026, 9, 28), "2026-09-25"),
+        (date(2026, 9, 8), "2026-09-04"),
+    ],
+)
+def test_tqqq_live_signal_uses_previous_completed_market_session(
+    strategy_module, monkeypatch, run_date, expected_session
+):
+    import pandas_market_calendars as market_calendars
+
+    class FakeCalendar:
+        def valid_days(self, *, start_date, end_date):
+            return strategy_module.pd.bdate_range(start_date, end_date).difference(
+                strategy_module.pd.DatetimeIndex(["2026-09-07"])
+            )
+
+    monkeypatch.setattr(market_calendars, "get_calendar", lambda name: FakeCalendar())
+    assert str(strategy_module._previous_market_session(run_date).date()) == expected_session
+
+
+def test_tqqq_effective_date_skips_exchange_holiday():
+    metadata = strategy_runtime_module._tqqq_execution_timing_metadata(
+        strategy_runtime_module.pd.Timestamp("2026-09-04"), "NYSE"
+    )
+
+    assert metadata["signal_date"] == "2026-09-04"
+    assert metadata["effective_date"] == "2026-09-08"
+    assert metadata["execution_calendar_source"] == "NYSE"
 
 
 def test_main_compute_signals_passes_strategy_plugin_signals_to_runtime(strategy_module, monkeypatch):
@@ -1218,10 +1254,11 @@ def test_value_target_runtime_builds_tqqq_inputs(monkeypatch):
         assert symbol == "QQQ"
         assert duration == "2 Y"
         assert bar_size == "1 day"
-        return [
-            {"close": 100.0, "high": 101.0, "low": 99.0}
-            for _ in range(220)
+        completed = [
+            {"as_of": day, "close": 100.0, "high": 101.0, "low": 99.0}
+            for day in strategy_runtime_module.pd.date_range(end="2026-04-01", periods=220)
         ]
+        return [*completed, {"as_of": "2026-04-02", "close": 999.0, "high": 999.0, "low": 999.0}]
 
     close_loader_symbols = []
 
@@ -1258,6 +1295,17 @@ def test_value_target_runtime_builds_tqqq_inputs(monkeypatch):
     assert close_loader_symbols == [("TQQQ", "10 D", "1 day"), ("BOXX", "10 D", "1 day")]
     assert result.metadata["price_fallback_source"] == "historical_close"
     assert result.metadata["price_fallbacks"] == {"TQQQ": 70.0, "BOXX": 105.0}
+
+    with pytest.raises(ValueError, match="completed benchmark history is unavailable"):
+        runtime._build_value_target_market_inputs(
+            ib="fake-ib",
+            historical_close_loader=fake_close_loader,
+            historical_candle_loader=lambda *_args, **_kwargs: [
+                {"as_of": "2026-03-31", "close": 100.0, "high": 101.0, "low": 99.0},
+                {"as_of": "2026-04-02", "close": 999.0, "high": 999.0, "low": 999.0},
+            ],
+            as_of=strategy_runtime_module.pd.Timestamp("2026-04-01"),
+        )
 
 
 def test_enrich_portfolio_metadata_includes_unrealized_pnl():

@@ -9,9 +9,10 @@ import tempfile
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from application.account_new_risk_gate_support import (
@@ -647,6 +648,8 @@ def _require_live_risk_authority(
         or authority.get("strategy_profile") != strategy_profile
         or _normalize_account_ids(authority.get("account_ids")) != _normalize_account_ids(account_ids)
         or authority.get("trade_date") != signal_metadata.get("trade_date")
+        or authority.get("signal_date") != signal_metadata.get("signal_date")
+        or authority.get("effective_date") != signal_metadata.get("effective_date")
         or authority.get("snapshot_as_of") != signal_metadata.get("snapshot_as_of")
         or not isinstance(authority.get("targets"), dict)
         or not isinstance(authority.get("max_target_values"), dict)
@@ -674,6 +677,18 @@ def _require_live_risk_authority(
         ):
             raise RuntimeError("IBKR live order limit is invalid")
     return {symbol: float(caps[symbol]) for symbol in targets}
+
+
+def _require_tqqq_effective_date(signal_metadata: dict[str, Any], *, strategy_profile: str | None) -> None:
+    if strategy_profile != "tqqq_growth_income":
+        return
+    raw_effective_date = signal_metadata.get("effective_date")
+    try:
+        effective_date = date.fromisoformat(raw_effective_date)
+    except (TypeError, ValueError):
+        raise RuntimeError("IBKR TQQQ execution requires a valid effective date") from None
+    if effective_date != datetime.now(ZoneInfo("America/New_York")).date():
+        raise RuntimeError("IBKR TQQQ signal is not effective for this trading date")
 
 
 def _normalize_option_order_intents(signal_metadata: dict[str, Any] | None) -> tuple[dict[str, Any], ...]:
@@ -1358,6 +1373,7 @@ def execute_rebalance(
 
         submit_order_intent = submit_claimed_order
     signal_metadata = signal_metadata or {}
+    _require_tqqq_effective_date(signal_metadata, strategy_profile=strategy_profile)
     allocation = _resolve_weight_allocation(signal_metadata)
     target_weights = dict(allocation["targets"])
     approved_target_caps = _require_live_risk_authority(
