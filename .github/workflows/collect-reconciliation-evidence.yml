@@ -14,6 +14,11 @@ on:
           - tqqq_growth_income
           - global_etf_rotation
           - russell_top50_leader_rotation
+      inspect_execution_ledger:
+        description: "Read only scoped execution-record types in the cloud runner; emit counts only."
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -68,6 +73,10 @@ jobs:
           else
             echo "selected=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Checkout for optional execution ledger diagnostic
+        if: ${{ steps.selection.outputs.selected == 'true' && inputs.inspect_execution_ledger }}
+        uses: actions/checkout@v6
 
       - name: Authenticate to Google Cloud
         if: ${{ steps.selection.outputs.selected == 'true' }}
@@ -360,3 +369,14 @@ jobs:
           path: source-records/${{ matrix.profile }}.json
           if-no-files-found: error
           retention-days: 30
+
+      - name: Summarize scoped execution record types
+        if: ${{ success() && steps.selection.outputs.selected == 'true' && inputs.inspect_execution_ledger }}
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: |
+          set -euo pipefail
+          python3 scripts/summarize_execution_ledger_cloud.py \
+            --service "$SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION"

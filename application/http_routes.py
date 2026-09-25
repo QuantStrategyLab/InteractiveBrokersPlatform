@@ -260,6 +260,16 @@ def _handle_reconciliation():
             permits_active_lkg=candidate.permits_active_lkg,
             blockers=[finding.value for finding in candidate.recovery_blockers],
             expected_digests_configured=candidate.expected_digests_configured,
+            comparison_status=(
+                "not_configured"
+                if not candidate.expected_digests_configured
+                else "matched" if candidate.permits_active_lkg else "blocked"
+            ),
+            account_identity_match=observations.account_identity_match,
+            positions_record_count=len(observations.positions),
+            cash_record_count=len(observations.cash),
+            open_orders_record_count=len(observations.open_orders),
+            recent_executions_record_count=len(observations.recent_executions),
             execution_ledger_records_count=candidate.execution_ledger_records_count,
         )
         return json.dumps(payload, ensure_ascii=False), 200, {"Content-Type": "application/json"}
