@@ -30,6 +30,8 @@ grep -Fq 'ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION: ${{ vars.ENABLE_MAIN_PUSH_CLOUD
 grep -Fq 'target:' "$workflow_file"
 grep -Fq 'default: hk-verify' "$workflow_file"
 grep -Fq 'INPUT_DEPLOY_IMAGE: ${{ inputs.deploy_image }}' "$workflow_file"
+grep -Fq '[ "${INPUT_DEPLOY_IMAGE:-true}" = "true" ]; }; then' "$workflow_file"
+grep -Fq '[ "${INPUT_SYNC_ENV:-true}" = "true" ]; }; then' "$workflow_file"
 grep -Fq 'INPUT_APPROVE_TRAFFIC_SHIFT: ${{ inputs.approve_traffic_shift }}' "$workflow_file"
 grep -Fq 'INPUT_APPROVE_SCHEDULER_SYNC: ${{ inputs.approve_scheduler_sync }}' "$workflow_file"
 grep -Fq 'Apply HK verify-only dispatch defaults' "$workflow_file"
