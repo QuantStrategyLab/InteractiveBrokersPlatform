@@ -16,6 +16,11 @@ on:
         options:
           - "true"
           - "false"
+      send_daily_dry_run_digest:
+        description: "Send the U183 daily drill digest on a manual run."
+        required: false
+        type: boolean
+        default: false
   schedule:
     - cron: "20 22 * * *"
 
@@ -108,3 +113,7 @@ jobs:
           sync-url: ${{ vars.EXECUTION_EVIDENCE_SYNC_URL }}
         env:
           EXECUTION_EVIDENCE_SYNC_TOKEN: ${{ secrets.EXECUTION_EVIDENCE_SYNC_TOKEN }}
+
+      - name: Send U183 daily dry-run digest
+        if: ${{ always() && (github.event_name == 'schedule' || inputs.send_daily_dry_run_digest) }}
+        run: uv run --no-sync python scripts/daily_dry_run_digest.py
