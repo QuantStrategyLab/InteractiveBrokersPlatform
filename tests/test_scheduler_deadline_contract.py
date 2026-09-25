@@ -51,10 +51,14 @@ def test_precheck_uses_per_service_scheduler_with_bounded_deadline() -> None:
     assert 'precheck_job_name="${cloud_run_service%-service}-precheck-scheduler"' in workflow
     assert 'precheck_uri="${service_url}/dry-run"' in workflow
     assert workflow.count("--attempt-deadline=180s") == 2
-    assert workflow.count("--max-retry-attempts=3") == 2
+    assert "precheck_retry_attempts=3" in workflow
+    assert "precheck_retry_attempts=0" in workflow
+    assert workflow.count('--max-retry-attempts="${precheck_retry_attempts}"') == 2
     assert workflow.count("--min-backoff=120s") == 2
     assert workflow.count("--max-backoff=300s") == 2
-    assert workflow.count("--max-retry-duration=900s") == 2
+    assert "precheck_retry_duration=900s" in workflow
+    assert "precheck_retry_duration=0s" in workflow
+    assert workflow.count('--max-retry-duration="${precheck_retry_duration}"') == 2
     assert workflow.count("--max-retry-attempts=0") == 0
     assert 'managed_scheduler_jobs=("${job_name}" "${warmup_job_name}" "${precheck_job_name}")' in workflow
     assert 'monitor_job_name="interactive-brokers-monitor-dispatcher-scheduler"' not in workflow
