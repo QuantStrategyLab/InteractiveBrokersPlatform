@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from typing import Any
 
@@ -17,6 +18,29 @@ from us_equity_strategies.cash_only_equity import resolve_strategy_equity_for_ta
 
 _EMERGENCY_FLAGS = frozenset({"emergency", "hard_defense"})
 _NO_EXECUTE_FLAGS = frozenset({"no_execute"})
+
+
+def _approved_target_values(
+    decision: StrategyDecision,
+    runtime_metadata: Mapping[str, Any],
+) -> dict[str, float]:
+    equity = float(runtime_metadata.get("portfolio_total_equity") or 0.0)
+    if not math.isfinite(equity) or equity <= 0.0:
+        raise ValueError("IBKR risk approval requires positive portfolio equity")
+    values: dict[str, float] = {}
+    for position in decision.positions:
+        symbol = str(position.symbol or "").strip().upper()
+        value = (
+            float(position.target_value)
+            if position.target_value is not None
+            else float(position.target_weight) * equity
+            if position.target_weight is not None
+            else float("nan")
+        )
+        if not symbol or symbol in values or not math.isfinite(value) or value < 0.0:
+            raise ValueError("IBKR risk approval has invalid target values")
+        values[symbol] = value
+    return values
 
 
 def _resolve_allocation_order(strategy_profile: str) -> str:
@@ -151,6 +175,11 @@ def map_strategy_decision(
     risk_flags = tuple(str(flag) for flag in decision.risk_flags)
     rejected_risk_flag = next((flag for flag in risk_flags if flag.startswith("rejected:")), None)
     risk_gate_rejected = str(diagnostics.get("risk_gate") or "").upper() == "REJECT" or rejected_risk_flag is not None
+    risk_gate_approved = (
+        diagnostics.get("risk_gate") == "APPROVE"
+        and "risk_gate:passed" in risk_flags
+        and not risk_gate_rejected
+    )
     no_execute = bool(_NO_EXECUTE_FLAGS & set(risk_flags)) or risk_gate_rejected
     if risk_gate_rejected:
         # Only the known public gate codes may reach execution reporting.
@@ -173,6 +202,10 @@ def map_strategy_decision(
         no_execute = True
         risk_flags = tuple(dict.fromkeys((*risk_flags, "no_execute")))
         diagnostics.setdefault("execution_blocked_reason", "empty_position_decision")
+    if not no_execute and not risk_gate_approved:
+        no_execute = True
+        risk_flags = tuple(dict.fromkeys((*risk_flags, "no_execute")))
+        diagnostics["execution_blocked_reason"] = "missing_risk_approval"
     total_equity_value = runtime_metadata.get("portfolio_total_equity")
     cash_only_execution = bool(runtime_metadata.get("cash_only_execution", True))
     if not no_execute and total_equity_value is not None:
@@ -211,6 +244,7 @@ def map_strategy_decision(
     is_emergency = bool(_EMERGENCY_FLAGS & set(risk_flags))
 
     metadata: dict[str, Any] = {**runtime_metadata, **diagnostics}
+    metadata["risk_gate"] = "APPROVE" if risk_gate_approved else "REJECT" if risk_gate_rejected else "UNVERIFIED"
     metadata.setdefault("strategy_profile", canonical_profile)
     metadata.setdefault("status_icon", "🐤")
     metadata.setdefault(
@@ -220,10 +254,22 @@ def map_strategy_decision(
     safe_haven_symbol = _derive_safe_haven_symbol(normalized_decision, runtime_metadata)
     if safe_haven_symbol:
         metadata.setdefault("safe_haven_symbol", safe_haven_symbol)
-    metadata.setdefault("risk_flags", risk_flags)
-    metadata.setdefault("actionable", not no_execute)
+    metadata["risk_flags"] = risk_flags
+    metadata["actionable"] = not no_execute
     if allocation_payload:
-        metadata.setdefault("allocation", allocation_payload)
+        metadata["allocation"] = allocation_payload
+        metadata["risk_authority"] = {
+            "strategy_profile": canonical_profile,
+            "account_ids": tuple(runtime_metadata.get("account_ids") or ()),
+            "trade_date": runtime_metadata.get("trade_date"),
+            "snapshot_as_of": runtime_metadata.get("snapshot_as_of"),
+            "portfolio_equity": float(runtime_metadata.get("portfolio_total_equity") or 0.0),
+            "targets": dict(target_weights or {}),
+            "max_target_values": _approved_target_values(decision, runtime_metadata),
+        }
+    else:
+        metadata.pop("allocation", None)
+        metadata.pop("risk_authority", None)
     execution_annotations = _derive_execution_annotations(diagnostics, runtime_metadata)
     if execution_annotations:
         metadata.setdefault("execution_annotations", execution_annotations)

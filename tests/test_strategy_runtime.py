@@ -169,11 +169,13 @@ def test_main_compute_signals_uses_strategy_runtime_decision(strategy_module, mo
                 (),
                 {
                     "decision": StrategyDecision(
+                        risk_flags=("risk_gate:passed",),
                         positions=(
                             PositionTarget(symbol="AAA", target_weight=0.8),
                             PositionTarget(symbol="BIL", target_weight=0.2, role="safe_haven"),
                         ),
                         diagnostics={
+                            "risk_gate": "APPROVE",
                             "signal_description": "rotation signal",
                             "status_description": "canary=ok",
                         },
@@ -183,6 +185,7 @@ def test_main_compute_signals_uses_strategy_runtime_decision(strategy_module, mo
                         "managed_symbols": ("AAA", "BIL"),
                         "status_icon": "🐤",
                         "dry_run_only": False,
+                        "portfolio_total_equity": 1000.0,
                     },
                 },
             )()
@@ -228,14 +231,16 @@ def test_main_compute_signals_passes_strategy_plugin_signals_to_runtime(strategy
                 (),
                 {
                     "decision": StrategyDecision(
+                        risk_flags=("risk_gate:passed",),
                         positions=(PositionTarget(symbol="BOXX", target_weight=1.0),),
-                        diagnostics={"signal_description": "defense", "status_description": "plugin-aware"},
+                        diagnostics={"risk_gate": "APPROVE", "signal_description": "defense", "status_description": "plugin-aware"},
                     ),
                     "metadata": {
                         "strategy_profile": "global_etf_rotation",
                         "managed_symbols": ("BOXX",),
                         "status_icon": "🐤",
                         "dry_run_only": False,
+                        "portfolio_total_equity": 1000.0,
                     },
                 },
             )()

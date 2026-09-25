@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import tempfile
 import time
 from collections.abc import Mapping
@@ -627,6 +628,52 @@ def _resolve_weight_allocation(signal_metadata: dict[str, Any] | None) -> dict[s
             for symbol, weight in dict(allocation.get("targets") or {}).items()
         },
     }
+
+
+def _require_live_risk_authority(
+    signal_metadata: dict[str, Any],
+    allocation: dict[str, Any],
+    *,
+    strategy_profile: str | None,
+    account_ids,
+) -> dict[str, float]:
+    """Bind the final order plan to the strategy decision approved by RiskEngine."""
+    authority = signal_metadata.get("risk_authority")
+    flags = signal_metadata.get("risk_flags") or ()
+    if (
+        signal_metadata.get("risk_gate") != "APPROVE"
+        or "risk_gate:passed" not in flags
+        or not isinstance(authority, dict)
+        or authority.get("strategy_profile") != strategy_profile
+        or _normalize_account_ids(authority.get("account_ids")) != _normalize_account_ids(account_ids)
+        or authority.get("trade_date") != signal_metadata.get("trade_date")
+        or authority.get("snapshot_as_of") != signal_metadata.get("snapshot_as_of")
+        or not isinstance(authority.get("targets"), dict)
+        or not isinstance(authority.get("max_target_values"), dict)
+    ):
+        raise RuntimeError("IBKR live execution requires a valid RiskEngine approval")
+    targets = allocation["targets"]
+    approved_targets = authority["targets"]
+    caps = authority["max_target_values"]
+    equity = authority.get("portfolio_equity")
+    if type(equity) not in (int, float) or not math.isfinite(equity) or equity <= 0.0:
+        raise RuntimeError("IBKR live RiskEngine portfolio equity is invalid")
+    if set(targets) != set(approved_targets) or set(targets) != set(caps):
+        raise RuntimeError("IBKR live allocation differs from RiskEngine approval")
+    for symbol, target in targets.items():
+        approved = approved_targets[symbol]
+        cap = caps[symbol]
+        if (
+            type(approved) not in (int, float)
+            or not math.isfinite(approved)
+            or not math.isclose(target, approved, rel_tol=0.0, abs_tol=1e-9)
+            or type(cap) not in (int, float)
+            or not math.isfinite(cap)
+            or cap < 0.0
+            or not math.isclose(cap, approved * equity, rel_tol=1e-8, abs_tol=0.01)
+        ):
+            raise RuntimeError("IBKR live order limit is invalid")
+    return {symbol: float(caps[symbol]) for symbol in targets}
 
 
 def _normalize_option_order_intents(signal_metadata: dict[str, Any] | None) -> tuple[dict[str, Any], ...]:
@@ -1313,9 +1360,17 @@ def execute_rebalance(
     signal_metadata = signal_metadata or {}
     allocation = _resolve_weight_allocation(signal_metadata)
     target_weights = dict(allocation["targets"])
+    approved_target_caps = _require_live_risk_authority(
+        signal_metadata,
+        allocation,
+        strategy_profile=strategy_profile,
+        account_ids=account_ids,
+    )
     option_order_intents = _normalize_option_order_intents(signal_metadata)
     option_underliers = _option_intent_underliers(option_order_intents)
     has_executable_option_plan = _has_executable_option_plan(option_order_intents)
+    if has_executable_option_plan:
+        raise RuntimeError("IBKR live option intents lack final RiskEngine order limits")
     strategy_symbols = tuple(allocation["strategy_symbols"])
     trade_date = str(signal_metadata.get("trade_date") or "").strip() or None
     snapshot_date = _normalize_date_like(signal_metadata.get("snapshot_as_of"))
@@ -1550,7 +1605,11 @@ def execute_rebalance(
         quantity_step=order_quantity_step,
         cash_substitute_limit_usd=SMALL_ACCOUNT_SAFE_HAVEN_CASH_SUBSTITUTE_LIMIT_USD,
     )
-    target_mv = small_account_compatibility.targets
+    target_mv = dict(small_account_compatibility.targets)
+    for symbol, value in target_mv.items():
+        cap = approved_target_caps.get(symbol)
+        if cap is None or not math.isfinite(float(value)) or float(value) > cap + 0.01:
+            raise RuntimeError("IBKR target exceeds RiskEngine order limit")
     small_account_substituted_symbols = small_account_compatibility.whole_share_substituted_symbols
     for symbol in small_account_substituted_symbols:
         target_weights[symbol] = 0.0
@@ -1977,6 +2036,16 @@ def execute_rebalance(
         else:
             continue
 
+        held_quantity = float(positions.get(symbol, {}).get("quantity", 0.0) or 0.0)
+        if (
+            symbol not in allocation["strategy_symbols"]
+            or not math.isfinite(float(qty))
+            or float(qty) <= 0.0
+            or float(qty) > held_quantity + 1e-9
+            or not math.isfinite(float(price))
+            or float(price) <= 0.0
+        ):
+            raise RuntimeError("IBKR live sell exceeds approved position or has invalid pricing")
         if dry_run_only:
             execution_summary["orders_submitted"].append(
                 {"symbol": symbol, "side": "sell", "quantity": qty, "status": "dry_run"}
@@ -2154,6 +2223,16 @@ def execute_rebalance(
                 execution_summary["skipped_reasons"].append(f"insufficient_buying_power:{symbol}")
                 continue
 
+            remaining_approved = approved_target_caps[symbol] - float(current_mv.get(symbol, 0.0) or 0.0)
+            if (
+                symbol not in allocation["strategy_symbols"]
+                or not math.isfinite(float(qty))
+                or not math.isfinite(float(limit_price))
+                or float(qty) <= 0.0
+                or float(limit_price) <= 0.0
+                or order_cost > remaining_approved + 1e-6
+            ):
+                raise RuntimeError("IBKR live buy exceeds the approved RiskEngine order limit")
             if dry_run_only:
                 execution_summary["orders_submitted"].append(
                     {

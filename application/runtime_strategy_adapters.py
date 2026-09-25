@@ -238,10 +238,14 @@ class IBKRRuntimeStrategyAdapters:
         if strategy_plugin_signals:
             evaluate_kwargs["strategy_plugin_signals"] = tuple(strategy_plugin_signals or ())
         evaluation = self.strategy_runtime.evaluate(**evaluate_kwargs)
+        runtime_settings = getattr(self.strategy_runtime, "runtime_settings", None)
+        metadata = dict(evaluation.metadata)
+        if runtime_settings is not None:
+            metadata["account_ids"] = tuple(getattr(runtime_settings, "account_ids", ()) or ())
         return self.map_strategy_decision_fn(
             evaluation.decision,
             strategy_profile=self.strategy_profile,
-            runtime_metadata=evaluation.metadata,
+            runtime_metadata=metadata,
         )
 
 
