@@ -234,6 +234,23 @@ def test_tqqq_live_signal_uses_previous_completed_market_session(
     assert str(strategy_module._previous_market_session(run_date).date()) == expected_session
 
 
+def test_tqqq_live_as_of_uses_runtime_target_execution_mode(strategy_module, monkeypatch):
+    monkeypatch.delenv("IBKR_RUN_AS_OF_DATE", raising=False)
+    monkeypatch.setattr(strategy_module, "STRATEGY_PROFILE", "tqqq_growth_income")
+    monkeypatch.setattr(
+        strategy_module,
+        "RUNTIME_SETTINGS",
+        SimpleNamespace(runtime_target=SimpleNamespace(execution_mode="live")),
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "_previous_market_session",
+        lambda _run_date: strategy_module.pd.Timestamp("2026-09-24"),
+    )
+
+    assert str(strategy_module.resolve_run_as_of_date().date()) == "2026-09-24"
+
+
 def test_tqqq_effective_date_skips_exchange_holiday():
     metadata = strategy_runtime_module._tqqq_execution_timing_metadata(
         strategy_runtime_module.pd.Timestamp("2026-09-04"), "NYSE"

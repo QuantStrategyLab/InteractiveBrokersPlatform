@@ -978,7 +978,11 @@ def resolve_run_as_of_date() -> pd.Timestamp:
     if explicit:
         return pd.Timestamp(explicit).normalize()
     run_date = datetime.now(NEW_YORK_TZ).date()
-    if STRATEGY_PROFILE == "tqqq_growth_income" and RUNTIME_SETTINGS.execution_mode == "live":
+    if (
+        STRATEGY_PROFILE == "tqqq_growth_income"
+        and RUNTIME_SETTINGS.runtime_target is not None
+        and RUNTIME_SETTINGS.runtime_target.execution_mode == "live"
+    ):
         return _previous_market_session(run_date)
     return pd.Timestamp(run_date)
 
