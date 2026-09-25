@@ -12,6 +12,7 @@ from quant_platform_kit.common.execution_state import ExecutionMarkerStore
 
 from application.rebalance_service import (
     _resolve_reconciliation_mode,
+    _should_suppress_noop_notification,
     _should_record_execution_marker,
     _strategy_dashboard_text,
     run_strategy_core,
@@ -23,6 +24,16 @@ from notifications.renderers import (
     render_trade_notification,
 )
 from notifications.telegram import build_translator
+
+
+def test_no_trade_heartbeat_respects_window_and_notification_policy():
+    idle = {"actionable": False, "risk_flags": ()}
+    assert not _should_suppress_noop_notification(idle, order_count=0, notify_no_trade_cycles=True)
+    assert _should_suppress_noop_notification(idle, order_count=0, notify_no_trade_cycles=False)
+    assert _should_suppress_noop_notification(
+        {"no_op_reason": "outside_execution_window"}, order_count=0,
+        notify_no_trade_cycles=True,
+    )
 
 
 def _weight_allocation(targets, *, risk_symbols=(), income_symbols=(), safe_haven_symbols=()):
