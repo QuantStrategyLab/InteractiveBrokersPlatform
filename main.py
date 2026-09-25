@@ -121,6 +121,7 @@ from application.http_routes import (
     _handle_monitor_dispatch,
     _handle_probe,
     _handle_reconciliation,
+    _handle_live_permission_probe,
     health_impl,
 )
 
@@ -1893,6 +1894,11 @@ def handle_reconciliation():
         _handle_reconciliation,
         route_label="broker-reconciliation",
     )
+
+
+@app.route("/live-permission-probe", methods=["POST"])
+def handle_live_permission_probe():
+    return _handle_live_permission_probe()
 
 
 @app.route("/monitor-dispatch", methods=["POST", "GET"])

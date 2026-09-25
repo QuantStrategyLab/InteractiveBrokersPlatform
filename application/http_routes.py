@@ -22,12 +22,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import sys
 import traceback
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
 
 from flask import request
+from google.api_core.exceptions import PreconditionFailed
+from google.cloud import storage
 
 
 class _MainModuleProxy:
@@ -53,8 +59,15 @@ class _MainModuleProxy:
 main = _MainModuleProxy()
 
 
+class _SilentWhatIfLogger(logging.LoggerAdapter):
+    """Keep the broker's raw margin/account error text out of Cloud Logging."""
+
+    def log(self, level, msg, *args, **kwargs) -> None:
+        return
+
+
 _SCHEDULER_JOB_NAME_PATTERN = re.compile(
-    r"(?:projects/[A-Za-z0-9-]+/locations/[A-Za-z0-9-]+/jobs/[A-Za-z0-9_-]+|ibkr-reconcile-[A-Za-z0-9_-]+)"
+    r"(?:projects/[A-Za-z0-9-]+/locations/[A-Za-z0-9-]+/jobs/[A-Za-z0-9_-]+|ibkr-(?:reconcile|permission)-[A-Za-z0-9_-]+)"
 )
 
 
@@ -185,6 +198,114 @@ def _scheduler_job_identity_sha256() -> str | None:
     # Cloud Scheduler sends the short job ID in this header, while its API returns the full resource name.
     job_id = normalized.rsplit("/", 1)[-1]
     return hashlib.sha256(job_id.encode("utf-8")).hexdigest()
+
+
+def _claim_permission_probe(scheduler_job_sha256: str) -> bool:
+    """Persist a one-time probe identity before opening an order-capable session."""
+
+    parsed = urlsplit(os.getenv("EXECUTION_REPORT_GCS_URI") or "")
+    if parsed.scheme != "gs" or not parsed.netloc or parsed.query or parsed.fragment:
+        raise ValueError("permission probe requires a private cloud report store")
+    object_name = "/".join(part for part in (
+        parsed.path.strip("/"),
+        "permission-probes",
+        str(main.SERVICE_NAME or os.getenv("K_SERVICE") or "unknown-service"),
+        f"{scheduler_job_sha256}.json",
+    ) if part)
+    blob = storage.Client(project=main.PROJECT_ID).bucket(parsed.netloc).blob(object_name)
+    try:
+        blob.upload_from_string(
+            json.dumps({"schema_version": "ibkr_permission_probe_claim.v1", "job_sha256": scheduler_job_sha256}),
+            content_type="application/json",
+            if_generation_match=0,
+        )
+    except PreconditionFailed:
+        return False
+    return True
+
+
+def _permission_probe_request_is_fresh() -> bool:
+    raw_expiry = request.headers.get("X-QSL-Permission-Probe-Expires-At")
+    if not isinstance(raw_expiry, str):
+        return False
+    try:
+        expires_at = datetime.fromisoformat(raw_expiry.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    now = datetime.now(timezone.utc)
+    return expires_at.tzinfo is not None and now < expires_at <= now + timedelta(minutes=20)
+
+
+def _handle_live_permission_probe():
+    """Check the live Gateway's non-transmitting what-if path while trading is disabled."""
+
+    scheduler_job_sha256 = _scheduler_job_identity_sha256()
+    if scheduler_job_sha256 is None:
+        return "Error", 400
+    if not _permission_probe_request_is_fresh():
+        return "Error", 409
+    settings = main.RUNTIME_SETTINGS
+    target = settings.runtime_target
+    if (
+        target is None
+        or settings.runtime_target_enabled
+        or settings.dry_run_only
+        or str(settings.ib_gateway_mode).strip().lower() != "live"
+        or str(target.execution_mode).strip().lower() != "live"
+        or len(main.ACCOUNT_IDS) != 1
+    ):
+        return "Error", 409
+
+    ib = None
+    try:
+        main.require_gateway_execution_backend()
+        if not _claim_permission_probe(scheduler_job_sha256):
+            print(json.dumps({
+                "event": "ibkr_live_permission_probe_failed",
+                "scheduler_job_sha256": scheduler_job_sha256,
+                "error_type": "DuplicateRequest",
+            }), flush=True)
+            return "Error", 409
+        adapters = replace(main.build_broker_adapters(), connect_attempts=1)
+        ib = adapters.connect_ib(
+            validate_trading_permissions=False,
+            redact_connection_diagnostics=True,
+        )
+        wrapper = getattr(ib, "wrapper", None)
+        original_logger = getattr(wrapper, "_logger", None)
+        if not isinstance(original_logger, logging.Logger):
+            raise RuntimeError("IBKR what-if broker log redaction is unavailable")
+        scoped_logger = _SilentWhatIfLogger(original_logger, {})
+        wrapper._logger = scoped_logger
+        try:
+            adapters.validate_trading_permissions(ib)
+        finally:
+            if getattr(wrapper, "_logger", None) is scoped_logger:
+                wrapper._logger = original_logger
+        ib.disconnect()
+        ib = None
+        print(json.dumps({
+            "event": "ibkr_live_permission_probe_completed",
+            "scheduler_job_sha256": scheduler_job_sha256,
+            "what_if_access_verified": True,
+        }), flush=True)
+        return json.dumps({"what_if_access_verified": True}), 200, {"Content-Type": "application/json"}
+    except Exception as exc:
+        print(json.dumps({
+            "event": "ibkr_live_permission_probe_failed",
+            "scheduler_job_sha256": scheduler_job_sha256,
+            "error_type": type(exc).__name__,
+        }), flush=True)
+        return "Error", 503
+    finally:
+        if ib is not None:
+            try:
+                ib.disconnect()
+            except Exception:
+                print(json.dumps({
+                    "event": "ibkr_live_permission_probe_disconnect_failed",
+                    "scheduler_job_sha256": scheduler_job_sha256,
+                }), flush=True)
 
 
 def _handle_reconciliation():

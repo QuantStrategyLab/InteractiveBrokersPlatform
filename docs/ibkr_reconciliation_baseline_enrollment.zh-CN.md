@@ -7,6 +7,19 @@
 未决订单与旧执行标记，再按现有禁止提交完整周期和启用条件判断；
 不能为了套用本流程而先改写既有基线状态。
 
+对这类停用中的既有实盘目标，可先手动运行 `Inspect Historical IBKR Execution`，
+指定目标与旧标记对应的 UTC 日期。它只在云端读取该目标的私有运行报告，输出
+日期、周期状态、提交数量和已存在的成交确认类别；不输出订单、账户金额或原始报告。
+`submitted/not_observed`、缺失回执或缺失报告仍需进一步核对，摘要不能自动批准恢复。
+
+`Probe IBKR Live API Permission` 仅允许 `ACTIVE_LKG`、当前交易开关关闭、
+`IBKR_FORCE_RUN=false` 的单一 live 目标。它以一次性 Scheduler 身份调用内部
+`/live-permission-probe`，在私有云存储先原子认领本次请求，再使用当前实盘
+Gateway 配置验证账户和券商 `what-if` 写入口，随后断开连接；不会运行策略或提交订单。
+同一请求不重试；原始券商报错在探针期间不写入日志。失败、重复、连接释放失败、
+目标配置或运行版本漂移均不得据此启用实盘。成功也只证明这个 API 写入口，
+不证明每个标的的交易许可、资金足够或旧订单已结清。
+
 ## 独立券商报表来源（接入中，默认不启用）
 
 `application.ibkr_flex_source` 仅提供 IBKR 官方 Flex Web Service v3 的一次性、只读
