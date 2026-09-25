@@ -156,6 +156,9 @@ def _target_status(target: DrillTarget, day: dt.date) -> str:
         attempted_at = _timestamp(precheck.get("lastAttemptTime"))
         if attempted_at is None or attempted_at.astimezone(TIMEZONE).date() != day:
             return "⚠️ 今日定时演练尚未触发"
+        scheduled_at = dt.datetime.combine(day, dt.time(hour=9, minute=45), TIMEZONE)
+        if attempted_at < scheduled_at.astimezone(dt.timezone.utc) - dt.timedelta(minutes=5):
+            return "⚠️ 今日定时演练尚未触发"
         if (precheck.get("status") or {}).get("code") not in (None, 0):
             return "⚠️ 今日定时演练请求失败"
         reports = _today_reports(target, day)
