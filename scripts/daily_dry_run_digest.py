@@ -64,7 +64,11 @@ def _job(job_name: str) -> dict:
 
 
 def _report_time(report: dict) -> dt.datetime | None:
-    raw = str(report.get("started_at") or "").strip()
+    return _timestamp(report.get("started_at"))
+
+
+def _timestamp(raw_value: object) -> dt.datetime | None:
+    raw = str(raw_value or "").strip()
     try:
         value = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError:
@@ -149,10 +153,24 @@ def _target_status(target: DrillTarget, day: dt.date) -> str:
             != "ibkr-platform-scheduler@interactivebrokersquant.iam.gserviceaccount.com"
         ):
             return "⚠️ 演练任务未指向 /dry-run"
+        attempted_at = _timestamp(precheck.get("lastAttemptTime"))
+        if attempted_at is None or attempted_at.astimezone(TIMEZONE).date() != day:
+            return "⚠️ 今日定时演练尚未触发"
+        if (precheck.get("status") or {}).get("code") not in (None, 0):
+            return "⚠️ 今日定时演练请求失败"
         reports = _today_reports(target, day)
         if not reports:
             return "⚠️ 今日未找到演练报告，结果未验证"
-        report = reports[0]
+        report = next(
+            (
+                item for item in reports
+                if (started := _report_time(item)) is not None
+                and abs((started - attempted_at).total_seconds()) <= 600
+            ),
+            None,
+        )
+        if report is None:
+            return "⚠️ 定时请求与演练报告无法对应，结果未验证"
         if report.get("dry_run") is not True:
             return "⚠️ 最新报告不是 dry run，结果未验证"
         status = str(report.get("status") or "").lower()
