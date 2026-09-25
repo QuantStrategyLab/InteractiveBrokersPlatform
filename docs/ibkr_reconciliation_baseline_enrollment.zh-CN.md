@@ -1,5 +1,25 @@
 # IBKR 旧实盘基线：审核材料生成
 
+## 独立券商报表来源（接入中，默认不启用）
+
+`application.ibkr_flex_source` 仅提供 IBKR 官方 Flex Web Service v3 的一次性、只读
+XML Activity 报表获取和账户范围校验。它固定访问 IBKR 的 SendRequest/GetStatement，
+不跟随响应中的 URL 或 HTTP 重定向；令牌只从受限调用方传入，不写日志、命令参数、
+文件或候选回执。请求失败和报表尚未生成时不自动重试。报表原文只在内存中返回，
+不能保存到本机或公开 artifact。
+
+U166 首次旧账接管仍须在券商门户由所属用户名创建 XML Activity Flex Query，覆盖
+期末持仓、结算现金、成交、现金变动及相关公司行动，并启用 Flex Web Service。访问令牌
+应由用户在门户生成后存入该目标的私有 Secret Manager，Query ID 可作为目标配置；
+不要把令牌发到聊天、GitHub secret、仓库变量或命令行。当前生产项目尚无这两项配置，
+本模块未接入 `/reconcile` 或启用交易。
+门户配置参见 [IBKR Flex Web Service 官方说明](https://www.interactivebrokers.com/docs/web-api/flex-web-service/client-portal-configuration)。
+
+Flex 报表与 Gateway 当前状态是两份不同的券商视图，但报表摘要本身仍不是内部订单/现金
+账本，也不包含可靠的全部当前挂单。首次需要核对报表覆盖期、账户、期初/期末持仓与
+现金、成交、公司行动及内部订单结果，形成不可覆盖的人工确认基线；之后再用增量账本
+计算预期。缺任一材料时保持 `RECONCILE_ONLY`/停用，不把 observed 自动复制为 expected。
+
 `scripts/build_reconciliation_baseline_candidate.py` 处理一份或更多私有、已脱敏的
 `/reconcile` 回应。调用方同时显式提供已保存的 source records 和独立核验的
 `SourceReceiptExpectation`。现有 record/expectation 字段逐项一致、evidence 成员精确对应
