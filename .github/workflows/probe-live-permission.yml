@@ -100,9 +100,15 @@ jobs:
           fi
           echo "job_name=$job_name" >> "$GITHUB_OUTPUT"
           expires_at="$(date -u -d '+15 minutes' '+%Y-%m-%dT%H:%M:%SZ')"
+          delay_minutes=1
+          if [ "$(date -u +%S)" -ge 45 ]; then
+            delay_minutes=2
+          fi
+          schedule="$(date -u -d "+${delay_minutes} minutes" '+%-M %-H %-d %-m *')"
+          echo "requested_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           gcloud scheduler jobs create http "$job_name" \
             --project "$GCP_PROJECT_ID" --location "$REGION" \
-            --schedule '0 0 1 1 *' --time-zone 'Etc/UTC' \
+            --schedule "$schedule" --time-zone 'Etc/UTC' \
             --uri "${SERVICE_URL}/live-permission-probe" --http-method POST \
             --headers "X-QSL-Permission-Probe-Expires-At=${expires_at}" \
             --oidc-service-account-email "$GCP_SCHEDULER_SERVICE_ACCOUNT" \
@@ -110,8 +116,6 @@ jobs:
             --attempt-deadline '60s' --max-retry-attempts=0 --max-retry-duration=0s \
             --quiet >/dev/null
           echo "job_sha256=$(printf '%s' "$job_name" | sha256sum | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-          echo "requested_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-          gcloud scheduler jobs run "$job_name" --project "$GCP_PROJECT_ID" --location "$REGION" --quiet >/dev/null
 
       - name: Read only the scoped safe probe outcome
         env:
@@ -122,7 +126,7 @@ jobs:
           REQUESTED_AT: ${{ steps.scheduler.outputs.requested_at }}
         run: |
           set -euo pipefail
-          for _ in $(seq 1 18); do
+          for _ in $(seq 1 36); do
             result="$(gcloud logging read \
               "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${SERVICE}\" AND timestamp>=\"${REQUESTED_AT}\" AND textPayload:\"ibkr_live_permission_probe_\"" \
               --project "$GCP_PROJECT_ID" --freshness=10m --limit=20 --format=json)"
