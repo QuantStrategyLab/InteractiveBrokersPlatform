@@ -1,0 +1,164 @@
+name: Probe IBKR Live API Permission
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Disabled live target whose what-if API access will be checked once."
+        required: true
+        type: choice
+        options:
+          - tqqq_growth_income
+          - soxl_soxx_trend_income
+          - global_etf_rotation
+          - russell_top50_leader_rotation
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: interactivebrokersquant
+  GCP_WORKLOAD_IDENTITY_PROVIDER: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
+  GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com
+  GCP_SCHEDULER_SERVICE_ACCOUNT: ibkr-platform-scheduler@interactivebrokersquant.iam.gserviceaccount.com
+
+concurrency:
+  group: ibkr-live-permission-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Select validated target
+        id: target
+        env:
+          REQUESTED_TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          target="$(jq -cer --arg id "$REQUESTED_TARGET" '
+            [.targets[] | select(.id == $id and .execution_mode == "live" and .include_reconciliation == true)]
+            | if length == 1 then .[0] else error("target is not a unique live target") end
+          ' config/runtime_targets.manifest.json)"
+          echo "service=$(jq -r .service <<< "$target")" >> "$GITHUB_OUTPUT"
+          echo "region=$(jq -r .region <<< "$target")" >> "$GITHUB_OUTPUT"
+
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Verify disabled live target and resolve internal URL
+        id: service
+        env:
+          SERVICE: ${{ steps.target.outputs.service }}
+          REGION: ${{ steps.target.outputs.region }}
+          PROFILE: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          service_json="$(gcloud run services describe "$SERVICE" --project "$GCP_PROJECT_ID" --region "$REGION" --format=json)"
+          revision="$(jq -er '.status.latestReadyRevisionName | select(type == "string" and length > 0)' <<< "$service_json")"
+          jq -e --arg revision "$revision" '
+            .status.traffic | length == 1 and .[0].percent == 100 and .[0].revisionName == $revision
+          ' <<< "$service_json" >/dev/null
+          revision_json="$(gcloud run revisions describe "$revision" --project "$GCP_PROJECT_ID" --region "$REGION" --format=json)"
+          jq -e --arg profile "$PROFILE" '
+            (.spec.containers[0].env | map({key:.name,value:(.value // "")}) | from_entries) as $env
+            | ($env.RUNTIME_TARGET_JSON | fromjson) as $target
+            | $env.RUNTIME_TARGET_ENABLED == "false"
+              and $env.IBKR_DRY_RUN_ONLY == "false"
+              and $env.IBKR_FORCE_RUN == "false"
+              and $env.STRATEGY_PROFILE == $profile
+              and $target.strategy_profile == $profile
+              and $target.execution_mode == "live"
+              and $target.live_continuity.state == "ACTIVE_LKG"
+          ' <<< "$revision_json" >/dev/null
+          service_url="$(jq -er '.status.url | select(type == "string" and length > 0)' <<< "$service_json")"
+          echo "service_url=$service_url" >> "$GITHUB_OUTPUT"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+
+      - name: Schedule exactly one non-transmitting what-if probe
+        id: scheduler
+        env:
+          SERVICE_URL: ${{ steps.service.outputs.service_url }}
+          REGION: ${{ steps.target.outputs.region }}
+          PROFILE: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          job_name="ibkr-permission-${PROFILE}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          full_name="projects/${GCP_PROJECT_ID}/locations/${REGION}/jobs/${job_name}"
+          scheduler_jobs="$(gcloud scheduler jobs list --project "$GCP_PROJECT_ID" --location "$REGION" --format=json)"
+          if jq -e --arg name "$full_name" '[.[] | select(.name == $name)] | length > 0' <<< "$scheduler_jobs" >/dev/null; then
+            echo "Refusing to reuse an existing permission probe job" >&2
+            exit 1
+          fi
+          echo "job_name=$job_name" >> "$GITHUB_OUTPUT"
+          expires_at="$(date -u -d '+15 minutes' '+%Y-%m-%dT%H:%M:%SZ')"
+          gcloud scheduler jobs create http "$job_name" \
+            --project "$GCP_PROJECT_ID" --location "$REGION" \
+            --schedule '0 0 1 1 *' --time-zone 'Etc/UTC' \
+            --uri "${SERVICE_URL}/live-permission-probe" --http-method POST \
+            --headers "X-QSL-Permission-Probe-Expires-At=${expires_at}" \
+            --oidc-service-account-email "$GCP_SCHEDULER_SERVICE_ACCOUNT" \
+            --oidc-token-audience "$SERVICE_URL" \
+            --attempt-deadline '60s' --max-retry-attempts=0 --max-retry-duration=0s \
+            --quiet >/dev/null
+          echo "job_sha256=$(printf '%s' "$job_name" | sha256sum | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "requested_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          gcloud scheduler jobs run "$job_name" --project "$GCP_PROJECT_ID" --location "$REGION" --quiet >/dev/null
+
+      - name: Read only the scoped safe probe outcome
+        env:
+          SERVICE: ${{ steps.target.outputs.service }}
+          REGION: ${{ steps.target.outputs.region }}
+          EXPECTED_REVISION: ${{ steps.service.outputs.revision }}
+          JOB_SHA256: ${{ steps.scheduler.outputs.job_sha256 }}
+          REQUESTED_AT: ${{ steps.scheduler.outputs.requested_at }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 18); do
+            result="$(gcloud logging read \
+              "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${SERVICE}\" AND timestamp>=\"${REQUESTED_AT}\" AND textPayload:\"ibkr_live_permission_probe_\"" \
+              --project "$GCP_PROJECT_ID" --freshness=10m --limit=20 --format=json)"
+            outcome="$(jq -r --arg sha "$JOB_SHA256" --arg revision "$EXPECTED_REVISION" '
+              [.[] | select(.resource.labels.revision_name == $revision)
+                | (.textPayload? | fromjson? // empty)
+                | select(.scheduler_job_sha256 == $sha)
+                | select(.event == "ibkr_live_permission_probe_completed" or .event == "ibkr_live_permission_probe_failed")]
+              | first // empty | .event // empty
+            ' <<< "$result")"
+            if [ "$outcome" = "ibkr_live_permission_probe_completed" ]; then
+              current_service="$(gcloud run services describe "$SERVICE" --project "$GCP_PROJECT_ID" --region "$REGION" --format=json)"
+              jq -e --arg revision "$EXPECTED_REVISION" '
+                .status.latestReadyRevisionName == $revision
+                and (.status.traffic | length == 1 and .[0].percent == 100 and .[0].revisionName == $revision)
+              ' <<< "$current_service" >/dev/null
+              echo 'What-if access verified; no strategy cycle or broker order was submitted.'
+              exit 0
+            fi
+            if [ "$outcome" = "ibkr_live_permission_probe_failed" ]; then
+              echo 'What-if access could not be verified; live activation remains blocked.' >&2
+              exit 1
+            fi
+            sleep 5
+          done
+          echo 'What-if probe outcome unavailable; live activation remains blocked.' >&2
+          exit 1
+
+      - name: Delete temporary Scheduler job
+        if: ${{ always() && steps.scheduler.outputs.job_name != '' }}
+        env:
+          JOB_NAME: ${{ steps.scheduler.outputs.job_name }}
+          REGION: ${{ steps.target.outputs.region }}
+        run: |
+          set -euo pipefail
+          gcloud scheduler jobs delete "$JOB_NAME" --project "$GCP_PROJECT_ID" --location "$REGION" --quiet >/dev/null
+          full_name="projects/${GCP_PROJECT_ID}/locations/${REGION}/jobs/${JOB_NAME}"
+          scheduler_jobs="$(gcloud scheduler jobs list --project "$GCP_PROJECT_ID" --location "$REGION" --format=json)"
+          jq -e --arg name "$full_name" '[.[] | select(.name == $name)] | length == 0' <<< "$scheduler_jobs" >/dev/null

@@ -1,10 +1,14 @@
 import hashlib
 import json
+import logging
 import types
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 import application.execution_receipt_adapter as execution_receipt_adapter
+import application.http_routes as http_routes
 from application.cycle_result import StrategyCycleResult
 
 
@@ -25,6 +29,15 @@ def route_methods(strategy_module):
     }
 
 
+def permission_probe_headers():
+    return {
+        "X-CloudScheduler-JobName": "ibkr-permission-probe-123",
+        "X-QSL-Permission-Probe-Expires-At": (
+            datetime.now(timezone.utc) + timedelta(minutes=10)
+        ).isoformat(),
+    }
+
+
 def test_cloud_run_route_contracts_are_registered(strategy_module):
     assert route_methods(strategy_module) == {
         "/run": ["POST"],
@@ -32,6 +45,7 @@ def test_cloud_run_route_contracts_are_registered(strategy_module):
         "/paper-command-consumer": ["POST"],
         "/probe": ["POST"],
         "/reconcile": ["POST"],
+        "/live-permission-probe": ["POST"],
         "/monitor-dispatch": ["GET", "POST"],
         "/health": ["GET"],
         "/healthz": ["GET"],
@@ -1613,6 +1627,133 @@ def test_handle_reconciliation_rejects_missing_scheduler_identity_before_broker_
 
     assert (body, response_code) == ("Error", 400)
     assert broker_connection_attempts == []
+
+
+def test_live_permission_probe_is_single_attempt_and_never_runs_strategy(strategy_module, monkeypatch):
+    observed = {"attempts": None, "disconnects": 0, "validations": 0}
+    logger = logging.getLogger("test-ibkr-permission-probe")
+    wrapper = types.SimpleNamespace(_logger=logger)
+
+    @dataclass
+    class FakeAdapters:
+        connect_attempts: int = 3
+
+        def connect_ib(self, **kwargs):
+            observed["attempts"] = self.connect_attempts
+            assert kwargs == {
+                "validate_trading_permissions": False,
+                "redact_connection_diagnostics": True,
+            }
+            return types.SimpleNamespace(
+                wrapper=wrapper,
+                disconnect=lambda: observed.__setitem__("disconnects", 1),
+            )
+
+        def validate_trading_permissions(self, _ib):
+            observed["validations"] += 1
+            assert wrapper._logger is not logger
+
+    monkeypatch.setattr(strategy_module, "RUNTIME_SETTINGS", types.SimpleNamespace(
+        runtime_target=types.SimpleNamespace(execution_mode="live"),
+        runtime_target_enabled=False,
+        dry_run_only=False,
+        ib_gateway_mode="live",
+    ))
+    monkeypatch.setattr(strategy_module, "ACCOUNT_IDS", ("U1234567",))
+    monkeypatch.setattr(strategy_module, "require_gateway_execution_backend", lambda: None)
+    monkeypatch.setattr(strategy_module, "build_broker_adapters", lambda: FakeAdapters())
+    monkeypatch.setattr(http_routes, "_claim_permission_probe", lambda _sha: True)
+    monkeypatch.setattr(strategy_module, "run_strategy_core", lambda **_kwargs: pytest.fail("strategy must not run"))
+
+    response = strategy_module.app.test_client().post(
+        "/live-permission-probe",
+        headers=permission_probe_headers(),
+    )
+
+    assert response.status_code == 200
+    assert response.json == {"what_if_access_verified": True}
+    assert observed == {"attempts": 1, "disconnects": 1, "validations": 1}
+    assert wrapper._logger is logger
+
+
+def test_live_permission_probe_requires_disabled_target_and_scheduler_identity(strategy_module, monkeypatch):
+    monkeypatch.setattr(strategy_module, "build_broker_adapters", lambda: pytest.fail("must not connect"))
+    monkeypatch.setattr(http_routes, "_claim_permission_probe", lambda _sha: pytest.fail("must not claim"))
+    monkeypatch.setattr(strategy_module, "RUNTIME_SETTINGS", types.SimpleNamespace(
+        runtime_target=types.SimpleNamespace(execution_mode="live"),
+        runtime_target_enabled=True,
+        dry_run_only=False,
+        ib_gateway_mode="live",
+    ))
+    monkeypatch.setattr(strategy_module, "ACCOUNT_IDS", ("U1234567",))
+
+    client = strategy_module.app.test_client()
+    assert client.post("/live-permission-probe").status_code == 400
+    assert client.post(
+        "/live-permission-probe",
+        headers={
+            "X-CloudScheduler-JobName": "ibkr-permission-probe-123",
+            "X-QSL-Permission-Probe-Expires-At": "2020-01-01T00:00:00Z",
+        },
+    ).status_code == 409
+    assert client.post(
+        "/live-permission-probe",
+        headers=permission_probe_headers(),
+    ).status_code == 409
+
+
+def test_live_permission_probe_duplicate_claim_cannot_reopen_gateway(strategy_module, monkeypatch):
+    monkeypatch.setattr(strategy_module, "RUNTIME_SETTINGS", types.SimpleNamespace(
+        runtime_target=types.SimpleNamespace(execution_mode="live"),
+        runtime_target_enabled=False,
+        dry_run_only=False,
+        ib_gateway_mode="live",
+    ))
+    monkeypatch.setattr(strategy_module, "ACCOUNT_IDS", ("U1234567",))
+    monkeypatch.setattr(strategy_module, "require_gateway_execution_backend", lambda: None)
+    monkeypatch.setattr(http_routes, "_claim_permission_probe", lambda _sha: False)
+    monkeypatch.setattr(strategy_module, "build_broker_adapters", lambda: pytest.fail("must not connect"))
+
+    response = strategy_module.app.test_client().post(
+        "/live-permission-probe",
+        headers=permission_probe_headers(),
+    )
+    assert response.status_code == 409
+
+
+def test_live_permission_probe_disconnect_failure_cannot_report_success(strategy_module, monkeypatch, capsys):
+    @dataclass
+    class FakeAdapters:
+        connect_attempts: int = 3
+
+        def connect_ib(self, **_kwargs):
+            return types.SimpleNamespace(
+                wrapper=types.SimpleNamespace(_logger=logging.getLogger("test-permission-disconnect")),
+                disconnect=lambda: (_ for _ in ()).throw(RuntimeError("private-detail")),
+            )
+
+        def validate_trading_permissions(self, _ib):
+            return None
+
+    monkeypatch.setattr(strategy_module, "RUNTIME_SETTINGS", types.SimpleNamespace(
+        runtime_target=types.SimpleNamespace(execution_mode="live"),
+        runtime_target_enabled=False,
+        dry_run_only=False,
+        ib_gateway_mode="live",
+    ))
+    monkeypatch.setattr(strategy_module, "ACCOUNT_IDS", ("U1234567",))
+    monkeypatch.setattr(strategy_module, "require_gateway_execution_backend", lambda: None)
+    monkeypatch.setattr(http_routes, "_claim_permission_probe", lambda _sha: True)
+    monkeypatch.setattr(strategy_module, "build_broker_adapters", lambda: FakeAdapters())
+
+    response = strategy_module.app.test_client().post(
+        "/live-permission-probe",
+        headers=permission_probe_headers(),
+    )
+    assert response.status_code == 503
+    output = capsys.readouterr().out
+    assert "ibkr_live_permission_probe_completed" not in output
+    assert "private-detail" not in output
 
 
 @pytest.mark.parametrize(

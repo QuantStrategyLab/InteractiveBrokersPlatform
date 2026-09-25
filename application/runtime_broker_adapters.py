@@ -129,6 +129,10 @@ class IBKRRuntimeBrokerAdapters:
             ib.RaiseRequestErrors = True
             ib.RequestTimeout = self.connect_timeout_seconds
             probe_result = permission_probe(ib)
+            if probe_result is None:
+                raise IBKRTradingPermissionError(
+                    "IB Gateway what-if permission probe returned no broker response."
+                )
             probe_warning = getattr(probe_result, "warningText", "")
             if read_only_errors or is_read_only_error(probe_warning):
                 raise IBKRTradingPermissionError(
@@ -147,7 +151,7 @@ class IBKRRuntimeBrokerAdapters:
                 ) from exc
             raise
         except Exception as exc:
-            if is_read_only_error(exc):
+            if read_only_errors or is_read_only_error(exc):
                 raise IBKRTradingPermissionError(
                     "IB Gateway API is in Read-Only mode; live execution is disabled."
                 ) from exc
@@ -185,7 +189,7 @@ class IBKRRuntimeBrokerAdapters:
             if redact_connection_diagnostics:
                 self.printer(
                     "Connecting to IB gateway "
-                    f"(read_only=true, attempt={attempt}/{self.connect_attempts})",
+                    f"(connection_details_redacted=true, attempt={attempt}/{self.connect_attempts})",
                     flush=True,
                 )
             else:

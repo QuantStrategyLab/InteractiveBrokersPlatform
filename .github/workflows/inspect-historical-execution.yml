@@ -1,0 +1,68 @@
+name: Inspect Historical IBKR Execution
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Configured live runtime target to inspect."
+        required: true
+        type: choice
+        options:
+          - tqqq_growth_income
+          - soxl_soxx_trend_income
+          - global_etf_rotation
+          - russell_top50_leader_rotation
+      dates:
+        description: "Space-separated UTC dates (YYYY-MM-DD), maximum seven."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: interactivebrokersquant
+  GCP_WORKLOAD_IDENTITY_PROVIDER: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
+  GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Select validated target
+        id: target
+        env:
+          REQUESTED_TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          target="$(jq -cer --arg id "$REQUESTED_TARGET" '
+            [.targets[] | select(.id == $id and .execution_mode == "live" and .include_reconciliation == true)]
+            | if length == 1 then .[0] else error("target is not a unique live target") end
+          ' config/runtime_targets.manifest.json)"
+          echo "service=$(jq -r .service <<< "$target")" >> "$GITHUB_OUTPUT"
+          echo "region=$(jq -r .region <<< "$target")" >> "$GITHUB_OUTPUT"
+
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Summarize selected private reports without order details
+        env:
+          SERVICE: ${{ steps.target.outputs.service }}
+          REGION: ${{ steps.target.outputs.region }}
+          DATES: ${{ inputs.dates }}
+        run: |
+          set -euo pipefail
+          read -r -a selected_dates <<< "$DATES"
+          python3 scripts/summarize_historical_execution_cloud.py \
+            --service "$SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$REGION" \
+            --dates "${selected_dates[@]}"

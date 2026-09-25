@@ -396,6 +396,25 @@ def test_connect_ib_does_not_misclassify_unrelated_321_as_read_only():
     assert adapters.connect_ib().managedAccounts() == ["U1234567"]
 
 
+def test_connect_ib_rejects_empty_what_if_response():
+    disconnected = []
+    ib = SimpleNamespace(
+        managedAccounts=lambda: ["U1234567"],
+        whatIfOrder=lambda *_args: None,
+        disconnect=lambda: disconnected.append(True),
+        RaiseRequestErrors=False,
+        RequestTimeout=0,
+    )
+    adapters = _build_adapters(account_ids=("U1234567",), execution_mode="live")
+    adapters = adapters.__class__(
+        **{**adapters.__dict__, "connect_ib_fn": lambda *_args, **_kwargs: ib}
+    )
+
+    with pytest.raises(IBKRTradingPermissionError, match="could not verify"):
+        adapters.connect_ib()
+    assert disconnected == [True]
+
+
 def test_connect_ib_skips_trading_permission_probe_for_dry_run():
     class FakeIB:
         def managedAccounts(self):
