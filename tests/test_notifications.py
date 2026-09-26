@@ -3,24 +3,62 @@ from notifications.telegram import build_strategy_display_name, build_translator
 from strategy_registry import SUPPORTED_STRATEGY_PROFILES
 
 
-def test_no_trade_heartbeat_labels_verified_account_values_in_both_languages():
+def test_no_trade_heartbeat_compact_copy_keeps_only_verified_account_equity():
     from datetime import datetime, timezone
 
     snapshot = {
         "currency": "USD", "available_cash": 100.0, "net_assets": 2500.0,
         "observed_at": datetime(2026, 9, 25, 14, 0, tzinfo=timezone.utc),
     }
-    for language, cash, equity in (
-        ("zh", "可用现金: USD 100.00", "账户总权益: USD 2,500.00"),
-        ("en", "Available cash: USD 100.00", "Total account equity: USD 2,500.00"),
+    for language, cash, equity, observed_label in (
+        ("zh", "可用现金: USD 100.00", "账户总权益: USD 2,500.00", "账户观察时间"),
+        ("en", "Available cash: USD 100.00", "Total account equity: USD 2,500.00", "Account observed"),
     ):
         rendered = render_heartbeat_notification(
             dashboard="", strategy_dashboard="", no_op_text="no trades",
             signal_desc="", status_desc="", status_icon="", translator=build_translator(language),
             separator="---", strategy_display_name="Example", account_snapshot=snapshot,
         )
-        assert cash in rendered.compact_text
+        assert cash not in rendered.compact_text
         assert equity in rendered.compact_text
+        assert observed_label not in rendered.compact_text
+
+
+def test_no_trade_heartbeat_keeps_nonzero_holdings_and_omits_noise():
+    from datetime import datetime, timezone
+
+    rendered = render_heartbeat_notification(
+        dashboard="full detailed dashboard",
+        strategy_dashboard=(
+            "📌 策略账户概览\n"
+            "  - 总资产（策略净值）: $572.66\n"
+            "  - 购买力: $572.66\n"
+            "💼 策略持仓\n  - QQQM: $306.26 / 1股"
+        ),
+        no_op_text="✅ 无需调仓",
+        signal_desc="QQQ above MA200",
+        status_desc="risk on",
+        status_icon="🚀",
+        translator=build_translator("zh"),
+        separator="━━━━━━━━━━━━━━━━━━",
+        strategy_display_name="纳斯达克增长收益",
+        extra_notification_lines=("🧩 插件：市场状态控制",),
+        account_snapshot={
+            "currency": "USD",
+            "available_cash": 572.66,
+            "net_assets": 572.66,
+            "observed_at": datetime(2026, 9, 25, 19, 45, tzinfo=timezone.utc),
+        },
+    )
+
+    assert rendered.compact_text == (
+        "💓 【心跳检测】\n"
+        "🧭 策略: 纳斯达克增长收益\n"
+        "💰 账户总权益: USD 572.66\n"
+        "💼 持仓\n"
+        "- QQQM: $306.26 / 1股\n"
+        "✅ 无需调仓"
+    )
 
 
 def test_build_translator_supports_chinese():
