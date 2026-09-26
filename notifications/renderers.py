@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from datetime import datetime
 import math
 
+from notifications.compact_adapter import adapt_compact_sections
 from notifications.events import RenderedNotification
 from quant_platform_kit.common.quantity import format_quantity
 from quant_platform_kit.common.notification_localization import (
@@ -291,6 +292,19 @@ def _build_notification_trade_lines(
     lines: list[str] = []
     execution_summary = dict(execution_summary or {})
 
+    order_fields = (
+        "orders_submitted",
+        "orders_pending",
+        "orders_filled",
+        "orders_partially_filled",
+        "orders_skipped",
+        "option_orders_submitted",
+        "option_orders_pending",
+        "option_orders_filled",
+        "option_orders_partially_filled",
+        "option_orders_skipped",
+    )
+    has_order_activity = any(execution_summary.get(field) for field in order_fields)
     no_op_reason = str(execution_summary.get("no_op_reason") or "").strip()
     if no_op_reason.startswith("same_day_execution_locked:"):
         lines.append(
@@ -301,29 +315,13 @@ def _build_notification_trade_lines(
                 snapshot_date=_format_text(execution_summary.get("snapshot_as_of"), fallback="<none>"),
             )
         )
-    elif no_op_reason:
+    elif no_op_reason and not has_order_activity:
         lines.append(
             translator(
                 "no_order_plan_reason",
                 reason=_localize_notification_text(f"reason={no_op_reason}", translator=translator),
             )
         )
-
-    fallback_symbols = tuple(execution_summary.get("snapshot_price_fallback_symbols") or ())
-    if execution_summary.get("snapshot_price_fallback_used") and fallback_symbols:
-        lines.append(
-            translator(
-                "dry_run_snapshot_prices"
-                if execution_summary.get("mode") == "dry_run"
-                else "price_fallback_prices",
-                count=len(fallback_symbols),
-                symbols=_format_symbol_preview(fallback_symbols),
-            )
-        )
-
-    target_change_summary = _summarize_target_changes(execution_summary.get("target_vs_current"))
-    if target_change_summary:
-        lines.append(translator("target_diff_summary", details=target_change_summary))
 
     lines.extend(_build_order_batch_lines(execution_summary, translator=translator))
 
@@ -332,6 +330,8 @@ def _build_notification_trade_lines(
         if not text:
             continue
         if text.startswith(("目标差异 ", "target_diff ", "DRY_RUN buy ", "DRY_RUN sell ")):
+            continue
+        if text.startswith(("ℹ️", "📏")):
             continue
         if text.startswith(("🧪 dry-run估价:", "🧪 dry-run pricing:")):
             continue
@@ -576,29 +576,49 @@ def _build_compact_message(
     dashboard_text: str = "",
     extra_notification_lines=(),
     include_dashboard: bool = False,
+    account_equity_line: str = "",
+    supplemental_lines=(),
 ) -> str:
-    """Minimal notification: account → positions → trades. No signal math, no timing."""
+    """Minimal user notification: strategy, total assets, and cycle/order result."""
     lines = [title]
     strategy_name = _format_text(strategy_display_name, fallback="<unknown>")
-    lines.append(f"{strategy_name}")
-    extra = _extra_notification_lines(extra_notification_lines)
-    if extra:
-        lines.append(" | ".join(str(e).strip() for e in extra if str(e).strip()))
-    lines.append(separator)
-    # Positions
-    dashboard = _format_compact_dashboard_text(dashboard_text)
-    if dashboard:
-        lines.extend(dashboard.splitlines())
-        lines.append(separator)
-    # Trades
+    lines.append(translator("strategy_label", name=strategy_name))
+    total_assets_line = account_equity_line or _compact_total_assets_line(dashboard_text)
+    if total_assets_line:
+        lines.append(total_assets_line)
+    lines.extend(
+        adapt_compact_sections(
+            dashboard_text,
+            locale="zh" if _translator_uses_zh(translator) else "en",
+            supplemental_lines=supplemental_lines,
+        )
+    )
     compact_body = [str(line).strip() for line in body_lines or () if str(line).strip()]
     if compact_body:
         lines.extend(compact_body)
-        lines.append(separator)
     else:
         lines.append(translator("no_trades"))
-        lines.append(separator)
     return "\n".join(lines)
+
+
+def _compact_total_assets_line(dashboard_text: str) -> str:
+    labels = (
+        "总资产",
+        "账户总权益",
+        "净值",
+        "total assets",
+        "total account equity",
+        "net assets",
+        "net value",
+        "equity",
+    )
+    for raw_line in str(dashboard_text or "").splitlines():
+        for segment in raw_line.split(" | "):
+            line = segment.strip().lstrip("- ").strip()
+            lowered = line.lower()
+            if any(label in lowered for label in labels) and ":" in line:
+                return line if line.startswith("💰") else f"💰 {line}"
+    return ""
 
 
 def render_heartbeat_notification(
@@ -614,6 +634,7 @@ def render_heartbeat_notification(
     strategy_display_name,
     extra_notification_lines=(),
     account_snapshot=None,
+    compact_supplemental_lines=(),
 ) -> RenderedNotification:
     extra_lines = _extra_notification_lines(extra_notification_lines)
     snapshot = account_snapshot if isinstance(account_snapshot, Mapping) else {}
@@ -621,6 +642,7 @@ def render_heartbeat_notification(
     observed_at = snapshot.get("observed_at")
     observed_at = observed_at.isoformat() if isinstance(observed_at, datetime) else str(observed_at or "").strip()
     amount_lines = []
+    account_equity_line = ""
     verified = False
     for field, label in (("available_cash", "heartbeat_available_cash"), ("net_assets", "heartbeat_account_equity")):
         amount = snapshot.get(field)
@@ -630,7 +652,13 @@ def render_heartbeat_notification(
             and (field != "net_assets" or amount > 0)
         )
         verified = verified or valid
-        amount_lines.append(translator(label, value=f"{currency} {amount:,.2f}" if valid else translator("heartbeat_unverified")))
+        rendered_amount = translator(
+            label,
+            value=f"{currency} {amount:,.2f}" if valid else translator("heartbeat_unverified"),
+        )
+        amount_lines.append(rendered_amount)
+        if field == "net_assets" and valid:
+            account_equity_line = rendered_amount
     if verified:
         amount_lines.append(translator("heartbeat_observed_at", value=observed_at))
     detailed_parts = [translator("heartbeat_title"), *extra_lines, *amount_lines, dashboard, separator, no_op_text]
@@ -643,10 +671,12 @@ def render_heartbeat_notification(
         status_icon=status_icon,
         translator=translator,
         separator=separator,
-        body_lines=[*amount_lines, no_op_text],
+        body_lines=[no_op_text],
         dashboard_text=strategy_dashboard,
         extra_notification_lines=extra_lines,
         include_dashboard=True,
+        account_equity_line=account_equity_line,
+        supplemental_lines=compact_supplemental_lines,
     )
     return RenderedNotification(detailed_text=detailed_text, compact_text=compact_text)
 
@@ -711,6 +741,7 @@ def render_trade_notification(
             dashboard_text=strategy_dashboard,
             extra_notification_lines=extra_lines,
             include_dashboard=True,
+            supplemental_lines=execution_summary.get("compact_supplemental_lines", ()),
         )
         return RenderedNotification(detailed_text=detailed_text, compact_text=compact_text)
 
@@ -728,5 +759,6 @@ def render_trade_notification(
         dashboard_text=strategy_dashboard,
         extra_notification_lines=extra_lines,
         include_dashboard=True,
+        supplemental_lines=execution_summary.get("compact_supplemental_lines", ()),
     )
     return RenderedNotification(detailed_text=detailed_text, compact_text=compact_text)
