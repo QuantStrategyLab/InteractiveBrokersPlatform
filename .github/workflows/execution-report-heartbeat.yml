@@ -21,6 +21,14 @@ on:
         required: false
         type: boolean
         default: false
+      account_facts_target:
+        description: "Publish one fresh archived account-facts report for the selected target."
+        required: false
+        type: choice
+        default: disabled
+        options:
+          - disabled
+          - live-u16608560
   schedule:
     - cron: "20 22 * * *"
 
@@ -113,6 +121,16 @@ jobs:
           sync-url: ${{ vars.EXECUTION_EVIDENCE_SYNC_URL }}
         env:
           EXECUTION_EVIDENCE_SYNC_TOKEN: ${{ secrets.EXECUTION_EVIDENCE_SYNC_TOKEN }}
+
+      - name: Publish one fresh IBKR account-facts report
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.account_facts_target == 'live-u16608560' }}
+        env:
+          IBKR_ACCOUNT_FACTS_TARGET: ${{ inputs.account_facts_target }}
+          IBKR_ACCOUNT_FACTS_REPORT_PREFIX: gs://qsl-runtime-logs-shared/execution-reports/interactive_brokers/tqqq_growth_income/live-u16608560
+          IBKR_ACCOUNT_FACTS_RUNTIME_REVISION: ${{ vars.IBKR_ACCOUNT_FACTS_RUNTIME_REVISION }}
+          IBKR_ACCOUNT_FACTS_SYNC_URL: ${{ vars.IBKR_ACCOUNT_FACTS_SYNC_URL }}
+          IBKR_ACCOUNT_FACTS_SYNC_TOKEN: ${{ secrets.IBKR_ACCOUNT_FACTS_SYNC_TOKEN }}
+        run: uv run --no-sync python scripts/publish_account_facts_from_report.py
 
       - name: Send configured daily dry-run digest
         if: ${{ always() && (github.event_name == 'schedule' || inputs.send_daily_dry_run_digest) }}
