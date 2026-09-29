@@ -2,7 +2,7 @@ import hashlib
 import json
 import logging
 import types
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -907,6 +907,17 @@ def test_execution_report_prefers_configured_managed_symbols_without_ranking_poo
 
 def test_handle_request_enriches_runtime_report_with_cycle_details(strategy_module_factory, monkeypatch):
     strategy_module = strategy_module_factory(IBKR_DRY_RUN_ONLY="false")
+    monkeypatch.setattr(
+        strategy_module,
+        "RUNTIME_SETTINGS",
+        replace(
+            strategy_module.RUNTIME_SETTINGS,
+            runtime_target=replace(
+                strategy_module.RUNTIME_SETTINGS.runtime_target,
+                account_selector=("DU123",),
+            ),
+        ),
+    )
     observed = {}
 
     monkeypatch.setattr(strategy_module, "build_run_id", lambda: "run-001")
@@ -915,6 +926,7 @@ def test_handle_request_enriches_runtime_report_with_cycle_details(strategy_modu
     def fake_run_strategy_core(**_kwargs):
         return StrategyCycleResult(
             result="OK - executed",
+            account_facts={"schema_version": "ibkr_account_snapshot.v1", "account_ids": ["DU123"]},
             execution_summary={
                 "execution_status": "executed",
                 "orders_submitted": [{"symbol": "AAA"}],
@@ -940,6 +952,9 @@ def test_handle_request_enriches_runtime_report_with_cycle_details(strategy_modu
     assert status == 200
     assert body == "OK - executed"
     assert observed["report"]["summary"]["execution_status"] == "executed"
+    assert observed["report"]["summary"]["account_facts"] == {
+        "schema_version": "ibkr_account_snapshot.v1", "account_ids": ["DU123"]
+    }
     assert observed["report"]["summary"]["orders_submitted_count"] == 1
     assert observed["report"]["summary"]["orders_previewed_count"] == 0
     assert observed["report"]["summary"]["dry_run_order_preview_available"] is False
@@ -948,6 +963,24 @@ def test_handle_request_enriches_runtime_report_with_cycle_details(strategy_modu
     assert observed["report"]["diagnostics"]["price_source_mode"] == "mixed_market_quote_snapshot_close"
     assert observed["report"]["diagnostics"]["snapshot_price_fallback_symbols"] == ["AAA"]
     assert observed["report"]["artifacts"]["reconciliation_record_path"] == "/tmp/reconciliation.json"
+
+
+def test_cycle_report_omits_unbound_account_facts(strategy_module_factory, monkeypatch):
+    strategy_module = strategy_module_factory(IBKR_DRY_RUN_ONLY="false")
+    result = StrategyCycleResult(result="OK", account_facts={"account_ids": ["DU123"]})
+    monkeypatch.setattr(
+        strategy_module,
+        "RUNTIME_SETTINGS",
+        replace(
+            strategy_module.RUNTIME_SETTINGS,
+            runtime_target=replace(
+                strategy_module.RUNTIME_SETTINGS.runtime_target,
+                account_selector=("DU456",),
+            ),
+        ),
+    )
+    summary = strategy_module._build_cycle_report_summary(result, {}, {}, dry_run=False)
+    assert "account_facts" not in summary
 
 
 def test_handle_request_marks_blocked_cycle_as_report_error_without_http_retry(

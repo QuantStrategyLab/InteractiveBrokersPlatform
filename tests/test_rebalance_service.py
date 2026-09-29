@@ -18,7 +18,7 @@ from application.rebalance_service import (
     _strategy_dashboard_text,
     run_strategy_core,
 )
-from application.runtime_dependencies import IBKRRebalanceConfig
+from application.runtime_dependencies import IBKRRebalanceConfig, IBKRRebalanceRuntime
 from notifications.renderers import (
     _build_notification_trade_lines,
     build_dashboard,
@@ -529,6 +529,88 @@ def test_run_strategy_core_writes_reconciliation_record(tmp_path):
     assert "target_changes AAA +60.0%" not in observed["messages"][0]
     assert "DRY_RUN buy AAA 1 @100.00" not in observed["messages"][0]
     assert "目标差异" not in observed["messages"][0]
+
+
+@pytest.mark.parametrize("return_path", ["no_signal", "already_recorded", "executed"])
+def test_account_facts_use_the_single_cycle_snapshot_on_each_return_path(return_path):
+    from datetime import datetime, timezone
+
+    snapshot_calls = []
+    snapshot = SimpleNamespace(
+        as_of=datetime(2026, 9, 30, 12, tzinfo=timezone.utc),
+        positions=(),
+        total_equity=900.0,
+        buying_power=100.0,
+        metadata={
+            "account_ids": ("U16608560",),
+            "cash_balances": ({
+                "account_id": "U16608560",
+                "currency": "USD",
+                "CashBalance": 100,
+                "NetLiquidation": 1000,
+            },),
+            "total_equity_source": "broker_net_liquidation",
+            "broker_net_liquidation": 1000,
+        },
+    )
+
+    class FakeIB:
+        def isConnected(self):
+            return True
+
+        def disconnect(self):
+            return None
+
+    class PortfolioPort:
+        def get_portfolio_snapshot(self):
+            snapshot_calls.append(snapshot)
+            return snapshot
+
+    marker_store = Mock(has_marker=Mock(return_value=return_path == "already_recorded"))
+    execution_calls = []
+    metadata = {
+        "strategy_profile": "tqqq_growth_income",
+        "managed_symbols": ("AAA", "BIL"),
+        "trade_date": "2026-09-30",
+        "effective_date": "2026-10-01",
+        "execution_timing_contract": "next_trading_day",
+        "dry_run_only": False,
+        "allocation": _weight_allocation(
+            {"AAA": 0.5, "BIL": 0.5}, risk_symbols=("AAA",), safe_haven_symbols=("BIL",)
+        ),
+    }
+
+    def compute_signals(_ib, _holdings):
+        if return_path == "no_signal":
+            return None, "waiting", False, "waiting", {"strategy_profile": "tqqq_growth_income"}
+        return {"AAA": 0.5, "BIL": 0.5}, "signal", False, "status", metadata
+
+    runtime = IBKRRebalanceRuntime(
+        connect_ib=FakeIB,
+        portfolio_port_factory=lambda _ib: PortfolioPort(),
+        compute_signals=compute_signals,
+        execute_rebalance=lambda *_args, **_kwargs: execution_calls.append("called") or [],
+        notifications=SimpleNamespace(send_text=lambda _text: None),
+    )
+    result = run_strategy_core(
+        runtime=runtime,
+        config=IBKRRebalanceConfig(
+            translator=_build_test_translator(),
+            separator="---",
+            strategy_profile="tqqq_growth_income",
+            execution_dedup_enabled=return_path == "already_recorded",
+            execution_state_store=marker_store if return_path == "already_recorded" else None,
+            notify_no_trade_cycles=False,
+        ),
+    )
+
+    assert result.account_facts["account_ids"] == ["U16608560"]
+    assert result.account_facts["net_assets"] == "1000"
+    assert result.account_facts["cash"] == [
+        {"currency": "USD", "cash_balance": "100", "source_tag": "CashBalance"}
+    ]
+    assert len(snapshot_calls) == 1
+    assert execution_calls == ([] if return_path in {"no_signal", "already_recorded"} else ["called"])
 
 
 def test_run_strategy_core_persists_risk_block_without_execution_or_claim(tmp_path):

@@ -8,6 +8,7 @@ import json
 import re
 
 from application.cycle_result import StrategyCycleResult
+from application.account_facts import build_ibkr_account_facts
 from application.runtime_dependencies import IBKRRebalanceConfig, IBKRRebalanceRuntime
 from application.reconciliation_service import (
     build_reconciliation_record,
@@ -1066,6 +1067,7 @@ def run_strategy_core(
                 execution_summary=dict(blocked_summary or {}),
                 reconciliation_record=dict(record),
                 reconciliation_record_path=str(record_path),
+                account_facts=build_ibkr_account_facts(snapshot),
             )
 
         execution_marker_key = _build_execution_marker_key(config=config, signal_metadata=signal_metadata)
@@ -1155,6 +1157,7 @@ def run_strategy_core(
                 execution_summary={"action_done": False, "no_op_reason": "execution_already_recorded"},
                 reconciliation_record=dict(record),
                 reconciliation_record_path=str(record_path),
+                account_facts=build_ibkr_account_facts(snapshot),
             )
 
         execution_claim_attempted = False
@@ -1309,6 +1312,7 @@ def run_strategy_core(
             execution_summary=dict(execution_summary or {}),
             reconciliation_record=dict(record),
             reconciliation_record_path=str(record_path),
+            account_facts=build_ibkr_account_facts(snapshot),
         )
     finally:
         if ib is not None and ib.isConnected():

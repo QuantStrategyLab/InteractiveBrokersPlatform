@@ -16,6 +16,7 @@ class StrategyCycleResult:
     execution_summary: dict[str, Any] = field(default_factory=dict)
     reconciliation_record: dict[str, Any] = field(default_factory=dict)
     reconciliation_record_path: str | None = None
+    account_facts: dict[str, Any] = field(default_factory=dict)
 
 
 def coerce_strategy_cycle_result(value: StrategyCycleResult | str) -> StrategyCycleResult:
