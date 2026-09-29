@@ -291,6 +291,7 @@ gcloud storage buckets add-iam-policy-binding "gs://run-sources-${PROJECT_ID}-${
 
 5. **通过受保护的部署 workflow 触发同步或镜像发布**
    - 标准路径是 `Deploy Cloud Run` workflow；`configured` 必须提供精确的 `configured_service`，禁止默认扫全部 inventory。
+   - `workflow_dispatch` 必须从 `refs/heads/main` 调用可信 workflow。可选 `source_commit` 仅接受本仓库已存在的完整 40 位 SHA；未传时沿用 workflow SHA。镜像构建使用单独检出的源码，并以实际源码 SHA 标记镜像、revision 与部署读回。workflow 自身仍由 GitHub 的 main ref admission 约束，不更换 WIF provider。
    - 镜像发布与 env 同步默认 `--no-traffic`：只准备候选 revision，不改当前流量。
    - 只更新已批准目标的镜像时，明确设置 `deploy_image=true`、`sync_env=false`；只同步配置则设置 `deploy_image=false`、`sync_env=true`。两项仍受仓库级部署/同步开关约束，且必须指定精确 `configured_service`。这样通知等纯代码发布不会顺带改 Secret、运行开关或 Scheduler。
    - `approve_traffic_shift` / `approve_scheduler_sync` 默认 `false`；显式打开后才切流量或启停 Scheduler，并做读回失败停止。

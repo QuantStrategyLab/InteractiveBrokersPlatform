@@ -15,6 +15,10 @@ on:
         description: "Exact inventory service_name required for configured target."
         required: false
         type: string
+      source_commit:
+        description: "Full commit SHA from this repository to build when dispatching an image deployment."
+        required: false
+        type: string
       cloud_run_region:
         description: "Cloud Run region for hk-verify. Leave blank to use repository/environment variables."
         required: false
@@ -85,6 +89,8 @@ jobs:
       CLOUD_RUN_CLEANUP_ENABLED: ${{ vars.CLOUD_RUN_CLEANUP_ENABLED }}
       WORKFLOW_TARGET: ${{ inputs.target || 'configured' }}
       INPUT_CONFIGURED_SERVICE: ${{ inputs.configured_service }}
+      INPUT_SOURCE_COMMIT: ${{ inputs.source_commit }}
+      SOURCE_COMMIT: ${{ inputs.source_commit || github.sha }}
       INPUT_CLOUD_RUN_REGION: ${{ inputs.cloud_run_region }}
       INPUT_CLOUD_RUN_SERVICE: ${{ inputs.cloud_run_service }}
       INPUT_ACCOUNT_GROUP: ${{ inputs.account_group }}
@@ -256,6 +262,19 @@ jobs:
             fi
           fi
 
+          if { [ "${deploy_enabled}" = "true" ] || [ "${env_sync_enabled}" = "true" ] || [ "${traffic_shift_enabled}" = "true" ] || [ "${scheduler_sync_enabled}" = "true" ]; } \
+            && [ "${GITHUB_REF:-}" != "refs/heads/main" ]; then
+            echo "Cloud Run mutations require the trusted main workflow ref." >&2
+            exit 1
+          fi
+
+          if [ "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch" ] && [ "${deploy_enabled}" = "true" ] \
+            && [ -n "${INPUT_SOURCE_COMMIT:-}" ] \
+            && [[ ! "${INPUT_SOURCE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Explicit source_commit must be a full 40-character SHA." >&2
+            exit 1
+          fi
+
           write_github_output \
             "deploy_enabled=${deploy_enabled}" \
             "env_sync_enabled=${env_sync_enabled}" \
@@ -275,6 +294,29 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: ${{ github.sha }}
+
+      - name: Checkout selected image source
+        if: steps.config.outputs.deploy_enabled == 'true'
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ env.SOURCE_COMMIT }}
+          path: source
+          persist-credentials: false
+
+      - name: Verify selected image source
+        if: steps.config.outputs.deploy_enabled == 'true'
+        run: |
+          set -euo pipefail
+          if [[ ! "${SOURCE_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Selected source must be a full commit SHA." >&2
+            exit 1
+          fi
+          checked_out_sha="$(git -C source rev-parse HEAD)"
+          if [ "${checked_out_sha}" != "${SOURCE_COMMIT}" ]; then
+            echo "Checked-out image source does not match source_commit." >&2
+            exit 1
+          fi
 
       - name: Apply HK verify-only dispatch defaults
         if: steps.config.outputs.enabled == 'true' && github.event_name == 'workflow_dispatch' && inputs.target == 'hk-verify'
@@ -609,10 +651,10 @@ jobs:
 
           artifact_registry_hostname="${GCP_ARTIFACT_REGISTRY_HOSTNAME:-${CLOUD_RUN_REGION}-docker.pkg.dev}"
           image_repo="${artifact_registry_hostname}/${GCP_PROJECT_ID}/${GCP_ARTIFACT_REGISTRY_REPOSITORY}/interactivebrokersplatform/cloud-run"
-          image="${image_repo}:${GITHUB_SHA}"
+          image="${image_repo}:${SOURCE_COMMIT}-${GITHUB_RUN_ID}"
 
           gcloud auth configure-docker "${artifact_registry_hostname}" --quiet
-          docker build --pull -t "${image}" .
+          docker build --pull -t "${image}" source
           docker push "${image}"
           image_digest="$(gcloud artifacts docker images describe "${image}" --project="${GCP_PROJECT_ID}" --format='value(image_summary.digest)')"
           if [[ ! "${image_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
@@ -639,7 +681,7 @@ jobs:
               --network=default \
               --subnet=default \
               --vpc-egress=private-ranges-only \
-              --labels="managed-by=github-actions,commit-sha=${GITHUB_SHA},github-run-id=${GITHUB_RUN_ID}" \
+              --labels="managed-by=github-actions,commit-sha=${SOURCE_COMMIT},github-run-id=${GITHUB_RUN_ID}" \
               --no-traffic \
               --quiet
           done
@@ -667,7 +709,7 @@ jobs:
               --service="${cloud_run_service}" \
               --scheduler-location="${CLOUD_SCHEDULER_LOCATION:-${CLOUD_RUN_REGION}}" \
               --before="${DEPLOY_READBACK_DIR}/${cloud_run_service}.json" \
-              --expected-sha="${GITHUB_SHA}" \
+              --expected-sha="${SOURCE_COMMIT}" \
               --expected-image-digest="${EXPECTED_IMAGE_DIGEST}"
           done
 
@@ -698,7 +740,7 @@ jobs:
               ;;
           esac
 
-          target_sha="${GITHUB_SHA}"
+          target_sha="${SOURCE_COMMIT}"
 
           for cloud_run_service in "${target_services[@]}"; do
             deadline=$((SECONDS + 1800))
@@ -1577,7 +1619,7 @@ jobs:
             --project="${GCP_PROJECT_ID}" \
             --include-tags \
             --format=json \
-            | python -c 'import json,os,sys; keep=os.environ["GITHUB_SHA"]; rows=json.load(sys.stdin); print("\n".join(row["version"] for row in rows if keep not in set(row.get("tags") or [])))')"
+            | python -c 'import json,os,sys; keep=os.environ["SOURCE_COMMIT"]; rows=json.load(sys.stdin); print("\n".join(row["version"] for row in rows if not any(keep in tag for tag in (row.get("tags") or []))))')"
 
           while IFS= read -r digest; do
             if [ -z "${digest}" ]; then
