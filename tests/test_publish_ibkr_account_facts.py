@@ -226,6 +226,7 @@ def test_publisher_posts_once_with_fresh_projected_payload_and_dedicated_token(m
     request = observed["request"]
     assert request.get_method() == "POST"
     assert request.get_header("Authorization") == "Bearer dedicated-test-token"
+    assert request.get_header("User-agent") == publisher.IBKR_ACCOUNT_FACTS_USER_AGENT
     assert json.loads(request.data)["account_ids"] == ["U16608560"]
     assert observed["timeout"] == 15
 
@@ -499,6 +500,7 @@ def test_ingress_diagnostic_posts_fixed_empty_body_once_without_gcs(monkeypatch,
     assert request.data == b"{}"
     assert request.get_method() == "POST"
     assert request.get_header("Authorization") == "Bearer TOKEN_SENTINEL"
+    assert request.get_header("User-agent") == publisher.IBKR_ACCOUNT_FACTS_USER_AGENT
     assert request.get_header("Content-type") == "application/json"
     assert observed["calls"] == 1
     assert observed["timeout"] == 15
