@@ -15,6 +15,9 @@ from scripts.publish_account_facts_from_report import (
 
 
 def _report() -> dict[str, object]:
+    observed_at = datetime(2026, 9, 30, 1, 0, 1, tzinfo=timezone.utc)
+    started_at = observed_at.replace(microsecond=0)
+    finished_at = observed_at.replace(microsecond=0).replace(second=2)
     return {
         "schema_version": "runtime_report.v1",
         "platform": "interactive_brokers",
@@ -28,14 +31,14 @@ def _report() -> dict[str, object]:
         },
         "diagnostics": {"runtime_revision": "service-00369-88c"},
         "runtime_release_receipt": {"attestation_state": "legacy_unattested"},
-        "started_at": "2026-09-30T01:00:00Z",
-        "finished_at": "2026-09-30T01:00:02Z",
+        "started_at": started_at.isoformat().replace("+00:00", "Z"),
+        "finished_at": finished_at.isoformat().replace("+00:00", "Z"),
         "summary": {
             "account_facts": {
                 "schema_version": "ibkr_account_snapshot.v1",
                 "account_ids": ["U16608560"],
                 "currency": "USD",
-                "observed_at": "2026-09-30T01:00:01Z",
+                "observed_at": observed_at.isoformat().replace("+00:00", "Z"),
                 "net_assets": "12345.6700",
                 "cash": [
                     {"currency": "USD", "cash_balance": "100.00", "source_tag": "$LEDGER-CashBalance"},
@@ -209,7 +212,7 @@ def test_publisher_posts_once_with_fresh_projected_payload_and_dedicated_token(m
     monkeypatch.setattr(publisher, "build_opener", lambda *_args: Opener())
     result = publisher.publish_ibkr_account_facts_history(
         _report(),
-        now=datetime(2026, 9, 30, 1, 1, 30, tzinfo=timezone.utc),
+        now=datetime(2026, 9, 30, 1, 40, 1, tzinfo=timezone.utc),
         source_report_uri="gs://qsl-runtime-reports/ibkr/report-1.json",
         sync_url=publisher.IBKR_ACCOUNT_FACTS_SYNC_URL,
         sync_token="dedicated-test-token",
@@ -231,12 +234,24 @@ def test_publisher_posts_once_with_fresh_projected_payload_and_dedicated_token(m
     assert observed["timeout"] == 15
 
 
-def test_publisher_rejects_stale_or_missing_facts_without_http(monkeypatch):
-    monkeypatch.setattr(
-        publisher,
-        "build_opener",
-        lambda *_args: (_ for _ in ()).throw(AssertionError("must not POST")),
-    )
+def test_publisher_accepts_36_hour_boundary_and_rejects_older_or_future_without_http(monkeypatch):
+    observed_requests = []
+
+    class Response:
+        status = 201
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    class Opener:
+        def open(self, request, *, timeout):
+            observed_requests.append((request, timeout))
+            return Response()
+
+    monkeypatch.setattr(publisher, "build_opener", lambda *_args: Opener())
     args = {
         "source_report_uri": "gs://qsl-runtime-reports/ibkr/report-1.json",
         "sync_url": publisher.IBKR_ACCOUNT_FACTS_SYNC_URL,
@@ -250,12 +265,27 @@ def test_publisher_rejects_stale_or_missing_facts_without_http(monkeypatch):
         "expected_account_selector": ["U16608560"],
         "expected_deployment_selector": "live-u16608560",
     }
-    recent_wrapper = _report()
-    recent_wrapper["finished_at"] = "2026-09-30T01:20:00Z"
-    stale = publisher.publish_ibkr_account_facts_history(
-        recent_wrapper, now=datetime(2026, 9, 30, 1, 20, tzinfo=timezone.utc), **args
+    boundary = publisher.publish_ibkr_account_facts_history(
+        _report(), now=datetime(2026, 10, 1, 13, 0, 1, tzinfo=timezone.utc), **args
     )
-    assert stale == {"status": "skipped", "reason": "observation_stale"}
+    assert boundary == {"status": "published"}
+    assert len(observed_requests) == 1
+    assert observed_requests[0][1] == 15
+
+    older = publisher.publish_ibkr_account_facts_history(
+        _report(), now=datetime(2026, 10, 1, 13, 0, 2, tzinfo=timezone.utc), **args
+    )
+    assert older == {"status": "skipped", "reason": "observation_stale"}
+
+    future = _report()
+    future_facts = future["summary"]["account_facts"]  # type: ignore[index]
+    future_facts["observed_at"] = "2026-09-30T01:06:01Z"  # type: ignore[index]
+    future["started_at"] = "2026-09-30T01:06:00Z"
+    future["finished_at"] = "2026-09-30T01:06:02Z"
+    future_observation = publisher.publish_ibkr_account_facts_history(
+        future, now=datetime(2026, 9, 30, 1, 0, 1, tzinfo=timezone.utc), **args
+    )
+    assert future_observation == {"status": "skipped", "reason": "observation_stale"}
 
     missing_facts = _report()
     missing_facts["summary"].pop("account_facts")  # type: ignore[union-attr]
@@ -263,6 +293,7 @@ def test_publisher_rejects_stale_or_missing_facts_without_http(monkeypatch):
         missing_facts, now=datetime(2026, 9, 30, 1, 1, 30, tzinfo=timezone.utc), **args
     )
     assert missing == {"status": "skipped", "reason": "account_facts_invalid"}
+    assert len(observed_requests) == 1
 
     wrong_endpoint = publisher.publish_ibkr_account_facts_history(
         _report(),

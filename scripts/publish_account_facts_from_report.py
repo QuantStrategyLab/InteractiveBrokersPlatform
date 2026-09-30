@@ -28,6 +28,7 @@ SOURCE_BINDING_KIND = "deployment_runtime_account"
 IBKR_ACCOUNT_FACTS_SYNC_TOKEN_ENV = "IBKR_ACCOUNT_FACTS_SYNC_TOKEN"
 IBKR_ACCOUNT_FACTS_SYNC_URL = "https://qsl-strategy-switch-console.pigbibi.workers.dev/api/account-facts/sync"
 IBKR_ACCOUNT_FACTS_USER_AGENT = "QSL-IBKR-AccountFacts/1.0"
+IBKR_ACCOUNT_FACTS_MAX_AGE = timedelta(hours=36)
 IBKR_ACCOUNT_FACTS_INGRESS_DIAGNOSTIC_TARGET = "ingress-diagnostic"
 _INGRESS_DIAGNOSTIC_BODY = b"{}"
 _INGRESS_DIAGNOSTIC_ERROR = "invalid_account_facts_history"
@@ -258,7 +259,7 @@ def publish_ibkr_account_facts_history(
             raise _ProjectionError("account_facts_invalid")
         observed = _observed_timestamp(facts.get("observed_at"))
         current = now.astimezone(timezone.utc)
-        if observed < current - timedelta(minutes=15) or observed > current + timedelta(minutes=5):
+        if observed < current - IBKR_ACCOUNT_FACTS_MAX_AGE or observed > current + timedelta(minutes=5):
             raise _ProjectionError("observation_stale")
         endpoint = urlsplit(_text(sync_url))
         if (
