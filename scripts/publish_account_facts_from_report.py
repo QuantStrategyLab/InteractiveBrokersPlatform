@@ -27,6 +27,7 @@ RUNTIME_REPORT_SCHEMA = "runtime_report.v1"
 SOURCE_BINDING_KIND = "deployment_runtime_account"
 IBKR_ACCOUNT_FACTS_SYNC_TOKEN_ENV = "IBKR_ACCOUNT_FACTS_SYNC_TOKEN"
 IBKR_ACCOUNT_FACTS_SYNC_URL = "https://qsl-strategy-switch-console.pigbibi.workers.dev/api/account-facts/sync"
+IBKR_ACCOUNT_FACTS_USER_AGENT = "QSL-IBKR-AccountFacts/1.0"
 IBKR_ACCOUNT_FACTS_INGRESS_DIAGNOSTIC_TARGET = "ingress-diagnostic"
 _INGRESS_DIAGNOSTIC_BODY = b"{}"
 _INGRESS_DIAGNOSTIC_ERROR = "invalid_account_facts_history"
@@ -287,6 +288,7 @@ def publish_ibkr_account_facts_history(
             headers={
                 "Authorization": f"Bearer {_text(sync_token)}",
                 "Content-Type": "application/json",
+                "User-Agent": IBKR_ACCOUNT_FACTS_USER_AGENT,
             },
             method="POST",
         )
@@ -400,6 +402,7 @@ def diagnose_account_facts_ingress(*, sync_token: str) -> dict[str, Any]:
         headers={
             "Authorization": f"Bearer {_text(sync_token)}",
             "Content-Type": "application/json",
+            "User-Agent": IBKR_ACCOUNT_FACTS_USER_AGENT,
         },
         method="POST",
     )
