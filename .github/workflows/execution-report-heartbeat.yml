@@ -28,7 +28,7 @@ on:
         default: disabled
         options:
           - disabled
-          - live-u16608560
+          - primary-live
           - ingress-diagnostic
   schedule:
     - cron: "20 22 * * *"
@@ -122,19 +122,55 @@ jobs:
         env:
           EXECUTION_EVIDENCE_SYNC_TOKEN: ${{ secrets.EXECUTION_EVIDENCE_SYNC_TOKEN }}
 
-      - name: Publish one fresh IBKR account-facts report
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.account_facts_target == 'live-u16608560' }}
-        env:
-          IBKR_ACCOUNT_FACTS_TARGET: ${{ inputs.account_facts_target }}
-          IBKR_ACCOUNT_FACTS_REPORT_PREFIX: gs://qsl-runtime-logs-shared/execution-reports/interactive_brokers/tqqq_growth_income/live-u16608560
-          IBKR_ACCOUNT_FACTS_RUNTIME_REVISION: ${{ vars.IBKR_ACCOUNT_FACTS_RUNTIME_REVISION }}
-          IBKR_ACCOUNT_FACTS_SYNC_URL: ${{ vars.IBKR_ACCOUNT_FACTS_SYNC_URL }}
-          IBKR_ACCOUNT_FACTS_SYNC_TOKEN: ${{ secrets.IBKR_ACCOUNT_FACTS_SYNC_TOKEN }}
-        run: uv run --no-sync python scripts/publish_account_facts_from_report.py
-
       - name: Send configured daily dry-run digest
         if: ${{ always() && (github.event_name == 'schedule' || inputs.send_daily_dry_run_digest) }}
         run: uv run --no-sync python scripts/daily_dry_run_digest.py
+
+  account-facts-publisher:
+    name: Publish latest fresh IBKR account-facts report
+    if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.account_facts_target == 'primary-live') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GCP_PROJECT_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
+      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com
+      IBKR_ACCOUNT_FACTS_TARGET: primary-live
+      IBKR_ACCOUNT_FACTS_REPORT_PREFIX: ${{ secrets.IBKR_ACCOUNT_FACTS_REPORT_PREFIX }}
+      IBKR_ACCOUNT_FACTS_TARGET_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_TARGET_ID }}
+      IBKR_ACCOUNT_FACTS_SERVICE_NAME: ${{ secrets.IBKR_ACCOUNT_FACTS_SERVICE_NAME }}
+      IBKR_ACCOUNT_FACTS_RUNTIME_REVISION: ${{ secrets.IBKR_ACCOUNT_FACTS_RUNTIME_REVISION }}
+      IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE }}
+      IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON }}
+      IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR: ${{ secrets.IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR }}
+      IBKR_ACCOUNT_FACTS_SYNC_URL: ${{ vars.IBKR_ACCOUNT_FACTS_SYNC_URL }}
+      IBKR_ACCOUNT_FACTS_SYNC_TOKEN: ${{ secrets.IBKR_ACCOUNT_FACTS_SYNC_TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          uv sync --frozen --no-dev
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Publish one validated report
+        run: uv run --no-sync python scripts/publish_account_facts_from_report.py
 
   account-facts-ingress-diagnostic:
     name: Verify account-facts ingress authentication only

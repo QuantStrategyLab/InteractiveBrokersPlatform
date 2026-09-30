@@ -1,7 +1,17 @@
+import re
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _job_block(workflow: str, name: str) -> str:
+    start = workflow.index(f"  {name}:")
+    tail = workflow[start:]
+    next_job = re.search(r"(?m)^  [A-Za-z0-9_-]+:\s*$", tail[len(f"  {name}:"):])
+    if next_job is None:
+        return tail
+    return tail[:len(f"  {name}:") + next_job.start()]
 
 
 def test_execution_report_heartbeat_has_market_neutral_daily_schedule() -> None:
@@ -20,9 +30,14 @@ def test_execution_report_heartbeat_has_market_neutral_daily_schedule() -> None:
 
 
 def test_runtime_monitor_workflows_retry_gcp_authentication() -> None:
-    for name in ("execution-report-heartbeat.yml", "runtime-guard.yml"):
-        workflow = (ROOT / ".github/workflows" / name).read_text()
+    workflows = {
+        name: (ROOT / ".github/workflows" / name).read_text()
+        for name in ("execution-report-heartbeat.yml", "runtime-guard.yml")
+    }
+    heartbeat_job = _job_block(workflows["execution-report-heartbeat.yml"], "heartbeat")
+    runtime_guard = workflows["runtime-guard.yml"]
 
+    for workflow in (heartbeat_job, runtime_guard):
         assert workflow.count("google-github-actions/auth@v3") == 2
         assert "id: gcp_auth_primary" in workflow
         assert "continue-on-error: true" in workflow

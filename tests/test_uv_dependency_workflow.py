@@ -3,6 +3,16 @@ import tomllib
 from pathlib import Path
 
 
+def _job_block(workflow: str, name: str) -> str:
+    header = f"  {name}:"
+    start = workflow.index(header)
+    tail = workflow[start:]
+    next_job = re.search(r"(?m)^  [A-Za-z0-9_-]+:\s*$", tail[len(header):])
+    if next_job is None:
+        return tail
+    return tail[:len(header) + next_job.start()]
+
+
 def test_pyproject_declares_runtime_and_test_dependencies() -> None:
     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
 
@@ -25,6 +35,8 @@ def test_ci_docker_and_runtime_monitoring_use_uv_lock() -> None:
     execution_report_heartbeat = Path(".github/workflows/execution-report-heartbeat.yml").read_text(
         encoding="utf-8"
     )
+    heartbeat_job = _job_block(execution_report_heartbeat, "heartbeat")
+    publisher_job = _job_block(execution_report_heartbeat, "account-facts-publisher")
     lockfile = Path("uv.lock").read_text(encoding="utf-8")
 
     assert lockfile.startswith("version = ")
@@ -34,7 +46,7 @@ def test_ci_docker_and_runtime_monitoring_use_uv_lock() -> None:
     assert "uv sync --frozen --no-dev" in env_sync
     assert "uv run --no-sync python scripts/build_cloud_run_env_sync_plan.py --json" in env_sync
     setup_uv = "uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78"
-    for workflow in (runtime_guard, runtime_target_lifecycle, execution_report_heartbeat):
+    for workflow in (runtime_guard, runtime_target_lifecycle, heartbeat_job):
         assert setup_uv in workflow
         assert workflow.count(setup_uv) == 1
         assert workflow.index(setup_uv) < workflow.index("google-github-actions/auth@v3")
@@ -45,6 +57,12 @@ def test_ci_docker_and_runtime_monitoring_use_uv_lock() -> None:
     assert "uv run --no-sync python scripts/cloud_run_runtime_guard.py" in runtime_target_lifecycle
     assert "uv run --no-sync python scripts/execution_report_heartbeat.py" in runtime_target_lifecycle
     assert "uv run --no-sync python scripts/execution_report_heartbeat.py" in execution_report_heartbeat
+    assert "uv run --no-sync python scripts/publish_account_facts_from_report.py" in publisher_job
+    assert publisher_job.count(setup_uv) == 1
+    assert publisher_job.count("uv sync --frozen --no-dev") == 1
+    assert publisher_job.count("google-github-actions/auth@v3") == 1
+    assert publisher_job.index(setup_uv) < publisher_job.index("google-github-actions/auth@v3")
+    assert "needs:" not in publisher_job
     assert "run: python scripts/cloud_run_runtime_guard.py" not in runtime_guard
     assert "          python scripts/cloud_run_runtime_guard.py" not in runtime_target_lifecycle
     assert 'name = "pandas-market-calendars"' in lockfile

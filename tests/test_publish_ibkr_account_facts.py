@@ -22,21 +22,21 @@ def _report() -> dict[str, object]:
         "schema_version": "runtime_report.v1",
         "platform": "interactive_brokers",
         "deploy_target": "cloud_run",
-        "project_id": "qsl-prod",
-        "service_name": "interactive-brokers-quant-live-u16608560-service",
-        "account_scope": "live-u16608560",
+        "project_id": "example-project",
+        "service_name": "ibkr-primary-service",
+        "account_scope": "live-primary",
         "runtime_target": {
-            "account_selector": ["U16608560"],
-            "deployment_selector": "live-u16608560",
+            "account_selector": ["U00000001"],
+            "deployment_selector": "live-primary",
         },
-        "diagnostics": {"runtime_revision": "service-00369-88c"},
+        "diagnostics": {"runtime_revision": "runtime-revision-001"},
         "runtime_release_receipt": {"attestation_state": "legacy_unattested"},
         "started_at": started_at.isoformat().replace("+00:00", "Z"),
         "finished_at": finished_at.isoformat().replace("+00:00", "Z"),
         "summary": {
             "account_facts": {
                 "schema_version": "ibkr_account_snapshot.v1",
-                "account_ids": ["U16608560"],
+                "account_ids": ["U00000001"],
                 "currency": "USD",
                 "observed_at": observed_at.isoformat().replace("+00:00", "Z"),
                 "net_assets": "12345.6700",
@@ -52,15 +52,15 @@ def _report() -> dict[str, object]:
 def _project(report: dict[str, object]) -> dict[str, object]:
     return project_ibkr_account_facts_history(
         report,
-        target_id="ibkr-u16608560",
+        target_id="ibkr-primary",
         expected_report_prefix="gs://qsl-runtime-reports/ibkr",
         source_report_uri="gs://qsl-runtime-reports/ibkr/report-1.json",
-        expected_project_id="qsl-prod",
-        expected_service_name="interactive-brokers-quant-live-u16608560-service",
-        expected_runtime_revision="service-00369-88c",
-        expected_account_scope="live-u16608560",
-        expected_account_selector=["U16608560"],
-        expected_deployment_selector="live-u16608560",
+        expected_project_id="example-project",
+        expected_service_name="ibkr-primary-service",
+        expected_runtime_revision="runtime-revision-001",
+        expected_account_scope="live-primary",
+        expected_account_selector=["U00000001"],
+        expected_deployment_selector="live-primary",
     )
 
 
@@ -70,7 +70,7 @@ def test_projects_bound_ibkr_facts_and_keeps_legacy_receipt_unchanged():
 
     assert history["schema_version"] == "ibkr_account_snapshot_history.v1"
     assert history["snapshot_schema_version"] == "ibkr_account_snapshot.v1"
-    assert history["account_ids"] == ["U16608560"]
+    assert history["account_ids"] == ["U00000001"]
     assert history["broker_reported_balances"] == [
         {"currency": "USD", "net_assets": "12345.6700"}
     ]
@@ -117,15 +117,15 @@ def test_projection_fails_closed_on_scope_identity_and_selector_mismatch():
     default_selector["runtime_target"]["account_selector"] = ["default"]  # type: ignore[index]
     result = project_ibkr_account_facts_history(
         default_selector,
-        target_id="ibkr-u16608560",
+        target_id="ibkr-primary",
         expected_report_prefix="gs://qsl-runtime-reports/ibkr",
         source_report_uri="gs://qsl-runtime-reports/ibkr/report-1.json",
-        expected_project_id="qsl-prod",
-        expected_service_name="interactive-brokers-quant-live-u16608560-service",
-        expected_runtime_revision="service-00369-88c",
-        expected_account_scope="live-u16608560",
+        expected_project_id="example-project",
+        expected_service_name="ibkr-primary-service",
+        expected_runtime_revision="runtime-revision-001",
+        expected_account_scope="live-primary",
         expected_account_selector=["default"],
-        expected_deployment_selector="live-u16608560",
+        expected_deployment_selector="live-primary",
     )
     assert result == {"status": "skipped", "reason": "expected_target_invalid"}
 
@@ -137,15 +137,15 @@ def test_projection_rejects_invalid_observation_provenance_and_duplicate_cash():
 
     out_of_prefix = project_ibkr_account_facts_history(
         _report(),
-        target_id="ibkr-u16608560",
+        target_id="ibkr-primary",
         expected_report_prefix="gs://qsl-runtime-reports/ibkr",
         source_report_uri="gs://other-bucket/ibkr/report-1.json",
-        expected_project_id="qsl-prod",
-        expected_service_name="interactive-brokers-quant-live-u16608560-service",
-        expected_runtime_revision="service-00369-88c",
-        expected_account_scope="live-u16608560",
-        expected_account_selector=["U16608560"],
-        expected_deployment_selector="live-u16608560",
+        expected_project_id="example-project",
+        expected_service_name="ibkr-primary-service",
+        expected_runtime_revision="runtime-revision-001",
+        expected_account_scope="live-primary",
+        expected_account_selector=["U00000001"],
+        expected_deployment_selector="live-primary",
     )
     assert out_of_prefix == {"status": "skipped", "reason": "report_provenance_invalid"}
 
@@ -187,7 +187,7 @@ def test_projection_rejects_snapshot_observation_outside_report_interval():
     assert _project(report) == {"status": "skipped", "reason": "observation_invalid"}
 
     padded_selector = _report()
-    padded_selector["runtime_target"]["account_selector"] = [" U16608560"]  # type: ignore[index]
+    padded_selector["runtime_target"]["account_selector"] = [" U00000001"]  # type: ignore[index]
     assert _project(padded_selector) == {"status": "skipped", "reason": "runtime_target_mismatch"}
 
 
@@ -203,6 +203,9 @@ def test_publisher_posts_once_with_fresh_projected_payload_and_dedicated_token(m
         def __exit__(self, *_args):
             return None
 
+        def read(self, _limit):
+            return b'{"ok":true,"stored":true,"unchanged":false}'
+
     class Opener:
         def open(self, request, *, timeout):
             observed["request"] = request
@@ -216,21 +219,21 @@ def test_publisher_posts_once_with_fresh_projected_payload_and_dedicated_token(m
         source_report_uri="gs://qsl-runtime-reports/ibkr/report-1.json",
         sync_url=publisher.IBKR_ACCOUNT_FACTS_SYNC_URL,
         sync_token="dedicated-test-token",
-        target_id="ibkr-u16608560",
+        target_id="ibkr-primary",
         expected_report_prefix="gs://qsl-runtime-reports/ibkr",
-        expected_project_id="qsl-prod",
-        expected_service_name="interactive-brokers-quant-live-u16608560-service",
-        expected_runtime_revision="service-00369-88c",
-        expected_account_scope="live-u16608560",
-        expected_account_selector=["U16608560"],
-        expected_deployment_selector="live-u16608560",
+        expected_project_id="example-project",
+        expected_service_name="ibkr-primary-service",
+        expected_runtime_revision="runtime-revision-001",
+        expected_account_scope="live-primary",
+        expected_account_selector=["U00000001"],
+        expected_deployment_selector="live-primary",
     )
     assert result == {"status": "published"}
     request = observed["request"]
     assert request.get_method() == "POST"
     assert request.get_header("Authorization") == "Bearer dedicated-test-token"
     assert request.get_header("User-agent") == publisher.IBKR_ACCOUNT_FACTS_USER_AGENT
-    assert json.loads(request.data)["account_ids"] == ["U16608560"]
+    assert json.loads(request.data)["account_ids"] == ["U00000001"]
     assert observed["timeout"] == 15
 
 
@@ -246,6 +249,9 @@ def test_publisher_accepts_36_hour_boundary_and_rejects_older_or_future_without_
         def __exit__(self, *_args):
             return None
 
+        def read(self, _limit):
+            return b'{"ok":true,"stored":true,"unchanged":false}'
+
     class Opener:
         def open(self, request, *, timeout):
             observed_requests.append((request, timeout))
@@ -256,14 +262,14 @@ def test_publisher_accepts_36_hour_boundary_and_rejects_older_or_future_without_
         "source_report_uri": "gs://qsl-runtime-reports/ibkr/report-1.json",
         "sync_url": publisher.IBKR_ACCOUNT_FACTS_SYNC_URL,
         "sync_token": "dedicated-test-token",
-        "target_id": "ibkr-u16608560",
+        "target_id": "ibkr-primary",
         "expected_report_prefix": "gs://qsl-runtime-reports/ibkr",
-        "expected_project_id": "qsl-prod",
-        "expected_service_name": "interactive-brokers-quant-live-u16608560-service",
-        "expected_runtime_revision": "service-00369-88c",
-        "expected_account_scope": "live-u16608560",
-        "expected_account_selector": ["U16608560"],
-        "expected_deployment_selector": "live-u16608560",
+        "expected_project_id": "example-project",
+        "expected_service_name": "ibkr-primary-service",
+        "expected_runtime_revision": "runtime-revision-001",
+        "expected_account_scope": "live-primary",
+        "expected_account_selector": ["U00000001"],
+        "expected_deployment_selector": "live-primary",
     }
     boundary = publisher.publish_ibkr_account_facts_history(
         _report(), now=datetime(2026, 10, 1, 13, 0, 1, tzinfo=timezone.utc), **args
@@ -303,6 +309,46 @@ def test_publisher_accepts_36_hour_boundary_and_rejects_older_or_future_without_
     assert wrong_endpoint == {"status": "skipped", "reason": "publish_target_invalid"}
 
 
+def test_publisher_reports_unchanged_observation_without_claiming_refresh(monkeypatch):
+    observed = {"calls": 0}
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self, _limit):
+            return b'{"ok":true,"stored":true,"unchanged":true}'
+
+    class Opener:
+        def open(self, *_args, **_kwargs):
+            observed["calls"] += 1
+            return Response()
+
+    monkeypatch.setattr(publisher, "build_opener", lambda *_args: Opener())
+    result = publisher.publish_ibkr_account_facts_history(
+        _report(),
+        now=datetime(2026, 9, 30, 1, 1, 30, tzinfo=timezone.utc),
+        source_report_uri="gs://example-private/ibkr/report-1.json",
+        sync_url=publisher.IBKR_ACCOUNT_FACTS_SYNC_URL,
+        sync_token="dedicated-test-token",
+        target_id="ibkr-primary",
+        expected_report_prefix="gs://example-private/ibkr",
+        expected_project_id="example-project",
+        expected_service_name="ibkr-primary-service",
+        expected_runtime_revision="runtime-revision-001",
+        expected_account_scope="live-primary",
+        expected_account_selector=["U00000001"],
+        expected_deployment_selector="live-primary",
+    )
+    assert result == {"status": "unchanged", "reason": "observation_unchanged"}
+    assert observed["calls"] == 1
+
+
 @pytest.mark.parametrize(
     ("status", "body_error", "expected_error"),
     [
@@ -335,14 +381,14 @@ def test_publisher_retains_http_status_and_allowlisted_qrs_error_without_retry(
         source_report_uri="gs://qsl-runtime-reports/ibkr/report-1.json",
         sync_url=publisher.IBKR_ACCOUNT_FACTS_SYNC_URL,
         sync_token="dedicated-test-token",
-        target_id="ibkr-u16608560",
+        target_id="ibkr-primary",
         expected_report_prefix="gs://qsl-runtime-reports/ibkr",
-        expected_project_id="qsl-prod",
-        expected_service_name="interactive-brokers-quant-live-u16608560-service",
-        expected_runtime_revision="service-00369-88c",
-        expected_account_scope="live-u16608560",
-        expected_account_selector=["U16608560"],
-        expected_deployment_selector="live-u16608560",
+        expected_project_id="example-project",
+        expected_service_name="ibkr-primary-service",
+        expected_runtime_revision="runtime-revision-001",
+        expected_account_scope="live-primary",
+        expected_account_selector=["U00000001"],
+        expected_deployment_selector="live-primary",
     )
 
     assert result == {
@@ -381,14 +427,14 @@ def test_publisher_marks_transport_outcome_unknown_without_exposing_exception(
         source_report_uri="gs://qsl-runtime-reports/ibkr/report-1.json",
         sync_url=publisher.IBKR_ACCOUNT_FACTS_SYNC_URL,
         sync_token="dedicated-test-token",
-        target_id="ibkr-u16608560",
+        target_id="ibkr-primary",
         expected_report_prefix="gs://qsl-runtime-reports/ibkr",
-        expected_project_id="qsl-prod",
-        expected_service_name="interactive-brokers-quant-live-u16608560-service",
-        expected_runtime_revision="service-00369-88c",
-        expected_account_scope="live-u16608560",
-        expected_account_selector=["U16608560"],
-        expected_deployment_selector="live-u16608560",
+        expected_project_id="example-project",
+        expected_service_name="ibkr-primary-service",
+        expected_runtime_revision="runtime-revision-001",
+        expected_account_scope="live-primary",
+        expected_account_selector=["U00000001"],
+        expected_deployment_selector="live-primary",
     )
 
     assert result == {
@@ -430,20 +476,26 @@ def test_cli_prints_allowlisted_http_diagnostics_without_private_response_data(
 
     monkeypatch.setattr(publisher, "datetime", FrozenDateTime)
     report = _report()
-    report["project_id"] = "interactivebrokersquant"
+    report["project_id"] = "example-project"
     monkeypatch.setattr(
         publisher,
         "_latest_report_uri",
         lambda **_kwargs: (
-            "gs://qsl-runtime-logs-shared/execution-reports/interactive_brokers/"
-            "tqqq_growth_income/live-u16608560/2026-09/20260930T010000Z.json"
+            "gs://example-private/execution-reports/interactive_brokers/"
+            "example-profile/live-primary/2026-09/20260930T010000Z.json"
         ),
     )
     monkeypatch.setattr(publisher, "_load_gcs_report", lambda *_args, **_kwargs: report)
     monkeypatch.setattr(publisher, "build_opener", lambda *_args: Opener())
-    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_TARGET", "live-u16608560")
-    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_REPORT_PREFIX", "gs://qsl-runtime-logs-shared/execution-reports/interactive_brokers/tqqq_growth_income/live-u16608560")
-    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_RUNTIME_REVISION", "service-00369-88c")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_TARGET", publisher.IBKR_ACCOUNT_FACTS_PRIMARY_TARGET)
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_REPORT_PREFIX", "gs://example-private/execution-reports/interactive_brokers/example-profile/live-primary")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_TARGET_ID", "ibkr-primary")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_PROJECT_ID", "example-project")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_SERVICE_NAME", "ibkr-primary-service")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_RUNTIME_REVISION", "runtime-revision-001")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE", "live-primary")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", '["U00000001"]')
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR", "live-primary")
     monkeypatch.setenv("IBKR_ACCOUNT_FACTS_SYNC_URL", publisher.IBKR_ACCOUNT_FACTS_SYNC_URL)
     monkeypatch.setenv("IBKR_ACCOUNT_FACTS_SYNC_TOKEN", "TOKEN_SENTINEL")
 
@@ -681,6 +733,20 @@ def test_workflow_ingress_diagnostic_is_manual_and_isolated_from_heartbeat():
     assert "run: python3 scripts/publish_account_facts_from_report.py" in diagnostic_job
 
 
+def test_workflow_scheduled_publisher_is_independent_and_single_target():
+    workflow = Path(__file__).parents[1] / ".github/workflows/execution-report-heartbeat.yml"
+    source = workflow.read_text()
+    assert "- primary-live" in source
+    assert "Publish one validated report" not in source.split("  heartbeat:", 1)[1].split("  account-facts-publisher:", 1)[0]
+    publisher_job = source.split("  account-facts-publisher:", 1)[1].split("  account-facts-ingress-diagnostic:", 1)[0]
+    assert "github.event_name == 'schedule'" in publisher_job
+    assert "inputs.account_facts_target == 'primary-live'" in publisher_job
+    assert "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON }}" in publisher_job
+    assert "IBKR_ACCOUNT_FACTS_REPORT_PREFIX: ${{ secrets.IBKR_ACCOUNT_FACTS_REPORT_PREFIX }}" in publisher_job
+    assert "IBKR_ACCOUNT_FACTS_TARGET_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_TARGET_ID }}" in publisher_job
+    assert "id-token: write" in publisher_job
+
+
 def test_latest_report_listing_is_confined_to_exact_prefix(monkeypatch):
     seen = []
 
@@ -694,17 +760,17 @@ def test_latest_report_listing_is_confined_to_exact_prefix(monkeypatch):
     def run(argv, **_kwargs):
         seen.append(argv[3])
         return Result(
-            "gs://bucket/root/interactive_brokers/tqqq_growth_income/live-u16608560/2026-09/"
+            "gs://bucket/root/interactive_brokers/example-profile/live-primary/2026-09/"
             "20260930T010000Z.json\n"
-            "gs://bucket/root/interactive_brokers/tqqq_growth_income/live-u16608560-other/2026-09/"
+            "gs://bucket/root/interactive_brokers/example-profile/live-primary-other/2026-09/"
             "20260930T010500Z.json\n"
         )
 
     monkeypatch.setattr(publisher.subprocess, "run", run)
     uri = publisher._latest_report_uri(
-        prefix="gs://bucket/root/interactive_brokers/tqqq_growth_income/live-u16608560",
+        prefix="gs://bucket/root/interactive_brokers/example-profile/live-primary",
         project_id="project",
         now=datetime(2026, 9, 30, 1, 10, tzinfo=timezone.utc),
     )
     assert uri.endswith("/2026-09/20260930T010000Z.json")
-    assert all("live-u16608560/" in value for value in seen)
+    assert all("live-primary/" in value for value in seen)

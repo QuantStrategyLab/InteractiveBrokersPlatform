@@ -30,6 +30,7 @@ IBKR_ACCOUNT_FACTS_SYNC_URL = "https://qsl-strategy-switch-console.pigbibi.worke
 IBKR_ACCOUNT_FACTS_USER_AGENT = "QSL-IBKR-AccountFacts/1.0"
 IBKR_ACCOUNT_FACTS_MAX_AGE = timedelta(hours=36)
 IBKR_ACCOUNT_FACTS_INGRESS_DIAGNOSTIC_TARGET = "ingress-diagnostic"
+IBKR_ACCOUNT_FACTS_PRIMARY_TARGET = "primary-live"
 _INGRESS_DIAGNOSTIC_BODY = b"{}"
 _INGRESS_DIAGNOSTIC_ERROR = "invalid_account_facts_history"
 _REPORT_RUN_ID = re.compile(r"^\d{8}T\d{6}Z\.json$")
@@ -97,6 +98,24 @@ def _selector(value: object) -> tuple[str, ...]:
 
 def _exact_text(value: object) -> str:
     return value if isinstance(value, str) and value and value == value.strip() else ""
+
+
+def _required_private_setting(name: str) -> str:
+    value = _exact_text(os.environ.get(name))
+    if not value:
+        raise _ProjectionError("target_config_unavailable")
+    return value
+
+
+def _expected_account_selector() -> tuple[str, ...]:
+    raw = _required_private_setting("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON")
+    try:
+        selector = _selector(json.loads(raw))
+    except (json.JSONDecodeError, TypeError):
+        raise _ProjectionError("target_config_invalid") from None
+    if len(selector) != 1 or selector[0].lower() == "default":
+        raise _ProjectionError("target_config_invalid")
+    return selector
 
 
 def _observed_timestamp(value: object) -> datetime:
@@ -303,6 +322,34 @@ def publish_ibkr_account_facts_history(
                         http_status=_numeric_http_status(response.status),
                         qrs_error_code="unknown",
                     )
+                response_body = response.read(_HTTP_ERROR_BODY_LIMIT + 1)
+                if not isinstance(response_body, bytes) or len(response_body) > _HTTP_ERROR_BODY_LIMIT:
+                    return _publish_failed(
+                        stage="http_response",
+                        category="response_invalid",
+                        http_status=_numeric_http_status(response.status),
+                    )
+                try:
+                    response_payload = json.loads(response_body)
+                except (json.JSONDecodeError, TypeError):
+                    return _publish_failed(
+                        stage="http_response",
+                        category="response_invalid",
+                        http_status=_numeric_http_status(response.status),
+                    )
+                if (
+                    not isinstance(response_payload, Mapping)
+                    or response_payload.get("ok") is not True
+                    or response_payload.get("stored") is not True
+                    or not isinstance(response_payload.get("unchanged"), bool)
+                ):
+                    return _publish_failed(
+                        stage="http_response",
+                        category="response_invalid",
+                        http_status=_numeric_http_status(response.status),
+                    )
+                if response_payload["unchanged"]:
+                    return {"status": "unchanged", "reason": "observation_unchanged"}
         except HTTPError as exc:
             return _publish_failed(
                 stage="http_response",
@@ -461,7 +508,7 @@ def diagnose_account_facts_ingress(*, sync_token: str) -> dict[str, Any]:
 
 
 def _format_cli_result(result: Mapping[str, Any]) -> str:
-    status = result.get("status") if result.get("status") in {"published", "verified", "skipped"} else "skipped"
+    status = result.get("status") if result.get("status") in {"published", "unchanged", "verified", "skipped"} else "skipped"
     reason = result.get("reason") if isinstance(result.get("reason"), str) else "unknown"
     diagnostic = result.get("diagnostics")
     if not isinstance(diagnostic, Mapping):
@@ -474,7 +521,7 @@ def _format_cli_result(result: Mapping[str, Any]) -> str:
     category = (
         diagnostic.get("category")
         if diagnostic.get("category") in {
-            "http_status", "http_error", "timeout", "url_error", "transport_error", "unknown"
+            "http_status", "http_error", "response_invalid", "timeout", "url_error", "transport_error", "unknown"
         }
         else "unknown"
     )
@@ -557,33 +604,24 @@ def main() -> int:
             )
             print(_format_cli_result(result))
             return 0 if result.get("status") == "verified" else 1
-        if target != "live-u16608560":
+        if target != IBKR_ACCOUNT_FACTS_PRIMARY_TARGET:
             print("skipped:target_disabled")
             return 0
-        prefix = _text(os.environ.get("IBKR_ACCOUNT_FACTS_REPORT_PREFIX"))
-        expected_prefix = (
-            "gs://qsl-runtime-logs-shared/execution-reports/"
-            "interactive_brokers/tqqq_growth_income/live-u16608560"
-        )
-        if prefix != expected_prefix:
-            print("skipped:report_prefix_mismatch")
-            return 1
+        prefix = _required_private_setting("IBKR_ACCOUNT_FACTS_REPORT_PREFIX")
+        expected_prefix = prefix
         expected = {
-            "target_id": "ibkr-u16608560",
+            "target_id": _required_private_setting("IBKR_ACCOUNT_FACTS_TARGET_ID"),
             "expected_report_prefix": expected_prefix,
-            "expected_project_id": "interactivebrokersquant",
-            "expected_service_name": "interactive-brokers-quant-live-u16608560-service",
-            "expected_runtime_revision": _text(os.environ.get("IBKR_ACCOUNT_FACTS_RUNTIME_REVISION")),
-            "expected_account_scope": "live-u16608560",
-            "expected_account_selector": ["U16608560"],
-            "expected_deployment_selector": "live-u16608560",
+            "expected_project_id": _required_private_setting("IBKR_ACCOUNT_FACTS_PROJECT_ID"),
+            "expected_service_name": _required_private_setting("IBKR_ACCOUNT_FACTS_SERVICE_NAME"),
+            "expected_runtime_revision": _required_private_setting("IBKR_ACCOUNT_FACTS_RUNTIME_REVISION"),
+            "expected_account_scope": _required_private_setting("IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE"),
+            "expected_account_selector": _expected_account_selector(),
+            "expected_deployment_selector": _required_private_setting("IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR"),
         }
-        if not expected["expected_runtime_revision"]:
-            print("skipped:expected_revision_unavailable")
-            return 1
         now = datetime.now(timezone.utc)
-        uri = _latest_report_uri(prefix=expected_prefix, project_id="interactivebrokersquant", now=now)
-        report = _load_gcs_report(uri, project_id="interactivebrokersquant")
+        uri = _latest_report_uri(prefix=expected_prefix, project_id=expected["expected_project_id"], now=now)
+        report = _load_gcs_report(uri, project_id=expected["expected_project_id"])
         result = publish_ibkr_account_facts_history(
             report,
             now=now,
@@ -593,7 +631,7 @@ def main() -> int:
             **expected,
         )
         print(_format_cli_result(result))
-        return 0 if result["status"] == "published" else 1
+        return 0 if result["status"] in {"published", "unchanged"} else 1
     except _ProjectionError as exc:
         print(f"skipped:{exc.reason}")
         return 1
