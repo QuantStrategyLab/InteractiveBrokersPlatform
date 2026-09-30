@@ -22,20 +22,16 @@ on:
         type: boolean
         default: false
       account_facts_target:
-        description: "Publish one fresh archived account-facts report for the selected target."
+        description: "Optional account-facts action; disabled by default."
         required: false
         type: choice
         default: disabled
         options:
           - disabled
           - live-u16608560
+          - ingress-diagnostic
   schedule:
     - cron: "20 22 * * *"
-
-env:
-  GCP_PROJECT_ID: interactivebrokersquant
-  GCP_WORKLOAD_IDENTITY_PROVIDER: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
-  GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}
@@ -44,12 +40,16 @@ concurrency:
 jobs:
   heartbeat:
     name: Check execution report heartbeat
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.account_facts_target != 'ingress-diagnostic' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
       id-token: write
     env:
+      GCP_PROJECT_ID: interactivebrokersquant
+      GCP_WORKLOAD_IDENTITY_PROVIDER: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
+      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com
       RUNTIME_HEARTBEAT_NAME: InteractiveBrokersPlatform
       RUNTIME_HEARTBEAT_REPORT_PLATFORM: interactive_brokers
       RUNTIME_HEARTBEAT_REQUIRED_SERVICES: ${{ secrets.RUNTIME_HEARTBEAT_REQUIRED_SERVICES }}
@@ -135,3 +135,20 @@ jobs:
       - name: Send configured daily dry-run digest
         if: ${{ always() && (github.event_name == 'schedule' || inputs.send_daily_dry_run_digest) }}
         run: uv run --no-sync python scripts/daily_dry_run_digest.py
+
+  account-facts-ingress-diagnostic:
+    name: Verify account-facts ingress authentication only
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.account_facts_target == 'ingress-diagnostic' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    env:
+      IBKR_ACCOUNT_FACTS_TARGET: ${{ inputs.account_facts_target }}
+      IBKR_ACCOUNT_FACTS_SYNC_TOKEN: ${{ secrets.IBKR_ACCOUNT_FACTS_SYNC_TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Send one fixed account-facts ingress diagnostic
+        run: python3 scripts/publish_account_facts_from_report.py

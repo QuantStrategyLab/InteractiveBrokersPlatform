@@ -2,6 +2,11 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from io import BytesIO
+from pathlib import Path
+from urllib.error import HTTPError, URLError
+
+import pytest
 
 import scripts.publish_account_facts_from_report as publisher
 from scripts.publish_account_facts_from_report import (
@@ -264,6 +269,383 @@ def test_publisher_rejects_stale_or_missing_facts_without_http(monkeypatch):
         **{**args, "sync_url": "https://attacker.example/api/account-facts/sync"},
     )
     assert wrong_endpoint == {"status": "skipped", "reason": "publish_target_invalid"}
+
+
+@pytest.mark.parametrize(
+    ("status", "body_error", "expected_error"),
+    [
+        (401, "account_facts_sync_token_invalid", "account_facts_sync_token_invalid"),
+        (409, "account_facts_bindings_missing", "account_facts_bindings_missing"),
+        (503, "account_facts_store_unavailable", "account_facts_store_unavailable"),
+        (409, "UNAPPROVED_ERROR_SENTINEL", "unknown"),
+    ],
+)
+def test_publisher_retains_http_status_and_allowlisted_qrs_error_without_retry(
+    monkeypatch, status, body_error, expected_error
+):
+    observed = {"calls": 0}
+
+    class Opener:
+        def open(self, request, *, timeout):
+            observed["calls"] += 1
+            raise HTTPError(
+                request.full_url,
+                status,
+                "private response text",
+                {},
+                BytesIO(json.dumps({"error": body_error}).encode()),
+            )
+
+    monkeypatch.setattr(publisher, "build_opener", lambda *_args: Opener())
+    result = publisher.publish_ibkr_account_facts_history(
+        _report(),
+        now=datetime(2026, 9, 30, 1, 1, 30, tzinfo=timezone.utc),
+        source_report_uri="gs://qsl-runtime-reports/ibkr/report-1.json",
+        sync_url=publisher.IBKR_ACCOUNT_FACTS_SYNC_URL,
+        sync_token="dedicated-test-token",
+        target_id="ibkr-u16608560",
+        expected_report_prefix="gs://qsl-runtime-reports/ibkr",
+        expected_project_id="qsl-prod",
+        expected_service_name="interactive-brokers-quant-live-u16608560-service",
+        expected_runtime_revision="service-00369-88c",
+        expected_account_scope="live-u16608560",
+        expected_account_selector=["U16608560"],
+        expected_deployment_selector="live-u16608560",
+    )
+
+    assert result == {
+        "status": "skipped",
+        "reason": "publish_failed",
+        "diagnostics": {
+            "stage": "http_response",
+            "category": "http_error",
+            "http_status": status,
+            "qrs_error_code": expected_error,
+            "outcome": "unknown",
+        },
+    }
+    assert observed["calls"] == 1
+
+
+@pytest.mark.parametrize(
+    ("error", "category", "stage"),
+    [
+        (TimeoutError("TIMEOUT_SENTINEL"), "timeout", "request"),
+        (URLError("URL_REASON_SENTINEL"), "url_error", "request"),
+        (RuntimeError("UNKNOWN_TRANSPORT_SENTINEL"), "unknown", "unknown"),
+    ],
+)
+def test_publisher_marks_transport_outcome_unknown_without_exposing_exception(
+    monkeypatch, error, category, stage
+):
+    class Opener:
+        def open(self, *_args, **_kwargs):
+            raise error
+
+    monkeypatch.setattr(publisher, "build_opener", lambda *_args: Opener())
+    result = publisher.publish_ibkr_account_facts_history(
+        _report(),
+        now=datetime(2026, 9, 30, 1, 1, 30, tzinfo=timezone.utc),
+        source_report_uri="gs://qsl-runtime-reports/ibkr/report-1.json",
+        sync_url=publisher.IBKR_ACCOUNT_FACTS_SYNC_URL,
+        sync_token="dedicated-test-token",
+        target_id="ibkr-u16608560",
+        expected_report_prefix="gs://qsl-runtime-reports/ibkr",
+        expected_project_id="qsl-prod",
+        expected_service_name="interactive-brokers-quant-live-u16608560-service",
+        expected_runtime_revision="service-00369-88c",
+        expected_account_scope="live-u16608560",
+        expected_account_selector=["U16608560"],
+        expected_deployment_selector="live-u16608560",
+    )
+
+    assert result == {
+        "status": "skipped",
+        "reason": "publish_failed",
+        "diagnostics": {
+            "stage": stage,
+            "category": category,
+            "http_status": None,
+            "qrs_error_code": "unknown",
+            "outcome": "unknown",
+        },
+    }
+    assert "SENTINEL" not in repr(result)
+
+
+def test_cli_prints_allowlisted_http_diagnostics_without_private_response_data(
+    monkeypatch, capsys
+):
+    now = datetime(2026, 9, 30, 1, 1, 30, tzinfo=timezone.utc)
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now if tz is not None else now.replace(tzinfo=None)
+
+    class Opener:
+        def open(self, request, *, timeout):
+            raise HTTPError(
+                "https://endpoint.invalid/URL_SENTINEL",
+                503,
+                "MESSAGE_SENTINEL",
+                {"X-Debug": "HEADER_SENTINEL"},
+                BytesIO(
+                    b'{"error":"account_facts_store_unavailable",'
+                    b'"debug":"BODY_SENTINEL"}'
+                ),
+            )
+
+    monkeypatch.setattr(publisher, "datetime", FrozenDateTime)
+    report = _report()
+    report["project_id"] = "interactivebrokersquant"
+    monkeypatch.setattr(
+        publisher,
+        "_latest_report_uri",
+        lambda **_kwargs: (
+            "gs://qsl-runtime-logs-shared/execution-reports/interactive_brokers/"
+            "tqqq_growth_income/live-u16608560/2026-09/20260930T010000Z.json"
+        ),
+    )
+    monkeypatch.setattr(publisher, "_load_gcs_report", lambda *_args, **_kwargs: report)
+    monkeypatch.setattr(publisher, "build_opener", lambda *_args: Opener())
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_TARGET", "live-u16608560")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_REPORT_PREFIX", "gs://qsl-runtime-logs-shared/execution-reports/interactive_brokers/tqqq_growth_income/live-u16608560")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_RUNTIME_REVISION", "service-00369-88c")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_SYNC_URL", publisher.IBKR_ACCOUNT_FACTS_SYNC_URL)
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_SYNC_TOKEN", "TOKEN_SENTINEL")
+
+    assert publisher.main() == 1
+    output = capsys.readouterr().out
+    assert output.strip() == (
+        "skipped:publish_failed:stage=http_response:category=http_error:"
+        "http_status=503:qrs_error_code=account_facts_store_unavailable:outcome=unknown"
+    )
+    for sentinel in (
+        "URL_SENTINEL", "MESSAGE_SENTINEL", "HEADER_SENTINEL", "BODY_SENTINEL", "TOKEN_SENTINEL"
+    ):
+        assert sentinel not in output
+
+
+def test_default_cli_target_makes_no_api_or_report_calls(monkeypatch, capsys):
+    monkeypatch.delenv("IBKR_ACCOUNT_FACTS_TARGET", raising=False)
+    monkeypatch.setattr(
+        publisher,
+        "build_opener",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("must not call API")),
+    )
+    monkeypatch.setattr(
+        publisher,
+        "_latest_report_uri",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("must not list GCS")),
+    )
+    monkeypatch.setattr(
+        publisher,
+        "_load_gcs_report",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not read GCS")),
+    )
+
+    assert publisher.main() == 0
+    assert capsys.readouterr().out.strip() == "skipped:target_disabled"
+
+
+def test_ingress_diagnostic_posts_fixed_empty_body_once_without_gcs(monkeypatch, capsys):
+    observed = {"calls": 0}
+
+    class Response:
+        status = 400
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self, limit):
+            observed["read_limit"] = limit
+            return b'{"error":"invalid_account_facts_history"}'
+
+    class Opener:
+        def open(self, request, *, timeout):
+            observed["calls"] += 1
+            observed["request"] = request
+            observed["timeout"] = timeout
+            return Response()
+
+    monkeypatch.setattr(publisher, "build_opener", lambda *_args: Opener())
+    monkeypatch.setattr(
+        publisher,
+        "_latest_report_uri",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("diagnostic must not list GCS")),
+    )
+    monkeypatch.setattr(
+        publisher,
+        "_load_gcs_report",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("diagnostic must not read GCS")),
+    )
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_TARGET", publisher.IBKR_ACCOUNT_FACTS_INGRESS_DIAGNOSTIC_TARGET)
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_SYNC_TOKEN", "TOKEN_SENTINEL")
+    monkeypatch.delenv("IBKR_ACCOUNT_FACTS_SYNC_URL", raising=False)
+
+    assert publisher.main() == 0
+    output = capsys.readouterr().out
+    assert output.strip() == (
+        "verified:ingress_authentication_and_schema_rejection_verified:"
+        "stage=http_response:category=http_status:http_status=400:"
+        "qrs_error_code=invalid_account_facts_history:outcome=rejected_before_storage"
+    )
+    request = observed["request"]
+    assert request.full_url == publisher.IBKR_ACCOUNT_FACTS_SYNC_URL
+    assert request.data == b"{}"
+    assert request.get_method() == "POST"
+    assert request.get_header("Authorization") == "Bearer TOKEN_SENTINEL"
+    assert request.get_header("Content-type") == "application/json"
+    assert observed["calls"] == 1
+    assert observed["timeout"] == 15
+    assert "TOKEN_SENTINEL" not in output
+
+
+@pytest.mark.parametrize(
+    ("response_status", "body_error", "exception", "expected_status", "expected_reason", "expected_code"),
+    [
+        (None, "account_facts_sync_token_invalid", None, "skipped", "ingress_diagnostic_unverified", "account_facts_sync_token_invalid"),
+        (None, "invalid_account_facts_history", None, "verified", "ingress_authentication_and_schema_rejection_verified", "invalid_account_facts_history"),
+        (None, "UNSAFE_ERROR_SENTINEL", None, "skipped", "ingress_diagnostic_unverified", "unknown"),
+        (200, None, None, "skipped", "ingress_diagnostic_unverified", "unknown"),
+        (None, None, TimeoutError("TIMEOUT_SENTINEL"), "skipped", "ingress_diagnostic_unverified", "unknown"),
+    ],
+)
+def test_ingress_diagnostic_verifies_only_exact_qrs_schema_rejection(
+    monkeypatch, response_status, body_error, exception, expected_status, expected_reason, expected_code
+):
+    class Response:
+        status = response_status
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self, _limit):
+            return json.dumps({"error": body_error}).encode() if body_error else b""
+
+    class Opener:
+        def open(self, request, *, timeout):
+            assert request.data == b"{}"
+            if exception is not None:
+                raise exception
+            if response_status is None:
+                raise HTTPError(
+                    request.full_url,
+                    400 if body_error != "account_facts_sync_token_invalid" else 401,
+                    "private response message",
+                    {},
+                    BytesIO(json.dumps({"error": body_error}).encode()),
+                )
+            return Response()
+
+    monkeypatch.setattr(publisher, "build_opener", lambda *_args: Opener())
+    result = publisher.diagnose_account_facts_ingress(sync_token="diagnostic-token")
+    assert result["status"] == expected_status
+    assert result["reason"] == expected_reason
+    assert result["diagnostics"]["qrs_error_code"] == expected_code
+    assert result["diagnostics"]["outcome"] == (
+        "rejected_before_storage" if expected_status == "verified" else "unknown"
+    )
+    assert "SENTINEL" not in repr(result)
+
+
+def test_ingress_diagnostic_rejects_missing_token_without_api_call(monkeypatch):
+    monkeypatch.setattr(
+        publisher,
+        "build_opener",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("must not call API")),
+    )
+    assert publisher.diagnose_account_facts_ingress(sync_token="") == {
+        "status": "skipped",
+        "reason": "publish_auth_unavailable",
+    }
+
+
+def test_ingress_diagnostic_does_not_follow_redirect(monkeypatch):
+    observed = {"calls": 0}
+
+    class Opener:
+        def open(self, request, *, timeout):
+            observed["calls"] += 1
+            raise HTTPError(
+                request.full_url,
+                302,
+                "redirect response",
+                {"Location": "https://other.example/redirect"},
+                BytesIO(b'{"error":"invalid_account_facts_history"}'),
+            )
+
+    def build_opener(handler):
+        assert isinstance(handler, publisher._NoRedirect)
+        return Opener()
+
+    monkeypatch.setattr(publisher, "build_opener", build_opener)
+    result = publisher.diagnose_account_facts_ingress(sync_token="diagnostic-token")
+    assert result["status"] == "skipped"
+    assert result["diagnostics"] == {
+        "stage": "http_response",
+        "category": "http_error",
+        "http_status": 302,
+        "qrs_error_code": "invalid_account_facts_history",
+        "outcome": "unknown",
+    }
+    assert observed["calls"] == 1
+
+
+def test_ingress_diagnostic_cli_redacts_http_exception(monkeypatch, capsys):
+    class Opener:
+        def open(self, *_args, **_kwargs):
+            raise HTTPError(
+                "https://endpoint.invalid/URL_SENTINEL",
+                401,
+                "MESSAGE_SENTINEL",
+                {"X-Debug": "HEADER_SENTINEL"},
+                BytesIO(
+                    b'{"error":"account_facts_sync_token_invalid",'
+                    b'"debug":"BODY_SENTINEL"}'
+                ),
+            )
+
+    monkeypatch.setattr(publisher, "build_opener", lambda *_args: Opener())
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_TARGET", publisher.IBKR_ACCOUNT_FACTS_INGRESS_DIAGNOSTIC_TARGET)
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_SYNC_TOKEN", "TOKEN_SENTINEL")
+
+    assert publisher.main() == 1
+    output = capsys.readouterr().out
+    assert output.strip() == (
+        "skipped:ingress_diagnostic_unverified:stage=http_response:category=http_error:"
+        "http_status=401:qrs_error_code=account_facts_sync_token_invalid:outcome=unknown"
+    )
+    for sentinel in (
+        "URL_SENTINEL", "MESSAGE_SENTINEL", "HEADER_SENTINEL", "BODY_SENTINEL", "TOKEN_SENTINEL"
+    ):
+        assert sentinel not in output
+
+
+def test_workflow_ingress_diagnostic_is_manual_and_isolated_from_heartbeat():
+    workflow = Path(__file__).parents[1] / ".github/workflows/execution-report-heartbeat.yml"
+    source = workflow.read_text()
+    assert "default: disabled" in source
+    assert "- ingress-diagnostic" in source
+    assert "inputs.account_facts_target != 'ingress-diagnostic'" in source
+    diagnostic_job = source.split("  account-facts-ingress-diagnostic:", 1)[1]
+    assert "inputs.account_facts_target == 'ingress-diagnostic'" in diagnostic_job
+    assert "contents: read" in diagnostic_job
+    assert "id-token: write" not in diagnostic_job
+    assert "google-github-actions" not in diagnostic_job
+    assert "setup-uv" not in diagnostic_job
+    assert "uv sync" not in diagnostic_job
+    assert "GCP_" not in diagnostic_job
+    assert "RUNTIME_HEARTBEAT_" not in diagnostic_job
+    assert "IBKR_ACCOUNT_FACTS_SYNC_TOKEN: ${{ secrets.IBKR_ACCOUNT_FACTS_SYNC_TOKEN }}" in diagnostic_job
+    assert "run: python3 scripts/publish_account_facts_from_report.py" in diagnostic_job
 
 
 def test_latest_report_listing_is_confined_to_exact_prefix(monkeypatch):
