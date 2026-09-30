@@ -680,11 +680,125 @@ def test_handle_probe_checks_account_snapshot_without_success_notification(strat
     assert observed["report"]["summary"]["buying_power"] == 123.0
     assert observed["report"]["summary"]["total_equity"] == 456.0
     assert observed["report"]["summary"]["positions_count"] == 1
+    assert "account_facts" not in observed["report"]["summary"]
     assert observed["disconnects"] == 1
     assert observed["notifications"] == []
     assert observed["connection_options"] == [
         {"read_only": True, "validate_trading_permissions": False}
     ]
+
+
+@pytest.mark.parametrize(
+    ("case", "selector", "publishes_facts"),
+    [
+        ("valid", ("U1234567",), True),
+        ("valid", ("U7654321",), False),
+        ("multiple_native_accounts", ("U1234567",), False),
+        ("naive_observation_time", ("U1234567",), False),
+    ],
+)
+def test_handle_probe_projects_only_target_bound_snapshot_facts(
+    strategy_module_factory, monkeypatch, case, selector, publishes_facts
+):
+    strategy_module = strategy_module_factory()
+    monkeypatch.setattr(
+        strategy_module,
+        "RUNTIME_SETTINGS",
+        replace(
+            strategy_module.RUNTIME_SETTINGS,
+            runtime_target=replace(
+                strategy_module.RUNTIME_SETTINGS.runtime_target,
+                account_selector=selector,
+            ),
+        ),
+    )
+    account_ids = ("U1234567", "U7654321") if case == "multiple_native_accounts" else ("U1234567",)
+    observed_at = datetime(2026, 9, 30, 20, tzinfo=timezone(timedelta(hours=8)))
+    if case == "naive_observation_time":
+        observed_at = datetime(2026, 9, 30, 20)
+    snapshot = types.SimpleNamespace(
+        as_of=observed_at,
+        metadata={
+            "account_ids": account_ids,
+            "total_equity_source": "broker_net_liquidation",
+            "broker_net_liquidation": "1234.50",
+            "cash_balances": (
+                {
+                    "account_id": "U1234567",
+                    "currency": "USD",
+                    "NetLiquidation": "1234.50",
+                    "CashBalance": "0",
+                },
+                {
+                    "account_id": "U1234567",
+                    "currency": "HKD",
+                    "$LEDGER-TotalCashBalance": "-4.25",
+                },
+            ),
+        },
+        positions=(),
+        buying_power=9999.0,
+        total_equity=9998.0,
+    )
+    observed = {"snapshot_reads": 0, "disconnects": 0, "events": [], "notifications": []}
+
+    class FakeIB:
+        def disconnect(self):
+            observed["disconnects"] += 1
+
+    monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace(run_id="probe-facts"))
+    monkeypatch.setattr(strategy_module, "build_execution_report", lambda *_args, **_kwargs: {"status": "pending"})
+    monkeypatch.setattr(
+        strategy_module,
+        "persist_execution_report",
+        lambda report, **_kwargs: observed.setdefault("report", dict(report)) or "/tmp/runtime-report.json",
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "log_runtime_event",
+        lambda context, event, **fields: observed["events"].append((event, fields)),
+    )
+    monkeypatch.setattr(strategy_module, "connect_ib", lambda **_kwargs: FakeIB())
+
+    def read_existing_snapshot(_ib):
+        observed["snapshot_reads"] += 1
+        return snapshot
+
+    monkeypatch.setattr(strategy_module, "build_portfolio_snapshot", read_existing_snapshot)
+    monkeypatch.setattr(strategy_module, "run_strategy_core", lambda **_kwargs: pytest.fail("probe must not run strategy"))
+    monkeypatch.setattr(strategy_module, "build_broker_adapters", lambda **_kwargs: pytest.fail("probe must not build order adapters"))
+    monkeypatch.setattr(
+        strategy_module,
+        "publish_notification",
+        lambda **kwargs: observed["notifications"].append(kwargs),
+    )
+
+    with strategy_module.app.test_request_context("/probe", method="POST"):
+        body, status = strategy_module.handle_probe()
+
+    assert (body, status) == ("Probe OK", 200)
+    assert observed["snapshot_reads"] == 1
+    assert observed["disconnects"] == 1
+    assert observed["notifications"] == []
+    summary = observed["report"]["summary"]
+    if publishes_facts:
+        assert summary["account_facts"] == {
+            "schema_version": "ibkr_account_snapshot.v1",
+            "account_ids": ["U1234567"],
+            "currency": "USD",
+            "observed_at": "2026-09-30T12:00:00Z",
+            "net_assets": "1234.50",
+            "net_assets_semantics": "USD NetLiquidation; null unless broker source is verified",
+            "cash_semantics": "IBKR accountValues cash balance; source tag retained; not available funds",
+            "cash": [
+                {"currency": "USD", "cash_balance": "0", "source_tag": "CashBalance"},
+                {"currency": "HKD", "cash_balance": "-4.25", "source_tag": "$LEDGER-TotalCashBalance"},
+            ],
+        }
+        assert summary["buying_power"] == 9999.0
+        assert summary["total_equity"] == 9998.0
+    else:
+        assert "account_facts" not in summary
 
 
 def test_handle_probe_connect_timeout_sends_concise_connection_notification(strategy_module, monkeypatch):
