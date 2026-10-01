@@ -109,6 +109,37 @@ class _Session:
         return _Response({"permissions": kwargs["json"]["permissions"]})
 
 
+class _BackupSession:
+    def __init__(self, object_bytes, *, existing=False, upload_error=False, readback_error=False):
+        self.object_bytes = object_bytes
+        self.existing = existing
+        self.upload_error = upload_error
+        self.readback_error = readback_error
+        self.uploaded = None
+        self.calls = []
+
+    def request(self, method, url, **kwargs):
+        self.calls.append((method, url, kwargs))
+        if method == "GET" and url.endswith("/o/state.json?alt=media"):
+            return _Response(self.object_bytes)
+        if method == "GET" and url.endswith("/o/private%2Fstate%2Farchived-handover.json"):
+            return _Response(b"{}", status=200 if self.existing else 404)
+        if method == "POST" and "/upload/storage/v1/b/" in url:
+            if self.upload_error:
+                raise TimeoutError("synthetic timeout")
+            self.uploaded = kwargs["data"]
+            return _Response({"kind": "storage#object"})
+        if method == "GET" and url.endswith("/o/private%2Fstate%2Farchived-handover.json?alt=media"):
+            if self.readback_error:
+                return _Response(b"", status=503)
+            return _Response(self.uploaded)
+        raise AssertionError("unexpected request")
+
+
+def _transfer_bytes(payload):
+    return json.dumps(payload).encode()
+
+
 def test_inspection_uses_only_expected_read_and_permission_calls(monkeypatch):
     payload, protected = _fixture()
     session = _Session(payload)
@@ -127,7 +158,8 @@ def test_inspection_uses_only_expected_read_and_permission_calls(monkeypatch):
     assert all("fixture-account" not in url for _, url, _ in session.calls)
     assert session.calls[0][1] == "https://storage.googleapis.com/storage/v1/b/fixture-transfer/o/state.json?alt=media"
     assert session.calls[1][1] == "https://storage.googleapis.com/storage/v1/b/fixture-transfer/iam/testPermissions?permissions=storage.objects.get&permissions=storage.objects.create"
-    assert session.calls[1][2]["json"] is None
+    assert "json" not in session.calls[1][2]
+    assert "data" not in session.calls[1][2]
     assert session.calls[2][1] == "https://run.googleapis.com/v2/projects/fixture-project/locations/us-central1/services/fixture-service:testIamPermissions"
     assert session.calls[3][1] == "https://cloudresourcemanager.googleapis.com/v1/projects/fixture-project:testIamPermissions"
     assert all("run.app" not in url and "scheduler.googleapis.com" not in url for _, url, _ in session.calls)
@@ -135,6 +167,10 @@ def test_inspection_uses_only_expected_read_and_permission_calls(monkeypatch):
         "state", "preserved_file_count", "absent_execution_state_count",
         "bucket_permissions", "service_permissions", "scheduler_permissions",
     }
+    assert all(
+        method == "GET" or url.endswith(":testIamPermissions")
+        for method, url, _ in session.calls
+    )
 
 
 @pytest.mark.parametrize("uri", [
@@ -204,18 +240,128 @@ def test_rejects_redirect_and_oversized_transfer_response(monkeypatch, status, b
         inspector.inspect("gs://fixture-transfer/state.json", protected)
 
 
+def test_backup_stops_when_exact_marker_already_exists(monkeypatch):
+    payload, protected = _fixture()
+    session = _BackupSession(_transfer_bytes(payload), existing=True)
+    monkeypatch.setattr(inspector, "_SESSION", session)
+
+    result = inspector.backup_handover_state(
+        "gs://fixture-transfer/state.json", "gs://fixture-transfer/private/state/", protected
+    )
+
+    assert result == {"state": "blocked", "phase": "backup_check", "reason": "backup_already_exists"}
+    assert [method for method, _, _ in session.calls] == ["GET", "GET"]
+    assert not any(method == "POST" for method, _, _ in session.calls)
+
+
+def test_backup_first_attempt_is_create_only_and_reads_back_original_bytes(monkeypatch):
+    payload, protected = _fixture()
+    original = _transfer_bytes(payload)
+    session = _BackupSession(original)
+    monkeypatch.setattr(inspector, "_SESSION", session)
+
+    result = inspector.backup_handover_state(
+        "gs://fixture-transfer/state.json", "gs://fixture-transfer/private/state/", protected
+    )
+
+    assert result == {"state": "backup_verified", "phase": "readback_verified", "reason": "none"}
+    assert session.uploaded == original
+    assert [method for method, _, _ in session.calls] == ["GET", "GET", "POST", "GET"]
+    assert session.calls[1][1] == "https://storage.googleapis.com/storage/v1/b/fixture-transfer/o/private%2Fstate%2Farchived-handover.json"
+    upload = session.calls[2]
+    assert upload[1] == "https://storage.googleapis.com/upload/storage/v1/b/fixture-transfer/o?uploadType=media&name=private%2Fstate%2Farchived-handover.json&ifGenerationMatch=0"
+    assert upload[2]["data"] == original
+    assert upload[2]["headers"] == {"Content-Type": "application/json"}
+    assert upload[2]["allow_redirects"] is False
+    assert session.calls[3][1] == "https://storage.googleapis.com/storage/v1/b/fixture-transfer/o/private%2Fstate%2Farchived-handover.json?alt=media"
+
+
+def test_backup_upload_outcome_unknown_is_not_retried(monkeypatch):
+    payload, protected = _fixture()
+    session = _BackupSession(_transfer_bytes(payload), upload_error=True)
+    monkeypatch.setattr(inspector, "_SESSION", session)
+
+    result = inspector.backup_handover_state(
+        "gs://fixture-transfer/state.json", "gs://fixture-transfer/private/state/", protected
+    )
+
+    assert result == {"state": "unknown", "phase": "upload", "reason": "upload_outcome_unknown"}
+    assert [method for method, _, _ in session.calls] == ["GET", "GET", "POST"]
+
+
+def test_backup_readback_error_remains_unknown_without_reupload(monkeypatch):
+    payload, protected = _fixture()
+    session = _BackupSession(_transfer_bytes(payload), readback_error=True)
+    monkeypatch.setattr(inspector, "_SESSION", session)
+
+    result = inspector.backup_handover_state(
+        "gs://fixture-transfer/state.json", "gs://fixture-transfer/private/state/", protected
+    )
+
+    assert result == {"state": "unknown", "phase": "readback", "reason": "readback_unknown"}
+    assert [method for method, _, _ in session.calls] == ["GET", "GET", "POST", "GET"]
+
+
+def test_backup_readback_mismatch_remains_unknown_without_reupload(monkeypatch):
+    payload, protected = _fixture()
+    session = _BackupSession(_transfer_bytes(payload))
+    session.readback_error = False
+    session.readback_bytes = b"different bytes"
+    original_request = session.request
+
+    def request(method, url, **kwargs):
+        response = original_request(method, url, **kwargs)
+        if method == "GET" and url.endswith("/o/private%2Fstate%2Farchived-handover.json?alt=media"):
+            return _Response(session.readback_bytes)
+        return response
+
+    session.request = request
+    monkeypatch.setattr(inspector, "_SESSION", session)
+
+    result = inspector.backup_handover_state(
+        "gs://fixture-transfer/state.json", "gs://fixture-transfer/private/state/", protected
+    )
+
+    assert result == {"state": "unknown", "phase": "readback", "reason": "readback_mismatch"}
+    assert [method for method, _, _ in session.calls] == ["GET", "GET", "POST", "GET"]
+
+
+@pytest.mark.parametrize("prefix", [
+    "gs://other-transfer/private/state/", "gs://fixture-transfer/private/state",
+    "gs://fixture-transfer/private/../state/", "gs://fixture-transfer/private/state/?generation=1",
+    "gs://fixture-transfer/",
+])
+def test_backup_rejects_invalid_prefix_before_any_cloud_request(monkeypatch, prefix):
+    payload, protected = _fixture()
+    session = _BackupSession(_transfer_bytes(payload))
+    monkeypatch.setattr(inspector, "_SESSION", session)
+
+    with pytest.raises(inspector.PreflightError, match="invalid_backup_prefix"):
+        inspector.backup_handover_state("gs://fixture-transfer/state.json", prefix, protected)
+    assert session.calls == []
+
+
 def test_action_workflow_is_manual_main_only_and_separate_from_existing_paths():
     from pathlib import Path
 
     workflow = Path(".github/workflows/execution-report-heartbeat.yml").read_text()
     assert "default: disabled" in workflow
     assert "- paused-refresh-preflight" in workflow
+    assert "- paused-refresh-state-backup" in workflow
     assert "github.ref == 'refs/heads/main'" in workflow
     assert "inputs.account_facts_target == 'paused-refresh-preflight'" in workflow
+    assert "inputs.account_facts_target == 'paused-refresh-state-backup'" in workflow
     assert "IBKR_PAUSED_FACTS_STATE_TRANSFER_URI: ${{ secrets.IBKR_PAUSED_FACTS_STATE_TRANSFER_URI }}" in workflow
+    assert "IBKR_PAUSED_FACTS_STATE_PREFIX" in workflow
+    assert "secrets.IBKR_PAUSED_FACTS_STATE_PREFIX" in workflow
     assert "script='" not in workflow
     assert "inputs.account_facts_target != 'paused-refresh-preflight'" in workflow
+    assert "inputs.account_facts_target != 'paused-refresh-state-backup'" in workflow
     assert "Publish one validated report" in workflow
     assert "name: Check execution report heartbeat" in workflow
     publisher_condition = workflow.split("  account-facts-publisher:", 1)[1].split("  paused-refresh-preflight:", 1)[0]
     assert "paused-refresh-preflight" not in publisher_condition
+    assert "paused-refresh-state-backup" not in publisher_condition
+    ingress_condition = workflow.split("  account-facts-ingress-diagnostic:", 1)[1]
+    assert "inputs.account_facts_target == 'ingress-diagnostic'" in ingress_condition
+    assert "inputs.account_facts_target == 'paused-refresh-state-backup'" not in ingress_condition

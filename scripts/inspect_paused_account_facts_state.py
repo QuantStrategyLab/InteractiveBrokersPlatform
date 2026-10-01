@@ -109,7 +109,7 @@ def _bounded_content(response: object, limit: int) -> bytes:
     return b"".join(chunks)
 
 
-def _read_transfer(raw_uri: str) -> dict[str, object]:
+def _read_transfer(raw_uri: str) -> tuple[bytes, dict[str, object]]:
     bucket, obj = _gs_uri(raw_uri)
     response = _request(
         "GET", f"https://storage.googleapis.com/storage/v1/b/{quote(bucket, safe='')}/o/{quote(obj, safe='')}?alt=media",
@@ -122,19 +122,36 @@ def _read_transfer(raw_uri: str) -> dict[str, object]:
         response.close()
     if not isinstance(parsed, dict):
         raise PreflightError("invalid_object")
-    return parsed
+    return body, parsed
 
 
-def _request(method: str, url: str, *, expected: int, json_body: object | None = None):
+def _request(
+    method: str,
+    url: str,
+    *,
+    expected: int | tuple[int, ...],
+    json_body: object | None = None,
+    data: bytes | None = None,
+    headers: dict[str, str] | None = None,
+):
     session = _SESSION
+    request_kwargs: dict[str, object] = {
+        "timeout": TIMEOUT_SECONDS,
+        "allow_redirects": False,
+        "stream": True,
+    }
+    if json_body is not None:
+        request_kwargs["json"] = json_body
+    if data is not None:
+        request_kwargs["data"] = data
+    if headers is not None:
+        request_kwargs["headers"] = headers
     try:
-        response = session.request(
-            method, url, json=json_body, timeout=TIMEOUT_SECONDS,
-            allow_redirects=False, stream=True,
-        )
+        response = session.request(method, url, **request_kwargs)
     except Exception:
         raise PreflightError("request_failed") from None
-    if response.status_code != expected or 300 <= response.status_code < 400:
+    accepted = (expected,) if isinstance(expected, int) else expected
+    if response.status_code not in accepted or 300 <= response.status_code < 400:
         response.close()
         raise PreflightError("http_failed")
     return response
@@ -294,7 +311,7 @@ def _bucket_permissions(bucket: str, permissions: list[str]) -> dict[str, bool]:
 
 def inspect(uri: str, protected: dict[str, str]) -> dict[str, object]:
     transfer_bucket, _ = _gs_uri(uri)
-    payload = _read_transfer(uri)
+    _, payload = _read_transfer(uri)
     target, decoded = _verify_payload(payload, protected)
     del decoded
     project = target["project"]
@@ -320,6 +337,62 @@ def inspect(uri: str, protected: dict[str, str]) -> dict[str, object]:
     return results
 
 
+def _state_backup_object(prefix_uri: str, transfer_bucket: str) -> tuple[str, str]:
+    try:
+        bucket, path = _gs_uri(prefix_uri)
+    except PreflightError:
+        raise PreflightError("invalid_backup_prefix") from None
+    parsed = urlsplit(prefix_uri)
+    if bucket != transfer_bucket or not parsed.path.endswith("/") or not path.rstrip("/"):
+        raise PreflightError("invalid_backup_prefix")
+    object_name = f"{path}archived-handover.json"
+    return bucket, object_name
+
+
+def backup_handover_state(uri: str, prefix_uri: str, protected: dict[str, str]) -> dict[str, str]:
+    transfer_bucket, _ = _gs_uri(uri)
+    bucket, object_name = _state_backup_object(prefix_uri, transfer_bucket)
+    object_bytes, payload = _read_transfer(uri)
+    _verify_payload(payload, protected)
+    encoded_bucket = quote(bucket, safe="")
+    encoded_object = quote(object_name, safe="")
+    metadata_url = f"https://storage.googleapis.com/storage/v1/b/{encoded_bucket}/o/{encoded_object}"
+    try:
+        existing = _request("GET", metadata_url, expected=(200, 404))
+        existed = existing.status_code == 200
+        existing.close()
+    except PreflightError:
+        return {"state": "blocked", "phase": "backup_check", "reason": "backup_check_failed"}
+    except Exception:
+        return {"state": "blocked", "phase": "backup_check", "reason": "backup_check_failed"}
+    if existed:
+        return {"state": "blocked", "phase": "backup_check", "reason": "backup_already_exists"}
+
+    upload_query = urlencode({"uploadType": "media", "name": object_name, "ifGenerationMatch": "0"})
+    upload_url = f"https://storage.googleapis.com/upload/storage/v1/b/{encoded_bucket}/o?{upload_query}"
+    try:
+        uploaded = _request(
+            "POST", upload_url, expected=(200, 201), data=object_bytes,
+            headers={"Content-Type": "application/json"},
+        )
+        uploaded.close()
+    except Exception:
+        return {"state": "unknown", "phase": "upload", "reason": "upload_outcome_unknown"}
+
+    readback_url = f"{metadata_url}?alt=media"
+    try:
+        readback = _request("GET", readback_url, expected=200)
+        try:
+            readback_bytes = _bounded_content(readback, MAX_OBJECT_BYTES)
+        finally:
+            readback.close()
+    except Exception:
+        return {"state": "unknown", "phase": "readback", "reason": "readback_unknown"}
+    if hashlib.sha256(readback_bytes).digest() != hashlib.sha256(object_bytes).digest():
+        return {"state": "unknown", "phase": "readback", "reason": "readback_mismatch"}
+    return {"state": "backup_verified", "phase": "readback_verified", "reason": "none"}
+
+
 def main() -> int:
     global _SESSION
     try:
@@ -331,13 +404,22 @@ def main() -> int:
         if protected.get("IBKR_ACCOUNT_FACTS_TARGET") != "additional-1":
             raise PreflightError("target_mismatch")
         uri = os.environ.get("IBKR_PAUSED_FACTS_STATE_TRANSFER_URI", "")
-        _gs_uri(uri)
+        action = os.environ.get("IBKR_PAUSED_FACTS_STATE_ACTION", "inspect")
+        if action not in {"inspect", "backup"}:
+            raise PreflightError("invalid_action")
+        if action == "backup" and os.environ.get("IBKR_ACCOUNT_FACTS_TARGET") != "additional-1":
+            raise PreflightError("target_mismatch")
         credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
         _SESSION = AuthorizedSession(credentials, max_refresh_attempts=0)
         _SESSION.mount("https://", HTTPAdapter(max_retries=0))
-        result = inspect(uri, protected)
+        if action == "backup":
+            result = backup_handover_state(
+                uri, os.environ.get("IBKR_PAUSED_FACTS_STATE_PREFIX", ""), protected
+            )
+        else:
+            result = inspect(uri, protected)
         print(json.dumps(result, sort_keys=True))
-        return 0
+        return 0 if result.get("state") in {"archived_state_verified", "backup_verified"} else 1
     except PreflightError as exc:
         print(json.dumps({"state": "blocked", "reason": str(exc)}, sort_keys=True))
         return 1
