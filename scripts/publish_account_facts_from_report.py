@@ -31,6 +31,22 @@ IBKR_ACCOUNT_FACTS_USER_AGENT = "QSL-IBKR-AccountFacts/1.0"
 IBKR_ACCOUNT_FACTS_MAX_AGE = timedelta(hours=36)
 IBKR_ACCOUNT_FACTS_INGRESS_DIAGNOSTIC_TARGET = "ingress-diagnostic"
 IBKR_ACCOUNT_FACTS_PRIMARY_TARGET = "primary-live"
+IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON_ENV = "IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON"
+IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS = frozenset(
+    {"additional-1", "additional-2", "additional-3"}
+)
+_ADDITIONAL_TARGET_CONFIG_KEYS = frozenset(
+    {
+        "project_id",
+        "report_prefix",
+        "target_id",
+        "service_name",
+        "runtime_revision",
+        "account_scope",
+        "account_selector",
+        "deployment_selector",
+    }
+)
 _INGRESS_DIAGNOSTIC_BODY = b"{}"
 _INGRESS_DIAGNOSTIC_ERROR = "invalid_account_facts_history"
 _REPORT_RUN_ID = re.compile(r"^\d{8}T\d{6}Z\.json$")
@@ -116,6 +132,179 @@ def _expected_account_selector() -> tuple[str, ...]:
     if len(selector) != 1 or selector[0].lower() == "default":
         raise _ProjectionError("target_config_invalid")
     return selector
+
+
+def _single_line_text(value: object) -> str:
+    text = _exact_text(value)
+    if not text or "\n" in text or "\r" in text:
+        return ""
+    return text
+
+
+def _additional_target_configs(raw: str) -> dict[str, dict[str, Any]]:
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise _ProjectionError("target_config_invalid")
+            result[key] = value
+        return result
+
+    try:
+        parsed = json.loads(raw, object_pairs_hook=unique_object)
+    except (json.JSONDecodeError, TypeError, _ProjectionError):
+        raise _ProjectionError("target_config_invalid") from None
+    if not isinstance(parsed, dict) or set(parsed) != IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS:
+        raise _ProjectionError("target_config_invalid")
+
+    configs: dict[str, dict[str, Any]] = {}
+    seen_identities: set[tuple[str, ...]] = set()
+    seen_target_ids: set[str] = set()
+    seen_prefixes: set[tuple[str, str, str]] = set()
+    for slot in sorted(IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS):
+        record = parsed[slot]
+        if not isinstance(record, dict) or set(record) != _ADDITIONAL_TARGET_CONFIG_KEYS:
+            raise _ProjectionError("target_config_invalid")
+        normalized = {
+            key: _single_line_text(record[key])
+            for key in (
+                "project_id",
+                "report_prefix",
+                "target_id",
+                "service_name",
+                "runtime_revision",
+                "account_scope",
+                "deployment_selector",
+            )
+        }
+        selector = _selector(record["account_selector"])
+        prefix = normalized["report_prefix"]
+        try:
+            parsed_prefix = urlsplit(prefix)
+        except ValueError:
+            raise _ProjectionError("target_config_invalid") from None
+        if (
+            any(not value for value in normalized.values())
+            or not _TARGET_ID.fullmatch(normalized["target_id"])
+            or len(selector) != 1
+            or selector[0].lower() == "default"
+            or "\n" in selector[0]
+            or "\r" in selector[0]
+            or parsed_prefix.scheme != "gs"
+            or not parsed_prefix.netloc
+            or not parsed_prefix.path.strip("/")
+            or parsed_prefix.query
+            or parsed_prefix.fragment
+        ):
+            raise _ProjectionError("target_config_invalid")
+        identity = selector
+        target_id = normalized["target_id"]
+        prefix_identity = (
+            parsed_prefix.scheme,
+            parsed_prefix.netloc,
+            parsed_prefix.path.rstrip("/"),
+        )
+        if (
+            identity in seen_identities
+            or target_id in seen_target_ids
+            or prefix_identity in seen_prefixes
+        ):
+            raise _ProjectionError("target_config_invalid")
+        seen_identities.add(identity)
+        seen_target_ids.add(target_id)
+        seen_prefixes.add(prefix_identity)
+        normalized["account_selector"] = selector
+        configs[slot] = normalized
+    return configs
+
+
+def additional_target_environment(target: str) -> dict[str, str]:
+    """Resolve one fixed slot into the existing publisher environment contract."""
+    raw = os.environ.get(IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON_ENV)
+    if not isinstance(raw, str) or not raw:
+        raise _ProjectionError("target_config_unavailable")
+    configs = _additional_target_configs(raw)
+    if target not in configs:
+        raise _ProjectionError("target_config_invalid")
+    config = configs[target]
+    _reject_primary_target_duplicates(configs)
+    project_id = config["project_id"]
+    environment = {
+        "GCP_PROJECT_ID": project_id,
+        "IBKR_ACCOUNT_FACTS_PROJECT_ID": project_id,
+        "IBKR_ACCOUNT_FACTS_TARGET": target,
+        "IBKR_ACCOUNT_FACTS_REPORT_PREFIX": config["report_prefix"],
+        "IBKR_ACCOUNT_FACTS_TARGET_ID": config["target_id"],
+        "IBKR_ACCOUNT_FACTS_SERVICE_NAME": config["service_name"],
+        "IBKR_ACCOUNT_FACTS_RUNTIME_REVISION": config["runtime_revision"],
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE": config["account_scope"],
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON": json.dumps(
+            config["account_selector"], separators=(",", ":")
+        ),
+        "IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR": config["deployment_selector"],
+    }
+    if environment["GCP_PROJECT_ID"] != environment["IBKR_ACCOUNT_FACTS_PROJECT_ID"]:
+        raise _ProjectionError("target_config_invalid")
+    return environment
+
+
+def additional_project_environment(target: str) -> dict[str, str]:
+    """Resolve and validate the selected project without exporting account identity."""
+    raw = os.environ.get(IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON_ENV)
+    if not isinstance(raw, str) or not raw:
+        raise _ProjectionError("target_config_unavailable")
+    configs = _additional_target_configs(raw)
+    if target not in configs:
+        raise _ProjectionError("target_config_invalid")
+    _reject_primary_target_duplicates(configs)
+    project_id = configs[target]["project_id"]
+    environment = {
+        "GCP_PROJECT_ID": project_id,
+        "IBKR_ACCOUNT_FACTS_PROJECT_ID": project_id,
+    }
+    if environment["GCP_PROJECT_ID"] != environment["IBKR_ACCOUNT_FACTS_PROJECT_ID"]:
+        raise _ProjectionError("target_config_invalid")
+    return environment
+
+
+def _reject_primary_target_duplicates(configs: Mapping[str, Mapping[str, Any]]) -> None:
+    primary_selector = _expected_account_selector()
+    primary_target_id = _required_private_setting("IBKR_ACCOUNT_FACTS_TARGET_ID")
+    primary_prefix = _required_private_setting("IBKR_ACCOUNT_FACTS_REPORT_PREFIX")
+    try:
+        parsed_primary_prefix = urlsplit(primary_prefix)
+    except ValueError:
+        raise _ProjectionError("target_config_invalid") from None
+    primary_prefix_identity = (
+        parsed_primary_prefix.scheme,
+        parsed_primary_prefix.netloc,
+        parsed_primary_prefix.path.rstrip("/"),
+    )
+    for config in configs.values():
+        selected_prefix = urlsplit(config["report_prefix"])
+        if (
+            tuple(config["account_selector"]) == primary_selector
+            or config["target_id"] == primary_target_id
+            or (
+                selected_prefix.scheme,
+                selected_prefix.netloc,
+                selected_prefix.path.rstrip("/"),
+            )
+            == primary_prefix_identity
+        ):
+            raise _ProjectionError("target_config_invalid")
+
+
+def export_additional_target_to_github_env(target: str, env_path: str) -> None:
+    environment = additional_project_environment(target)
+    if not env_path:
+        raise _ProjectionError("target_config_unavailable")
+    print(f"::add-mask::{environment['GCP_PROJECT_ID']}")
+    with open(env_path, "a", encoding="utf-8") as handle:
+        for key, value in environment.items():
+            if "\n" in value or "\r" in value:
+                raise _ProjectionError("target_config_invalid")
+            handle.write(f"{key}={value}\n")
 
 
 def _observed_timestamp(value: object) -> datetime:
@@ -621,7 +810,9 @@ def main() -> int:
             )
             print(_format_cli_result(result))
             return 0 if result.get("status") == "verified" else 1
-        if target != IBKR_ACCOUNT_FACTS_PRIMARY_TARGET:
+        if target in IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS:
+            os.environ.update(additional_target_environment(target))
+        elif target != IBKR_ACCOUNT_FACTS_PRIMARY_TARGET:
             print("skipped:target_disabled")
             return 0
         prefix = _required_private_setting("IBKR_ACCOUNT_FACTS_REPORT_PREFIX")
