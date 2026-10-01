@@ -687,6 +687,128 @@ def test_handle_probe_checks_account_snapshot_without_success_notification(strat
     ]
 
 
+@pytest.mark.parametrize(
+    ("selector", "account_ids", "publishes_facts"),
+    [
+        (("U00000001",), ("U00000001",), True),
+        (("U00000002",), ("U00000001",), False),
+        (("U00000001",), ("U00000001", "U00000002"), False),
+        (("default",), ("U00000001",), False),
+    ],
+)
+def test_probe_projects_only_target_bound_facts_without_market_or_strategy_gate(
+    strategy_module_factory, monkeypatch, selector, account_ids, publishes_facts
+):
+    strategy_module = strategy_module_factory()
+    monkeypatch.setattr(
+        strategy_module,
+        "RUNTIME_SETTINGS",
+        replace(
+            strategy_module.RUNTIME_SETTINGS,
+            runtime_target=replace(
+                strategy_module.RUNTIME_SETTINGS.runtime_target,
+                account_selector=selector,
+            ),
+        ),
+    )
+    snapshot = types.SimpleNamespace(
+        as_of=datetime(2026, 9, 30, 20, tzinfo=timezone(timedelta(hours=8))),
+        metadata={
+            "account_ids": account_ids,
+            "total_equity_source": "broker_net_liquidation",
+            "broker_net_liquidation": "1234.50",
+            "cash_balances": (
+                {
+                    "account_id": "U00000001",
+                    "currency": "USD",
+                    "NetLiquidation": "1234.50",
+                    "CashBalance": "0",
+                },
+                {
+                    "account_id": "U00000001",
+                    "currency": "HKD",
+                    "$LEDGER-TotalCashBalance": "-4.25",
+                },
+            ),
+        },
+        positions=(),
+        buying_power=9999.0,
+        total_equity=9998.0,
+    )
+    observed = {
+        "snapshot_reads": 0,
+        "disconnects": 0,
+        "facts": None,
+        "scope": None,
+        "connection_options": [],
+    }
+
+    class FakeIB:
+        def disconnect(self):
+            observed["disconnects"] += 1
+
+    monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: object())
+    monkeypatch.setattr(
+        strategy_module,
+        "build_execution_report",
+        lambda *_args, **_kwargs: {"status": "pending", "account_scope": "scope-fixture"},
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "persist_execution_report",
+        lambda report, **_kwargs: observed.update(
+            facts=report.get("summary", {}).get("account_facts"),
+            scope=report.get("account_scope"),
+        ) or "/tmp/runtime-report.json",
+    )
+    monkeypatch.setattr(strategy_module, "log_runtime_event", lambda *_args, **_kwargs: None)
+    def connect_read_only(**kwargs):
+        observed["connection_options"].append(kwargs)
+        return FakeIB()
+
+    monkeypatch.setattr(strategy_module, "connect_ib", connect_read_only)
+
+    def read_snapshot(_ib):
+        observed["snapshot_reads"] += 1
+        return snapshot
+
+    monkeypatch.setattr(strategy_module, "build_portfolio_snapshot", read_snapshot)
+    monkeypatch.setattr(
+        strategy_module,
+        "is_market_open_now",
+        lambda **_kwargs: pytest.fail("read-only probe must not consult the strategy market gate"),
+    )
+    monkeypatch.setattr(
+        strategy_module,
+        "run_strategy_core",
+        lambda **_kwargs: pytest.fail("read-only probe must not run strategy execution"),
+    )
+
+    with strategy_module.app.test_request_context("/probe", method="POST"):
+        body, status = strategy_module.handle_probe()
+
+    assert (body, status) == ("Probe OK", 200)
+    assert observed["snapshot_reads"] == 1
+    assert observed["disconnects"] == 1
+    assert observed["scope"] == "scope-fixture"
+    assert observed["connection_options"] == [
+        {"read_only": True, "validate_trading_permissions": False}
+    ]
+    if publishes_facts:
+        assert observed["facts"]["account_ids"] == ["U00000001"]
+        assert observed["facts"]["net_assets"] == "1234.50"
+        assert observed["facts"]["cash"] == [
+            {"currency": "USD", "cash_balance": "0", "source_tag": "CashBalance"},
+            {
+                "currency": "HKD",
+                "cash_balance": "-4.25",
+                "source_tag": "$LEDGER-TotalCashBalance",
+            },
+        ]
+    else:
+        assert observed["facts"] is None
+
+
 def test_handle_probe_connect_timeout_sends_concise_connection_notification(strategy_module, monkeypatch):
     observed = {"events": [], "notifications": []}
     timeout_message = (

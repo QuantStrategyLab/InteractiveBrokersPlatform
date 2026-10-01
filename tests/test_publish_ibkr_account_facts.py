@@ -745,6 +745,21 @@ def test_workflow_scheduled_publisher_is_independent_and_single_target():
     assert "IBKR_ACCOUNT_FACTS_REPORT_PREFIX: ${{ secrets.IBKR_ACCOUNT_FACTS_REPORT_PREFIX }}" in publisher_job
     assert "IBKR_ACCOUNT_FACTS_TARGET_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_TARGET_ID }}" in publisher_job
     assert "id-token: write" in publisher_job
+    assert "IBKR_ACCOUNT_FACTS_REPORT_NAME: ${{ inputs.account_facts_report_name }}" in publisher_job
+
+
+def test_workflow_explicit_report_name_skips_only_manual_heartbeat():
+    workflow = Path(__file__).parents[1] / ".github/workflows/execution-report-heartbeat.yml"
+    source = workflow.read_text()
+    assert "account_facts_report_name:" in source
+    assert 'type: string\n        default: ""' in source
+    heartbeat_if = source.split("  heartbeat:", 1)[1].split("  account-facts-publisher:", 1)[0]
+    assert "github.event_name != 'workflow_dispatch'" in heartbeat_if
+    assert "inputs.account_facts_target != 'primary-live'" in heartbeat_if
+    assert "inputs.account_facts_report_name == ''" in heartbeat_if
+    publisher_job = source.split("  account-facts-publisher:", 1)[1].split("  account-facts-ingress-diagnostic:", 1)[0]
+    assert "github.event_name == 'schedule'" in publisher_job
+    assert "inputs.account_facts_target == 'primary-live'" in publisher_job
 
 
 def test_latest_report_listing_is_confined_to_exact_prefix(monkeypatch):
@@ -774,3 +789,144 @@ def test_latest_report_listing_is_confined_to_exact_prefix(monkeypatch):
     )
     assert uri.endswith("/2026-09/20260930T010000Z.json")
     assert all("live-primary/" in value for value in seen)
+
+
+def test_named_report_uri_uses_strict_utc_filename_and_protected_prefix():
+    now = datetime(2026, 10, 1, 13, 0, tzinfo=timezone.utc)
+    assert publisher._named_report_uri(
+        prefix="gs://example-private/reports/ibkr",
+        report_name="20261001T125959Z.json",
+        now=now,
+    ) == "gs://example-private/reports/ibkr/2026-10/20261001T125959Z.json"
+
+    for report_name in (
+        "20260230T120000Z.json",
+        "2026101T125959Z.json",
+        "20261001T130001Z.json",
+        "gs://attacker.example/20261001T125959Z.json",
+        "../20261001T125959Z.json",
+        "20261001T125959Z.json/extra",
+    ):
+        with pytest.raises(publisher._ProjectionError):
+            publisher._named_report_uri(
+                prefix="gs://example-private/reports/ibkr",
+                report_name=report_name,
+                now=now,
+            )
+
+
+def test_named_report_cli_skips_listing_and_rejects_bad_or_future_names_before_post(
+    monkeypatch, capsys
+):
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 10, 1, 13, 0, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(publisher, "datetime", FrozenDateTime)
+    for name, reason in (
+        ("20260230T120000Z.json", "report_name_invalid"),
+        ("20261001T130001Z.json", "report_name_future"),
+        ("gs://attacker.example/report.json", "report_name_invalid"),
+    ):
+        monkeypatch.setenv("IBKR_ACCOUNT_FACTS_TARGET", publisher.IBKR_ACCOUNT_FACTS_PRIMARY_TARGET)
+        monkeypatch.setenv("IBKR_ACCOUNT_FACTS_REPORT_PREFIX", "gs://example-private/reports/ibkr")
+        monkeypatch.setenv("IBKR_ACCOUNT_FACTS_TARGET_ID", "ibkr-primary")
+        monkeypatch.setenv("IBKR_ACCOUNT_FACTS_PROJECT_ID", "example-project")
+        monkeypatch.setenv("IBKR_ACCOUNT_FACTS_SERVICE_NAME", "ibkr-primary-service")
+        monkeypatch.setenv("IBKR_ACCOUNT_FACTS_RUNTIME_REVISION", "runtime-revision-001")
+        monkeypatch.setenv("IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE", "live-primary")
+        monkeypatch.setenv("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", '["U00000001"]')
+        monkeypatch.setenv("IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR", "live-primary")
+        monkeypatch.setenv("IBKR_ACCOUNT_FACTS_REPORT_NAME", name)
+        monkeypatch.setattr(
+            publisher,
+            "_latest_report_uri",
+            lambda **_kwargs: pytest.fail("explicit report selection must not list latest reports"),
+        )
+        monkeypatch.setattr(
+            publisher,
+            "_load_gcs_report",
+            lambda *_args, **_kwargs: pytest.fail("invalid report name must stop before GCS read"),
+        )
+        monkeypatch.setattr(
+            publisher,
+            "publish_ibkr_account_facts_history",
+            lambda *_args, **_kwargs: pytest.fail("invalid report name must stop before POST"),
+        )
+
+        assert publisher.main() == 1
+        assert capsys.readouterr().out.strip() == f"skipped:{reason}"
+
+
+def test_named_report_cli_loads_only_exact_prefix_derived_object(monkeypatch, capsys):
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_TARGET", publisher.IBKR_ACCOUNT_FACTS_PRIMARY_TARGET)
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_REPORT_PREFIX", "gs://example-private/reports/ibkr")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_TARGET_ID", "ibkr-primary")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_PROJECT_ID", "example-project")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_SERVICE_NAME", "ibkr-primary-service")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_RUNTIME_REVISION", "runtime-revision-001")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE", "live-primary")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", '["U00000001"]')
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR", "live-primary")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_REPORT_NAME", "20261001T125959Z.json")
+    selected = []
+    monkeypatch.setattr(
+        publisher,
+        "_latest_report_uri",
+        lambda **_kwargs: pytest.fail("explicit report selection must not list latest reports"),
+    )
+    monkeypatch.setattr(
+        publisher,
+        "_load_gcs_report",
+        lambda uri, **_kwargs: selected.append(uri) or _report(),
+    )
+    monkeypatch.setattr(
+        publisher,
+        "publish_ibkr_account_facts_history",
+        lambda _report, **kwargs: {"status": "published"},
+    )
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 10, 1, 13, 0, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(publisher, "datetime", FrozenDateTime)
+    assert publisher.main() == 0
+    assert selected == ["gs://example-private/reports/ibkr/2026-10/20261001T125959Z.json"]
+    assert capsys.readouterr().out.strip() == "published:unknown"
+
+
+def test_empty_named_report_preserves_latest_report_selection(monkeypatch, capsys):
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_TARGET", publisher.IBKR_ACCOUNT_FACTS_PRIMARY_TARGET)
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_REPORT_PREFIX", "gs://example-private/reports/ibkr")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_TARGET_ID", "ibkr-primary")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_PROJECT_ID", "example-project")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_SERVICE_NAME", "ibkr-primary-service")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_RUNTIME_REVISION", "runtime-revision-001")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE", "live-primary")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", '["U00000001"]')
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR", "live-primary")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_REPORT_NAME", "")
+    latest = []
+    loaded = []
+    monkeypatch.setattr(
+        publisher,
+        "_latest_report_uri",
+        lambda **_kwargs: latest.append(True) or "gs://example-private/reports/ibkr/2026-10/20261001T120000Z.json",
+    )
+    monkeypatch.setattr(
+        publisher,
+        "_load_gcs_report",
+        lambda uri, **_kwargs: loaded.append(uri) or _report(),
+    )
+    monkeypatch.setattr(
+        publisher,
+        "publish_ibkr_account_facts_history",
+        lambda _report, **_kwargs: {"status": "published"},
+    )
+    assert publisher.main() == 0
+    assert latest == [True]
+    assert loaded == ["gs://example-private/reports/ibkr/2026-10/20261001T120000Z.json"]
+    assert capsys.readouterr().out.strip() == "published:unknown"
