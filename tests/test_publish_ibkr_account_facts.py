@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import re
+import subprocess
+import sys
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
@@ -746,6 +749,127 @@ def test_workflow_scheduled_publisher_is_independent_and_single_target():
     assert "IBKR_ACCOUNT_FACTS_TARGET_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_TARGET_ID }}" in publisher_job
     assert "id-token: write" in publisher_job
     assert "IBKR_ACCOUNT_FACTS_REPORT_NAME: ${{ inputs.account_facts_report_name }}" in publisher_job
+
+
+def _publisher_job_environment() -> dict[str, str]:
+    workflow = Path(__file__).parents[1] / ".github/workflows/execution-report-heartbeat.yml"
+    source = workflow.read_text(encoding="utf-8")
+    job = source.split("  account-facts-publisher:", 1)[1].split(
+        "\n  account-facts-ingress-diagnostic:", 1
+    )[0]
+    env_block = job.split("\n    env:\n", 1)[1].split("\n    steps:", 1)[0]
+    placeholders = {
+        ("secrets", "IBKR_ACCOUNT_FACTS_PROJECT_ID"): "example-project",
+        ("secrets", "IBKR_ACCOUNT_FACTS_REPORT_PREFIX"): "gs://example-private/ibkr/reports",
+        ("secrets", "IBKR_ACCOUNT_FACTS_TARGET_ID"): "ibkr-example",
+        ("secrets", "IBKR_ACCOUNT_FACTS_SERVICE_NAME"): "example-ibkr-service",
+        ("secrets", "IBKR_ACCOUNT_FACTS_RUNTIME_REVISION"): "example-revision",
+        ("secrets", "IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE"): "live-example",
+        ("secrets", "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON"): '["U00000001"]',
+        ("secrets", "IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR"): "live-example",
+        ("vars", "IBKR_ACCOUNT_FACTS_SYNC_URL"): publisher.IBKR_ACCOUNT_FACTS_SYNC_URL,
+        ("secrets", "IBKR_ACCOUNT_FACTS_SYNC_TOKEN"): "synthetic-sync-token",
+        ("inputs", "account_facts_report_name"): "",
+    }
+    environment: dict[str, str] = {}
+    for line in env_block.splitlines():
+        match = re.fullmatch(r"      ([A-Z0-9_]+):\s*(.*?)\s*", line)
+        if match is None:
+            continue
+        key, raw_value = match.groups()
+        expression = re.fullmatch(r"\$\{\{\s*(secrets|vars|inputs)\.([A-Za-z0-9_]+)\s*\}\}", raw_value)
+        if expression:
+            source_name, name = expression.groups()
+            if (source_name, name) not in placeholders:
+                raise AssertionError(f"unmapped workflow input: {source_name}.{name}")
+            value = placeholders[source_name, name]
+        else:
+            value = raw_value.strip("'\"")
+        environment[key] = value
+    return environment
+
+
+def test_workflow_exports_publisher_project_and_main_runs_with_only_exported_env():
+    environment = _publisher_job_environment()
+    assert "IBKR_ACCOUNT_FACTS_PROJECT_ID" in environment
+
+    child = r'''
+import contextlib, io, json, os
+from datetime import datetime, timedelta, timezone
+import scripts.publish_account_facts_from_report as publisher
+
+prefix = os.environ["IBKR_ACCOUNT_FACTS_REPORT_PREFIX"]
+now = datetime.now(timezone.utc)
+observed = now - timedelta(seconds=30)
+selector = json.loads(os.environ["IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON"])
+uri = f"{prefix.rstrip('/')}/{now:%Y-%m}/{now:%Y%m%dT%H%M%SZ}.json"
+report = {
+    "schema_version": "runtime_report.v1",
+    "platform": "interactive_brokers",
+    "deploy_target": "cloud_run",
+    "project_id": os.environ["IBKR_ACCOUNT_FACTS_PROJECT_ID"],
+    "service_name": os.environ["IBKR_ACCOUNT_FACTS_SERVICE_NAME"],
+    "account_scope": os.environ["IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE"],
+    "runtime_target": {
+        "account_selector": selector,
+        "deployment_selector": os.environ["IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR"],
+    },
+    "diagnostics": {"runtime_revision": os.environ["IBKR_ACCOUNT_FACTS_RUNTIME_REVISION"]},
+    "runtime_release_receipt": {"attestation_state": "legacy_unattested"},
+    "started_at": (observed - timedelta(seconds=1)).isoformat().replace("+00:00", "Z"),
+    "finished_at": now.isoformat().replace("+00:00", "Z"),
+    "summary": {"account_facts": {
+        "schema_version": "ibkr_account_snapshot.v1",
+        "account_ids": selector,
+        "currency": "USD",
+        "observed_at": observed.isoformat().replace("+00:00", "Z"),
+        "net_assets": "123.45",
+        "cash": [{"currency": "USD", "cash_balance": "12.34", "source_tag": "CashBalance"}],
+    }},
+}
+calls = {"listing": 0, "report": 0, "post": 0}
+def latest_report_uri(*, prefix, project_id, now):
+    calls["listing"] += 1
+    assert project_id == os.environ["IBKR_ACCOUNT_FACTS_PROJECT_ID"]
+    return uri
+def load_report(requested_uri, *, project_id):
+    calls["report"] += 1
+    assert requested_uri == uri
+    assert project_id == os.environ["IBKR_ACCOUNT_FACTS_PROJECT_ID"]
+    return report
+class Response:
+    status = 200
+    def __enter__(self): return self
+    def __exit__(self, *_args): return False
+    def read(self, _limit=-1): return b'{"ok":true,"stored":true,"unchanged":false}'
+class Opener:
+    def open(self, request, *, timeout):
+        calls["post"] += 1
+        assert request.method == "POST" and timeout == 15
+        return Response()
+publisher._latest_report_uri = latest_report_uri
+publisher._load_gcs_report = load_report
+publisher.build_opener = lambda *_args: Opener()
+captured = io.StringIO()
+with contextlib.redirect_stdout(captured):
+    returncode = publisher.main()
+print(json.dumps({"returncode": returncode, "cli": captured.getvalue().strip(), "calls": calls}))
+'''
+    result = subprocess.run(
+        [sys.executable, "-c", child],
+        cwd=Path(__file__).parents[1],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    outcome = json.loads(result.stdout)
+    assert outcome == {
+        "returncode": 0,
+        "cli": "published:unknown",
+        "calls": {"listing": 1, "report": 1, "post": 1},
+    }
 
 
 def test_workflow_explicit_report_name_skips_only_manual_heartbeat():
