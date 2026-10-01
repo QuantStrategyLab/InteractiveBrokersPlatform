@@ -33,6 +33,7 @@ on:
           - additional-1
           - additional-2
           - additional-3
+          - paused-refresh-preflight
       account_facts_report_name:
         description: "Optional exact UTC runtime report filename for account-facts publishing."
         required: false
@@ -48,7 +49,7 @@ concurrency:
 jobs:
   heartbeat:
     name: Check execution report heartbeat
-    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.account_facts_target != 'ingress-diagnostic' && ((inputs.account_facts_target != 'primary-live' && inputs.account_facts_target != 'additional-1' && inputs.account_facts_target != 'additional-2' && inputs.account_facts_target != 'additional-3') || inputs.account_facts_report_name == '')) }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.account_facts_target != 'ingress-diagnostic' && inputs.account_facts_target != 'paused-refresh-preflight' && ((inputs.account_facts_target != 'primary-live' && inputs.account_facts_target != 'additional-1' && inputs.account_facts_target != 'additional-2' && inputs.account_facts_target != 'additional-3') || inputs.account_facts_report_name == '')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -189,6 +190,56 @@ jobs:
         run: uv run --no-sync python scripts/publish_account_facts_from_report.py
         env:
           IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ (inputs.account_facts_target == 'additional-1' || inputs.account_facts_target == 'additional-2' || inputs.account_facts_target == 'additional-3') && secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON || '' }}
+
+  paused-refresh-preflight:
+    name: Inspect archived paused IBKR account-facts state
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.account_facts_target == 'paused-refresh-preflight' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GCP_PROJECT_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID }}
+      IBKR_ACCOUNT_FACTS_PROJECT_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
+      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com
+      IBKR_ACCOUNT_FACTS_TARGET: additional-1
+      IBKR_ACCOUNT_FACTS_REPORT_PREFIX: ${{ secrets.IBKR_ACCOUNT_FACTS_REPORT_PREFIX }}
+      IBKR_ACCOUNT_FACTS_TARGET_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_TARGET_ID }}
+      IBKR_ACCOUNT_FACTS_SERVICE_NAME: ${{ secrets.IBKR_ACCOUNT_FACTS_SERVICE_NAME }}
+      IBKR_ACCOUNT_FACTS_RUNTIME_REVISION: ${{ secrets.IBKR_ACCOUNT_FACTS_RUNTIME_REVISION }}
+      IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE }}
+      IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON }}
+      IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR: ${{ secrets.IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR }}
+      IBKR_PAUSED_FACTS_STATE_TRANSFER_URI: ${{ secrets.IBKR_PAUSED_FACTS_STATE_TRANSFER_URI }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          uv sync --frozen --no-dev
+
+      - name: Select protected additional target before cloud authentication
+        env:
+          IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}
+        run: python3 scripts/configure_account_facts_target.py
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
+
+      - name: Inspect transferred state and effective permissions
+        env:
+          IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}
+        run: uv run --no-sync python scripts/inspect_paused_account_facts_state.py
 
   account-facts-ingress-diagnostic:
     name: Verify account-facts ingress authentication only
