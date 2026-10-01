@@ -67,6 +67,138 @@ def _project(report: dict[str, object]) -> dict[str, object]:
     )
 
 
+def _additional_targets() -> dict[str, dict[str, object]]:
+    return {
+        f"additional-{index}": {
+            "project_id": f"private-project-{index}",
+            "report_prefix": f"gs://private-bucket/reports/target-{index}",
+            "target_id": f"private-target-{index}",
+            "service_name": f"private-service-{index}",
+            "runtime_revision": f"private-revision-{index}",
+            "account_scope": f"private-scope-{index}",
+            "account_selector": [f"U0000001{index}"],
+            "deployment_selector": f"private-deployment-{index}",
+        }
+        for index in range(1, 4)
+    }
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_slot",
+        "extra_slot",
+        "duplicate_identity",
+        "duplicate_target",
+        "duplicate_prefix",
+        "duplicate_prefix_with_slash",
+        "missing_field",
+        "extra_field",
+        "invalid_slot_identity",
+    ],
+)
+def test_additional_target_config_is_strict_and_unique(mutation):
+    config = _additional_targets()
+    if mutation == "missing_slot":
+        del config["additional-3"]
+    elif mutation == "extra_slot":
+        config["additional-4"] = config["additional-3"]
+    elif mutation == "duplicate_identity":
+        config["additional-2"]["account_selector"] = config["additional-1"]["account_selector"]
+    elif mutation == "duplicate_target":
+        config["additional-2"]["target_id"] = config["additional-1"]["target_id"]
+    elif mutation == "duplicate_prefix":
+        config["additional-2"]["report_prefix"] = config["additional-1"]["report_prefix"]
+    elif mutation == "duplicate_prefix_with_slash":
+        config["additional-2"]["report_prefix"] = config["additional-1"]["report_prefix"] + "/"
+    elif mutation == "missing_field":
+        del config["additional-1"]["runtime_revision"]
+    elif mutation == "extra_field":
+        config["additional-1"]["account_name"] = "must-not-be-accepted"
+    else:
+        config["additional-1"]["account_selector"] = ["default"]
+
+    with pytest.raises(publisher._ProjectionError):
+        publisher._additional_target_configs(json.dumps(config))
+
+
+def test_additional_target_config_rejects_malformed_and_duplicate_json_keys():
+    for raw in (
+        "{broken",
+        '{"additional-1":{},"additional-1":{},"additional-2":{},"additional-3":{}}',
+    ):
+        with pytest.raises(publisher._ProjectionError):
+            publisher._additional_target_configs(raw)
+
+
+def test_additional_target_preflight_rejects_primary_identity_collision(monkeypatch):
+    config = _additional_targets()
+    config["additional-1"]["account_selector"] = ["U00000001"]
+    monkeypatch.setenv(
+        publisher.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON_ENV,
+        json.dumps(config),
+    )
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", '["U00000001"]')
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_TARGET_ID", "ibkr-primary")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_REPORT_PREFIX", "gs://example-private/ibkr/reports")
+
+    with pytest.raises(publisher._ProjectionError):
+        publisher.additional_target_environment("additional-2")
+
+
+@pytest.mark.parametrize("failure", ["missing", "malformed", "duplicate_target", "invalid_slot"])
+def test_additional_target_cli_fails_closed_before_gcs_or_post(monkeypatch, capsys, failure):
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_TARGET", "additional-1")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_REPORT_NAME", "20261001T125959Z.json")
+    config = _additional_targets()
+    if failure == "missing":
+        monkeypatch.delenv(publisher.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON_ENV, raising=False)
+    elif failure == "malformed":
+        monkeypatch.setenv(publisher.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON_ENV, "{broken")
+    else:
+        if failure == "duplicate_target":
+            config["additional-2"]["target_id"] = config["additional-1"]["target_id"]
+        monkeypatch.setenv(
+            publisher.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON_ENV,
+            json.dumps(config),
+        )
+        if failure == "invalid_slot":
+            monkeypatch.setenv("IBKR_ACCOUNT_FACTS_TARGET", "additional-4")
+    monkeypatch.setattr(
+        publisher,
+        "_latest_report_uri",
+        lambda **_kwargs: pytest.fail("invalid target config must stop before GCS listing"),
+    )
+    monkeypatch.setattr(
+        publisher,
+        "_named_report_uri",
+        lambda **_kwargs: pytest.fail("invalid target config must stop before report selection"),
+    )
+    monkeypatch.setattr(
+        publisher,
+        "_load_gcs_report",
+        lambda *_args, **_kwargs: pytest.fail("invalid target config must stop before GCS read"),
+    )
+    monkeypatch.setattr(
+        publisher,
+        "publish_ibkr_account_facts_history",
+        lambda *_args, **_kwargs: pytest.fail("invalid target config must stop before POST"),
+    )
+
+    result = publisher.main()
+
+    assert result == (0 if failure == "invalid_slot" else 1)
+    output = capsys.readouterr().out.strip()
+    assert output == (
+        "skipped:target_disabled"
+        if failure == "invalid_slot"
+        else "skipped:target_config_unavailable"
+        if failure == "missing"
+        else "skipped:target_config_invalid"
+    )
+    assert "private-project" not in output
+
+
 def test_projects_bound_ibkr_facts_and_keeps_legacy_receipt_unchanged():
     report = _report()
     history = _project(report)
@@ -747,6 +879,9 @@ def test_workflow_scheduled_publisher_is_independent_and_single_target():
     assert "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON }}" in publisher_job
     assert "IBKR_ACCOUNT_FACTS_REPORT_PREFIX: ${{ secrets.IBKR_ACCOUNT_FACTS_REPORT_PREFIX }}" in publisher_job
     assert "IBKR_ACCOUNT_FACTS_TARGET_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_TARGET_ID }}" in publisher_job
+    assert "IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}" in publisher_job
+    assert "IBKR_ACCOUNT_FACTS_TARGET: ${{ inputs.account_facts_target || 'primary-live' }}" in publisher_job
+    assert "strategy:" not in publisher_job
     assert "id-token: write" in publisher_job
     assert "IBKR_ACCOUNT_FACTS_REPORT_NAME: ${{ inputs.account_facts_report_name }}" in publisher_job
 
@@ -783,6 +918,8 @@ def _publisher_job_environment() -> dict[str, str]:
             if (source_name, name) not in placeholders:
                 raise AssertionError(f"unmapped workflow input: {source_name}.{name}")
             value = placeholders[source_name, name]
+        elif raw_value == "${{ inputs.account_facts_target || 'primary-live' }}":
+            value = "primary-live"
         else:
             value = raw_value.strip("'\"")
         environment[key] = value
@@ -872,6 +1009,132 @@ print(json.dumps({"returncode": returncode, "cli": captured.getvalue().strip(), 
     }
 
 
+def test_additional_target_runs_in_isolated_steps_with_one_private_publish(tmp_path):
+    environment = _publisher_job_environment()
+    config = _additional_targets()
+    environment.update(
+        {
+            "IBKR_ACCOUNT_FACTS_TARGET": "additional-2",
+            "IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON": json.dumps(config),
+            "GITHUB_ENV": str(tmp_path / "github-env"),
+            "IBKR_ACCOUNT_FACTS_REPORT_NAME": "20261001T125959Z.json",
+        }
+    )
+    root = Path(__file__).parents[1]
+    helper = subprocess.run(
+        [sys.executable, "scripts/configure_account_facts_target.py"],
+        cwd=root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert helper.returncode == 0, helper.stderr
+    assert helper.stdout == "::add-mask::private-project-2\n"
+    exported = {}
+    for line in Path(environment["GITHUB_ENV"]).read_text(encoding="utf-8").splitlines():
+        key, value = line.split("=", 1)
+        exported[key] = value
+    assert set(exported) == {"GCP_PROJECT_ID", "IBKR_ACCOUNT_FACTS_PROJECT_ID"}
+    assert exported["GCP_PROJECT_ID"] == exported["IBKR_ACCOUNT_FACTS_PROJECT_ID"]
+    assert exported["IBKR_ACCOUNT_FACTS_PROJECT_ID"] == "private-project-2"
+    assert environment["IBKR_ACCOUNT_FACTS_TARGET_ID"] == "ibkr-example"
+    assert environment["IBKR_ACCOUNT_FACTS_REPORT_PREFIX"] == "gs://example-private/ibkr/reports"
+    assert environment["IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON"] == '["U00000001"]'
+    environment.update(exported)
+
+    child = r'''
+import contextlib, io, json, os
+from datetime import datetime, timezone
+import scripts.publish_account_facts_from_report as publisher
+
+class FrozenDateTime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return datetime(2026, 10, 1, 13, 0, tzinfo=timezone.utc)
+publisher.datetime = FrozenDateTime
+selected_config = publisher.additional_target_environment(os.environ["IBKR_ACCOUNT_FACTS_TARGET"])
+prefix = selected_config["IBKR_ACCOUNT_FACTS_REPORT_PREFIX"]
+project = selected_config["IBKR_ACCOUNT_FACTS_PROJECT_ID"]
+selector = json.loads(selected_config["IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON"])
+report_name = os.environ["IBKR_ACCOUNT_FACTS_REPORT_NAME"]
+uri = f"{prefix.rstrip('/')}/2026-10/{report_name}"
+report = {
+    "schema_version": "runtime_report.v1",
+    "platform": "interactive_brokers",
+    "deploy_target": "cloud_run",
+    "project_id": project,
+    "service_name": selected_config["IBKR_ACCOUNT_FACTS_SERVICE_NAME"],
+    "account_scope": selected_config["IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE"],
+    "runtime_target": {
+        "account_selector": selector,
+        "deployment_selector": selected_config["IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR"],
+    },
+    "diagnostics": {"runtime_revision": selected_config["IBKR_ACCOUNT_FACTS_RUNTIME_REVISION"]},
+    "runtime_release_receipt": {"attestation_state": "legacy_unattested"},
+    "started_at": "2026-10-01T12:59:00Z",
+    "finished_at": "2026-10-01T13:00:00Z",
+    "summary": {"account_facts": {
+        "schema_version": "ibkr_account_snapshot.v1",
+        "account_ids": selector,
+        "currency": "USD",
+        "observed_at": "2026-10-01T12:59:30Z",
+        "net_assets": "123.45",
+        "cash": [{"currency": "USD", "cash_balance": "12.34", "source_tag": "CashBalance"}],
+    }},
+}
+calls = {"listing": 0, "reports": 0, "posts": 0}
+def latest_report_uri(**_kwargs):
+    calls["listing"] += 1
+    raise AssertionError("exact report selection must not list latest reports")
+def load_report(requested_uri, *, project_id):
+    assert requested_uri == uri
+    assert project_id == os.environ["IBKR_ACCOUNT_FACTS_PROJECT_ID"]
+    calls["reports"] += 1
+    return report
+class Response:
+    status = 200
+    def __enter__(self): return self
+    def __exit__(self, *_args): return False
+    def read(self, _limit=-1): return b'{"ok":true,"stored":true,"unchanged":false}'
+class Opener:
+    def open(self, request, *, timeout):
+        calls["posts"] += 1
+        assert request.method == "POST" and timeout == 15
+        return Response()
+publisher._latest_report_uri = latest_report_uri
+publisher._load_gcs_report = load_report
+publisher.build_opener = lambda *_args: Opener()
+captured = io.StringIO()
+with contextlib.redirect_stdout(captured):
+    returncode = publisher.main()
+print(json.dumps({"returncode": returncode, "cli": captured.getvalue().strip(), "calls": calls}))
+'''
+    publisher_run = subprocess.run(
+        [sys.executable, "-c", child],
+        cwd=root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert publisher_run.returncode == 0, publisher_run.stderr
+    assert publisher_run.stderr == ""
+    result = json.loads(publisher_run.stdout)
+    assert result == {
+        "returncode": 0,
+        "cli": "published:unknown",
+        "calls": {
+            "listing": 0,
+            "reports": 1,
+            "posts": 1,
+        },
+    }
+    assert helper.stdout == "::add-mask::private-project-2\n"
+    assert "private-project-2" not in publisher_run.stdout
+    assert "private-revision-2" not in helper.stdout + publisher_run.stdout
+
+
 def test_workflow_explicit_report_name_skips_only_manual_heartbeat():
     workflow = Path(__file__).parents[1] / ".github/workflows/execution-report-heartbeat.yml"
     source = workflow.read_text()
@@ -881,9 +1144,19 @@ def test_workflow_explicit_report_name_skips_only_manual_heartbeat():
     assert "github.event_name != 'workflow_dispatch'" in heartbeat_if
     assert "inputs.account_facts_target != 'primary-live'" in heartbeat_if
     assert "inputs.account_facts_report_name == ''" in heartbeat_if
+    for slot in ("additional-1", "additional-2", "additional-3"):
+        assert f"inputs.account_facts_target != '{slot}'" in heartbeat_if
     publisher_job = source.split("  account-facts-publisher:", 1)[1].split("  account-facts-ingress-diagnostic:", 1)[0]
     assert "github.event_name == 'schedule'" in publisher_job
     assert "inputs.account_facts_target == 'primary-live'" in publisher_job
+    for slot in ("additional-1", "additional-2", "additional-3"):
+        assert f"inputs.account_facts_target == '{slot}'" in publisher_job
+    assert publisher_job.index("Select protected additional target before cloud authentication") < publisher_job.index(
+        "google-github-actions/auth@v3"
+    )
+    assert publisher_job.index("google-github-actions/auth@v3") < publisher_job.index(
+        "Publish one validated report"
+    )
 
 
 def test_latest_report_listing_is_confined_to_exact_prefix(monkeypatch):
