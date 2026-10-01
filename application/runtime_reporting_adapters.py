@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import os
 from typing import Any
 
 from quant_platform_kit.common.runtime_assembly import RuntimeAssembly
@@ -32,6 +33,7 @@ class IBKRRuntimeReportingAdapters:
     dry_run: bool = False
     signal_effective_after_trading_days: int | None = None
     strategy_config_source: str | None = None
+    runtime_revision: str | None = None
     ib_gateway_host_resolver: Callable[[], str] | None = None
     ib_gateway_port: int = 0
     ib_gateway_mode: str = ""
@@ -80,16 +82,30 @@ class IBKRRuntimeReportingAdapters:
             signal_date=started_at,
             signal_effective_after_trading_days=self.signal_effective_after_trading_days,
         )
+        report_base_kwargs = self.runtime_assembly.with_overrides(
+            runtime_target=self.runtime_target,
+            extra_context_fields=self.extra_context_fields,
+        ).build_report_base_kwargs(
+            run_id=log_context.run_id,
+            dry_run=self.dry_run,
+            started_at=started_at,
+            strategy_domain=self.strategy_domain,
+        )
+        if self.runtime_revision:
+            report_base_kwargs["runtime_revision"] = self.runtime_revision
+        diagnostics = {
+            "strategy_config_source": self.strategy_config_source,
+            "ib_gateway_host": self.ib_gateway_host_resolver(),
+            "ib_gateway_port": self.ib_gateway_port,
+            "ib_gateway_mode": self.ib_gateway_mode,
+            "ib_gateway_ip_mode": self.ib_gateway_ip_mode,
+            "ib_client_id": self.ib_client_id,
+            "ib_connect_timeout_seconds": self.ib_connect_timeout_seconds,
+        }
+        if self.runtime_revision:
+            diagnostics["runtime_revision"] = self.runtime_revision
         return self.report_builder(
-            **self.runtime_assembly.with_overrides(
-                runtime_target=self.runtime_target,
-                extra_context_fields=self.extra_context_fields,
-            ).build_report_base_kwargs(
-                run_id=log_context.run_id,
-                dry_run=self.dry_run,
-                started_at=started_at,
-                strategy_domain=self.strategy_domain,
-            ),
+            **report_base_kwargs,
             summary={
                 "account_ids": list(self.extra_context_fields.get("account_ids") or ()),
                 "managed_symbols": list(self.managed_symbols),
@@ -100,15 +116,7 @@ class IBKRRuntimeReportingAdapters:
                 "strategy_display_name_localized": self.strategy_display_name_localized,
                 **timing_summary,
             },
-            diagnostics={
-                "strategy_config_source": self.strategy_config_source,
-                "ib_gateway_host": self.ib_gateway_host_resolver(),
-                "ib_gateway_port": self.ib_gateway_port,
-                "ib_gateway_mode": self.ib_gateway_mode,
-                "ib_gateway_ip_mode": self.ib_gateway_ip_mode,
-                "ib_client_id": self.ib_client_id,
-                "ib_connect_timeout_seconds": self.ib_connect_timeout_seconds,
-            },
+            diagnostics=diagnostics,
             artifacts={
                 "feature_snapshot_path": self.feature_snapshot_path,
                 "feature_snapshot_manifest_path": self.feature_snapshot_manifest_path,
@@ -156,6 +164,7 @@ def build_runtime_reporting_adapters(
     dry_run: bool,
     signal_effective_after_trading_days: int | None,
     strategy_config_source: str | None,
+    runtime_revision: str | None = None,
     ib_gateway_host_resolver: Callable[[], str],
     ib_gateway_port: int,
     ib_gateway_mode: str,
@@ -190,6 +199,11 @@ def build_runtime_reporting_adapters(
         dry_run=bool(dry_run),
         signal_effective_after_trading_days=signal_effective_after_trading_days,
         strategy_config_source=strategy_config_source,
+        runtime_revision=(
+            str(runtime_revision).strip()
+            if runtime_revision is not None
+            else str(os.getenv("K_REVISION") or "").strip()
+        ) or None,
         ib_gateway_host_resolver=ib_gateway_host_resolver,
         ib_gateway_port=int(ib_gateway_port),
         ib_gateway_mode=str(ib_gateway_mode or ""),

@@ -75,3 +75,29 @@ def test_runtime_reporting_adapters_start_run_builds_report_with_runtime_target(
     assert observed["report_builder"]["runtime_target"].platform_id == "interactive_brokers"
     assert observed["report_builder"]["runtime_target"].execution_mode == "paper"
     assert report == {"run_id": "run-001"}
+
+
+def test_build_execution_report_carries_real_cloud_run_revision_metadata(
+    strategy_module_factory, monkeypatch
+):
+    monkeypatch.setenv("K_REVISION", "synthetic-ibkr-revision-001")
+    module = strategy_module_factory()
+
+    report = module.build_execution_report(module.RUNTIME_LOG_CONTEXT.with_run("synthetic-run-001"))
+
+    assert report["diagnostics"]["runtime_revision"] == "synthetic-ibkr-revision-001"
+    assert report["runtime_release_receipt"]["attestation_state"] == "legacy_unattested"
+    assert "runtime_revision" not in report["runtime_release_receipt"]
+
+
+def test_build_execution_report_does_not_fabricate_missing_revision(
+    strategy_module_factory, monkeypatch
+):
+    monkeypatch.delenv("K_REVISION", raising=False)
+    module = strategy_module_factory()
+
+    report = module.build_execution_report(module.RUNTIME_LOG_CONTEXT.with_run("synthetic-run-002"))
+
+    assert "runtime_revision" not in report["diagnostics"]
+    assert report["runtime_release_receipt"]["attestation_state"] == "legacy_unattested"
+    assert "runtime_revision" not in report["runtime_release_receipt"]
