@@ -34,6 +34,7 @@ on:
           - additional-2
           - additional-3
           - paused-refresh-preflight
+          - paused-refresh-state-backup
       account_facts_report_name:
         description: "Optional exact UTC runtime report filename for account-facts publishing."
         required: false
@@ -49,7 +50,7 @@ concurrency:
 jobs:
   heartbeat:
     name: Check execution report heartbeat
-    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.account_facts_target != 'ingress-diagnostic' && inputs.account_facts_target != 'paused-refresh-preflight' && ((inputs.account_facts_target != 'primary-live' && inputs.account_facts_target != 'additional-1' && inputs.account_facts_target != 'additional-2' && inputs.account_facts_target != 'additional-3') || inputs.account_facts_report_name == '')) }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.account_facts_target != 'ingress-diagnostic' && inputs.account_facts_target != 'paused-refresh-preflight' && inputs.account_facts_target != 'paused-refresh-state-backup' && ((inputs.account_facts_target != 'primary-live' && inputs.account_facts_target != 'additional-1' && inputs.account_facts_target != 'additional-2' && inputs.account_facts_target != 'additional-3') || inputs.account_facts_report_name == '')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -192,8 +193,8 @@ jobs:
           IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ (inputs.account_facts_target == 'additional-1' || inputs.account_facts_target == 'additional-2' || inputs.account_facts_target == 'additional-3') && secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON || '' }}
 
   paused-refresh-preflight:
-    name: Inspect archived paused IBKR account-facts state
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.account_facts_target == 'paused-refresh-preflight' }}
+    name: Inspect or back up archived paused IBKR account-facts state
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.account_facts_target == 'paused-refresh-preflight' || inputs.account_facts_target == 'paused-refresh-state-backup') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -213,6 +214,7 @@ jobs:
       IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON }}
       IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR: ${{ secrets.IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR }}
       IBKR_PAUSED_FACTS_STATE_TRANSFER_URI: ${{ secrets.IBKR_PAUSED_FACTS_STATE_TRANSFER_URI }}
+      IBKR_PAUSED_FACTS_STATE_ACTION: ${{ inputs.account_facts_target == 'paused-refresh-state-backup' && 'backup' || 'inspect' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -236,9 +238,10 @@ jobs:
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
 
-      - name: Inspect transferred state and effective permissions
+      - name: Inspect transferred state or back up the handover object
         env:
           IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}
+          IBKR_PAUSED_FACTS_STATE_PREFIX: ${{ inputs.account_facts_target == 'paused-refresh-state-backup' && secrets.IBKR_PAUSED_FACTS_STATE_PREFIX || '' }}
         run: uv run --no-sync python scripts/inspect_paused_account_facts_state.py
 
   account-facts-ingress-diagnostic:
