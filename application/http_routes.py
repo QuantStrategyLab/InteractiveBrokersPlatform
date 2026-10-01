@@ -35,6 +35,8 @@ from flask import request
 from google.api_core.exceptions import PreconditionFailed
 from google.cloud import storage
 
+from application.account_facts import build_ibkr_account_facts
+
 
 class _MainModuleProxy:
     """Resolve ``main.<name>`` against ``sys.modules["main"]`` on every access.
@@ -97,14 +99,18 @@ def _handle_probe(*, response_body: str = "Probe OK"):
         positions = tuple(getattr(snapshot, "positions", ()) or ())
         buying_power = float(getattr(snapshot, "buying_power", 0.0) or 0.0)
         total_equity = float(getattr(snapshot, "total_equity", 0.0) or 0.0)
+        summary = {
+            "buying_power": buying_power,
+            "total_equity": total_equity,
+            "positions_count": len(positions),
+        }
+        account_facts = build_ibkr_account_facts(snapshot)
+        if account_facts and main._account_facts_match_runtime_target(account_facts):
+            summary["account_facts"] = account_facts
         main.finalize_runtime_report(
             report,
             status="ok",
-            summary={
-                "buying_power": buying_power,
-                "total_equity": total_equity,
-                "positions_count": len(positions),
-            },
+            summary=summary,
         )
         main.log_runtime_event(
             log_context,

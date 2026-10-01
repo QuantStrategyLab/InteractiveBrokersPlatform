@@ -30,6 +30,11 @@ on:
           - disabled
           - primary-live
           - ingress-diagnostic
+      account_facts_report_name:
+        description: "Optional exact UTC runtime report filename for account-facts publishing."
+        required: false
+        type: string
+        default: ""
   schedule:
     - cron: "20 22 * * *"
 
@@ -40,7 +45,7 @@ concurrency:
 jobs:
   heartbeat:
     name: Check execution report heartbeat
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.account_facts_target != 'ingress-diagnostic' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.account_facts_target != 'ingress-diagnostic' && (inputs.account_facts_target != 'primary-live' || inputs.account_facts_report_name == '')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -139,6 +144,7 @@ jobs:
       GCP_WORKLOAD_IDENTITY_PROVIDER: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
       GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com
       IBKR_ACCOUNT_FACTS_TARGET: primary-live
+      IBKR_ACCOUNT_FACTS_REPORT_NAME: ${{ inputs.account_facts_report_name }}
       IBKR_ACCOUNT_FACTS_REPORT_PREFIX: ${{ secrets.IBKR_ACCOUNT_FACTS_REPORT_PREFIX }}
       IBKR_ACCOUNT_FACTS_TARGET_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_TARGET_ID }}
       IBKR_ACCOUNT_FACTS_SERVICE_NAME: ${{ secrets.IBKR_ACCOUNT_FACTS_SERVICE_NAME }}

@@ -576,6 +576,23 @@ def _latest_report_uri(*, prefix: str, project_id: str, now: datetime) -> str:
     return max(candidates, key=lambda row: row[0])[1]
 
 
+def _named_report_uri(*, prefix: str, report_name: str, now: datetime) -> str:
+    """Resolve one strictly named report beneath the protected prefix."""
+    if not isinstance(report_name, str) or _REPORT_RUN_ID.fullmatch(report_name) is None:
+        raise _ProjectionError("report_name_invalid")
+    try:
+        report_time = datetime.strptime(report_name[:-5], "%Y%m%dT%H%M%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        raise _ProjectionError("report_name_invalid") from None
+    if report_time.strftime("%Y%m%dT%H%M%SZ.json") != report_name:
+        raise _ProjectionError("report_name_invalid")
+    if report_time > now.astimezone(timezone.utc):
+        raise _ProjectionError("report_name_future")
+    return f"{prefix.rstrip('/')}/{report_time:%Y-%m}/{report_name}"
+
+
 def _load_gcs_report(uri: str, *, project_id: str) -> dict[str, Any]:
     result = subprocess.run(
         ("gcloud", "storage", "cat", uri, "--project", project_id),
@@ -620,7 +637,19 @@ def main() -> int:
             "expected_deployment_selector": _required_private_setting("IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR"),
         }
         now = datetime.now(timezone.utc)
-        uri = _latest_report_uri(prefix=expected_prefix, project_id=expected["expected_project_id"], now=now)
+        report_name = os.environ.get("IBKR_ACCOUNT_FACTS_REPORT_NAME", "")
+        if report_name:
+            uri = _named_report_uri(
+                prefix=expected_prefix,
+                report_name=report_name,
+                now=now,
+            )
+        else:
+            uri = _latest_report_uri(
+                prefix=expected_prefix,
+                project_id=expected["expected_project_id"],
+                now=now,
+            )
         report = _load_gcs_report(uri, project_id=expected["expected_project_id"])
         result = publish_ibkr_account_facts_history(
             report,
