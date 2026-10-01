@@ -141,6 +141,7 @@ jobs:
       id-token: write
     env:
       GCP_PROJECT_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID }}
+      IBKR_ACCOUNT_FACTS_PROJECT_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID }}
       GCP_WORKLOAD_IDENTITY_PROVIDER: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
       GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com
       IBKR_ACCOUNT_FACTS_TARGET: primary-live
