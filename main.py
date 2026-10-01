@@ -7,6 +7,7 @@ import os
 import re
 import threading
 import time
+from collections.abc import Mapping
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -1106,6 +1107,33 @@ def _build_cycle_report_summary(cycle_result, execution_summary, reconciliation_
     if quote_snapshot:
         summary["quote_snapshot"] = quote_snapshot
     return summary
+
+
+def _account_facts_match_runtime_target(account_facts: Mapping[str, object]) -> bool:
+    """Only report physical account facts bound by the configured selector."""
+    target = getattr(RUNTIME_SETTINGS, "runtime_target", None)
+    selectors = getattr(target, "account_selector", ()) if target is not None else ()
+    account_ids = account_facts.get("account_ids") if isinstance(account_facts, Mapping) else None
+    if isinstance(selectors, str):
+        selectors = (selectors,)
+    if isinstance(account_ids, str):
+        account_ids = (account_ids,)
+    normalized_selectors = tuple(
+        str(value or "").strip()
+        for value in (selectors or ())
+        if str(value or "").strip()
+    )
+    normalized_account_ids = tuple(
+        str(value or "").strip()
+        for value in (account_ids or ())
+        if str(value or "").strip()
+    )
+    return (
+        len(normalized_selectors) == 1
+        and normalized_selectors[0].lower() != "default"
+        and len(normalized_account_ids) == 1
+        and normalized_account_ids[0] == normalized_selectors[0]
+    )
 
 
 def _build_notification_delivery_log_for_report(
