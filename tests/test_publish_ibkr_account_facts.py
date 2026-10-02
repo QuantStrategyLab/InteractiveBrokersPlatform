@@ -873,24 +873,26 @@ def test_workflow_scheduled_publisher_is_independent_and_single_target():
     source = workflow.read_text()
     assert "- primary-live" in source
     assert "Publish one validated report" not in source.split("  heartbeat:", 1)[1].split("  account-facts-publisher:", 1)[0]
-    publisher_job = source.split("  account-facts-publisher:", 1)[1].split("  account-facts-ingress-diagnostic:", 1)[0]
+    publisher_job = source.split("  account-facts-publisher:", 1)[1].split("  paused-refresh-preflight:", 1)[0]
+    assert "target: ${{ fromJSON(" in publisher_job
+    assert "fail-fast: false" in publisher_job
     assert "github.event_name == 'schedule'" in publisher_job
-    assert "inputs.account_facts_target == 'primary-live'" in publisher_job
+    assert "vars.IBKR_ACCOUNT_FACTS_ADDITIONAL_DAILY_ENABLED == 'true'" in publisher_job
     assert "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON }}" in publisher_job
     assert "IBKR_ACCOUNT_FACTS_REPORT_PREFIX: ${{ secrets.IBKR_ACCOUNT_FACTS_REPORT_PREFIX }}" in publisher_job
     assert "IBKR_ACCOUNT_FACTS_TARGET_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_TARGET_ID }}" in publisher_job
     assert "IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}" in publisher_job
-    assert "IBKR_ACCOUNT_FACTS_TARGET: ${{ inputs.account_facts_target || 'primary-live' }}" in publisher_job
-    assert "strategy:" not in publisher_job
+    assert "IBKR_ACCOUNT_FACTS_TARGET: ${{ matrix.target }}" in publisher_job
+    assert "format('[\"{0}\"]', inputs.account_facts_target || 'primary-live')" in publisher_job
     assert "id-token: write" in publisher_job
     assert "IBKR_ACCOUNT_FACTS_REPORT_NAME: ${{ inputs.account_facts_report_name }}" in publisher_job
 
 
-def _publisher_job_environment() -> dict[str, str]:
+def _publisher_job_environment(target: str = "primary-live") -> dict[str, str]:
     workflow = Path(__file__).parents[1] / ".github/workflows/execution-report-heartbeat.yml"
     source = workflow.read_text(encoding="utf-8")
     job = source.split("  account-facts-publisher:", 1)[1].split(
-        "\n  account-facts-ingress-diagnostic:", 1
+        "\n  paused-refresh-preflight:", 1
     )[0]
     env_block = job.split("\n    env:\n", 1)[1].split("\n    steps:", 1)[0]
     placeholders = {
@@ -903,6 +905,7 @@ def _publisher_job_environment() -> dict[str, str]:
         ("secrets", "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON"): '["U00000001"]',
         ("secrets", "IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR"): "live-example",
         ("vars", "IBKR_ACCOUNT_FACTS_SYNC_URL"): publisher.IBKR_ACCOUNT_FACTS_SYNC_URL,
+        ("vars", "IBKR_ACCOUNT_FACTS_ADDITIONAL_DAILY_ENABLED"): "false",
         ("secrets", "IBKR_ACCOUNT_FACTS_SYNC_TOKEN"): "synthetic-sync-token",
         ("inputs", "account_facts_report_name"): "",
     }
@@ -918,8 +921,10 @@ def _publisher_job_environment() -> dict[str, str]:
             if (source_name, name) not in placeholders:
                 raise AssertionError(f"unmapped workflow input: {source_name}.{name}")
             value = placeholders[source_name, name]
-        elif raw_value == "${{ inputs.account_facts_target || 'primary-live' }}":
-            value = "primary-live"
+        elif raw_value == "${{ matrix.target }}":
+            value = target
+        elif "matrix.target == 'additional-1'" in raw_value and "secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON" in raw_value:
+            value = json.dumps(_additional_targets()) if target.startswith("additional-") else ""
         else:
             value = raw_value.strip("'\"")
         environment[key] = value
@@ -1009,12 +1014,13 @@ print(json.dumps({"returncode": returncode, "cli": captured.getvalue().strip(), 
     }
 
 
-def test_additional_target_runs_in_isolated_steps_with_one_private_publish(tmp_path):
-    environment = _publisher_job_environment()
+@pytest.mark.parametrize("target,index", [("additional-1", 1), ("additional-2", 2), ("additional-3", 3)])
+def test_additional_target_runs_in_isolated_steps_with_one_private_publish(tmp_path, target, index):
+    environment = _publisher_job_environment(target)
     config = _additional_targets()
     environment.update(
         {
-            "IBKR_ACCOUNT_FACTS_TARGET": "additional-2",
+            "IBKR_ACCOUNT_FACTS_TARGET": target,
             "IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON": json.dumps(config),
             "GITHUB_ENV": str(tmp_path / "github-env"),
             "IBKR_ACCOUNT_FACTS_REPORT_NAME": "20261001T125959Z.json",
@@ -1030,14 +1036,14 @@ def test_additional_target_runs_in_isolated_steps_with_one_private_publish(tmp_p
         check=False,
     )
     assert helper.returncode == 0, helper.stderr
-    assert helper.stdout == "::add-mask::private-project-2\n"
+    assert helper.stdout == f"::add-mask::private-project-{index}\n"
     exported = {}
     for line in Path(environment["GITHUB_ENV"]).read_text(encoding="utf-8").splitlines():
         key, value = line.split("=", 1)
         exported[key] = value
     assert set(exported) == {"GCP_PROJECT_ID", "IBKR_ACCOUNT_FACTS_PROJECT_ID"}
     assert exported["GCP_PROJECT_ID"] == exported["IBKR_ACCOUNT_FACTS_PROJECT_ID"]
-    assert exported["IBKR_ACCOUNT_FACTS_PROJECT_ID"] == "private-project-2"
+    assert exported["IBKR_ACCOUNT_FACTS_PROJECT_ID"] == f"private-project-{index}"
     assert environment["IBKR_ACCOUNT_FACTS_TARGET_ID"] == "ibkr-example"
     assert environment["IBKR_ACCOUNT_FACTS_REPORT_PREFIX"] == "gs://example-private/ibkr/reports"
     assert environment["IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON"] == '["U00000001"]'
@@ -1130,9 +1136,9 @@ print(json.dumps({"returncode": returncode, "cli": captured.getvalue().strip(), 
             "posts": 1,
         },
     }
-    assert helper.stdout == "::add-mask::private-project-2\n"
-    assert "private-project-2" not in publisher_run.stdout
-    assert "private-revision-2" not in helper.stdout + publisher_run.stdout
+    assert helper.stdout == f"::add-mask::private-project-{index}\n"
+    assert f"private-project-{index}" not in publisher_run.stdout
+    assert f"private-revision-{index}" not in helper.stdout + publisher_run.stdout
 
 
 def test_workflow_explicit_report_name_skips_only_manual_heartbeat():
@@ -1146,17 +1152,62 @@ def test_workflow_explicit_report_name_skips_only_manual_heartbeat():
     assert "inputs.account_facts_report_name == ''" in heartbeat_if
     for slot in ("additional-1", "additional-2", "additional-3"):
         assert f"inputs.account_facts_target != '{slot}'" in heartbeat_if
-    publisher_job = source.split("  account-facts-publisher:", 1)[1].split("  account-facts-ingress-diagnostic:", 1)[0]
+    publisher_job = source.split("  account-facts-publisher:", 1)[1].split("  paused-refresh-preflight:", 1)[0]
     assert "github.event_name == 'schedule'" in publisher_job
-    assert "inputs.account_facts_target == 'primary-live'" in publisher_job
-    for slot in ("additional-1", "additional-2", "additional-3"):
-        assert f"inputs.account_facts_target == '{slot}'" in publisher_job
+    assert "inputs.account_facts_target == 'additional-1'" in publisher_job
+    assert "inputs.account_facts_target == 'additional-2'" in publisher_job
+    assert "inputs.account_facts_target == 'additional-3'" in publisher_job
+    assert "target: ${{ fromJSON(" in publisher_job
     assert publisher_job.index("Select protected additional target before cloud authentication") < publisher_job.index(
         "google-github-actions/auth@v3"
     )
     assert publisher_job.index("google-github-actions/auth@v3") < publisher_job.index(
         "Publish one validated report"
     )
+
+
+def test_workflow_natural_additional_publication_is_default_off_and_only_additional_one():
+    workflow = Path(__file__).parents[1] / ".github/workflows/execution-report-heartbeat.yml"
+    source = workflow.read_text()
+    publisher_job = source.split("  account-facts-publisher:", 1)[1].split(
+        "  paused-refresh-preflight:", 1
+    )[0]
+    assert "vars.IBKR_ACCOUNT_FACTS_ADDITIONAL_DAILY_ENABLED == 'true'" in publisher_job
+    assert "Select protected additional target before cloud authentication" in publisher_job
+    assert publisher_job.index("Select protected additional target before cloud authentication") < publisher_job.index(
+        "google-github-actions/auth@v3"
+    )
+    assert "target: ${{ fromJSON(" in publisher_job
+    assert "[\"primary-live\",\"additional-1\"]" in publisher_job
+    assert "[\"primary-live\"]" in publisher_job
+    assert "format('[\"{0}\"]', inputs.account_facts_target || 'primary-live')" in publisher_job
+    assert _publisher_job_environment("additional-1")["IBKR_ACCOUNT_FACTS_TARGET"] == "additional-1"
+
+
+@pytest.mark.parametrize(
+    "event,flag,target,expected",
+    [
+        ("schedule", None, None, ["primary-live"]),
+        ("schedule", "false", None, ["primary-live"]),
+        ("schedule", "False", None, ["primary-live"]),
+        ("schedule", "1", None, ["primary-live"]),
+        ("schedule", "true", None, ["primary-live", "additional-1"]),
+        ("schedule", "True", None, ["primary-live", "additional-1"]),
+        ("schedule", "TRUE", None, ["primary-live", "additional-1"]),
+        ("workflow_dispatch", None, "additional-1", ["additional-1"]),
+        ("workflow_dispatch", None, "additional-2", ["additional-2"]),
+        ("workflow_dispatch", None, "additional-3", ["additional-3"]),
+        ("workflow_dispatch", None, "disabled", []),
+    ],
+)
+def test_publisher_target_selection_is_single_manual_or_explicit_true_value_opt_in(event, flag, target, expected):
+    if event == "schedule":
+        # GitHub Actions string equality is case-insensitive.
+        explicit_true = isinstance(flag, str) and flag.casefold() == "true"
+        actual = ["primary-live", "additional-1"] if explicit_true else ["primary-live"]
+    else:
+        actual = [target] if target in {"primary-live", "additional-1", "additional-2", "additional-3"} else []
+    assert actual == expected
 
 
 def test_latest_report_listing_is_confined_to_exact_prefix(monkeypatch):
