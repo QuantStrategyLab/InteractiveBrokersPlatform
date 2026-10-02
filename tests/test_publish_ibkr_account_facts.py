@@ -878,6 +878,7 @@ def test_workflow_scheduled_publisher_is_independent_and_single_target():
     assert "fail-fast: false" in publisher_job
     assert "github.event_name == 'schedule'" in publisher_job
     assert "vars.IBKR_ACCOUNT_FACTS_ADDITIONAL_DAILY_ENABLED == 'true'" in publisher_job
+    assert "vars.IBKR_ACCOUNT_FACTS_REMAINING_DAILY_ENABLED == 'true'" in publisher_job
     assert "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON }}" in publisher_job
     assert "IBKR_ACCOUNT_FACTS_REPORT_PREFIX: ${{ secrets.IBKR_ACCOUNT_FACTS_REPORT_PREFIX }}" in publisher_job
     assert "IBKR_ACCOUNT_FACTS_TARGET_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_TARGET_ID }}" in publisher_job
@@ -1166,7 +1167,7 @@ def test_workflow_explicit_report_name_skips_only_manual_heartbeat():
     )
 
 
-def test_workflow_natural_additional_publication_is_default_off_and_only_additional_one():
+def test_workflow_natural_additional_publication_has_independent_default_off_flags():
     workflow = Path(__file__).parents[1] / ".github/workflows/execution-report-heartbeat.yml"
     source = workflow.read_text()
     publisher_job = source.split("  account-facts-publisher:", 1)[1].split(
@@ -1178,33 +1179,47 @@ def test_workflow_natural_additional_publication_is_default_off_and_only_additio
         "google-github-actions/auth@v3"
     )
     assert "target: ${{ fromJSON(" in publisher_job
-    assert "[\"primary-live\",\"additional-1\"]" in publisher_job
-    assert "[\"primary-live\"]" in publisher_job
+    assert "[\"primary-live\"{0}{1}]" in publisher_job
+    assert "vars.IBKR_ACCOUNT_FACTS_ADDITIONAL_DAILY_ENABLED == 'true' && ',\"additional-1\"' || ''" in publisher_job
+    assert (
+        "vars.IBKR_ACCOUNT_FACTS_REMAINING_DAILY_ENABLED == 'true' "
+        "&& ',\"additional-2\",\"additional-3\"' || ''"
+    ) in publisher_job
     assert "format('[\"{0}\"]', inputs.account_facts_target || 'primary-live')" in publisher_job
     assert _publisher_job_environment("additional-1")["IBKR_ACCOUNT_FACTS_TARGET"] == "additional-1"
 
 
 @pytest.mark.parametrize(
-    "event,flag,target,expected",
+    "event,first_flag,remaining_flag,target,expected",
     [
-        ("schedule", None, None, ["primary-live"]),
-        ("schedule", "false", None, ["primary-live"]),
-        ("schedule", "False", None, ["primary-live"]),
-        ("schedule", "1", None, ["primary-live"]),
-        ("schedule", "true", None, ["primary-live", "additional-1"]),
-        ("schedule", "True", None, ["primary-live", "additional-1"]),
-        ("schedule", "TRUE", None, ["primary-live", "additional-1"]),
-        ("workflow_dispatch", None, "additional-1", ["additional-1"]),
-        ("workflow_dispatch", None, "additional-2", ["additional-2"]),
-        ("workflow_dispatch", None, "additional-3", ["additional-3"]),
-        ("workflow_dispatch", None, "disabled", []),
+        ("schedule", None, None, None, ["primary-live"]),
+        ("schedule", "false", "false", None, ["primary-live"]),
+        ("schedule", "true", "false", None, ["primary-live", "additional-1"]),
+        ("schedule", "false", "true", None, ["primary-live", "additional-2", "additional-3"]),
+        ("schedule", "true", "true", None, ["primary-live", "additional-1", "additional-2", "additional-3"]),
+        ("schedule", "True", "False", None, ["primary-live", "additional-1"]),
+        ("schedule", "FALSE", "TRUE", None, ["primary-live", "additional-2", "additional-3"]),
+        ("schedule", "TRUE", "TRUE", None, ["primary-live", "additional-1", "additional-2", "additional-3"]),
+        ("schedule", "1", "yes", None, ["primary-live"]),
+        ("workflow_dispatch", None, None, "additional-1", ["additional-1"]),
+        ("workflow_dispatch", None, None, "additional-2", ["additional-2"]),
+        ("workflow_dispatch", None, None, "additional-3", ["additional-3"]),
+        ("workflow_dispatch", "true", "true", "additional-2", ["additional-2"]),
+        ("workflow_dispatch", "true", "true", "disabled", []),
     ],
 )
-def test_publisher_target_selection_is_single_manual_or_explicit_true_value_opt_in(event, flag, target, expected):
+def test_publisher_target_selection_is_single_manual_or_independent_schedule_opt_in(
+    event, first_flag, remaining_flag, target, expected
+):
     if event == "schedule":
         # GitHub Actions string equality is case-insensitive.
-        explicit_true = isinstance(flag, str) and flag.casefold() == "true"
-        actual = ["primary-live", "additional-1"] if explicit_true else ["primary-live"]
+        include_first = isinstance(first_flag, str) and first_flag.casefold() == "true"
+        include_remaining = isinstance(remaining_flag, str) and remaining_flag.casefold() == "true"
+        actual = ["primary-live"]
+        if include_first:
+            actual.append("additional-1")
+        if include_remaining:
+            actual.extend(("additional-2", "additional-3"))
     else:
         actual = [target] if target in {"primary-live", "additional-1", "additional-2", "additional-3"} else []
     assert actual == expected
