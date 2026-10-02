@@ -28,6 +28,7 @@ ANCHOR_KEYS = {
 }
 CONTEXT_JOB_KEYS = {"name", "schedule", "method", "path", "deadline"}
 ROLES = {"main", "precheck", "warmup"}
+SLOT_ORDINALS = {"additional-1": 0, "additional-2": 2, "additional-3": 3}
 MAX_EVIDENCE_AGE = timedelta(seconds=120)
 MAX_PAUSED_ANCHOR_AGE = timedelta(days=30)
 WINDOW_SECONDS = 600
@@ -105,12 +106,15 @@ def _binding_id(binding: dict[str, object]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _validate_context(inputs: dict[str, object]) -> tuple[dict[str, object], dict[str, object]]:
+def _validate_context(inputs: dict[str, object], observer_readonly: bool = False) -> tuple[dict[str, object], dict[str, object]]:
     required_inputs = {
-        "target_context", "image_digest", "account_binding", "paused_prior_run",
+        "target_context", "image_digest", "account_binding",
         "selected_slot", "old_target", "live_jobs",
     }
-    if set(inputs) != required_inputs or inputs.get("selected_slot") != "additional-1":
+    expected = required_inputs if observer_readonly else required_inputs | {"paused_prior_run"}
+    if observer_readonly and "paused_prior_run" in inputs:
+        _fail("paused_anchor_invalid")
+    if set(inputs) != expected or inputs.get("selected_slot") not in SLOT_ORDINALS:
         _fail("target_input_invalid")
     context = inputs.get("target_context")
     binding = inputs.get("account_binding")
@@ -287,7 +291,8 @@ def _check_jobs(jobs: dict[str, object], context: dict[str, object]) -> None:
         token = target.get("oidcToken") if isinstance(target, dict) else None
         resource = f"projects/{context['project']}/locations/{context['region']}/jobs/{expected['name']}"
         if (
-            job.get("name") != resource or job.get("state") != "PAUSED"
+            job.get("name") != resource
+            or job.get("state") not in (("PAUSED", "ENABLED") if role == "precheck" else ("PAUSED",))
             or job.get("schedule") != expected["schedule"]
             or job.get("timeZone") != "America/New_York"
             or job.get("attemptDeadline") != expected["deadline"]
@@ -297,6 +302,15 @@ def _check_jobs(jobs: dict[str, object], context: dict[str, object]) -> None:
             or token.get("audience") != base
         ):
             _fail("job_preflight_failed")
+        if role == "precheck":
+            retry = job.get("retryConfig", {})
+            if (
+                not isinstance(retry, dict)
+                or type(retry.get("retryCount")) is not int
+                or retry.get("retryCount") != 3
+                or retry.get("maxRetryDuration") != "900s"
+            ):
+                _fail("job_preflight_failed")
 
 
 def _check_anchor(anchor: object, context: dict[str, object], binding: dict[str, object], now: datetime) -> dict[str, object]:
@@ -322,7 +336,7 @@ def _check_anchor(anchor: object, context: dict[str, object], binding: dict[str,
     return copy.deepcopy(anchor)
 
 
-def _check_gateway(mapping: dict[str, object], passive: dict[str, object], now: datetime, selected_index: object) -> datetime:
+def _check_gateway(mapping: dict[str, object], passive: dict[str, object], now: datetime, selected_index: object, expected_ordinal: int) -> datetime:
     mapping_keys = {
         "status", "runtime_ordinal", "gateway_inventory_index", "native_account_matches_protected",
         "current_vm_host_matches_actual_runtime_config", "mode_matches", "vm_running", "observed_at_utc", "mutations",
@@ -338,7 +352,7 @@ def _check_gateway(mapping: dict[str, object], passive: dict[str, object], now: 
     index = mapping.get("gateway_inventory_index")
     if (
         mapping.get("status") != "mapping_verified"
-        or type(mapping.get("runtime_ordinal")) is not int or mapping["runtime_ordinal"] != 0
+        or type(mapping.get("runtime_ordinal")) is not int or mapping["runtime_ordinal"] != expected_ordinal
         or type(index) is not int or index < 0
         or type(selected_index) is not int or selected_index != index
         or any(mapping.get(flag) is not True for flag in (
@@ -384,6 +398,8 @@ def assemble_configs(
     sole_operator_confirmed: bool,
     *,
     pagination_complete: bool = False,
+    actual_runtime_ordinal: int = 0,
+    observer_readonly: bool = False,
 ) -> tuple[dict[str, object], dict[str, object]]:
     """Return the two existing strict configs when all original evidence matches."""
     if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
@@ -394,7 +410,14 @@ def assemble_configs(
     for digest in (metadata_driver_sha256, probe_driver_sha256):
         if not isinstance(digest, str) or not _HEX64.fullmatch(digest):
             _fail("driver_source_hash_invalid")
-    context, binding = _validate_context(paused_inputs)
+    if observer_readonly is not True and observer_readonly is not False:
+        _fail("observer_mode_invalid")
+    context, binding = _validate_context(paused_inputs, observer_readonly)
+    if (
+        type(actual_runtime_ordinal) is not int
+        or SLOT_ORDINALS.get(paused_inputs["selected_slot"]) != actual_runtime_ordinal
+    ):
+        _fail("gateway_mapping_invalid")
     _check_service(
         service, old_revision, candidate_revision, context,
         paused_inputs["account_binding"], paused_inputs["image_digest"],
@@ -403,11 +426,12 @@ def assemble_configs(
     if pagination_complete is not True or not isinstance(recent_all_revision_requests, list) or recent_all_revision_requests:
         _fail("recent_requests_not_clear")
     passive_time = _check_gateway(
-        gateway_mapping, passive_observation, now, actual_selected_gateway_index
+        gateway_mapping, passive_observation, now, actual_selected_gateway_index,
+        actual_runtime_ordinal,
     )
     if not isinstance(actual_source_run_id, str) or not re.fullmatch(r"[1-9][0-9]*", actual_source_run_id):
         _fail("gateway_evidence_invalid")
-    anchor = _check_anchor(paused_inputs["paused_prior_run"], context, binding, now)
+    anchor = None if observer_readonly else _check_anchor(paused_inputs["paused_prior_run"], context, binding, now)
     checked = _format_time(now)
     proof = {
         "service": context["service"],
@@ -417,10 +441,13 @@ def assemble_configs(
         "checked_at_utc": checked,
         "window_start_utc": checked,
         "window_end_utc": _format_time(now + timedelta(seconds=WINDOW_SECONDS)),
-        "paused_prior_run": anchor,
         "gateway_observed_at_utc": _format_time(passive_time),
         "gateway_target_matches": True,
     }
+    if observer_readonly:
+        proof["observer_readonly"] = True
+    else:
+        proof["paused_prior_run"] = anchor
     common = {
         "target_context": copy.deepcopy(context),
         "image_digest": paused_inputs["image_digest"],
