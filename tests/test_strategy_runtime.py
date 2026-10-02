@@ -1,6 +1,6 @@
 import sys
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,7 +15,7 @@ for candidate in (ROOT, QPK_SRC, UES_SRC, HES_SRC):
         sys.path.insert(0, str(candidate))
 
 import strategy_runtime as strategy_runtime_module
-from quant_platform_kit.common.models import PortfolioSnapshot
+from quant_platform_kit.common.models import PortfolioSnapshot, Position
 from quant_platform_kit.common.runtime_target import build_runtime_target
 from quant_platform_kit.common.strategy_contracts import (
     PositionTarget,
@@ -306,6 +306,53 @@ def test_main_compute_signals_passes_strategy_plugin_signals_to_runtime(strategy
 
     assert result[0] == {"BOXX": 1.0}
     assert observed["strategy_plugin_signals"] == (signal,)
+
+
+def test_strategy_scope_projection_and_weights_use_the_observed_market_value():
+    class FakeEntrypoint:
+        manifest = StrategyManifest(
+            profile="tech_communication_pullback_enhancement",
+            domain="us_equity",
+            display_name="Test",
+            description="test",
+            required_inputs=frozenset(),
+        )
+
+        def evaluate(self, ctx):
+            return StrategyDecision(positions=())
+
+    as_of = datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc)
+    snapshot = PortfolioSnapshot(
+        as_of=as_of,
+        total_equity=2200.0,
+        buying_power=1000.0,
+        positions=(
+            Position(
+                symbol="XYZ",
+                quantity=10.0,
+                market_value=1200.0,
+                average_cost=100.0,
+                currency="USD",
+                account_id="U00000001",
+            ),
+        ),
+        metadata={"strategy_equity": 2200.0, "portfolio_mark_observed_at": as_of.isoformat()},
+    )
+    runtime = strategy_runtime_module.LoadedStrategyRuntime(
+        entrypoint=FakeEntrypoint(),
+        runtime_adapter=StrategyRuntimeAdapter(),
+        runtime_settings=_build_runtime_settings(),
+    )
+
+    projected = runtime._project_portfolio_snapshot(snapshot, ("XYZ",))
+    weights = strategy_runtime_module._portfolio_weight_map_from_snapshot(
+        projected, verified_nav=2200.0
+    )
+
+    assert projected.as_of == as_of
+    assert projected.total_equity == 2200.0
+    assert projected.positions[0].market_value == 1200.0
+    assert weights == pytest.approx({"XYZ": 1200.0 / 2200.0})
 
 
 def test_loaded_strategy_runtime_attaches_strategy_plugin_metadata_to_portfolio(monkeypatch):
