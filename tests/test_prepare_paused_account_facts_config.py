@@ -186,6 +186,17 @@ def test_observer_requires_actual_vm_reference_binding_without_claiming_live_ip(
     assemble_configs(*args, pagination_complete=True, actual_runtime_ordinal=2, observer_readonly=True)
 
 
+def test_preserves_existing_zero_retry_precheck_policy():
+    args = fixture_data()
+    args[4]["precheck"]["retryConfig"] = {
+        "maxRetryDuration": "0s", "minBackoffDuration": "120s",
+        "maxBackoffDuration": "300s", "maxDoublings": 5,
+    }
+    before = copy.deepcopy(args[4]["precheck"]["retryConfig"])
+    assemble_configs(*args, pagination_complete=True)
+    assert args[4]["precheck"]["retryConfig"] == before
+
+
 @pytest.mark.parametrize(("slot", "ordinal", "provided"), [
     ("additional-1", 2, 2), ("additional-2", 0, 0), ("additional-3", 2, 2),
     ("additional-2", 2, 0),
