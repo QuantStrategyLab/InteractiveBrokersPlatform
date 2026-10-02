@@ -148,6 +148,7 @@ def test_accepts_only_explicit_protected_slot_to_runtime_ordinal_pairs(slot, ord
 
 def test_explicit_readonly_observer_proof_does_not_invent_a_historical_anchor():
     args = fixture_data(slot="additional-2", ordinal=2, precheck_state="ENABLED")
+    args[6]["current_vm_target_matches_actual_runtime_config"] = args[6].pop("current_vm_host_matches_actual_runtime_config")
     args[0].pop("paused_prior_run")
     adopter, probe = assemble_configs(
         *args, pagination_complete=True, actual_runtime_ordinal=2, observer_readonly=True,
@@ -161,6 +162,7 @@ def test_explicit_readonly_observer_proof_does_not_invent_a_historical_anchor():
 
 def test_observer_mode_is_opt_in_and_still_rejects_current_requests():
     args = fixture_data(slot="additional-3", ordinal=3)
+    args[6]["current_vm_target_matches_actual_runtime_config"] = args[6].pop("current_vm_host_matches_actual_runtime_config")
     args[0].pop("paused_prior_run")
     with pytest.raises(PreparationError, match="target_input_invalid"):
         assemble_configs(*args, pagination_complete=True, actual_runtime_ordinal=3)
@@ -169,6 +171,19 @@ def test_observer_mode_is_opt_in_and_still_rejects_current_requests():
         assemble_configs(
             *args, pagination_complete=True, actual_runtime_ordinal=3, observer_readonly=True,
         )
+
+
+def test_observer_requires_actual_vm_reference_binding_without_claiming_live_ip():
+    args = fixture_data(slot="additional-2", ordinal=2)
+    args[0].pop("paused_prior_run")
+    with pytest.raises(PreparationError, match="gateway_mapping_invalid"):
+        assemble_configs(*args, pagination_complete=True, actual_runtime_ordinal=2, observer_readonly=True)
+    args[6].pop("current_vm_host_matches_actual_runtime_config")
+    args[6]["current_vm_target_matches_actual_runtime_config"] = False
+    with pytest.raises(PreparationError, match="gateway_mapping_invalid"):
+        assemble_configs(*args, pagination_complete=True, actual_runtime_ordinal=2, observer_readonly=True)
+    args[6]["current_vm_target_matches_actual_runtime_config"] = True
+    assemble_configs(*args, pagination_complete=True, actual_runtime_ordinal=2, observer_readonly=True)
 
 
 @pytest.mark.parametrize(("slot", "ordinal", "provided"), [

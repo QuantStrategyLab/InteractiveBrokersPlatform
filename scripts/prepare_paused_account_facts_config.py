@@ -336,10 +336,14 @@ def _check_anchor(anchor: object, context: dict[str, object], binding: dict[str,
     return copy.deepcopy(anchor)
 
 
-def _check_gateway(mapping: dict[str, object], passive: dict[str, object], now: datetime, selected_index: object, expected_ordinal: int) -> datetime:
+def _check_gateway(mapping: dict[str, object], passive: dict[str, object], now: datetime, selected_index: object, expected_ordinal: int, observer_readonly: bool = False) -> datetime:
+    identity_flag = (
+        "current_vm_target_matches_actual_runtime_config" if observer_readonly
+        else "current_vm_host_matches_actual_runtime_config"
+    )
     mapping_keys = {
         "status", "runtime_ordinal", "gateway_inventory_index", "native_account_matches_protected",
-        "current_vm_host_matches_actual_runtime_config", "mode_matches", "vm_running", "observed_at_utc", "mutations",
+        identity_flag, "mode_matches", "vm_running", "observed_at_utc", "mutations",
     }
     passive_keys = {
         "status", "container_running", "api_listener", "established_api_connections", "observed_at_utc",
@@ -356,7 +360,7 @@ def _check_gateway(mapping: dict[str, object], passive: dict[str, object], now: 
         or type(index) is not int or index < 0
         or type(selected_index) is not int or selected_index != index
         or any(mapping.get(flag) is not True for flag in (
-            "native_account_matches_protected", "current_vm_host_matches_actual_runtime_config", "mode_matches", "vm_running",
+            "native_account_matches_protected", identity_flag, "mode_matches", "vm_running",
         ))
         or type(mapping.get("mutations")) is not int or mapping["mutations"] != 0
     ):
@@ -427,7 +431,7 @@ def assemble_configs(
         _fail("recent_requests_not_clear")
     passive_time = _check_gateway(
         gateway_mapping, passive_observation, now, actual_selected_gateway_index,
-        actual_runtime_ordinal,
+        actual_runtime_ordinal, observer_readonly,
     )
     if not isinstance(actual_source_run_id, str) or not re.fullmatch(r"[1-9][0-9]*", actual_source_run_id):
         _fail("gateway_evidence_invalid")
