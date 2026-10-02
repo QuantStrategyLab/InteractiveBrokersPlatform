@@ -6,4 +6,6 @@
 
 快照记录市值来源及本次读取时间。`portfolio()` 返回缓存数据时通常没有逐条报价时间，因此该时间只表示本次观察时点，不证明底层报价的新鲜度。这里不请求行情、不换汇，也不增加券商读取调用。
 
-锁定的 QuantPlatformKit 策略范围投影保留正确的 `market_value`，但会重建 `Position` 并丢弃 `average_cost`、`currency` 和 `account_id`。本次修复不更改共享投影契约；因此平均成本只在投影前的 IBKR 快照可用，不能据此宣称下游所有 PnL 诊断都已恢复。
+锁定的 QuantPlatformKit 策略范围投影保留正确的 `market_value`，但会重建 `Position` 并丢弃 `average_cost`、`currency` 和 `account_id`。QPK PR #643 的后续补丁修正了这一往返转换：唯一标的保留字段及空头，重复标的明确拒绝，缺失成本保持未知。
+
+已使用 IBKR 实际投影入口、已安装的锁定 QPK 模型及 UES 现金归一化函数，叠加候选 QPK helper 做离线合成验证：多头、空头、缺失成本和重复标的拒绝均通过。IBKR 的依赖固定版本尚未更新，平均成本在当前采用版本中仍只在投影前可用；候选补丁通过不等于下游已采用或生产 PnL 已恢复。
