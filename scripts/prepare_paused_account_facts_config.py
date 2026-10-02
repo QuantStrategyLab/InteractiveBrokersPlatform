@@ -306,9 +306,9 @@ def _check_jobs(jobs: dict[str, object], context: dict[str, object]) -> None:
             retry = job.get("retryConfig", {})
             if (
                 not isinstance(retry, dict)
-                or type(retry.get("retryCount")) is not int
-                or retry.get("retryCount") != 3
-                or retry.get("maxRetryDuration") != "900s"
+                or type(retry.get("retryCount", 0)) is not int
+                or (retry.get("retryCount", 0), retry.get("maxRetryDuration", "0s"))
+                not in {(0, "0s"), (3, "900s")}
             ):
                 _fail("job_preflight_failed")
 
