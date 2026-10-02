@@ -144,7 +144,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: ${{ fromJSON(github.event_name == 'schedule' && vars.IBKR_ACCOUNT_FACTS_ADDITIONAL_DAILY_ENABLED == 'true' && '["primary-live","additional-1"]' || github.event_name == 'schedule' && '["primary-live"]' || format('["{0}"]', inputs.account_facts_target || 'primary-live')) }}
+        target: ${{ fromJSON(github.event_name == 'schedule' && format('["primary-live"{0}{1}]', vars.IBKR_ACCOUNT_FACTS_ADDITIONAL_DAILY_ENABLED == 'true' && ',"additional-1"' || '', vars.IBKR_ACCOUNT_FACTS_REMAINING_DAILY_ENABLED == 'true' && ',"additional-2","additional-3"' || '') || format('["{0}"]', inputs.account_facts_target || 'primary-live')) }}
     permissions:
       contents: read
       id-token: write
