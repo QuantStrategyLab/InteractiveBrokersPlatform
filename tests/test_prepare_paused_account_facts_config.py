@@ -25,7 +25,7 @@ OLD_REV = "qsl-runner-old123"
 CANDIDATE_REV = "qsl-runner-candidate456"
 
 
-def fixture_data():
+def fixture_data(slot="additional-1", ordinal=0, precheck_state="PAUSED"):
     jobs_spec = {
         "main": {"name": "runner-main", "schedule": "*/5 * * * *", "method": "POST", "path": "/run", "deadline": "900s"},
         "precheck": {"name": "runner-precheck", "schedule": "*/5 * * * *", "method": "POST", "path": "/dry-run", "deadline": "900s"},
@@ -56,7 +56,7 @@ def fixture_data():
     }
     inputs = {
         "target_context": context, "image_digest": IMAGE_DIGEST, "account_binding": binding,
-        "paused_prior_run": anchor, "selected_slot": "additional-1",
+        "paused_prior_run": anchor, "selected_slot": slot,
         "old_target": {key: binding[key] for key in (
             "project_id", "service_name", "account_scope", "account_selector", "deployment_selector",
         )},
@@ -94,12 +94,14 @@ def fixture_data():
         }
         job = {
             "name": f"projects/{context['project']}/locations/{context['region']}/jobs/{spec['name']}",
-            "state": "PAUSED", "schedule": spec["schedule"], "timeZone": "America/New_York",
+            "state": precheck_state if role == "precheck" else "PAUSED", "schedule": spec["schedule"], "timeZone": "America/New_York",
             "attemptDeadline": spec["deadline"], "httpTarget": target,
         }
+        if role == "precheck":
+            job["retryConfig"] = {"retryCount": 3, "maxRetryDuration": "900s"}
         job_responses[role] = job
     mapping = {
-        "status": "mapping_verified", "runtime_ordinal": 0, "gateway_inventory_index": 4,
+        "status": "mapping_verified", "runtime_ordinal": ordinal, "gateway_inventory_index": 4,
         "native_account_matches_protected": True, "current_vm_host_matches_actual_runtime_config": True,
         "mode_matches": True, "vm_running": True,
         "observed_at_utc": (NOW - timedelta(seconds=15)).isoformat(), "mutations": 0,
@@ -136,6 +138,56 @@ def test_assembles_exact_existing_configs_from_complete_current_evidence():
     assert "verified" not in json.dumps(probe["window_proof"])
 
 
+@pytest.mark.parametrize(("slot", "ordinal"), [("additional-1", 0), ("additional-2", 2), ("additional-3", 3)])
+def test_accepts_only_explicit_protected_slot_to_runtime_ordinal_pairs(slot, ordinal):
+    args = fixture_data(slot=slot, ordinal=ordinal, precheck_state="ENABLED")
+    adopter, probe = assemble_configs(*args, pagination_complete=True, actual_runtime_ordinal=ordinal)
+    assert adopter["target_context"]["service"] == SERVICE
+    assert probe["account_binding"] == args[0]["account_binding"]
+
+
+def test_explicit_readonly_observer_proof_does_not_invent_a_historical_anchor():
+    args = fixture_data(slot="additional-2", ordinal=2, precheck_state="ENABLED")
+    args[0].pop("paused_prior_run")
+    adopter, probe = assemble_configs(
+        *args, pagination_complete=True, actual_runtime_ordinal=2, observer_readonly=True,
+    )
+    for config in (adopter, probe):
+        proof = config["window_proof"]
+        assert proof["observer_readonly"] is True
+        assert "paused_prior_run" not in proof
+    assert "paused_prior_run" not in json.dumps(adopter)
+
+
+def test_observer_mode_is_opt_in_and_still_rejects_current_requests():
+    args = fixture_data(slot="additional-3", ordinal=3)
+    args[0].pop("paused_prior_run")
+    with pytest.raises(PreparationError, match="target_input_invalid"):
+        assemble_configs(*args, pagination_complete=True, actual_runtime_ordinal=3)
+    args[5].append({"synthetic": "current request"})
+    with pytest.raises(PreparationError, match="recent_requests_not_clear"):
+        assemble_configs(
+            *args, pagination_complete=True, actual_runtime_ordinal=3, observer_readonly=True,
+        )
+
+
+@pytest.mark.parametrize(("slot", "ordinal", "provided"), [
+    ("additional-1", 2, 2), ("additional-2", 0, 0), ("additional-3", 2, 2),
+    ("additional-2", 2, 0),
+])
+def test_rejects_slot_ordinal_mismatch(slot, ordinal, provided):
+    args = fixture_data(slot=slot, ordinal=ordinal)
+    with pytest.raises(PreparationError, match="gateway_mapping_invalid"):
+        assemble_configs(*args, pagination_complete=True, actual_runtime_ordinal=provided)
+
+
+@pytest.mark.parametrize("precheck_state", ["DISABLED", "UNKNOWN", "SCHEDULED"])
+def test_rejects_precheck_states_outside_paused_maintenance_contract(precheck_state):
+    args = fixture_data(precheck_state=precheck_state)
+    with pytest.raises(PreparationError, match="job_preflight_failed"):
+        assemble_configs(*args, pagination_complete=True)
+
+
 def test_zero_candidate_traffic_may_omit_percent():
     args = fixture_data()
     zero_row = {"revision": SERVICE_RESOURCE + "/revisions/" + CANDIDATE_REV}
@@ -165,6 +217,7 @@ def test_zero_candidate_traffic_may_omit_percent():
         (lambda a: a[3]["containers"][0]["env"][1].__setitem__("value", json.dumps({"account_selector": ["wrong"], "account_scope": "synthetic-scope", "deployment_selector": "synthetic-deployment"})), "runtime_target_identity_invalid"),
         (lambda a: a[3]["containers"][0].__setitem__("image", "registry.example/runner@sha256:" + "d" * 64), "candidate_digest_invalid"),
         (lambda a: a[4]["main"].__setitem__("state", "ENABLED"), "job_preflight_failed"),
+        (lambda a: a[4]["precheck"]["retryConfig"].__setitem__("retryCount", 3.0), "job_preflight_failed"),
         (lambda a: a[5].append({"request": "placeholder"}), "recent_requests_not_clear"),
         (lambda a: a[7].update(established_api_connections=1), "gateway_observation_invalid"),
         (lambda a: a[7].update(broker_calls=True), "gateway_observation_invalid"),
