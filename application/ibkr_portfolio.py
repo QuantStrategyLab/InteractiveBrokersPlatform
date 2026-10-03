@@ -52,6 +52,56 @@ def _as_float(value: Any) -> float | None:
         return None
 
 
+def _aggregate_strategy_positions(positions: Iterable[Position]) -> list[Position]:
+    """Combine same-symbol holdings for strategy consumers that key by symbol."""
+    aggregates: dict[str, dict[str, Any]] = {}
+    for position in positions:
+        symbol = str(position.symbol).strip().upper()
+        row = aggregates.setdefault(
+            symbol,
+            {
+                "quantity": 0.0,
+                "market_value": 0.0,
+                "weighted_cost": 0.0,
+                "absolute_quantity": 0.0,
+                "currency": position.currency,
+                "accounts": set(),
+            },
+        )
+        if row["currency"] != position.currency:
+            raise IBKRPortfolioSnapshotUnavailableError(
+                "IBKR same-symbol positions with different currencies cannot be aggregated."
+            )
+        row["quantity"] += float(position.quantity)
+        row["market_value"] += float(position.market_value)
+        if position.average_cost is not None:
+            absolute_quantity = abs(float(position.quantity))
+            row["weighted_cost"] += absolute_quantity * float(position.average_cost)
+            row["absolute_quantity"] += absolute_quantity
+        if position.account_id:
+            row["accounts"].add(position.account_id)
+
+    aggregated = []
+    for symbol, row in aggregates.items():
+        average_cost = (
+            row["weighted_cost"] / row["absolute_quantity"]
+            if row["absolute_quantity"] > 0.0
+            else None
+        )
+        accounts = row["accounts"]
+        aggregated.append(
+            Position(
+                symbol=symbol,
+                quantity=row["quantity"],
+                market_value=row["market_value"],
+                average_cost=average_cost,
+                currency=row["currency"],
+                account_id=next(iter(accounts)) if len(accounts) == 1 else None,
+            )
+        )
+    return aggregated
+
+
 def _cash_value_for_currency(
     values_by_account_currency: dict[tuple[str | None, str], dict[str, float]],
     *,
@@ -79,15 +129,13 @@ def _broker_net_liquidation_evidence(
 ) -> tuple[float | None, str | None]:
     """Return account-scope USD NetLiquidation and a stable source digest.
 
-    Prefer an explicit USD NetLiquidation row.  IBKR also publishes a BASE
-    NetLiquidation for single-currency USD accounts; accept that only when USD
-    is absent so cash-only lanes can still bind capital evidence.
+    Only explicit USD NetLiquidation rows identify USD capital. BASE is
+    account-relative and does not establish a currency.
     """
 
     if not selected_account_ids:
         return None, None
-    # account_id -> (priority, value). Lower priority wins (USD=0, BASE=1).
-    selected: dict[str, tuple[int, float]] = {}
+    selected: dict[str, float] = {}
     for account_value in account_values:
         account_id = str(getattr(account_value, "account", "") or "").strip()
         if account_id not in selected_account_ids:
@@ -95,11 +143,7 @@ def _broker_net_liquidation_evidence(
         if str(getattr(account_value, "tag", "") or "").strip() != "NetLiquidation":
             continue
         currency = str(getattr(account_value, "currency", "") or "").strip().upper()
-        if currency == "USD":
-            priority = 0
-        elif currency == "BASE":
-            priority = 1
-        else:
+        if currency != "USD":
             continue
         try:
             value = float(getattr(account_value, "value", None))
@@ -107,14 +151,12 @@ def _broker_net_liquidation_evidence(
             return None, None
         if not math.isfinite(value) or value <= 0.0:
             return None, None
-        current = selected.get(account_id)
-        if current is None or priority < current[0]:
-            selected[account_id] = (priority, value)
+        selected[account_id] = value
 
     if set(selected) != set(selected_account_ids):
         return None, None
     canonical_rows = [
-        {"account_id": account_id, "currency": "USD", "value": selected[account_id][1]}
+        {"account_id": account_id, "currency": "USD", "value": selected[account_id]}
         for account_id in sorted(selected)
     ]
     source_digest = hashlib.sha256(
@@ -151,21 +193,76 @@ def fetch_portfolio_snapshot(
 
         time_module.sleep(wait_seconds)
 
+    # ib_insync's portfolio() exposes the current cached portfolio rows; it
+    # does not request quotes or create another broker data path.
+    portfolio_fn = getattr(ib, "portfolio", None)
+    if not callable(portfolio_fn):
+        raise IBKRPortfolioSnapshotUnavailableError(
+            "IBKR strategy snapshot requires the cached read-only portfolio market values."
+        )
+    try:
+        portfolio_items = tuple(portfolio_fn() or ())
+    except Exception as exc:
+        raise IBKRPortfolioSnapshotUnavailableError(
+            "IBKR could not load cached read-only portfolio market values."
+        ) from exc
+
+    market_values_by_account_con_id: dict[tuple[str, str], tuple[float, float, str]] = {}
+    for item in portfolio_items:
+        contract = getattr(item, "contract", None)
+        if str(getattr(contract, "secType", "") or "").strip().upper() != "STK":
+            continue
+        account_id = str(getattr(item, "account", "") or "").strip()
+        if not _matches_account(account_id or None, selected_account_ids):
+            continue
+        con_id = str(getattr(contract, "conId", "") or "").strip()
+        if not account_id or not con_id or con_id == "0":
+            raise IBKRPortfolioSnapshotUnavailableError(
+                "IBKR portfolio stock mark is missing its account or contract identity."
+            )
+        market_value = _as_float(getattr(item, "marketValue", None))
+        quantity = _as_float(getattr(item, "position", None))
+        currency_value = str(getattr(contract, "currency", "") or "").strip().upper()
+        if (
+            market_value is None
+            or quantity is None
+            or not all(math.isfinite(value) for value in (market_value, quantity))
+            or not currency_value
+        ):
+            raise IBKRPortfolioSnapshotUnavailableError(
+                "IBKR portfolio stock mark is missing finite market value, quantity, or currency."
+            )
+        identity = (account_id, con_id)
+        if identity in market_values_by_account_con_id:
+            raise IBKRPortfolioSnapshotUnavailableError(
+                "IBKR returned duplicate portfolio rows for one account and stock contract."
+            )
+        market_values_by_account_con_id[identity] = (market_value, quantity, currency_value)
+
     positions = []
     option_positions = []
     for raw_position in ib.positions():
         account_id = str(getattr(raw_position, "account", "") or "").strip() or None
         if not _matches_account(account_id, selected_account_ids):
             continue
-        if raw_position.position == 0:
-            continue
         contract = raw_position.contract
-        quantity = float(raw_position.position)
-        average_cost = float(raw_position.avgCost)
+        quantity = _as_float(getattr(raw_position, "position", None))
+        average_cost = _as_float(getattr(raw_position, "avgCost", None))
+        if quantity is None or average_cost is None:
+            raise IBKRPortfolioSnapshotUnavailableError(
+                "IBKR position is missing its quantity or average cost."
+            )
+        if quantity == 0:
+            continue
         contract_currency = str(getattr(contract, "currency", "") or "").strip().upper()
-        if not contract_currency:
-            contract_currency = market_currency
-        if str(getattr(contract, "secType", "") or "").strip().upper() == "OPT":
+        sec_type = str(getattr(contract, "secType", "") or "").strip().upper()
+        if not math.isfinite(quantity) or not math.isfinite(average_cost):
+            raise IBKRPortfolioSnapshotUnavailableError(
+                "IBKR position is missing a finite quantity or average cost."
+            )
+        if sec_type == "OPT":
+            if not contract_currency:
+                contract_currency = market_currency
             option_positions.append(
                 {
                     "underlier": str(getattr(contract, "symbol", "") or "").strip().upper(),
@@ -183,15 +280,50 @@ def fetch_portfolio_snapshot(
                 }
             )
             continue
+        if sec_type != "STK":
+            raise IBKRPortfolioSnapshotUnavailableError(
+                f"IBKR strategy snapshot does not support position type {sec_type or 'UNKNOWN'}."
+            )
+        if contract_currency != market_currency:
+            raise IBKRPortfolioSnapshotUnavailableError(
+                "IBKR stock positions in another or unknown currency cannot be mixed into this strategy snapshot."
+            )
+        con_id = str(getattr(contract, "conId", "") or "").strip()
+        if not con_id or con_id == "0":
+            raise IBKRPortfolioSnapshotUnavailableError(
+                "IBKR stock position is missing its contract identity."
+            )
+        mark = market_values_by_account_con_id.get((account_id or "", con_id))
+        if mark is None:
+            raise IBKRPortfolioSnapshotUnavailableError(
+                "IBKR current portfolio mark is missing for a selected stock position."
+            )
+        market_value, portfolio_quantity, portfolio_currency = mark
+        if portfolio_currency != contract_currency:
+            raise IBKRPortfolioSnapshotUnavailableError(
+                "IBKR portfolio mark currency does not match its selected stock position."
+            )
+        if not math.isclose(quantity, portfolio_quantity, rel_tol=1e-9, abs_tol=1e-9):
+            raise IBKRPortfolioSnapshotUnavailableError(
+                "IBKR positions and portfolio snapshot quantities do not match."
+            )
+        symbol = str(getattr(contract, "symbol", "") or "").strip().upper()
+        if not symbol:
+            raise IBKRPortfolioSnapshotUnavailableError(
+                "IBKR stock position is missing its symbol."
+            )
         positions.append(
             Position(
-                symbol=str(getattr(contract, "symbol", "") or "").strip().upper(),
+                symbol=symbol,
                 quantity=quantity,
-                market_value=quantity * average_cost,
+                market_value=market_value,
                 average_cost=average_cost,
                 currency=contract_currency,
+                account_id=account_id,
             )
         )
+
+    positions = _aggregate_strategy_positions(positions)
 
     total_equity = 0.0
     available_funds = None
@@ -199,6 +331,7 @@ def fetch_portfolio_snapshot(
     matched_market_currency_value_count = 0
     values_by_account_currency: dict[tuple[str | None, str], dict[str, float]] = {}
     account_values = tuple(ib.accountValues())
+    observed_at = datetime.now(timezone.utc)
     for account_value in account_values:
         account_id = str(getattr(account_value, "account", "") or "").strip() or None
         if not _matches_account(account_id, selected_account_ids):
@@ -237,10 +370,12 @@ def fetch_portfolio_snapshot(
         )
     if cash_only_execution:
         buying_power = float(market_currency_cash or 0.0) if market_currency_cash is not None else 0.0
-        position_market_values = {
-            str(position.symbol).strip().upper(): float(position.market_value)
-            for position in positions
-        }
+        position_market_values: dict[str, float] = {}
+        for position in positions:
+            symbol = str(position.symbol).strip().upper()
+            position_market_values[symbol] = (
+                position_market_values.get(symbol, 0.0) + float(position.market_value)
+            )
         from us_equity_strategies.cash_only_equity import compute_strategy_total_equity
 
         total_equity = compute_strategy_total_equity(
@@ -263,6 +398,15 @@ def fetch_portfolio_snapshot(
         "market_currency_cash": market_currency_cash,
         "available_funds": available_funds,
         "cash_only_execution": cash_only_execution,
+        "strategy_equity": float(total_equity),
+        "strategy_equity_source": (
+            "ibkr_cached_portfolio_market_value_plus_account_cash"
+            if cash_only_execution
+            else "ibkr_account_values_net_liquidation"
+        ),
+        "position_market_value_source": "ibkr_cached_portfolio_market_value",
+        "portfolio_mark_observed_at": observed_at.isoformat(),
+        "snapshot_observed_at": observed_at.isoformat(),
         "cash_balances": tuple(
             {
                 "account_id": account_id,
@@ -284,24 +428,14 @@ def fetch_portfolio_snapshot(
         metadata["account_hash"] = selected_account_ids[0]
     if verified_nlv is not None and source_digest is not None:
         metadata["broker_net_liquidation"] = float(verified_nlv)
+        metadata["broker_net_liquidation_source"] = "accountValues:USD:NetLiquidation"
+        metadata["broker_net_liquidation_observed_at"] = observed_at.isoformat()
         metadata["source_digest_sha256"] = source_digest
-        # Cash-only SOXL sizes value targets from positions+cash, while RRL
-        # divides by capital_base NLV. When sleeve marks exceed NetLiquidation,
-        # in-cap weights inflate and fail closed. Shrink the cash sleeve so
-        # strategy equity matches the verified USD NLV used by the gate.
-        if cash_only_execution and market_currency == "USD":
-            position_mv_sum = sum(float(position.market_value) for position in positions)
-            strategy_equity = float(total_equity)
-            nlv = float(verified_nlv)
-            if strategy_equity > nlv + 1e-6:
-                metadata["strategy_equity_before_nlv_align"] = strategy_equity
-                aligned_cash = nlv - position_mv_sum
-                metadata["market_currency_cash"] = aligned_cash
-                total_equity = nlv
-                buying_power = aligned_cash
+        if market_currency == "USD":
+            metadata["strategy_equity_minus_broker_nlv"] = float(total_equity) - float(verified_nlv)
 
     return PortfolioSnapshot(
-        as_of=datetime.now(timezone.utc),
+        as_of=observed_at,
         total_equity=total_equity,
         buying_power=buying_power,
         positions=tuple(positions),
