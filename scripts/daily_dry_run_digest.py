@@ -236,7 +236,7 @@ def main(now: dt.datetime | None = None) -> int:
     if os.environ.get("DRILL_DIGEST_PREVIEW") == "true":
         print(f"Daily drill preview: targets={len(targets)}, alerts={alerts}")
         return 0
-    sent = _send_telegram(message)
+    sent = _send_telegram(message, retry_429_once=True)
     print(f"Daily drill digest sent={sent}; targets={len(targets)}; alerts={alerts}")
     return 0 if sent and alerts == 0 else 1
 

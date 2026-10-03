@@ -9,6 +9,8 @@ import os
 import re
 import subprocess
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any
@@ -997,7 +999,45 @@ def _telegram_token() -> str:
         return direct_token
     return _load_telegram_token_from_secret()
 
-def _send_telegram(message: str) -> bool:
+
+_TELEGRAM_RETRY_AFTER_MAX_SECONDS = 15
+_TELEGRAM_ERROR_BODY_MAX_BYTES = 64 * 1024
+
+
+def _telegram_retry_after_seconds(exc: urllib.error.HTTPError) -> int | None:
+    if exc.code != 429:
+        return None
+    try:
+        try:
+            raw_body = exc.read(_TELEGRAM_ERROR_BODY_MAX_BYTES + 1)
+        finally:
+            exc.close()
+        if len(raw_body) > _TELEGRAM_ERROR_BODY_MAX_BYTES:
+            return None
+        payload = json.loads(raw_body)
+    except Exception:  # noqa: BLE001
+        return None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("ok") is not False
+        or type(payload.get("error_code")) is not int
+        or payload["error_code"] != 429
+    ):
+        return None
+    parameters = payload.get("parameters")
+    if not isinstance(parameters, dict):
+        return None
+    retry_after = parameters.get("retry_after")
+    if (
+        type(retry_after) is not int
+        or retry_after <= 0
+        or retry_after > _TELEGRAM_RETRY_AFTER_MAX_SECONDS
+    ):
+        return None
+    return retry_after
+
+
+def _send_telegram(message: str, *, retry_429_once: bool = False) -> bool:
     targets: list[tuple[str, str]] = []
     token = _telegram_token()
     for chat_id in _split_values(os.environ.get("GLOBAL_TELEGRAM_CHAT_ID")):
@@ -1019,6 +1059,24 @@ def _send_telegram(message: str) -> bool:
         try:
             with urllib.request.urlopen(request, timeout=15) as response:
                 ok = ok and response.status < 400
+        except urllib.error.HTTPError as exc:
+            retry_after = (
+                _telegram_retry_after_seconds(exc) if retry_429_once else None
+            )
+            if retry_after is None:
+                ok = False
+                print(f"Telegram send failed: {type(exc).__name__}", file=sys.stderr)
+                continue
+            time.sleep(retry_after)
+            try:
+                with urllib.request.urlopen(request, timeout=15) as response:
+                    ok = ok and response.status < 400
+            except Exception as retry_exc:  # noqa: BLE001
+                ok = False
+                print(
+                    f"Telegram send failed: {type(retry_exc).__name__}",
+                    file=sys.stderr,
+                )
         except Exception as exc:  # noqa: BLE001
             ok = False
             print(f"Telegram send failed: {type(exc).__name__}", file=sys.stderr)

@@ -2,12 +2,37 @@ from __future__ import annotations
 
 import subprocess
 import datetime as dt
+import io
 import json
 import os
+import urllib.error
+import urllib.parse
 
 import pytest
 
+from scripts import daily_dry_run_digest as dry_run_digest
 from scripts import execution_report_heartbeat as heartbeat
+
+
+class _FakeTelegramResponse:
+    def __init__(self, status=200):
+        self.status = status
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+
+def _telegram_http_error(body, *, code=429):
+    return urllib.error.HTTPError(
+        "https://api.telegram.org/bot-synthetic-token/sendMessage",
+        code,
+        "request rejected",
+        None,
+        io.BytesIO(body),
+    )
 
 
 def _clear_runtime_env(monkeypatch):
@@ -874,3 +899,167 @@ def test_main_skips_when_all_configured_targets_are_disabled(monkeypatch, capsys
         now=dt.datetime(2026, 6, 20, 23, 10, tzinfo=dt.timezone.utc)
     ) == 0
     assert "no enabled runtime target matches this heartbeat" in capsys.readouterr().out
+
+
+def test_send_telegram_retries_only_the_explicitly_rejected_target_once(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_TOKEN", "synthetic-token")
+    monkeypatch.setenv("GLOBAL_TELEGRAM_CHAT_ID", "synthetic-chat-a,synthetic-chat-b")
+    requests = []
+    sleeps = []
+
+    def fake_urlopen(request, timeout):
+        requests.append((request, timeout))
+        if len(requests) == 1:
+            return _FakeTelegramResponse()
+        if len(requests) == 2:
+            raise _telegram_http_error(
+                b'{"ok":false,"error_code":429,"parameters":{"retry_after":2}}'
+            )
+        return _FakeTelegramResponse()
+
+    monkeypatch.setattr(heartbeat.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(heartbeat.time, "sleep", sleeps.append)
+
+    assert heartbeat._send_telegram("synthetic digest", retry_429_once=True) is True
+
+    assert len(requests) == 3
+    assert sleeps == [2]
+    assert [timeout for _, timeout in requests] == [15, 15, 15]
+    decoded = [
+        urllib.parse.parse_qs(request.data.decode("utf-8"))
+        for request, _ in requests
+    ]
+    assert [item["chat_id"] for item in decoded] == [
+        ["synthetic-chat-a"],
+        ["synthetic-chat-b"],
+        ["synthetic-chat-b"],
+    ]
+    assert [request.get_method() for request, _ in requests] == ["POST", "POST", "POST"]
+
+
+@pytest.mark.parametrize(
+    ("code", "body"),
+    [
+        (500, b'{"ok":false,"error_code":429,"parameters":{"retry_after":1}}'),
+        (429, b'{"ok":false,"error_code":400,"parameters":{"retry_after":1}}'),
+        (
+            429,
+            b'{"ok":false,"error_code":400,"description":"synthetic-private-detail",'
+            b'"parameters":{"retry_after":1}}',
+        ),
+        (429, b'{"ok":false,"error_code":429,"parameters":{"retry_after":0}}'),
+        (429, b'{"ok":false,"error_code":429,"parameters":{"retry_after":16}}'),
+        (429, b'{"ok":false,"error_code":429,"parameters":{"retry_after":true}}'),
+        (429, b'{"ok":false,"error_code":429,"parameters":[]}'),
+        (429, b"not-json"),
+        (
+            429,
+            b'{"ok":false,"error_code":429,"parameters":{"retry_after":1},"extra":"'
+            + b"x" * (heartbeat._TELEGRAM_ERROR_BODY_MAX_BYTES + 1)
+            + b'"}',
+        ),
+    ],
+)
+def test_send_telegram_does_not_retry_unqualified_429_or_other_http_error(
+    monkeypatch, capsys, code, body
+):
+    monkeypatch.setenv("TELEGRAM_TOKEN", "synthetic-token")
+    monkeypatch.setenv("GLOBAL_TELEGRAM_CHAT_ID", "synthetic-chat")
+    requests = []
+    sleeps = []
+
+    def fake_urlopen(request, timeout):
+        requests.append((request, timeout))
+        raise _telegram_http_error(body, code=code)
+
+    monkeypatch.setattr(heartbeat.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(heartbeat.time, "sleep", sleeps.append)
+
+    assert heartbeat._send_telegram("synthetic digest", retry_429_once=True) is False
+    assert len(requests) == 1
+    assert sleeps == []
+    assert "synthetic-private-detail" not in capsys.readouterr().err
+
+
+def test_send_telegram_does_not_retry_unknown_transport_outcome(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_TOKEN", "synthetic-token")
+    monkeypatch.setenv("GLOBAL_TELEGRAM_CHAT_ID", "synthetic-chat")
+    requests = []
+    sleeps = []
+
+    def fake_urlopen(request, timeout):
+        requests.append((request, timeout))
+        raise urllib.error.URLError("synthetic connection uncertainty")
+
+    monkeypatch.setattr(heartbeat.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(heartbeat.time, "sleep", sleeps.append)
+
+    assert heartbeat._send_telegram("synthetic digest", retry_429_once=True) is False
+    assert len(requests) == 1
+    assert sleeps == []
+
+
+def test_send_telegram_default_does_not_retry_even_a_valid_429(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_TOKEN", "synthetic-token")
+    monkeypatch.setenv("GLOBAL_TELEGRAM_CHAT_ID", "synthetic-chat")
+    requests = []
+    sleeps = []
+    body = b'{"ok":false,"error_code":429,"parameters":{"retry_after":1}}'
+
+    def fake_urlopen(request, timeout):
+        requests.append((request, timeout))
+        raise _telegram_http_error(body)
+
+    monkeypatch.setattr(heartbeat.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(heartbeat.time, "sleep", sleeps.append)
+
+    assert heartbeat._send_telegram("synthetic alert") is False
+    assert len(requests) == 1
+    assert sleeps == []
+
+
+def test_send_telegram_does_not_retry_a_second_429(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_TOKEN", "synthetic-token")
+    monkeypatch.setenv("GLOBAL_TELEGRAM_CHAT_ID", "synthetic-chat")
+    requests = []
+    sleeps = []
+    body = b'{"ok":false,"error_code":429,"parameters":{"retry_after":1}}'
+
+    def fake_urlopen(request, timeout):
+        requests.append((request, timeout))
+        raise _telegram_http_error(body)
+
+    monkeypatch.setattr(heartbeat.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(heartbeat.time, "sleep", sleeps.append)
+
+    assert heartbeat._send_telegram("synthetic digest", retry_429_once=True) is False
+    assert len(requests) == 2
+    assert sleeps == [1]
+
+
+def test_daily_dry_run_digest_enables_only_the_bounded_429_retry(monkeypatch):
+    monkeypatch.delenv("DRILL_DIGEST_PREVIEW", raising=False)
+    target = dry_run_digest.DrillTarget(
+        label="synthetic-target",
+        profile="synthetic-profile",
+        scope="synthetic-scope",
+        service="synthetic-service",
+        schedule="0 12 * * 1-5",
+        timezone="UTC",
+    )
+    day = dt.date(2026, 10, 3)
+    monkeypatch.setattr(dry_run_digest, "_targets", lambda: [target])
+    monkeypatch.setattr(
+        dry_run_digest,
+        "_target_status",
+        lambda _target, _now: (day, "✅ synthetic dry run"),
+    )
+    calls = []
+    monkeypatch.setattr(
+        dry_run_digest,
+        "_send_telegram",
+        lambda _message, *, retry_429_once=False: calls.append(retry_429_once) or True,
+    )
+
+    assert dry_run_digest.main(now=dt.datetime(2026, 10, 3, tzinfo=dt.timezone.utc)) == 0
+    assert calls == [True]
