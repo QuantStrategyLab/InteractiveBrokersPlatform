@@ -355,6 +355,79 @@ def test_strategy_scope_projection_and_weights_use_the_observed_market_value():
     assert weights == pytest.approx({"XYZ": 1200.0 / 2200.0})
 
 
+# Remove this pending-adoption marker when QPK PR #643 is pinned. Detect only
+# contract presence: checking its correctness here would hide future regressions.
+_pending_qpk_position_details = pytest.mark.xfail(
+    condition="position_details" not in strategy_runtime_module.build_account_state_from_portfolio_snapshot(
+        PortfolioSnapshot(
+            as_of=datetime(2026, 10, 3, tzinfo=timezone.utc),
+            total_equity=1.0,
+            positions=(),
+        )
+    ),
+    strict=True,
+    reason="QPK #643 position-details contract has not yet been adopted",
+)
+
+
+def _project_synthetic_positions(positions, *, total_equity=2200.0):
+    runtime = strategy_runtime_module.LoadedStrategyRuntime(
+        entrypoint=SimpleNamespace(),
+        runtime_adapter=StrategyRuntimeAdapter(),
+        runtime_settings=_build_runtime_settings(),
+    )
+    snapshot = PortfolioSnapshot(
+        as_of=datetime(2026, 10, 3, tzinfo=timezone.utc),
+        total_equity=total_equity,
+        buying_power=1000.0,
+        positions=positions,
+        metadata={"cash_by_currency": {"HKD": 1000.0}, "account_base_currency": "HKD"},
+    )
+    projected = runtime._project_portfolio_snapshot(
+        snapshot, tuple(position.symbol for position in positions)
+    )
+    assert projected.as_of == snapshot.as_of
+    for key, value in snapshot.metadata.items():
+        assert projected.metadata[key] == value
+    return projected
+
+
+@_pending_qpk_position_details
+@pytest.mark.parametrize("average_cost", [100.0, None])
+def test_strategy_projection_preserves_cost_currency_and_account(average_cost):
+    position = Position(
+        symbol="XYZ", quantity=10.0, market_value=1200.0,
+        average_cost=average_cost, currency="HKD", account_id="synthetic-account-a",
+    )
+    projected = _project_synthetic_positions((position,))
+    assert projected.positions == (position,)
+
+
+@_pending_qpk_position_details
+def test_strategy_projection_preserves_short_and_omits_empty_position():
+    short = Position(
+        symbol="XYZ", quantity=-4.0, market_value=-600.0,
+        average_cost=150.0, currency="HKD", account_id="synthetic-account-a",
+    )
+    empty = Position(symbol="EMPTY", quantity=0.0, market_value=0.0)
+    projected = _project_synthetic_positions((short, empty), total_equity=400.0)
+    assert projected.positions == (short,)
+    assert projected.total_equity == 400.0
+
+
+@_pending_qpk_position_details
+def test_strategy_projection_rejects_duplicate_symbol_accounts():
+    positions = tuple(
+        Position(
+            symbol="XYZ", quantity=quantity, market_value=quantity * 120.0,
+            average_cost=100.0, currency="HKD", account_id=account,
+        )
+        for quantity, account in ((5.0, "synthetic-account-a"), (5.0, "synthetic-account-b"))
+    )
+    with pytest.raises(ValueError, match="duplicate symbol"):
+        _project_synthetic_positions(positions)
+
+
 def test_loaded_strategy_runtime_attaches_strategy_plugin_metadata_to_portfolio(monkeypatch):
     observed = {}
 
