@@ -116,7 +116,18 @@ def _should_suppress_noop_notification(
     no-trade cycle when no-trade notifications are enabled.
     """
     metadata = signal_metadata if isinstance(signal_metadata, Mapping) else {}
-    if order_count == 0 and not has_error and not notify_no_trade_cycles:
+    if has_error or any(metadata.get(key) for key in (
+        "error", "errors", "fail_reason", "execution_blocked_reason", "plugin_error",
+        "persistence_error", "report_persistence_error", "notification_error",
+        "pending_reconciliation", "reconciliation_required",
+    )):
+        return False
+    execution_status = str(metadata.get("execution_status") or "").strip().lower()
+    if execution_status and execution_status not in {"no_op", "no_action", "completed", "dry_run_completed"}:
+        return False
+    if _execution_summary_has_order_activity(metadata):
+        return False
+    if order_count == 0 and not notify_no_trade_cycles:
         return True
     no_op_reason = str(metadata.get("no_op_reason") or "").strip()
     if no_op_reason.startswith(("outside_execution_window", "outside_monthly_execution_window")):
