@@ -123,7 +123,7 @@ jobs:
         run: uv run --no-sync python scripts/execution_report_heartbeat.py
 
       - name: Publish read-only runtime execution evidence
-        uses: QuantStrategyLab/QuantRuntimeSettings/actions/publish-runtime-execution-evidence@394a4f2d6f3824ac0a53427e0cfe8794776a4035
+        uses: QuantStrategyLab/QuantRuntimeSettings/actions/publish-runtime-execution-evidence@3053c2646f391a8025a259cc138e0420e6e7ba54
         with:
           source-id: runtime-reports-ibkr
           report-platform: interactive_brokers
