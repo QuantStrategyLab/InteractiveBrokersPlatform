@@ -614,6 +614,7 @@ def test_main_reports_backend_from_newest_accepted_required_target_report(
     capsys,
 ):
     _clear_runtime_env(monkeypatch)
+    monkeypatch.setattr(heartbeat, "_send_telegram", lambda _message: True)
     monkeypatch.setenv("RUNTIME_HEARTBEAT_NAME", "IBKR runtime")
     monkeypatch.setenv("RUNTIME_HEARTBEAT_REQUIRED_SERVICES", "svc-us")
     monkeypatch.setenv("RUNTIME_HEARTBEAT_GCS_URIS", "gs://bucket/reports")
@@ -682,6 +683,7 @@ def test_main_reports_unknown_backend_for_noncanonical_no_required_report(
     execution_backend,
 ):
     _clear_runtime_env(monkeypatch)
+    monkeypatch.setattr(heartbeat, "_send_telegram", lambda _message: True)
     monkeypatch.setenv("RUNTIME_HEARTBEAT_NAME", "IBKR runtime")
     monkeypatch.setenv("RUNTIME_HEARTBEAT_GCS_URIS", "gs://bucket/reports")
     monkeypatch.setattr(
@@ -718,6 +720,7 @@ def test_main_does_not_use_rejected_report_backend_for_no_required_report(
     capsys,
 ):
     _clear_runtime_env(monkeypatch)
+    monkeypatch.setattr(heartbeat, "_send_telegram", lambda _message: True)
     monkeypatch.setenv("RUNTIME_HEARTBEAT_NAME", "IBKR runtime")
     monkeypatch.setenv("RUNTIME_HEARTBEAT_GCS_URIS", "gs://bucket/reports")
     monkeypatch.setattr(
@@ -755,10 +758,10 @@ def test_main_does_not_use_rejected_report_backend_for_no_required_report(
 
     result = heartbeat.main(now=dt.datetime(2026, 9, 9, 10, 30, tzinfo=dt.timezone.utc))
 
-    assert result == 0
+    assert result == 1
     output = capsys.readouterr().out
-    assert "backend=quantconnect" in output
-    assert "backend=gateway" not in output
+    assert "rejected execution_status=blocked" in output
+    assert "heartbeat OK" not in output
 
 
 def test_report_with_blocked_execution_status_is_rejected_even_when_top_level_is_ok():
@@ -1052,7 +1055,7 @@ def test_daily_dry_run_digest_enables_only_the_bounded_429_retry(monkeypatch):
     monkeypatch.setattr(
         dry_run_digest,
         "_target_status",
-        lambda _target, _now: (day, "✅ synthetic dry run"),
+        lambda _target, _now: (day, "⚠️ synthetic unconfirmed drill", False),
     )
     calls = []
     monkeypatch.setattr(
@@ -1061,5 +1064,5 @@ def test_daily_dry_run_digest_enables_only_the_bounded_429_retry(monkeypatch):
         lambda _message, *, retry_429_once=False: calls.append(retry_429_once) or True,
     )
 
-    assert dry_run_digest.main(now=dt.datetime(2026, 10, 3, tzinfo=dt.timezone.utc)) == 0
+    assert dry_run_digest.main(now=dt.datetime(2026, 10, 3, tzinfo=dt.timezone.utc)) == 1
     assert calls == [True]

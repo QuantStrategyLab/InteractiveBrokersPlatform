@@ -12,9 +12,9 @@ from dataclasses import dataclass
 from zoneinfo import ZoneInfo
 
 try:
-    from scripts.execution_report_heartbeat import _send_telegram
+    from scripts.execution_report_heartbeat import _is_quiet_report, _send_telegram
 except ModuleNotFoundError:
-    from execution_report_heartbeat import _send_telegram
+    from execution_report_heartbeat import _is_quiet_report, _send_telegram
 
 
 @dataclass(frozen=True)
@@ -49,7 +49,11 @@ def _targets() -> list[DrillTarget]:
         raise ValueError("drill target inventory must be a list")
     result: list[DrillTarget] = []
     for item in entries:
-        if not isinstance(item, dict) or item.get("drill_precheck_enabled") is not True:
+        if not isinstance(item, dict):
+            raise ValueError("drill target inventory entries must be objects")
+        if "drill_precheck_enabled" in item and type(item["drill_precheck_enabled"]) is not bool:
+            raise ValueError("drill_precheck_enabled must be a boolean")
+        if item.get("drill_precheck_enabled") is not True:
             continue
         runtime = item.get("runtime_target") or item.get("runtime_target_json") or {}
         if isinstance(runtime, str):
@@ -73,7 +77,10 @@ def _targets() -> list[DrillTarget]:
         fields = schedule.split()
         if len(fields) != 5 or fields[2:] != ["*", "*", "*"]:
             raise ValueError("drill precheck must run every day")
-        int(fields[0]), int(fields[1])
+        minute, hour = int(fields[0]), int(fields[1])
+        if not 0 <= minute <= 59 or not 0 <= hour <= 23:
+            raise ValueError("drill precheck time is invalid")
+        ZoneInfo(timezone)
         result.append(DrillTarget(
             label=str(item.get("drill_label") or f"演练目标 {len(result) + 1}"),
             profile=profile,
@@ -163,25 +170,28 @@ def _service_is_drill_only(target: DrillTarget) -> tuple[bool, str]:
         env.get("RUNTIME_TARGET_ENABLED") == "false"
         and env.get("IBKR_DRY_RUN_ONLY") == "false"
         and runtime.get("dry_run_only") is False
+        and runtime.get("service_name") == target.service
+        and runtime.get("strategy_profile") == target.profile
+        and runtime.get("account_scope") == target.scope
         and runtime.get("live_continuity", {}).get("state") == "RECONCILE_ONLY"
     )
     return safe, str(service.get("status", {}).get("url") or "")
 
 
-def _target_status(target: DrillTarget, now: dt.datetime) -> tuple[dt.date, str]:
+def _target_status(target: DrillTarget, now: dt.datetime) -> tuple[dt.date, str, bool]:
     timezone = ZoneInfo(target.timezone)
     day = now.astimezone(timezone).date()
     try:
         safe, service_url = _service_is_drill_only(target)
         if not safe:
-            return day, "⚠️ 云端禁单配置不符；需立即检查"
+            return day, "⚠️ 云端禁单配置不符；需立即检查", False
         precheck, live = _job(target.precheck_job), _job(target.live_job)
         if live.get("state") != "PAUSED":
-            return day, "⚠️ 实盘任务未暂停；需立即检查"
+            return day, "⚠️ 实盘任务未暂停；需立即检查", False
         if precheck.get("state") != "ENABLED":
-            return day, "⚠️ 演练任务未启用"
+            return day, "⚠️ 演练任务未启用", False
         if precheck.get("schedule") != target.schedule or precheck.get("timeZone") != target.timezone:
-            return day, "⚠️ 每日演练时间配置不符"
+            return day, "⚠️ 每日演练时间配置不符", False
         http_target = precheck.get("httpTarget") or {}
         oidc = http_target.get("oidcToken") or {}
         if (
@@ -190,34 +200,63 @@ def _target_status(target: DrillTarget, now: dt.datetime) -> tuple[dt.date, str]
             or not oidc.get("serviceAccountEmail")
             or oidc.get("audience") != service_url
         ):
-            return day, "⚠️ 演练任务路由或认证不符"
+            return day, "⚠️ 演练任务路由或认证不符", False
         attempted_at = _timestamp(precheck.get("lastAttemptTime"))
         minute, hour = (int(value) for value in target.schedule.split()[:2])
         scheduled_at = dt.datetime.combine(day, dt.time(hour=hour, minute=minute), timezone)
         if attempted_at is None or attempted_at < scheduled_at.astimezone(dt.timezone.utc) - dt.timedelta(minutes=5):
-            return day, "⚠️ 今日定时演练尚未触发"
+            return day, "⚠️ 今日定时演练尚未触发", False
         if attempted_at.astimezone(timezone).date() != day:
-            return day, "⚠️ 今日定时演练尚未触发"
-        if (precheck.get("status") or {}).get("code") not in (None, 0):
-            return day, "⚠️ 今日定时演练请求失败"
+            return day, "⚠️ 今日定时演练尚未触发", False
+        request_status = precheck.get("status")
+        # google.rpc.Status uses implicit-presence int32: a present {} omits success code 0.
+        request_code = request_status.get("code", 0) if isinstance(request_status, dict) else None
+        if type(request_code) is not int or request_code != 0:
+            return day, "⚠️ 今日定时演练请求失败", False
         reports = _today_reports(target, day)
         report = next((item for item in reports if (started := _report_time(item)) is not None
                        and abs((started - attempted_at).total_seconds()) <= 600), None)
         if report is None:
-            return day, "⚠️ 定时请求与演练报告无法对应，结果未验证"
-        if report.get("dry_run") is not True:
-            return day, "⚠️ 最新报告不是 dry run，结果未验证"
+            return day, "⚠️ 定时请求与演练报告无法对应，结果未验证", False
+        if (
+            report.get("dry_run") is not True
+            or report.get("service_name") != target.service
+            or report.get("strategy_profile") != target.profile
+            or report.get("account_scope") != target.scope
+        ):
+            return day, "⚠️ 最新报告身份或 dry run 证据不符，结果未验证", False
         status = str(report.get("status") or "").lower()
-        diagnostics = report.get("diagnostics") or {}
-        if status == "skipped" and diagnostics.get("skip_reason") == "market_closed":
-            return day, "🗓️ 休市，演练按规则跳过；未下单"
-        summary = report.get("summary") or {}
-        if status == "ok" and summary.get("execution_status") and summary.get("orders_submitted_count") == 0:
-            return day, "✅ 今日模拟周期完成；实际下单 0 笔"
-        return day, f"⚠️ 演练未通过完整零下单核验（状态：{status or '未知'}）"
+        summary = report.get("summary")
+        quiet = (
+            _is_quiet_report(report, now=now)
+            and type(summary.get("orders_submitted_count")) is int
+            and summary["orders_submitted_count"] == 0
+        )
+        if quiet:
+            if "execution_receipt" in report and report["execution_receipt"].get("outcome") not in {"not_due", "no_action", "no_signal", "no_rebalance"}:
+                quiet = False
+            for scope in (report, summary, report.get("diagnostics")):
+                if str(scope.get("stage") or "").upper() not in {"", "DRY_RUN_COMPLETED", "NO_ACTION", "COMPLETED"}:
+                    quiet = False
+                if any(scope.get(key) for key in (
+                    "orders_submitted", "submitted_orders", "orders_pending", "orders_filled",
+                    "orders_partially_filled", "option_orders_submitted", "option_orders_pending",
+                    "option_orders_filled", "option_orders_partially_filled",
+                )):
+                    quiet = False
+                for key in ("orders_submitted_count", "orders_pending_count", "orders_filled_count", "orders_partially_filled_count"):
+                    if key in scope and (type(scope[key]) is not int or scope[key] != 0):
+                        quiet = False
+                execution_status = str(scope.get("execution_status") or "").lower()
+                if execution_status and execution_status not in {"no_op", "no_action", "completed", "dry_run_completed", "executed"}:
+                    quiet = False
+        if quiet:
+            if status == "skipped":
+                return day, "🗓️ 休市，演练按规则跳过；未下单", True
+            return day, "✅ 今日模拟周期完成；实际下单 0 笔", True
+        return day, f"⚠️ 演练未通过完整零下单核验（状态：{status or '未知'}）", False
     except (RuntimeError, ValueError, TypeError, KeyError, json.JSONDecodeError):
-        return day, "⚠️ 无法读取演练证据，结果未验证"
-
+        return day, "⚠️ 无法读取演练证据，结果未验证", False
 
 def main(now: dt.datetime | None = None) -> int:
     now = now or dt.datetime.now(dt.timezone.utc)
@@ -228,13 +267,19 @@ def main(now: dt.datetime | None = None) -> int:
     lines = ["🧪 IBKR 每日模拟演练", "仅检查已配置的只读目标；实盘下单任务应保持关闭。"]
     statuses = []
     for target in targets:
-        day, status = _target_status(target, now)
-        statuses.append(status)
-        lines.append(f"{target.label} · {day.isoformat()}：{status}")
+        day, status, quiet = _target_status(target, now)
+        statuses.append(quiet)
+        line = f"{target.label} · {day.isoformat()}：{status}"
+        print(f"Daily drill record: {line}; notification_suppressed={quiet}")
+        if not quiet:
+            lines.append(line)
     message = "\n".join(lines)
-    alerts = sum(not value.startswith(("✅", "🗓️")) for value in statuses)
+    alerts = sum(not quiet for quiet in statuses)
     if os.environ.get("DRILL_DIGEST_PREVIEW") == "true":
         print(f"Daily drill preview: targets={len(targets)}, alerts={alerts}")
+        return 0
+    if alerts == 0:
+        print(f"Daily drill digest suppressed; targets={len(targets)}; alerts=0")
         return 0
     sent = _send_telegram(message, retry_429_once=True)
     print(f"Daily drill digest sent={sent}; targets={len(targets)}; alerts={alerts}")
