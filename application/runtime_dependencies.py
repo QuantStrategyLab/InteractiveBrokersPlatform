@@ -29,6 +29,7 @@ class IBKRRebalanceConfig:
     paper_execution_admission_enabled: bool = False
     runtime_release_receipt: Any = None
     expected_strategy_release: Any = None
+    notification_attention_reason_codes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

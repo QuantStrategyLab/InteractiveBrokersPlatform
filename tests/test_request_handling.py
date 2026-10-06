@@ -1477,11 +1477,11 @@ def test_run_strategy_core_allows_multiple_runs_in_same_process(strategy_module,
     first = strategy_module.run_strategy_core()
     second = strategy_module.run_strategy_core()
 
-    assert first.result == "OK - heartbeat"
-    assert second.result == "OK - heartbeat"
+    assert first.result == "OK - no-op"
+    assert second.result == "OK - no-op"
     assert observed["connect_calls"] == 2
     assert observed["disconnect_calls"] == 2
-    assert len(observed["messages"]) == 2
+    assert observed["messages"] == []
 
 
 def test_send_tg_message_uses_cycle_channel_sender(strategy_module, monkeypatch):
@@ -1943,3 +1943,24 @@ def test_reconciliation_rejection_reports_only_safe_reason(
         "reason": reason,
     }
     assert output.err == ""
+
+
+
+def test_run_strategy_core_passes_fixed_plugin_attention_without_changing_runtime_result(strategy_module, monkeypatch):
+    observed = {}
+    result_marker = object()
+    composer = types.SimpleNamespace(
+        build_rebalance_runtime=lambda **kwargs: observed.setdefault("runtime_args", kwargs),
+        build_rebalance_config=lambda **kwargs: observed.setdefault("config_args", kwargs),
+    )
+    monkeypatch.setattr(strategy_module, "PAPER_LIQUIDATE_ONLY", False)
+    monkeypatch.setattr(strategy_module, "build_composer", lambda **_kwargs: composer)
+    monkeypatch.setattr(strategy_module, "build_extra_notification_lines", lambda *_args, **_kwargs: ("localized detail",))
+    monkeypatch.setattr(strategy_module, "run_rebalance_cycle", lambda **_kwargs: result_marker)
+
+    assert strategy_module.run_strategy_core(strategy_plugin_error="synthetic_error") is result_marker
+    assert observed["config_args"]["notification_attention_reason_codes"] == ("strategy_plugin_error",)
+    assert observed["config_args"]["extra_notification_lines"] == ("localized detail",)
+    observed.clear()
+    assert strategy_module.run_strategy_core() is result_marker
+    assert observed["config_args"]["notification_attention_reason_codes"] == ()
