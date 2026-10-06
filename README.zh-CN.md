@@ -1,23 +1,10 @@
 # InteractiveBrokersPlatform
 
-
-## QSL 架构角色
-
-- **层级**：`执行平台`。
-- **职责**：Interactive Brokers 多市场执行运行时。
-- **事实源/归属**：IBKR 连接、paper/live 控制、账户/runtime 集成。
-- **消费对象**：UsEquityStrategies、HkEquityStrategies、snapshot artifacts、QuantPlatformKit、QuantRuntimeSettings。
-- **禁止事项**：承载策略研究逻辑或绕过 dry-run checks。
-
 [English README](README.md)
 
+InteractiveBrokersPlatform 是 QuantStrategyLab 的 Interactive Brokers 多市场执行运行时，通过 IBKR 运行服务执行美股和港股 profile，支持 dry-run、paper 和 live 控制。它属于执行层，不是策略研究仓库：策略逻辑来自 `UsEquityStrategies` / `HkEquityStrategies`，如果 profile 依赖 snapshot，验证和产物来自 `UsEquitySnapshotPipelines` / `HkEquitySnapshotPipelines`。
+
 > 投资有风险。本项目不构成投资建议，仅用于学习、研究和工程审阅。
-
-## 这个仓库是什么
-
-InteractiveBrokersPlatform 是 QuantStrategyLab 的Interactive Brokers 多市场执行平台。通过 IBKR 运行服务执行美股和港股 profile，支持 dry-run、paper 和 live 控制。
-
-它属于执行层，不是策略研究仓库。策略逻辑来自 `UsEquityStrategies / HkEquityStrategies`；如果 profile 依赖 snapshot，验证和产物来自 `UsEquitySnapshotPipelines / HkEquitySnapshotPipelines`。
 
 ## 运行边界
 
@@ -46,6 +33,14 @@ InteractiveBrokersPlatform 是 QuantStrategyLab 的Interactive Brokers 多市场
 - `.github/workflows/`：CI、定时任务、发布或部署 workflow。
 - `scripts/`：运维脚本和本地辅助工具。
 - `research/`：研究配置和非 live 候选产物。
+
+## QSL 架构角色
+
+- **层级**：`执行平台`。
+- **职责**：Interactive Brokers 多市场执行运行时。
+- **事实源/归属**：IBKR 连接、paper/live 控制、账户/runtime 集成。
+- **消费对象**：UsEquityStrategies、HkEquityStrategies、snapshot artifacts、QuantPlatformKit、QuantRuntimeSettings。
+- **禁止事项**：承载策略研究逻辑或绕过 dry-run checks。
 
 ## 快速开始
 
