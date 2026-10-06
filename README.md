@@ -1,23 +1,10 @@
 # InteractiveBrokersPlatform
 
-
-## QSL architecture role
-
-- **Layer**: `runtime-platform`.
-- **Responsibility**: Interactive Brokers multi-market execution runtime.
-- **Owns**: IBKR connectivity, paper/live controls, account/runtime integration.
-- **Consumes**: UsEquityStrategies, HkEquityStrategies, snapshot artifacts, QuantPlatformKit, QuantRuntimeSettings.
-- **Must not**: own strategy research logic or bypass dry-run checks.
-
 [Chinese README](README.zh-CN.md)
 
+InteractiveBrokersPlatform is QuantStrategyLab's Interactive Brokers multi-market execution runtime. It runs US and HK equity profiles through IBKR runtime services, under dry-run, paper, and live controls. It is an execution layer, not a strategy research repository: strategy logic comes from `UsEquityStrategies` / `HkEquityStrategies`, and snapshot or validation artifacts come from `UsEquitySnapshotPipelines` / `HkEquitySnapshotPipelines` when a profile requires them.
+
 > Investing involves risk. This project does not provide investment advice and is for education, research, and engineering review only.
-
-## What this repository is
-
-InteractiveBrokersPlatform is a QuantStrategyLab Interactive Brokers multi-market execution platform. It runs US and HK equity profiles through IBKR runtime services with dry-run, paper, and live controls.
-
-It is an execution layer, not a strategy research repository. Strategy logic comes from `UsEquityStrategies / HkEquityStrategies`; snapshot and validation artifacts come from `UsEquitySnapshotPipelines / HkEquitySnapshotPipelines` when a profile requires them.
 
 ## Runtime boundary
 
@@ -46,6 +33,14 @@ Direct runtime profiles can usually run from market history or portfolio state. 
 - `.github/workflows/`: CI, scheduled jobs, release, or deployment workflows.
 - `scripts/`: operator scripts and local helpers.
 - `research/`: research configs and non-live candidate artifacts.
+
+## QSL architecture role
+
+- **Layer**: `runtime-platform`.
+- **Responsibility**: Interactive Brokers multi-market execution runtime.
+- **Owns**: IBKR connectivity, paper/live controls, account/runtime integration.
+- **Consumes**: UsEquityStrategies, HkEquityStrategies, snapshot artifacts, QuantPlatformKit, QuantRuntimeSettings.
+- **Must not**: own strategy research logic or bypass dry-run checks.
 
 ## Quick start
 
