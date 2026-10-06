@@ -1111,3 +1111,49 @@ def test_reconciliation_unknown_target_without_summary_is_noop():
     )
     assert record["execution_status"] == "no_op"
     assert record["no_op_reason"] is None
+
+
+
+def test_runtime_cycle_notification_is_quiet_for_success_but_keeps_attention():
+    from types import SimpleNamespace
+    from application.rebalance_service import _should_publish_execution_notification
+
+    config = SimpleNamespace(dry_run_only=False, notify_no_trade_cycles=False, notification_attention_reason_codes=())
+    healthy = {"execution_status": "no_op", "orders_submitted": []}
+    assert not _should_publish_execution_notification(config=config, signal_metadata={}, execution_summary=healthy, trade_logs=[])
+    for change in (
+        {"execution_status": "blocked", "no_op_reason": "submit_failed:AAA:Rejected"},
+        {"execution_status": "pending_reconciliation"},
+        {"execution_status": "unknown"},
+        {"account_new_risk_buy_blocked": True},
+        {"small_account_buy_blocked": True},
+        {"persistence_error": "synthetic_error"},
+        {"report_persistence_error": "synthetic_error"},
+        {"notification_error": "synthetic_error"},
+    ):
+        summary = {**healthy, **change}
+        before = json.loads(json.dumps(summary))
+        assert _should_publish_execution_notification(config=config, signal_metadata={}, execution_summary=summary, trade_logs=[])
+        assert summary == before
+    for orders in ("orders_submitted", "orders_pending", "orders_filled", "option_orders_submitted"):
+        assert _should_publish_execution_notification(
+            config=config, signal_metadata={}, execution_summary={**healthy, orders: [{"symbol": "AAA"}]}, trade_logs=[],
+        )
+    assert _should_publish_execution_notification(
+        config=config, signal_metadata={"fail_reason": "source_stale"}, execution_summary=healthy, trade_logs=[],
+    )
+    config.notification_attention_reason_codes = ("strategy_plugin_error",)
+    assert _should_publish_execution_notification(config=config, signal_metadata={}, execution_summary=healthy, trade_logs=[])
+
+
+def test_successful_dry_run_orders_are_not_real_trade_notifications():
+    from types import SimpleNamespace
+    from application.rebalance_service import _should_publish_execution_notification
+
+    config = SimpleNamespace(dry_run_only=True, notify_no_trade_cycles=False, notification_attention_reason_codes=())
+    assert not _should_publish_execution_notification(
+        config=config, signal_metadata={}, execution_summary={"execution_status": "executed", "orders_submitted": [{"status": "dry_run"}]}, trade_logs=["preview"],
+    )
+    assert _should_publish_execution_notification(
+        config=config, signal_metadata={}, execution_summary={"execution_status": "blocked", "no_op_reason": "account_new_risk_gate"}, trade_logs=[],
+    )

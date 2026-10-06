@@ -1471,6 +1471,9 @@ def run_strategy_core(
                 strategy_plugin_error=strategy_plugin_error,
             ),
             cash_only_execution=CASH_ONLY_EXECUTION,
+            notification_attention_reason_codes=(
+                ("strategy_plugin_error",) if strategy_plugin_error else ()
+            ),
         ),
     )
 

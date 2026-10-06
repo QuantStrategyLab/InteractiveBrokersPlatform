@@ -168,6 +168,45 @@ def _has_order_activity(*, trade_logs, execution_summary) -> bool:
     return False
 
 
+
+def _has_notification_attention(signal_metadata, execution_summary=None, *, reason_codes=()) -> bool:
+    if reason_codes:
+        return True
+    for scope in (signal_metadata, execution_summary):
+        if scope is None:
+            continue
+        if not isinstance(scope, Mapping):
+            return True
+        if any(scope.get(key) for key in (
+            "error", "errors", "fail_reason", "execution_blocked_reason", "plugin_error",
+            "persistence_error", "report_persistence_error", "notification_error",
+            "pending_reconciliation", "reconciliation_required", "notification_attention_reason_codes",
+            "account_new_risk_buy_blocked", "small_account_buy_blocked",
+        )):
+            return True
+        status = str(scope.get("execution_status") or "").strip().lower()
+        if status not in {"", "no_op", "no_action", "completed", "executed", "dry_run", "dry_run_completed"}:
+            return True
+        if str(scope.get("risk_gate") or "").strip().upper() in {"BLOCK", "BLOCKED", "REJECT", "REJECTED", "DENY", "DENIED"}:
+            return True
+        if any(str(reason).startswith(("submit_failed:", "option_submit_failed:")) for reason in scope.get("skipped_reasons", ()) or ()):
+            return True
+    return False
+
+
+def _should_publish_execution_notification(*, config, signal_metadata, execution_summary, trade_logs) -> bool:
+    if _has_notification_attention(
+        signal_metadata, execution_summary,
+        reason_codes=getattr(config, "notification_attention_reason_codes", ()),
+    ):
+        return True
+    if bool(getattr(config, "dry_run_only", False)):
+        return False
+    return _has_order_activity(trade_logs=trade_logs, execution_summary=execution_summary) or bool(
+        getattr(config, "notify_no_trade_cycles", False)
+    )
+
+
 def _normalize_reconciliation_mode(value: object, *, fallback: str = "") -> str:
     normalized = str(value or "").strip().lower().replace("-", "_")
     if normalized in {"dry_run", "paper", "live"}:
@@ -1029,7 +1068,10 @@ def run_strategy_core(
                 flush=True,
             )
             order_count = len(orders) if 'orders' in dir() and orders else 0
-            has_error = bool(fail_reason or execution_blocked_reason)
+            has_error = bool(fail_reason or execution_blocked_reason) or _has_notification_attention(
+                signal_metadata, blocked_summary,
+                reason_codes=getattr(config, "notification_attention_reason_codes", ()),
+            )
             notification_suppressed = _should_suppress_noop_notification(
                 signal_metadata,
                 order_count=order_count,
@@ -1128,7 +1170,10 @@ def run_strategy_core(
                 no_op_reason="execution_already_recorded",
             )
             record_path = write_reconciliation_record(record, output_path=config.reconciliation_output_path)
-            notification_suppressed = not getattr(config, "notify_no_trade_cycles", True)
+            notification_suppressed = not _should_publish_execution_notification(
+                config=config, signal_metadata=signal_metadata,
+                execution_summary={"execution_status": "no_op"}, trade_logs=(),
+            )
             if notification_suppressed:
                 print(
                     "notification_suppressed "
@@ -1280,10 +1325,9 @@ def run_strategy_core(
             ),
             flush=True,
         )
-        if _has_order_activity(trade_logs=trade_logs, execution_summary=execution_summary) or getattr(
-            config,
-            "notify_no_trade_cycles",
-            True,
+        if _should_publish_execution_notification(
+            config=config, signal_metadata=signal_metadata,
+            execution_summary=execution_summary, trade_logs=trade_logs,
         ):
             notification_publisher.publish(
                 notification_renderers.render_trade_notification(
