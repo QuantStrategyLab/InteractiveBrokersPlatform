@@ -57,7 +57,7 @@ from runtime_config_support import (  # noqa: E402
     DEFAULT_MARKET_TIMEZONE,
     resolve_market,
 )
-from scripts.runtime_heartbeat_policy import (  # noqa: E402
+from quant_platform_kit.common.runtime_heartbeat_policy import (  # noqa: E402
     runtime_target_permits_standard_execution,
 )
 from scripts.reconciliation_recovery_state_ledger import (  # noqa: E402
