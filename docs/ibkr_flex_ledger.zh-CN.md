@@ -7,8 +7,8 @@
 
 `diagnose_activity_flex_ledger` 是 source 侧报告入口：它调用上面的 importer，然后只返回
 `build_flex_ledger_diagnostic` 状态报告，保留状态、方法、期间、币种、缺项和安全 warning
-code，不含账户标识、估值、费用、出入金金额或 TWR 数值。当前仓库尚无 Flex 专用调度/发布
-调用点；此报告投影不等于收益页面已消费或恢复。它不接入 QRS 余额快照接口、旧 QPK USDT
+code，不含账户标识、估值、费用、出入金金额或 TWR 数值。此报告投影不等于收益页面已消费
+或恢复。它不接入 QRS 余额快照接口、旧 QPK USDT
 区间合同或任何交易链路。
 
 `scripts/diagnose_ibkr_flex_ledger.py` 是可执行的状态诊断入口。它默认关闭，只有环境变量
@@ -45,6 +45,51 @@ safe_status = diagnose_activity_flex_ledger(
 `AccountInformation.currency`）就是 USD 时才声明为 `"USD"`，否则为 `None` 并记
 `account_base_currency_not_usd` 警告。非 USD 金额只按原币种报告，不做换算、不改写
 币种、不与 USD 静默合并。
+
+期间收益发布器另用 `account_base_currency` 保留报表自身的三字母基础币种，例如 EUR；
+不会使用上述独立 USD 账本的 `currency=None` 重新标成 USD，也不会换算金额。
+
+## 原生期间收益的一次发布
+
+`application.ibkr_period_return.build_ibkr_period_return` 从已复核账户的账本提取
+`ibkr_account_period_return.v1`。它只接受唯一受保护预期账户、有效且一致的报表/原生收益
+期间、`return_assessment.computable=True`、`native_ibkr_twr` 方法与 `ChangeInNAV.twr`
+来源；原生 `percent` 和 assessment 的 `ratio` 必须精确相差 100 倍。缺少原生 TWR 时
+不改用净资产差额。投影仅含 QRS 合同字段，账户 ID 留在私有同步请求中。
+
+`scripts/publish_ibkr_flex_period_return.py` 是默认关闭、仅从环境取配置的一次调用入口：
+
+```sh
+PYTHONPATH=. python -m scripts.publish_ibkr_flex_period_return
+```
+
+由批准云端 Secret/受保护配置注入以下字段，不通过命令行传值：
+
+| 环境变量 | 用途 |
+|---|---|
+| `IBKR_PERIOD_RETURN_PUBLISH_ENABLED` | 只有精确 `true` 才启用 |
+| `IBKR_PERIOD_RETURN_TARGET_ID` / `IBKR_PERIOD_RETURN_SOURCE_BINDING_ID` | 已批准 QRS 目标与来源绑定 |
+| `IBKR_PERIOD_RETURN_ACCOUNT_SCOPE` / `IBKR_PERIOD_RETURN_ACCOUNT_KEY` | 已批准私有 scope 与回执预期 key |
+| `IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON` | 仅含一个独立批准原生账户的 JSON 数组 |
+| `IBKR_FLEX_TOKEN` / `IBKR_FLEX_QUERY_ID` | 原生 XML Activity Flex 来源配置 |
+| `IBKR_ACCOUNT_FACTS_SYNC_TOKEN` | 复用已有 IBKR 私有同步令牌；不得等同 Flex 或其他来源/控制令牌 |
+
+目标、绑定、scope、账户与回执 key 必须来自独立受保护配置，不能从导入报表反推授权。
+全部配置有效后才调用已有 `import_activity_flex_ledger`：一次 SendRequest、一次 GetStatement，
+没有自动重试或等待轮询。未启用或缺配置时不发 Flex HTTP；无合格原生 TWR 时不发同步 POST。
+
+同步地址固定为
+`https://qsl-strategy-switch-console.pigbibi.workers.dev/api/account-facts/period-return/sync`。
+发布器只发一次 POST，禁用重定向与环境代理；响应正文最多 8192 字节。只有 HTTP 200 且
+ACK 恰好包含 `ok/stored/unchanged/account_key/period/currency/method`，布尔类型正确，
+`ok/stored=true`，并且独立预期 key、期间、币种、方法全部精确匹配时才报告成功。
+超时、5xx、超长或无效 ACK 返回 `sync_unknown`，立即停止，不自动重发；3xx/4xx 返回
+`sync_rejected`。stdout 只输出固定 `status`，不输出账户、收益数值、令牌或原始异常。
+`published/unchanged` 退出码为 0，`disabled/configuration_incomplete` 为 2，其余为 1。
+
+此入口只更新每账户最新一个原生期间，不生成每日收益曲线、不触发交易或通知，不新增
+workflow 或存储。本地验证只使用合成 XML 和模拟 HTTP；真实 Flex token、Query 和获批
+账户绑定尚未核验，不能据此声称真实收益已恢复。
 
 ## 输出事实
 
@@ -108,8 +153,8 @@ safe_status = diagnose_activity_flex_ledger(
    只在批准云端内存/私有存储处理，不落 Mac。
 3. 用真实报表确认：基础币种确为 USD、期间与 `ChangeInNAV` 期间一致、StmtFunds
    活动码覆盖实际出入金、费用无跨区重复、期末估值与 Gateway 视图可解释的差异。
-4. 只有在上述事实齐全、且已有下游方法被显式接线时，才由下游计算期间收益；本模块
-   不代替该接线。
+4. 账本估值/现金流齐全后才能供依赖它们的下游计算；本次原生期间发布只消费券商 TWR，
+   另须核验上述受保护 QRS 配置与精确 ACK，不自行计算收益。
 
 ## 来源与测试
 
@@ -122,3 +167,6 @@ XML 元素/属性名与 `StmtFunds` 活动码（`DEP`/`WITH`/`MFEE`/`OFEE`/`FRTA
 `tests/test_ibkr_flex_ledger.py` 仅使用不可关联真实账户的合成占位符 XML，覆盖正负
 现金流、费用不重复计入、多币种不合并、坏金额、缺估值、缺期间结束、期间逆序、跨期
 估值、期间不匹配、账户归属保护与缺项结果；不验证任何真实账户或真实收益。
+`tests/test_ibkr_period_return.py` 与 `tests/test_publish_ibkr_flex_period_return.py` 补充纯投影
+及真实 importer→合成 XML→固定请求→模拟 ACK 链，覆盖 EUR、单位精确匹配、默认关闭、
+缺配置零 HTTP、缺原生收益零 POST、错身份/期间/币种回执、未知结果不重发与固定安全输出。
