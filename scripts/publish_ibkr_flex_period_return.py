@@ -13,7 +13,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 import requests
 
-from application.ibkr_flex_source import import_activity_flex_ledger
+from application.ibkr_flex_source import FlexReportPending, import_activity_flex_ledger
 from application.ibkr_period_return import (
     PeriodReturnError, build_ibkr_period_return, validate_period_return_scope,
 )
@@ -115,6 +115,10 @@ def main() -> int:
                     session.trust_env = False
                     ledger = import_activity_flex_ledger(token=config["flex_token"], query_id=config["query_id"],
                         expected_account_ids=tuple(config["expected_account_ids"]), session=session)
+            except FlexReportPending:
+                # The CLI has no approved cross-process private handle store.
+                # Stop; rerunning it would generate a different request.
+                status = "flex_pending"
             except Exception:
                 status = "flex_import_failed"
             else:

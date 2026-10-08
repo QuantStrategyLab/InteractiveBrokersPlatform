@@ -8,7 +8,7 @@ import re
 from datetime import date
 from typing import Any
 
-from application.ibkr_flex_source import diagnose_activity_flex_ledger
+from application.ibkr_flex_source import FlexReportPending, diagnose_activity_flex_ledger
 
 
 _SCHEMA_VERSION = "ibkr_flex_diagnostic.v1"
@@ -143,6 +143,10 @@ def main() -> int:
             expected_account_ids=account_ids,
         )
         report = _validated_report(result)
+    except FlexReportPending:
+        report = _empty_report(status="pending", missing=["flex_generation_pending"])
+        print(json.dumps(report, sort_keys=True))
+        return 1
     except Exception:
         # Never print exception text: SDK/request exceptions may carry query
         # URLs, account identifiers, amounts or broker return values.

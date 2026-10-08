@@ -31,6 +31,22 @@ class FlexReport:
     content: bytes = field(repr=False)
 
 
+@dataclass(frozen=True)
+class FlexReportRequest:
+    """Private in-memory generation handle; never serialize or log its fields."""
+
+    reference_code: str = field(repr=False)
+    token: str = field(repr=False)
+
+
+class FlexReportPending(FlexSourceError):
+    """Generation is pending; an authorized caller may collect this same handle."""
+
+    def __init__(self, request: FlexReportRequest):
+        super().__init__("IBKR Flex report generation pending")
+        self.request = request
+
+
 def _read_response(session: requests.Session, endpoint: str, params: dict[str, str]) -> bytes:
     try:
         with session.get(
@@ -65,12 +81,16 @@ def _xml_root(body: bytes, *, endpoint: str) -> ElementTree.Element:
         raise FlexSourceError(f"IBKR Flex {endpoint} returned invalid XML") from None
 
 
-def fetch_activity_flex_xml(*, token: str, query_id: str, session: requests.Session | None = None) -> FlexReport:
-    """Fetch one XML query once; no retry, broker trade, or local persistence."""
+def request_activity_flex_report(
+    *, token: str, query_id: str, session: requests.Session | None = None,
+) -> FlexReportRequest:
+    """SendRequest exactly once and retain its private reference in memory."""
 
     if not token or not re.fullmatch(r"[0-9]+", query_id):
         raise FlexSourceError("IBKR Flex token and numeric query ID are required")
     client = session or requests.Session()
+    if session is None:
+        client.trust_env = False
     try:
         send = _xml_root(
             _read_response(client, "SendRequest", {"t": token, "q": query_id, "v": "3"}),
@@ -81,11 +101,48 @@ def fetch_activity_flex_xml(*, token: str, query_id: str, session: requests.Sess
         reference = send.findtext("ReferenceCode") or ""
         if not re.fullmatch(r"[0-9]+", reference):
             raise FlexSourceError("IBKR Flex returned no valid reference code")
-        body = _read_response(client, "GetStatement", {"t": token, "q": reference, "v": "3"})
+        return FlexReportRequest(reference_code=reference, token=token)
+    finally:
+        if session is None:
+            client.close()
+
+
+def collect_activity_flex_xml(
+    request: FlexReportRequest, *, session: requests.Session | None = None,
+) -> FlexReport:
+    """GetStatement once for this handle; never generate, poll or replace it."""
+    if (
+        not isinstance(request, FlexReportRequest) or not request.token
+        or not isinstance(request.reference_code, str)
+        or not re.fullmatch(r"[0-9]+", request.reference_code)
+    ):
+        raise FlexSourceError("IBKR Flex generation handle is required")
+    client = session or requests.Session()
+    if session is None:
+        client.trust_env = False
+    try:
+        body = _read_response(client, "GetStatement", {"t": request.token, "q": request.reference_code, "v": "3"})
         report = _xml_root(body, endpoint="GetStatement")
+        if report.tag == "FlexStatementResponse":
+            if report.findtext("ErrorCode") == "1019":
+                raise FlexReportPending(request)
+            raise FlexSourceError("IBKR Flex report retrieval was rejected")
         if report.tag != "FlexQueryResponse":
             raise FlexSourceError("IBKR Flex query must return an XML Activity report")
         return FlexReport(content_sha256=hashlib.sha256(body).hexdigest(), content=body)
+    finally:
+        if session is None:
+            client.close()
+
+
+def fetch_activity_flex_xml(*, token: str, query_id: str, session: requests.Session | None = None) -> FlexReport:
+    """Generate then collect once; pending retains the same handle, without retry."""
+    client = session or requests.Session()
+    if session is None:
+        client.trust_env = False
+    try:
+        request = request_activity_flex_report(token=token, query_id=query_id, session=client)
+        return collect_activity_flex_xml(request, session=client)
     finally:
         if session is None:
             client.close()
@@ -123,6 +180,17 @@ def import_activity_flex_ledger(
     report = fetch_activity_flex_xml(token=token, query_id=query_id, session=session)
     # Import lazily so the source module remains the lower-level fetch/verify
     # boundary and the pure parser can continue importing FlexReport.
+    from application.ibkr_flex_ledger import build_flex_ledger
+
+    return build_flex_ledger(report, expected_account_ids=expected_account_ids)
+
+
+def import_activity_flex_ledger_from_request(
+    request: FlexReportRequest, *, expected_account_ids: Collection[str],
+    session: requests.Session | None = None,
+) -> dict[str, object]:
+    """Explicitly collect the original handle once and verify its account scope."""
+    report = collect_activity_flex_xml(request, session=session)
     from application.ibkr_flex_ledger import build_flex_ledger
 
     return build_flex_ledger(report, expected_account_ids=expected_account_ids)

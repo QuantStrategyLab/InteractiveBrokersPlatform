@@ -31,6 +31,19 @@ def test_cli_is_disabled_by_default_and_does_not_fetch(monkeypatch, capsys):
     }
 
 
+def test_pending_diagnostic_retains_only_fixed_status(monkeypatch, capsys):
+    _set_input(monkeypatch)
+    request = ibkr_flex_source.FlexReportRequest(reference_code="987654321098765", token="synthetic-token")
+    def pending(**_kwargs):
+        raise ibkr_flex_source.FlexReportPending(request)
+    monkeypatch.setattr(cli, "diagnose_activity_flex_ledger", pending)
+    assert cli.main() == 1
+    output = capsys.readouterr().out
+    result = json.loads(output)
+    assert result["status"] == "pending" and result["missing"] == ["flex_generation_pending"]
+    assert request.reference_code not in output and request.token not in output
+
+
 def test_cli_reports_missing_inputs_without_fetching(monkeypatch, capsys):
     _set_input(monkeypatch)
     monkeypatch.delenv("IBKR_FLEX_TOKEN")
