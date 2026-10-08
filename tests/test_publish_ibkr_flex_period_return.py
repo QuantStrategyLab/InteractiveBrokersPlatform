@@ -1,9 +1,13 @@
 import json
+from datetime import datetime, timezone
 from urllib.error import HTTPError
 
 import pytest
 
 from scripts import publish_ibkr_flex_period_return as cli
+from application.ibkr_flex_source import (
+    FlexReportPending, import_activity_flex_ledger_from_request,
+)
 
 
 def configure(monkeypatch):
@@ -145,6 +149,41 @@ def test_flex_failure_has_safe_stdout_and_zero_post(monkeypatch, capsys):
     monkeypatch.setattr(cli, "build_opener", lambda *_args: pytest.fail("failed source posted"))
     assert cli.main() == 1
     assert capsys.readouterr().out == '{"status": "flex_import_failed"}\n'
+
+
+def test_generation_pending_has_zero_post_and_no_replacement_request(monkeypatch, capsys):
+    configure(monkeypatch)
+    pending_xml = b"<FlexStatementResponse><Status>Fail</Status><ErrorCode>1019</ErrorCode><ErrorMessage>synthetic-private-token</ErrorMessage></FlexStatementResponse>"
+    session = FlexSession(pending_xml)
+    monkeypatch.setattr(cli.requests, "Session", lambda: session)
+    monkeypatch.setattr(cli, "build_opener", lambda *_args: pytest.fail("pending source posted"))
+    assert cli.main() == 1
+    assert capsys.readouterr().out == '{"status": "flex_pending"}\n'
+    assert len(session.calls) == 2 and session.closed
+    assert session.calls[1][1]["params"]["q"] == "98765"
+
+
+def test_explicit_same_reference_collection_to_projection_and_single_ack(monkeypatch, capsys):
+    config = cli._config(configure(monkeypatch))
+    session = FlexSession(b"<FlexStatementResponse><ErrorCode>1019</ErrorCode></FlexStatementResponse>")
+    session.trust_env = False
+    with pytest.raises(FlexReportPending) as caught:
+        cli.import_activity_flex_ledger(token=config["flex_token"], query_id=config["query_id"],
+            expected_account_ids=tuple(config["expected_account_ids"]), session=session)
+    request = caught.value.request
+    assert len(session.calls) == 2  # No automatic second collection or generation.
+    session.report = xml()  # An explicit authorized caller resumes in this process.
+    ledger = import_activity_flex_ledger_from_request(request,
+        expected_account_ids=tuple(config["expected_account_ids"]), session=session)
+    payload = cli.build_ibkr_period_return(ledger, observed_at=datetime.now(timezone.utc),
+        **{key: config[key] for key in ("target_id", "source_binding_id", "account_scope", "expected_account_ids")})
+    opener = Opener()
+    monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
+    assert cli.publish_period_return(payload, sync_token=config["sync_token"], expected_account_key=config["account_key"]) == "published"
+    assert len(opener.calls) == 1 and len(session.calls) == 3
+    assert sum(url.endswith("/SendRequest") for url, _ in session.calls) == 1
+    assert session.calls[1][1]["params"] == session.calls[2][1]["params"]
+    assert capsys.readouterr().out == ""
 
 
 @pytest.mark.parametrize("report", [xml(twr=None), xml(account="DU9999999"), xml(currency="")])

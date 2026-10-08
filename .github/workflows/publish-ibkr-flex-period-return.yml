@@ -1,0 +1,49 @@
+name: Publish IBKR Flex Native Period Return
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_once:
+        description: "Explicitly authorize one configured Flex generation/collection and one QRS publish."
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ibkr-flex-period-return
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    # A rerun would generate a new reference. Pending/unknown outcomes require
+    # investigation, not a rerun or a fresh dispatch to replace the request.
+    if: ${{ github.repository == 'QuantStrategyLab/InteractiveBrokersPlatform' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && inputs.publish_once && vars.IBKR_PERIOD_RETURN_PUBLISH_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout approved main source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+
+      - name: Install locked runtime dependencies
+        run: uv sync --frozen --no-dev
+
+      - name: Generate, collect and publish once
+        run: uv run --no-sync python -m scripts.publish_ibkr_flex_period_return
+        env:
+          IBKR_PERIOD_RETURN_PUBLISH_ENABLED: "true"
+          IBKR_PERIOD_RETURN_TARGET_ID: ${{ secrets.IBKR_PERIOD_RETURN_TARGET_ID }}
+          IBKR_PERIOD_RETURN_SOURCE_BINDING_ID: ${{ secrets.IBKR_PERIOD_RETURN_SOURCE_BINDING_ID }}
+          IBKR_PERIOD_RETURN_ACCOUNT_SCOPE: ${{ secrets.IBKR_PERIOD_RETURN_ACCOUNT_SCOPE }}
+          IBKR_PERIOD_RETURN_ACCOUNT_KEY: ${{ secrets.IBKR_PERIOD_RETURN_ACCOUNT_KEY }}
+          IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON: ${{ secrets.IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON }}
+          IBKR_FLEX_TOKEN: ${{ secrets.IBKR_FLEX_TOKEN }}
+          IBKR_FLEX_QUERY_ID: ${{ secrets.IBKR_FLEX_QUERY_ID }}
+          IBKR_ACCOUNT_FACTS_SYNC_TOKEN: ${{ secrets.IBKR_ACCOUNT_FACTS_SYNC_TOKEN }}
