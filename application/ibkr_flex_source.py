@@ -104,3 +104,45 @@ def verify_report_accounts(report: FlexReport, *, expected_account_ids: Collecti
     actual = [statement.get("accountId", "").strip() for statement in statements]
     if not actual or any(not account for account in actual) or set(actual) != expected or len(actual) != len(set(actual)):
         raise FlexSourceError("IBKR Flex report account scope does not match the target")
+
+
+def import_activity_flex_ledger(
+    *,
+    token: str,
+    query_id: str,
+    expected_account_ids: Collection[str],
+    session: requests.Session | None = None,
+) -> dict[str, object]:
+    """Fetch one report and parse its account-scoped ledger in memory.
+
+    The full returned ledger contains private financial facts. Callers must
+    keep it in memory or use an already approved private cloud store; public
+    diagnostics should use ``diagnose_activity_flex_ledger`` instead.
+    """
+
+    report = fetch_activity_flex_xml(token=token, query_id=query_id, session=session)
+    # Import lazily so the source module remains the lower-level fetch/verify
+    # boundary and the pure parser can continue importing FlexReport.
+    from application.ibkr_flex_ledger import build_flex_ledger
+
+    return build_flex_ledger(report, expected_account_ids=expected_account_ids)
+
+
+def diagnose_activity_flex_ledger(
+    *,
+    token: str,
+    query_id: str,
+    expected_account_ids: Collection[str],
+    session: requests.Session | None = None,
+) -> dict[str, object]:
+    """Import once and return only the redacted Flex status report."""
+
+    ledger = import_activity_flex_ledger(
+        token=token,
+        query_id=query_id,
+        expected_account_ids=expected_account_ids,
+        session=session,
+    )
+    from application.ibkr_flex_ledger import build_flex_ledger_diagnostic
+
+    return build_flex_ledger_diagnostic(ledger)
