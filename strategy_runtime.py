@@ -925,19 +925,71 @@ class LoadedStrategyRuntime:
         enriched.update(extract_portfolio_risk_diagnostics(portfolio_snapshot))
         return enriched
 
+    def _nasdaq_dca_signal_symbols(self) -> tuple[str, ...]:
+        raw = self.merged_runtime_config.get("signal_symbols") or ("QQQ", "SPY")
+        if isinstance(raw, str):
+            raw = raw.replace(";", ",").split(",")
+        symbols = tuple(
+            dict.fromkeys(
+                str(symbol).strip().upper().removesuffix(".US")
+                for symbol in raw
+                if str(symbol).strip()
+            )
+        )
+        if not symbols:
+            raise ValueError(
+                f"{self.profile} signal_symbols must contain at least one symbol for prefetch"
+            )
+        return symbols
+
+    def _build_prefetched_market_history(
+        self,
+        ib,
+        historical_close_loader: Callable[..., Any],
+    ) -> dict[str, object]:
+        """Materialize DCA signal-symbol history in the input builder (B07 Phase B)."""
+        prefetched: dict[str, object] = {}
+        for symbol in self._nasdaq_dca_signal_symbols():
+            history = historical_close_loader(ib, symbol)
+            if history is None:
+                raise RuntimeError(
+                    f"prefetched_market_history missing for signal symbol {symbol!r}"
+                )
+            try:
+                length = len(history)
+            except TypeError as exc:
+                raise RuntimeError(
+                    f"prefetched_market_history for {symbol!r} is not sized: {type(history).__name__}"
+                ) from exc
+            if length == 0:
+                raise RuntimeError(
+                    f"prefetched_market_history empty for signal symbol {symbol!r}"
+                )
+            prefetched[symbol] = history
+        return prefetched
+
     def _build_market_history_inputs(
         self,
         ib,
         historical_close_loader: Callable[..., Any],
     ) -> Mapping[str, Any]:
         if not _requires_materialized_market_history(self.profile):
-            return build_market_history_inputs(historical_close_loader)
-        return {
-            _MARKET_HISTORY_INPUT: {
-                symbol: _loaded_history_to_rows(historical_close_loader(ib, symbol))
-                for symbol in self._market_history_symbols()
+            market_inputs = dict(build_market_history_inputs(historical_close_loader))
+        else:
+            market_inputs = {
+                _MARKET_HISTORY_INPUT: {
+                    symbol: _loaded_history_to_rows(historical_close_loader(ib, symbol))
+                    for symbol in self._market_history_symbols()
+                }
             }
-        }
+        if self.profile == "nasdaq_sp500_smart_dca":
+            # B07 Phase B/C adopt: prefetch signal history in the input builder so UES
+            # smart mode can fail-closed without live market_history(broker_client) IO.
+            market_inputs["prefetched_market_history"] = self._build_prefetched_market_history(
+                ib,
+                historical_close_loader,
+            )
+        return market_inputs
 
     def _build_direct_market_data_inputs(
         self,
@@ -1055,6 +1107,15 @@ class LoadedStrategyRuntime:
         available_inputs.update(self.required_inputs)
         if portfolio_snapshot is not None and context_adapter.portfolio_input_name:
             available_inputs.add(context_adapter.portfolio_input_name)
+        # B07: optional input-builder extras must survive the evaluation-input filter and
+        # QPK's required_inputs-only market_data projection so UES can consume prefetch.
+        for optional_key in (
+            "prefetched_market_history",
+            "technical_indicator_snapshot",
+            "derived_indicators",
+        ):
+            if optional_key in market_inputs:
+                available_inputs.add(optional_key)
         evaluation_inputs = build_strategy_evaluation_inputs(
             available_inputs=available_inputs,
             market_inputs=market_inputs,
@@ -1064,7 +1125,7 @@ class LoadedStrategyRuntime:
             ib=ib,
             portfolio_snapshot=portfolio_snapshot,
         )
-        return build_strategy_context_from_available_inputs(
+        ctx = build_strategy_context_from_available_inputs(
             entrypoint=self.entrypoint,
             runtime_adapter=context_adapter,
             as_of=as_of,
@@ -1073,6 +1134,18 @@ class LoadedStrategyRuntime:
             state={"current_holdings": tuple(current_holdings)},
             capabilities=capabilities,
         )
+        extras = {
+            key: evaluation_inputs[key]
+            for key in (
+                "prefetched_market_history",
+                "technical_indicator_snapshot",
+                "derived_indicators",
+            )
+            if key in evaluation_inputs and key not in ctx.market_data
+        }
+        if extras:
+            ctx = replace(ctx, market_data={**dict(ctx.market_data), **extras})
+        return ctx
 
     def evaluate(
         self,
