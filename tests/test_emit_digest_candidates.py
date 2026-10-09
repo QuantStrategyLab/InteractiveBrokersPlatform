@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import json
 import sys
 from pathlib import Path
@@ -246,3 +248,54 @@ def test_emit_skips_equity_when_report_projection_mismatches(tmp_path):
     assert result["equity_present"] is False
     assert "equity" not in json.loads(out.read_text(encoding="utf-8"))["runs"][0]
 
+
+
+def test_apply_additional_account_facts_target_loads_slot(monkeypatch):
+    """CLI must apply full additional_* identity (publisher parity), not project-only."""
+    import json
+
+    from scripts import publish_account_facts_from_report as publisher
+
+    primary = {
+        "IBKR_ACCOUNT_FACTS_TARGET_ID": "ibkr-primary",
+        "IBKR_ACCOUNT_FACTS_REPORT_PREFIX": "gs://primary-bucket/reports",
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON": json.dumps(["U16608560"]),
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE": "live-u16608560",
+        "IBKR_ACCOUNT_FACTS_SERVICE_NAME": "interactive-brokers-quant-live-u16608560-service",
+        "IBKR_ACCOUNT_FACTS_RUNTIME_REVISION": "rev-primary",
+        "IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR": "live-u16608560",
+        "IBKR_ACCOUNT_FACTS_PROJECT_ID": "primary-project",
+        "GCP_PROJECT_ID": "primary-project",
+    }
+    for key, value in primary.items():
+        monkeypatch.setenv(key, value)
+
+    def _slot(account: str, *, bucket: str) -> dict:
+        lower = account.lower()
+        return {
+            "project_id": "extra-project",
+            "report_prefix": f"gs://{bucket}/reports",
+            "target_id": f"ibkr-{lower}",
+            "service_name": f"interactive-brokers-quant-live-{lower}-service",
+            "runtime_revision": f"rev-{lower}",
+            "account_scope": f"live-{lower}",
+            "account_selector": [account],
+            "deployment_selector": f"live-{lower}",
+        }
+
+    monkeypatch.setenv(
+        publisher.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON_ENV,
+        json.dumps(
+            {
+                "additional-1": _slot("U15998061", bucket="extra-bucket-a"),
+                "additional-2": _slot("U18308207", bucket="extra-bucket-b"),
+                "additional-3": _slot("U18336562", bucket="extra-bucket-c"),
+            }
+        ),
+    )
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_TARGET", "additional-1")
+    emit._apply_additional_account_facts_target(os.environ)  # type: ignore[arg-type]
+    assert os.environ["IBKR_ACCOUNT_FACTS_TARGET_ID"] == "ibkr-u15998061"
+    assert os.environ["IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE"] == "live-u15998061"
+    assert "U15998061" in os.environ["IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON"]
+    assert os.environ["IBKR_ACCOUNT_FACTS_REPORT_PREFIX"] == "gs://extra-bucket-a/reports"
