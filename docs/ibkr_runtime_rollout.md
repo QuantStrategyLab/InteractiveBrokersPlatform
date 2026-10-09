@@ -237,7 +237,7 @@ gcloud storage buckets add-iam-policy-binding "gs://run-sources-${PROJECT_ID}-${
 - `ENABLE_GITHUB_ENV_SYNC=true`
 - `CLOUD_RUN_REGION`
 - `CLOUD_RUN_SERVICE`
-- `TELEGRAM_TOKEN_SECRET_NAME=interactive-brokers-telegram-token`
+- `TELEGRAM_TOKEN_SECRET_NAME=quant-sentinel-telegram-bot-token`（统一 bot「QSL资产管家」合同名，见 QuantRuntimeSettings `docs/notifications-quant-sentinel.zh-CN.md`；旧名 `interactive-brokers-telegram-token` 为遗留，不再作为执行通知入口）
 - `STRATEGY_PROFILE=global_etf_rotation`
 - `ACCOUNT_GROUP=paper`
 - `IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=ibkr-account-groups`
