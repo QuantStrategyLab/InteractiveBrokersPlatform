@@ -77,3 +77,82 @@ def test_emit_uses_injected_loader(tmp_path):
     )
     assert result["status"] == "candidates_written"
     assert result["producer_status"] == "projected"
+
+
+def test_emit_resolves_labels_from_cloud_run_targets(tmp_path):
+    report_path = tmp_path / "report.json"
+    out = tmp_path / "candidates.json"
+    # Report without selector — force CLOUD_RUN match via service name.
+    body = _report()
+    body["service_name"] = "interactive-brokers-quant-live-u15998061-service"
+    body.pop("account_scope", None)
+    body["runtime_target"] = {
+        "strategy_profile": "soxl_soxx_trend_income",
+        "service_name": "interactive-brokers-quant-live-u15998061-service",
+        "deployment_selector": "live-u15998061",
+    }
+    report_path.write_text(json.dumps(body), encoding="utf-8")
+    targets = {
+        "targets": [
+            {
+                "service_name": "interactive-brokers-quant-live-u15998061-service",
+                "runtime_target": {
+                    "account_scope": "live-u15998061",
+                    "account_selector": ["U15998061"],
+                    "deployment_selector": "live-u15998061",
+                    "service_name": "interactive-brokers-quant-live-u15998061-service",
+                    "strategy_profile": "soxl_soxx_trend_income",
+                    "execution_mode": "live",
+                },
+            },
+            {
+                "service_name": "interactive-brokers-quant-live-u16608560-service",
+                "runtime_target": {
+                    "account_scope": "live-u16608560",
+                    "account_selector": ["U16608560"],
+                    "deployment_selector": "live-u16608560",
+                    "service_name": "interactive-brokers-quant-live-u16608560-service",
+                    "strategy_profile": "tqqq_growth_income",
+                    "execution_mode": "live",
+                },
+            },
+        ]
+    }
+    environ = {
+        "IBKR_DIGEST_CANDIDATES_OUTPUT_PATH": str(out),
+        "IBKR_DIGEST_RUNTIME_REPORT_PATH": str(report_path),
+        "IBKR_DIGEST_OPAQUE_ACCOUNT_UID": "acct_opaque_synthetic",
+        "IBKR_DIGEST_TARGET_ID": "ibkr/synthetic-target",
+        "CLOUD_RUN_SERVICE_TARGETS_JSON": json.dumps(targets),
+    }
+    result = emit.emit_digest_candidates(environ)
+    assert result["status"] == "candidates_written"
+    assert result["account_hint_present"] is True
+    assert result["account_scope_present"] is True
+    # Safe summary must not echo the U####### value.
+    dumped = json.dumps(result)
+    assert "U15998061" not in dumped
+    data = json.loads(out.read_text(encoding="utf-8"))
+    row = data["runs"][0]
+    assert row["account_hint"] == "U15998061"
+    assert row["account_scope"] == "live-u15998061"
+
+
+def test_emit_explicit_digest_hint_overrides(tmp_path):
+    out = tmp_path / "candidates.json"
+    environ = {
+        "IBKR_DIGEST_CANDIDATES_OUTPUT_PATH": str(out),
+        "IBKR_DIGEST_OPAQUE_ACCOUNT_UID": "acct_opaque_synthetic",
+        "IBKR_DIGEST_TARGET_ID": "ibkr/synthetic-target",
+        "IBKR_DIGEST_ACCOUNT_HINT": "U18308207",
+        "IBKR_DIGEST_ACCOUNT_SCOPE": "live-u18308207",
+    }
+    result = emit.emit_digest_candidates(
+        environ,
+        report_loader=lambda _env: _report(),
+    )
+    assert result["account_hint_present"] is True
+    row = json.loads(out.read_text(encoding="utf-8"))["runs"][0]
+    # Explicit override wins over report fixture U00000001.
+    assert row["account_hint"] == "U18308207"
+    assert row["account_scope"] == "live-u18308207"

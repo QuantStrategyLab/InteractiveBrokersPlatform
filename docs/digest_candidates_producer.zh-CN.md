@@ -29,6 +29,8 @@
       "strategy_profile": "global_etf_rotation",
       "opaque_account_uid": "acct_opaque_example",
       "target_id": "ibkr/example-target",
+      "account_hint": "U00000001",
+      "account_scope": "live-u00000001",
       "actually_ran": true,
       "fill_count": null,
       "order_count": null,
@@ -58,6 +60,8 @@
 | `strategy_profile` | report / `runtime_target.strategy_profile` | 回退文档化默认 `global_etf_rotation` + `strategy_profile_defaulted` |
 | `opaque_account_uid` | `IBKR_DIGEST_OPAQUE_ACCOUNT_UID` | 空字符串 + `opaque_account_uid_absent` |
 | `target_id` | `IBKR_DIGEST_TARGET_ID` 或 `IBKR_ACCOUNT_FACTS_TARGET_ID` | 空字符串 + `target_id_absent` |
+| `account_hint` | `IBKR_DIGEST_ACCOUNT_HINT` → account-facts selector → report `runtime_target.account_selector` → `RUNTIME_TARGET_JSON` → `CLOUD_RUN_SERVICE_TARGETS_JSON` | 省略；中央标签会退化为 scope/`live` |
+| `account_scope` | `IBKR_DIGEST_ACCOUNT_SCOPE` → `IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE` → report/`RUNTIME_TARGET_JSON`/`CLOUD_RUN_SERVICE_TARGETS_JSON` | 省略 |
 | `actually_ran` | 有 covering 策略周期（status / execution_receipt / stage）才为 `true` | 仅 account-facts、无周期证据 → 不产出 run |
 | `fill_count` / `order_count` | **不**读取 `summary.orders_*_count` | **必须** `null` + `counts_unknown` + `ibkr_fills_not_projected`；禁止把 quiet/dry-run 的 0 写成已验证零 |
 | `cycle_count` | 同策略同业务日 covering report 数 | — |
