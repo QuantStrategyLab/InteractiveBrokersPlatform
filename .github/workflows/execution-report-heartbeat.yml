@@ -45,6 +45,11 @@ on:
         required: false
         type: string
         default: ""
+      emit_digest_candidates:
+        description: "Write ephemeral DIGEST_CANDIDATES JSON under runner temp (no public artifact; does not mutate QRS Environment)."
+        required: false
+        type: boolean
+        default: false
   schedule:
     - cron: "20 22 * * *"
 
@@ -252,6 +257,68 @@ jobs:
           IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}
           IBKR_PAUSED_FACTS_STATE_PREFIX: ${{ inputs.account_facts_target == 'paused-refresh-state-backup' && secrets.IBKR_PAUSED_FACTS_STATE_PREFIX || '' }}
         run: uv run --no-sync python scripts/inspect_paused_account_facts_state.py
+
+  emit-digest-candidates:
+    name: Emit DIGEST_CANDIDATES (ephemeral, no artifact)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.emit_digest_candidates && inputs.account_facts_target != 'ingress-diagnostic' && inputs.account_facts_target != 'paused-refresh-preflight' && inputs.account_facts_target != 'paused-refresh-state-backup' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GCP_PROJECT_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID }}
+      IBKR_ACCOUNT_FACTS_PROJECT_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
+      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com
+      IBKR_ACCOUNT_FACTS_TARGET: ${{ (inputs.account_facts_target == 'additional-1' || inputs.account_facts_target == 'additional-2' || inputs.account_facts_target == 'additional-3') && inputs.account_facts_target || 'primary-live' }}
+      IBKR_ACCOUNT_FACTS_REPORT_NAME: ${{ inputs.account_facts_report_name }}
+      IBKR_ACCOUNT_FACTS_REPORT_PREFIX: ${{ secrets.IBKR_ACCOUNT_FACTS_REPORT_PREFIX }}
+      IBKR_ACCOUNT_FACTS_TARGET_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_TARGET_ID }}
+      IBKR_ACCOUNT_FACTS_SERVICE_NAME: ${{ secrets.IBKR_ACCOUNT_FACTS_SERVICE_NAME }}
+      IBKR_ACCOUNT_FACTS_RUNTIME_REVISION: ${{ secrets.IBKR_ACCOUNT_FACTS_RUNTIME_REVISION }}
+      IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE }}
+      IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON }}
+      IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR: ${{ secrets.IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR }}
+      IBKR_DIGEST_OPAQUE_ACCOUNT_UID: ${{ secrets.IBKR_DIGEST_OPAQUE_ACCOUNT_UID }}
+      IBKR_DIGEST_TARGET_ID: ${{ secrets.IBKR_DIGEST_TARGET_ID }}
+      IBKR_DIGEST_CANDIDATES_OUTPUT_PATH: ${{ runner.temp }}/ibkr-digest-candidates.json
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          uv sync --frozen --no-dev
+
+      - name: Select protected additional target before cloud authentication
+        if: ${{ inputs.account_facts_target == 'additional-1' || inputs.account_facts_target == 'additional-2' || inputs.account_facts_target == 'additional-3' }}
+        env:
+          IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}
+        run: python3 scripts/configure_account_facts_target.py
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Emit DIGEST_CANDIDATES (ephemeral, no artifact)
+        env:
+          IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ (inputs.account_facts_target == 'additional-1' || inputs.account_facts_target == 'additional-2' || inputs.account_facts_target == 'additional-3') && secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON || '' }}
+        run: |
+          # Writes only to runner temp. Do not upload-artifact (may contain account equity).
+          # Injection into QRS DIGEST_CANDIDATES_JSON is manual — see docs/digest_candidates_producer.zh-CN.md
+          uv run --no-sync python scripts/emit_digest_candidates.py
+          test -f "$IBKR_DIGEST_CANDIDATES_OUTPUT_PATH"
+          python3 -c 'import json,os; p=os.environ["IBKR_DIGEST_CANDIDATES_OUTPUT_PATH"]; d=json.load(open(p,encoding="utf-8")); r=d.get("runs") or []; print(json.dumps({"ephemeral_path_present":True,"schema_version":d.get("schema_version"),"producer_status":d.get("producer_status"),"runs":len(r),"fill_count_null":all(x.get("fill_count") is None for x in r)},sort_keys=True))'
 
   account-facts-ingress-diagnostic:
     name: Verify account-facts ingress authentication only
