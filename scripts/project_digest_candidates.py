@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import re
 from collections.abc import Mapping, Sequence
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -89,6 +90,69 @@ def _as_mapping(value: object) -> dict[str, Any] | None:
 
 def _as_str(value: object) -> str:
     return value.strip() if isinstance(value, str) else ""
+
+
+_BROKER_ACCOUNT_RE = re.compile(r"(?i)\b(D?U\d{5,})\b")
+
+
+def _normalize_broker_account_id(raw: object) -> str:
+    """Return canonical ``U######`` / ``DU######`` when present; else empty."""
+    text = _as_str(raw)
+    if not text:
+        return ""
+    compact = text.strip()
+    m = re.fullmatch(r"(?i)(du|u)(\d{5,})", compact)
+    if m:
+        prefix = m.group(1).upper()
+        digits = m.group(2)
+        return ("DU" if prefix == "DU" else "U") + digits
+    found = _BROKER_ACCOUNT_RE.search(text)
+    if not found:
+        return ""
+    return _normalize_broker_account_id(found.group(1))
+
+
+def _labels_from_runtime_target(target: Mapping[str, Any] | None) -> tuple[str, str]:
+    """Return (account_hint, account_scope) from a runtime_target-like mapping."""
+    if not isinstance(target, Mapping):
+        return "", ""
+    scope = _as_str(target.get("account_scope"))
+    hint = ""
+    selector = target.get("account_selector")
+    if isinstance(selector, str):
+        hint = _normalize_broker_account_id(selector)
+    elif isinstance(selector, Sequence) and not isinstance(selector, (str, bytes)):
+        for item in selector:
+            hint = _normalize_broker_account_id(item)
+            if hint:
+                break
+    if not hint:
+        hint = _normalize_broker_account_id(scope)
+    return hint, scope
+
+
+def _labels_from_report(report: Mapping[str, Any]) -> tuple[str, str]:
+    target = _as_mapping(report.get("runtime_target"))
+    hint, scope = _labels_from_runtime_target(target)
+    if not scope:
+        scope = _as_str(report.get("account_scope"))
+    if not hint:
+        hint = _normalize_broker_account_id(scope)
+    return hint, scope
+
+
+def _apply_account_labels(
+    row: dict[str, Any],
+    *,
+    account_hint: str = "",
+    account_scope: str = "",
+) -> None:
+    normalized = _normalize_broker_account_id(account_hint)
+    if normalized:
+        row["account_hint"] = normalized
+    scope = _as_str(account_scope)
+    if scope:
+        row["account_scope"] = scope
 
 
 def _money_to_float(value: object) -> float | None:
@@ -263,6 +327,8 @@ def _project_from_schwab_shaped_daily(
     target_id: str,
     account_facts: Mapping[str, Any] | None,
     business_day: str | None,
+    account_hint: str = "",
+    account_scope: str = "",
 ) -> dict[str, Any] | None:
     """Optional adapter when a daily-like envelope is supplied (tests / future)."""
     records = daily_projection.get("records")
@@ -340,6 +406,11 @@ def _project_from_schwab_shaped_daily(
             row["equity"] = equity
             row["equity_currency"] = equity_currency
             row["currency"] = equity_currency
+        _apply_account_labels(
+            row,
+            account_hint=account_hint,
+            account_scope=account_scope,
+        )
         runs_out.append(row)
     return {
         "schema_version": SCHEMA_VERSION,
@@ -357,6 +428,8 @@ def project_digest_candidates(
     target_id: str = "",
     account_facts: Mapping[str, Any] | None = None,
     business_day: str | None = None,
+    account_hint: str = "",
+    account_scope: str = "",
 ) -> dict[str, Any]:
     """Build ``{"schema_version", "runs": [...]}`` from IBKR runtime reports.
 
@@ -375,6 +448,8 @@ def project_digest_candidates(
             target_id=target_id,
             account_facts=account_facts,
             business_day=business_day,
+            account_hint=account_hint,
+            account_scope=account_scope,
         )
         if shaped is not None:
             return shaped
@@ -425,12 +500,19 @@ def project_digest_candidates(
                 "activities": [],
                 "statuses": [],
                 "strategy_defaulted": False,
+                "account_hint": "",
+                "account_scope": "",
             }
             buckets[key] = bucket
         bucket["activities"].append(activity)
         bucket["statuses"].append(_as_str(report.get("status")).lower())
         if not explicit_strategy:
             bucket["strategy_defaulted"] = True
+        rep_hint, rep_scope = _labels_from_report(report)
+        if rep_hint and not bucket["account_hint"]:
+            bucket["account_hint"] = rep_hint
+        if rep_scope and not bucket["account_scope"]:
+            bucket["account_scope"] = rep_scope
 
     runs_out: list[dict[str, Any]] = []
     for bucket in buckets.values():
@@ -479,6 +561,12 @@ def project_digest_candidates(
             row["equity"] = equity
             row["equity_currency"] = equity_currency
             row["currency"] = equity_currency
+        # Explicit caller labels win; else use labels collected from reports.
+        _apply_account_labels(
+            row,
+            account_hint=account_hint or bucket.get("account_hint") or "",
+            account_scope=account_scope or bucket.get("account_scope") or "",
+        )
         runs_out.append(row)
 
     return {
@@ -541,6 +629,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional YYYY-MM-DD filter.",
     )
     parser.add_argument(
+        "--account-hint",
+        default="",
+        help="Human broker account label (e.g. U15998061) for digest [ibkr U…] tags.",
+    )
+    parser.add_argument(
+        "--account-scope",
+        default="",
+        help="Runtime account_scope (e.g. live-u15998061).",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         required=True,
@@ -581,6 +679,8 @@ def main(argv: list[str] | None = None) -> int:
         target_id=args.target_id,
         account_facts=facts,
         business_day=args.business_day,
+        account_hint=args.account_hint,
+        account_scope=args.account_scope,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(

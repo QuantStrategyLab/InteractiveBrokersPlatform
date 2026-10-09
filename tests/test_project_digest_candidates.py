@@ -197,3 +197,28 @@ def test_cli_writes_safe_summary(tmp_path, capsys):
     dumped = json.loads(out_path.read_text(encoding="utf-8"))
     assert dumped["runs"][0]["fill_count"] is None
     assert dumped["runs"][0]["platform_id"] == "ibkr"
+
+
+def test_account_hint_and_scope_from_kwargs():
+    payload = project_digest_candidates(
+        runtime_reports=_report(),
+        opaque_account_uid="acct_opaque_synthetic",
+        target_id="ibkr/synthetic-target",
+        account_hint="u15998061",
+        account_scope="live-u15998061",
+    )
+    row = payload["runs"][0]
+    assert row["account_hint"] == "U15998061"
+    assert row["account_scope"] == "live-u15998061"
+
+
+def test_account_labels_from_runtime_report_selector():
+    # Fixture report already carries account_selector U00000001 / live-synthetic.
+    payload = project_digest_candidates(
+        runtime_reports=_report(),
+        opaque_account_uid="acct_opaque_synthetic",
+        target_id="ibkr/synthetic-target",
+    )
+    row = payload["runs"][0]
+    assert row["account_hint"] == "U00000001"
+    assert row["account_scope"] == "live-synthetic"
