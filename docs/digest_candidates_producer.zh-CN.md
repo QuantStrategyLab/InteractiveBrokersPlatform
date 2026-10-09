@@ -95,10 +95,11 @@ python3 -m pytest tests/test_project_digest_candidates.py tests/test_emit_digest
 开启后单独 job：
 
 - 复用 account-facts 的 WIF / report prefix / target 映射（只读 GCS report）
-- 写出到 `$RUNNER_TEMP/ibkr-digest-candidates.json`（ephemeral）
-- **不** `actions/upload-artifact`
+- 从同一 runtime report **只读**投影 `project_ibkr_account_facts_history` 填权益（**不** POST）
+- 写出到 `$RUNNER_TEMP/ibkr-digest-candidates.json`（ephemeral）；可选写出 ephemeral facts
+- 可选输入 `capture_digest_candidates_artifact=true` 上传 **repo-private** artifact（retention 1 day）供授权注入 QRS；默认关
 - **不** POST account-facts / 不改 QRS Environment
-- stdout 仅安全摘要（`identity_*_present` 布尔，无具体 uid）
+- stdout 仅安全摘要（`equity_present` / `account_hint_present` 布尔，无金额、无 uid）
 
 所需受保护配置（不得写入公开仓）：
 

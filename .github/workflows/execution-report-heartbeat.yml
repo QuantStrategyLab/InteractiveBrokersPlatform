@@ -50,6 +50,11 @@ on:
         required: false
         type: boolean
         default: false
+      capture_digest_candidates_artifact:
+        description: "When emit_digest_candidates=true, also upload repo-private Actions artifact (retention 1 day) for authorized QRS injection. Default off."
+        required: false
+        type: boolean
+        default: false
   schedule:
     - cron: "20 22 * * *"
 
@@ -286,7 +291,6 @@ jobs:
       IBKR_DIGEST_ACCOUNT_SCOPE: ${{ secrets.IBKR_DIGEST_ACCOUNT_SCOPE }}
       CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ vars.CLOUD_RUN_SERVICE_TARGETS_JSON || secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}
       RUNTIME_TARGET_JSON: ${{ vars.RUNTIME_TARGET_JSON || secrets.RUNTIME_TARGET_JSON }}
-      IBKR_DIGEST_CANDIDATES_OUTPUT_PATH: ${{ runner.temp }}/ibkr-digest-candidates.json
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -317,12 +321,26 @@ jobs:
       - name: Emit DIGEST_CANDIDATES (ephemeral, no artifact)
         env:
           IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ (inputs.account_facts_target == 'additional-1' || inputs.account_facts_target == 'additional-2' || inputs.account_facts_target == 'additional-3') && secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON || '' }}
+          IBKR_DIGEST_CANDIDATES_OUTPUT_PATH: ${{ runner.temp }}/ibkr-digest-candidates.json
+          IBKR_DIGEST_ACCOUNT_FACTS_OUTPUT_PATH: ${{ runner.temp }}/ibkr-digest-account-facts.json
         run: |
-          # Writes only to runner temp. Do not upload-artifact (may contain account equity).
+          # Writes only to runner temp. Do not upload-artifact by default (may contain account equity).
+          # Equity: read-only project_ibkr_account_facts_history from runtime report (no POST).
           # Injection into QRS DIGEST_CANDIDATES_JSON is manual — see docs/digest_candidates_producer.zh-CN.md
           uv run --no-sync python scripts/emit_digest_candidates.py
           test -f "$IBKR_DIGEST_CANDIDATES_OUTPUT_PATH"
-          python3 -c 'import json,os; p=os.environ["IBKR_DIGEST_CANDIDATES_OUTPUT_PATH"]; d=json.load(open(p,encoding="utf-8")); r=d.get("runs") or []; print(json.dumps({"ephemeral_path_present":True,"schema_version":d.get("schema_version"),"producer_status":d.get("producer_status"),"runs":len(r),"fill_count_null":all(x.get("fill_count") is None for x in r)},sort_keys=True))'
+          python3 -c 'import json,os; p=os.environ["IBKR_DIGEST_CANDIDATES_OUTPUT_PATH"]; d=json.load(open(p,encoding="utf-8")); r=d.get("runs") or []; print(json.dumps({"ephemeral_path_present":True,"schema_version":d.get("schema_version"),"producer_status":d.get("producer_status"),"runs":len(r),"fill_count_null":all(x.get("fill_count") is None for x in r),"equity_present":any(x.get("equity") is not None for x in r),"account_hint_present":any(bool(x.get("account_hint")) for x in r),"holdings_omitted":all("holdings" not in x for x in r)},sort_keys=True))'
+
+      - name: Capture DIGEST_CANDIDATES private artifact (opt-in)
+        if: ${{ inputs.capture_digest_candidates_artifact }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ibkr-digest-candidates
+          path: |
+            ${{ runner.temp }}/ibkr-digest-candidates.json
+            ${{ runner.temp }}/ibkr-digest-account-facts.json
+          if-no-files-found: warn
+          retention-days: 1
 
   account-facts-ingress-diagnostic:
     name: Verify account-facts ingress authentication only

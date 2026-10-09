@@ -23,6 +23,13 @@ Optional GCS path (workflow only; skipped when local path is set):
   reuses publish_account_facts_from_report listing/load helpers when
   IBKR_ACCOUNT_FACTS_REPORT_PREFIX and project id are configured. That path
   needs gcloud; tests must not rely on it.
+
+Equity (read-only; never POST to broker or QRS account-facts sync):
+  - IBKR_DIGEST_ACCOUNT_FACTS_PATH local JSON when set
+  - else project_ibkr_account_facts_history from the loaded runtime report
+    when IBKR_ACCOUNT_FACTS_* expected target env + source URI are present
+  Optional IBKR_DIGEST_ACCOUNT_FACTS_OUTPUT_PATH writes ephemeral projected
+  facts for authorized private artifact capture (default off in workflow).
 """
 
 from __future__ import annotations
@@ -231,22 +238,27 @@ def _load_local_report(environ: Mapping[str, str]) -> dict[str, Any] | None:
     return load_json_object(Path(raw.strip()))
 
 
-def _load_gcs_report_via_publisher(environ: Mapping[str, str]) -> dict[str, Any] | None:
-    """Best-effort latest report from account-facts prefix; no POST."""
+def _load_gcs_report_via_publisher(
+    environ: Mapping[str, str],
+) -> tuple[dict[str, Any] | None, str]:
+    """Best-effort latest report from account-facts prefix; no POST.
+
+    Returns ``(report, source_report_uri)``. URI is empty when unavailable.
+    """
     prefix = environ.get("IBKR_ACCOUNT_FACTS_REPORT_PREFIX")
     project_id = environ.get("IBKR_ACCOUNT_FACTS_PROJECT_ID") or environ.get(
         "GCP_PROJECT_ID"
     )
     if not isinstance(prefix, str) or not prefix.strip():
-        return None
+        return None, ""
     if not isinstance(project_id, str) or not project_id.strip():
-        return None
+        return None, ""
     try:
         from datetime import datetime, timezone
 
         from scripts import publish_account_facts_from_report as publisher
     except Exception:
-        return None
+        return None, ""
     try:
         now = datetime.now(timezone.utc)
         report_name = environ.get("IBKR_ACCOUNT_FACTS_REPORT_NAME", "") or ""
@@ -262,9 +274,97 @@ def _load_gcs_report_via_publisher(environ: Mapping[str, str]) -> dict[str, Any]
                 project_id=project_id.strip(),
                 now=now,
             )
-        return publisher._load_gcs_report(uri, project_id=project_id.strip())
+        report = publisher._load_gcs_report(uri, project_id=project_id.strip())
+        return report, str(uri or "")
     except Exception:
-        return None
+        return None, ""
+
+
+def _project_facts_from_report(
+    environ: Mapping[str, str],
+    report: Mapping[str, Any],
+    *,
+    source_report_uri: str,
+) -> tuple[dict[str, Any] | None, str]:
+    """Read-only history projection from one runtime report (Schwab-parity).
+
+    Never POSTs to QRS. Missing expected-* env or target mismatch → absent.
+    """
+    prefix = environ.get("IBKR_ACCOUNT_FACTS_REPORT_PREFIX")
+    project_id = environ.get("IBKR_ACCOUNT_FACTS_PROJECT_ID") or environ.get(
+        "GCP_PROJECT_ID"
+    )
+    target_id = (
+        environ.get("IBKR_DIGEST_TARGET_ID")
+        or environ.get("IBKR_ACCOUNT_FACTS_TARGET_ID")
+        or ""
+    )
+    service_name = environ.get("IBKR_ACCOUNT_FACTS_SERVICE_NAME") or ""
+    runtime_revision = environ.get("IBKR_ACCOUNT_FACTS_RUNTIME_REVISION") or ""
+    account_scope = environ.get("IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE") or ""
+    deployment_selector = environ.get("IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR") or ""
+    selector_raw = environ.get("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON") or ""
+    required = (
+        prefix,
+        project_id,
+        target_id,
+        service_name,
+        runtime_revision,
+        account_scope,
+        deployment_selector,
+        selector_raw,
+        source_report_uri,
+    )
+    if any(not isinstance(item, str) or not item.strip() for item in required):
+        return None, "account_facts_config_absent"
+    try:
+        selector = json.loads(selector_raw)
+    except json.JSONDecodeError:
+        return None, "account_facts_config_invalid"
+    try:
+        from scripts.publish_account_facts_from_report import (
+            project_ibkr_account_facts_history,
+        )
+    except Exception:
+        return None, "account_facts_projector_unavailable"
+    projected = project_ibkr_account_facts_history(
+        report,
+        target_id=target_id.strip(),
+        expected_report_prefix=prefix.strip(),
+        source_report_uri=source_report_uri.strip(),
+        expected_project_id=project_id.strip(),
+        expected_service_name=service_name.strip(),
+        expected_runtime_revision=runtime_revision.strip(),
+        expected_account_scope=account_scope.strip(),
+        expected_account_selector=selector,
+        expected_deployment_selector=deployment_selector.strip(),
+    )
+    if not isinstance(projected, dict):
+        return None, "account_facts_absent"
+    if projected.get("status") == "skipped":
+        return projected, str(projected.get("reason") or "account_facts_skipped")
+    return projected, "report_projection"
+
+
+def _maybe_write_ephemeral_facts(
+    environ: Mapping[str, str],
+    facts: Mapping[str, Any] | None,
+) -> bool:
+    raw = environ.get("IBKR_DIGEST_ACCOUNT_FACTS_OUTPUT_PATH")
+    if not isinstance(raw, str) or not raw.strip() or not isinstance(facts, Mapping):
+        return False
+    if facts.get("status") == "skipped":
+        return False
+    path = Path(raw.strip())
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(facts, ensure_ascii=True, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        return False
+    return True
 
 
 def emit_digest_candidates(
@@ -277,13 +377,21 @@ def emit_digest_candidates(
         return {"status": "skipped", "reason": "output_path_missing"}
     output_path = Path(output_raw.strip())
 
+    source_report_uri = ""
     try:
         if report_loader is not None:
             report = report_loader(environ)
+            override_uri = environ.get("IBKR_DIGEST_SOURCE_REPORT_URI")
+            if isinstance(override_uri, str):
+                source_report_uri = override_uri.strip()
         else:
             report = _load_local_report(environ)
             if report is None:
-                report = _load_gcs_report_via_publisher(environ)
+                report, source_report_uri = _load_gcs_report_via_publisher(environ)
+            else:
+                override_uri = environ.get("IBKR_DIGEST_SOURCE_REPORT_URI")
+                if isinstance(override_uri, str):
+                    source_report_uri = override_uri.strip()
     except (OSError, ValueError, json.JSONDecodeError):
         return {"status": "skipped", "reason": "runtime_report_unreadable"}
     except Exception:
@@ -293,12 +401,22 @@ def emit_digest_candidates(
         return {"status": "skipped", "reason": "runtime_report_missing"}
 
     account_facts = None
+    facts_source = "account_facts_absent"
     facts_path_raw = environ.get("IBKR_DIGEST_ACCOUNT_FACTS_PATH")
     if isinstance(facts_path_raw, str) and facts_path_raw.strip():
         try:
             account_facts = load_json_object(Path(facts_path_raw.strip()))
+            facts_source = "local_path"
         except (OSError, ValueError, json.JSONDecodeError):
             return {"status": "skipped", "reason": "account_facts_unreadable"}
+    else:
+        account_facts, facts_source = _project_facts_from_report(
+            environ,
+            report,
+            source_report_uri=source_report_uri,
+        )
+
+    facts_written = _maybe_write_ephemeral_facts(environ, account_facts)
 
     uid, tid = _safe_identity(environ)
     account_hint, account_scope = _resolve_account_labels(environ, report=report)
@@ -308,11 +426,16 @@ def emit_digest_candidates(
     else:
         business_day = None
 
+    # Skipped projection payloads must not feed equity (status=skipped).
+    facts_for_project = account_facts
+    if isinstance(account_facts, Mapping) and account_facts.get("status") == "skipped":
+        facts_for_project = account_facts
+
     payload = project_digest_candidates(
         runtime_reports=report,
         opaque_account_uid=uid,
         target_id=tid,
-        account_facts=account_facts,
+        account_facts=facts_for_project,
         business_day=business_day,
         account_hint=account_hint,
         account_scope=account_scope,
@@ -339,6 +462,8 @@ def emit_digest_candidates(
             isinstance(row, Mapping) and row.get("equity") is not None
             for row in (payload.get("runs") or [])
         ),
+        "account_facts_source": facts_source,
+        "account_facts_ephemeral_written": facts_written,
     }
 
 
