@@ -26,6 +26,7 @@ from application.account_new_risk_gate_support import (
     set_cycle_snapshot,
 )
 from application.paper_execution_admission import evaluate_ibkr_paper_execution_admission
+from application.execution_kernel_adapter import consult_t1_live_submit
 try:
     from quant_platform_kit.common.cash_sweep import should_sell_cash_sweep_to_fund_whole_share_buy
 except ImportError:  # pragma: no cover - compatibility with older pinned shared wheels
@@ -1368,7 +1369,11 @@ def execute_rebalance(
 
         def submit_claimed_order(ib, order_intent):
             if acquire_execution_claim is None or not acquire_execution_claim():
+                # N13 T1 consult-only: local claim still wins; ignore decision.
+                consult_t1_live_submit(identity_held=False, dry_run_bypass=False)
                 raise RuntimeError("IBKR execution claim required; refusing broker submission")
+            # Shadow consult after successful claim; deny must not block submit.
+            consult_t1_live_submit(identity_held=True, dry_run_bypass=False)
             return delegate_submit(ib, order_intent)
 
         submit_order_intent = submit_claimed_order
