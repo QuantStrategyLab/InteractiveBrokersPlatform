@@ -1156,6 +1156,9 @@ def test_market_history_value_runtime_requires_portfolio_snapshot(monkeypatch):
     )
 
     assert captured["market_data"]["market_history"] is close_loader
+    prefetched = captured["market_data"]["prefetched_market_history"]
+    assert set(prefetched) == {"QQQ", "SPY"}
+    assert len(prefetched["QQQ"]) == 2
     assert captured["portfolio"] is portfolio_snapshot
     assert captured["runtime_config"]["signal_effective_after_trading_days"] == 0
     assert result.metadata["portfolio_total_equity"] == 10000.0
@@ -1163,7 +1166,125 @@ def test_market_history_value_runtime_requires_portfolio_snapshot(monkeypatch):
     assert result.metadata["signal_date"] == "2026-05-26"
     assert result.metadata["effective_date"] == "2026-05-26"
     assert result.metadata["execution_timing_contract"] == "same_trading_day"
-    assert close_loader_symbols == [("QQQM", "10 D", "1 day"), ("SPLG", "10 D", "1 day")]
+    assert close_loader_symbols == [
+        ("QQQ", "2 Y", "1 day"),
+        ("SPY", "2 Y", "1 day"),
+        ("QQQM", "10 D", "1 day"),
+        ("SPLG", "10 D", "1 day"),
+    ]
+
+
+
+def test_nasdaq_dca_prefetched_market_history_fail_closed_on_empty(monkeypatch):
+    class FakeEntrypoint:
+        manifest = StrategyManifest(
+            profile="nasdaq_sp500_smart_dca",
+            domain="us_equity",
+            display_name="Nasdaq 100 / S&P 500 Smart DCA",
+            description="test",
+            required_inputs=frozenset({"market_history", "portfolio_snapshot"}),
+            default_config={"signal_symbols": ("QQQ", "SPY"), "managed_symbols": ("QQQM", "SPLG")},
+        )
+
+        def evaluate(self, ctx):
+            return StrategyDecision()
+
+    runtime = strategy_runtime_module.LoadedStrategyRuntime(
+        entrypoint=FakeEntrypoint(),
+        runtime_adapter=StrategyRuntimeAdapter(
+            status_icon="🧺",
+            portfolio_input_name="portfolio_snapshot",
+            runtime_policy=StrategyRuntimePolicy(signal_effective_after_trading_days=0),
+        ),
+        runtime_settings=_build_runtime_settings(
+            profile="nasdaq_sp500_smart_dca",
+            display_name="Nasdaq 100 / S&P 500 Smart DCA",
+            target_mode="value",
+        ),
+        runtime_config={},
+        merged_runtime_config={"signal_symbols": ("QQQ", "SPY"), "managed_symbols": ("QQQM", "SPLG")},
+        status_icon="🧺",
+        logger=lambda _message: None,
+    )
+    monkeypatch.setattr(
+        strategy_runtime_module,
+        "fetch_portfolio_snapshot",
+        lambda _ib, **_kwargs: SimpleNamespace(total_equity=1000.0),
+    )
+
+    def close_loader(_ib, symbol, duration="2 Y", bar_size="1 day"):
+        if symbol == "QQQ":
+            return strategy_runtime_module.pd.Series(dtype=float)
+        return strategy_runtime_module.pd.Series([1.0, 2.0])
+
+    try:
+        runtime.evaluate(
+            ib="fake-ib",
+            current_holdings=(),
+            historical_close_loader=close_loader,
+            run_as_of=strategy_runtime_module.pd.Timestamp("2026-05-26"),
+            translator=lambda key, **_kwargs: key,
+            pacing_sec=0.0,
+        )
+    except RuntimeError as exc:
+        assert "empty for signal symbol 'QQQ'" in str(exc)
+    else:
+        raise AssertionError("expected fail-closed RuntimeError for empty QQQ history")
+
+
+def test_non_nasdaq_dca_profile_skips_prefetch(monkeypatch):
+    captured = {}
+
+    class FakeEntrypoint:
+        manifest = StrategyManifest(
+            profile="ibit_smart_dca",
+            domain="us_equity",
+            display_name="IBIT Smart DCA",
+            description="test",
+            required_inputs=frozenset({"market_history", "portfolio_snapshot"}),
+            default_config={"managed_symbols": ("IBIT",)},
+        )
+
+        def evaluate(self, ctx):
+            captured["market_data"] = dict(ctx.market_data)
+            return StrategyDecision()
+
+    runtime = strategy_runtime_module.LoadedStrategyRuntime(
+        entrypoint=FakeEntrypoint(),
+        runtime_adapter=StrategyRuntimeAdapter(
+            status_icon="₿",
+            portfolio_input_name="portfolio_snapshot",
+            runtime_policy=StrategyRuntimePolicy(signal_effective_after_trading_days=0),
+        ),
+        runtime_settings=_build_runtime_settings(
+            profile="ibit_smart_dca",
+            display_name="IBIT Smart DCA",
+            target_mode="value",
+        ),
+        runtime_config={},
+        merged_runtime_config={"managed_symbols": ("IBIT",)},
+        status_icon="₿",
+        logger=lambda _message: None,
+    )
+    monkeypatch.setattr(
+        strategy_runtime_module,
+        "fetch_portfolio_snapshot",
+        lambda _ib, **_kwargs: SimpleNamespace(total_equity=1000.0),
+    )
+
+    def close_loader(_ib, symbol, duration="2 Y", bar_size="1 day"):
+        return strategy_runtime_module.pd.Series([1.0, 2.0])
+
+    runtime.evaluate(
+        ib="fake-ib",
+        current_holdings=(),
+        historical_close_loader=close_loader,
+        run_as_of=strategy_runtime_module.pd.Timestamp("2026-05-26"),
+        translator=lambda key, **_kwargs: key,
+        pacing_sec=0.0,
+    )
+    assert "market_history" in captured["market_data"]
+    assert "prefetched_market_history" not in captured["market_data"]
 
 
 def test_feature_snapshot_runtime_fail_closes_on_entrypoint_exception(monkeypatch):
