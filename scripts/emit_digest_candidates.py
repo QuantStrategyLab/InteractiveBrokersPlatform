@@ -467,13 +467,43 @@ def emit_digest_candidates(
     }
 
 
+def _apply_additional_account_facts_target(environ: dict[str, str]) -> None:
+    """Match publisher.main: load full additional-* identity into environ.
+
+    configure_account_facts_target.py intentionally exports only project ids
+    into GITHUB_ENV; emit must apply additional_target_environment here so
+    report prefix / selector / target_id match the selected slot (not primary).
+    """
+    target = environ.get("IBKR_ACCOUNT_FACTS_TARGET", "")
+    if not isinstance(target, str) or target not in {
+        "additional-1",
+        "additional-2",
+        "additional-3",
+    }:
+        return
+    try:
+        from scripts.publish_account_facts_from_report import (
+            _ProjectionError,
+            additional_target_environment,
+        )
+    except Exception:
+        return
+    try:
+        environ.update(additional_target_environment(target))
+    except _ProjectionError:
+        return
+
+
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if args:
         print(json.dumps({"status": "skipped", "reason": "unsupported_arguments"}))
         return 2
     try:
-        result = emit_digest_candidates(os.environ)
+        # os.environ is a MutableMapping; cast via dict update on the live object.
+        env = os.environ
+        _apply_additional_account_facts_target(env)  # type: ignore[arg-type]
+        result = emit_digest_candidates(env)
     except Exception:
         print(json.dumps({"status": "skipped", "reason": "operation_failed"}))
         return 2
