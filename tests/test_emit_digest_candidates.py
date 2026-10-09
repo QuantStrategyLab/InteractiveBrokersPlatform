@@ -156,3 +156,93 @@ def test_emit_explicit_digest_hint_overrides(tmp_path):
     # Explicit override wins over report fixture U00000001.
     assert row["account_hint"] == "U18308207"
     assert row["account_scope"] == "live-u18308207"
+
+def test_emit_projects_equity_from_report_when_target_matches(tmp_path, monkeypatch):
+    """Read-only report projection supplies equity; safe summary stays amount-free."""
+    report_path = tmp_path / "report.json"
+    out = tmp_path / "candidates.json"
+    facts_out = tmp_path / "facts.json"
+    body = {
+        "schema_version": "runtime_report.v1",
+        "platform": "interactive_brokers",
+        "deploy_target": "cloud_run",
+        "project_id": "interactivebrokersquant",
+        "service_name": "interactive-brokers-quant-live-u15998061-service",
+        "account_scope": "live-u15998061",
+        "strategy_profile": "soxl_soxx_trend_income",
+        "status": "ok",
+        "started_at": "2026-10-08T20:01:00Z",
+        "finished_at": "2026-10-08T20:05:00Z",
+        "execution_receipt": {"outcome": "no_signal"},
+        "diagnostics": {"runtime_revision": "rev-digest-test"},
+        "runtime_target": {
+            "account_selector": ["U15998061"],
+            "deployment_selector": "live-u15998061",
+            "strategy_profile": "soxl_soxx_trend_income",
+        },
+        "summary": {
+            "account_facts": {
+                "schema_version": "ibkr_account_snapshot.v1",
+                "account_ids": ["U15998061"],
+                "currency": "USD",
+                "net_assets": "569.1600",
+                "observed_at": "2026-10-08T20:03:00Z",
+                "cash": [
+                    {"currency": "USD", "cash_balance": "100.00", "source_tag": "$LEDGER-CashBalance"},
+                ],
+            }
+        },
+    }
+    report_path.write_text(json.dumps(body), encoding="utf-8")
+    prefix = "gs://ibkr-runtime-reports-test/prefix"
+    environ = {
+        "IBKR_DIGEST_CANDIDATES_OUTPUT_PATH": str(out),
+        "IBKR_DIGEST_ACCOUNT_FACTS_OUTPUT_PATH": str(facts_out),
+        "IBKR_DIGEST_RUNTIME_REPORT_PATH": str(report_path),
+        "IBKR_DIGEST_SOURCE_REPORT_URI": f"{prefix}/2026/10/08/report.json",
+        "IBKR_DIGEST_OPAQUE_ACCOUNT_UID": "acct_opaque_synthetic",
+        "IBKR_DIGEST_TARGET_ID": "ibkr-primary-u15998061",
+        "IBKR_ACCOUNT_FACTS_REPORT_PREFIX": prefix,
+        "IBKR_ACCOUNT_FACTS_PROJECT_ID": "interactivebrokersquant",
+        "IBKR_ACCOUNT_FACTS_SERVICE_NAME": "interactive-brokers-quant-live-u15998061-service",
+        "IBKR_ACCOUNT_FACTS_RUNTIME_REVISION": "rev-digest-test",
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE": "live-u15998061",
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON": '["U15998061"]',
+        "IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR": "live-u15998061",
+    }
+    result = emit.emit_digest_candidates(environ)
+    assert result["status"] == "candidates_written"
+    assert result["equity_present"] is True
+    assert result["account_facts_source"] == "report_projection"
+    assert result["account_facts_ephemeral_written"] is True
+    assert "569.16" not in json.dumps(result)
+    row = json.loads(out.read_text(encoding="utf-8"))["runs"][0]
+    assert row["equity"] == 569.16
+    assert row["account_hint"] == "U15998061"
+    facts = json.loads(facts_out.read_text(encoding="utf-8"))
+    assert facts["broker_reported_balances"][0]["net_assets"] == "569.1600"
+
+
+def test_emit_skips_equity_when_report_projection_mismatches(tmp_path):
+    report_path = tmp_path / "report.json"
+    out = tmp_path / "candidates.json"
+    report_path.write_text(json.dumps(_report()), encoding="utf-8")
+    environ = {
+        "IBKR_DIGEST_CANDIDATES_OUTPUT_PATH": str(out),
+        "IBKR_DIGEST_RUNTIME_REPORT_PATH": str(report_path),
+        "IBKR_DIGEST_SOURCE_REPORT_URI": "gs://ibkr-runtime-reports-test/prefix/x.json",
+        "IBKR_DIGEST_OPAQUE_ACCOUNT_UID": "acct_opaque_synthetic",
+        "IBKR_DIGEST_TARGET_ID": "ibkr/synthetic-target",
+        "IBKR_ACCOUNT_FACTS_REPORT_PREFIX": "gs://ibkr-runtime-reports-test/prefix",
+        "IBKR_ACCOUNT_FACTS_PROJECT_ID": "interactivebrokersquant",
+        "IBKR_ACCOUNT_FACTS_SERVICE_NAME": "missing-service",
+        "IBKR_ACCOUNT_FACTS_RUNTIME_REVISION": "rev-x",
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE": "live-u15998061",
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON": '["U15998061"]',
+        "IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR": "live-u15998061",
+    }
+    result = emit.emit_digest_candidates(environ)
+    assert result["status"] == "candidates_written"
+    assert result["equity_present"] is False
+    assert "equity" not in json.loads(out.read_text(encoding="utf-8"))["runs"][0]
+
