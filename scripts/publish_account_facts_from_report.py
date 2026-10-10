@@ -388,6 +388,58 @@ def _bound_source_id(
     return hashlib.sha256(canonical).hexdigest()
 
 
+POSITIONS_SCOPE = "stocks_only"
+# Archive-projection-only keys: the console /api/account-facts/sync contract is
+# exact-key, so these are carried for offline consumers (digest emit) and are
+# stripped before any publish.
+ARCHIVE_ONLY_KEYS = ("broker_reported_positions", "broker_reported_positions_scope")
+_POSITION_SYMBOL = re.compile(r"[A-Z0-9][A-Z0-9./ -]{0,31}\Z", re.ASCII)
+_MAX_POSITIONS = 64
+_POSITION_KEYS = frozenset({"symbol", "quantity", "market_value", "currency", "avg_cost"})
+
+
+def _project_positions(facts: Mapping[str, Any]) -> list[dict[str, str]] | None:
+    """Validate runtime ``broker_reported_positions``; None (omit) on any doubt."""
+    raw = facts.get("broker_reported_positions")
+    if facts.get("broker_reported_positions_scope") != POSITIONS_SCOPE:
+        return None
+    if not isinstance(raw, list) or not raw or len(raw) > _MAX_POSITIONS:
+        return None
+    rows: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, Mapping) or set(item) - _POSITION_KEYS:
+            return None
+        symbol = item.get("symbol")
+        currency = item.get("currency")
+        if (
+            not isinstance(symbol, str)
+            or _POSITION_SYMBOL.fullmatch(symbol) is None
+            or symbol in seen
+            or not isinstance(currency, str)
+            or _CURRENCY.fullmatch(currency) is None
+        ):
+            return None
+        seen.add(symbol)
+        try:
+            row = {
+                "symbol": symbol,
+                "quantity": _decimal_text(item.get("quantity")),
+                "market_value": _decimal_text(item.get("market_value")),
+                "currency": currency,
+            }
+            if "avg_cost" in item:
+                row["avg_cost"] = _decimal_text(item.get("avg_cost"))
+        except _ProjectionError:
+            return None
+        rows.append(row)  # type: ignore[arg-type]
+    return rows
+
+
+def strip_archive_only_keys(body: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in body.items() if key not in ARCHIVE_ONLY_KEYS}
+
+
 def _project_cash(value: object) -> list[dict[str, str]]:
     if not isinstance(value, list) or not value:
         raise _ProjectionError("account_facts_invalid")
@@ -490,7 +542,9 @@ def publish_ibkr_account_facts_history(
         )
         if projected.get("status") == "skipped":
             return projected
-        body = json.dumps(projected, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+        body = json.dumps(
+            strip_archive_only_keys(projected), ensure_ascii=True, separators=(",", ":")
+        ).encode("utf-8")
         request = Request(
             _text(sync_url),
             data=body,
@@ -943,7 +997,7 @@ def _project_ibkr_account_facts_history(
         account_selector=actual_selector,
         deployment_selector=actual_fields["deployment_selector"],
     )
-    return {
+    body: dict[str, Any] = {
         "schema_version": HISTORY_SCHEMA,
         "snapshot_schema_version": SNAPSHOT_SCHEMA,
         "account_scope": actual_fields["account_scope"],
@@ -961,6 +1015,11 @@ def _project_ibkr_account_facts_history(
         "cash": cash,
         "account_ids": [account_ids[0]],
     }
+    positions = _project_positions(facts)
+    if positions is not None:
+        body["broker_reported_positions"] = positions
+        body["broker_reported_positions_scope"] = POSITIONS_SCOPE
+    return body
 
 
 __all__ = [
