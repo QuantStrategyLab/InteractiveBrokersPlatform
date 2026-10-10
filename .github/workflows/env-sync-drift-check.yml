@@ -12,6 +12,11 @@ name: Env Sync Drift Check
 # tests/test_env_sync_drift_check.py fails if the two drift apart.
 on:
   workflow_dispatch:
+    inputs:
+      show_runtime_target_diff:
+        description: "Also print a field-level RUNTIME_TARGET_JSON diff (deployment intent, credential-like fields masked) for services where it changed."
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -190,6 +195,8 @@ jobs:
           fi
 
       - name: Build sync plan and report drift (key names only)
+        env:
+          DRIFT_VALUE_DIFF_KEYS: ${{ inputs.show_runtime_target_diff && 'RUNTIME_TARGET_JSON' || '' }}
         run: |
           set -euo pipefail
           SYNC_PLAN_JSON="$(uv run --no-sync python scripts/build_cloud_run_env_sync_plan.py --json)"

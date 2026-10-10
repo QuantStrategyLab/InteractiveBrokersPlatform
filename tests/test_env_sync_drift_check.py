@@ -98,3 +98,33 @@ def test_capture_collects_args_without_running_gcloud(tmp_path):
     script = drift.load_step_script(wf)
     captured = drift.capture(script, {"PATH": "/usr/bin:/bin"})
     assert [c[3] for c in captured] == ["a", "b"]
+
+
+def test_value_field_diff_masks_credentials_and_lists_changed_paths():
+    before = '{"scheduler":{"precheck_time":"45 9 * * 1-5"},"api_token":"SEKRIT-ONE","a":1}'
+    after = '{"a":1,"scheduler":{"precheck_time":"45 9 * * *"},"api_token":"SEKRIT-TWO","new":true}'
+    out = drift.value_field_diff(before, after)
+    assert out["semantically_equal"] is False
+    paths = {f["path"]: f for f in out["changed_fields"]}
+    assert set(paths) == {"scheduler.precheck_time", "new"}
+    assert paths["new"]["serving"] == "<absent>"
+    assert "SEKRIT" not in str(out)
+
+
+def test_value_field_diff_reports_reorder_as_semantically_equal():
+    out = drift.value_field_diff('{"a":1,"b":2}', '{"b":2,"a":1}')
+    assert out["semantically_equal"] is True
+    assert out["changed_fields"] == []
+    assert out["before_sha256"] != out["after_sha256"]
+
+
+def test_value_diff_keys_allowlist(monkeypatch):
+    import pytest
+
+    monkeypatch.setenv("DRIFT_VALUE_DIFF_KEYS", "RUNTIME_TARGET_JSON")
+    assert drift._value_diff_keys() == ["RUNTIME_TARGET_JSON"]
+    monkeypatch.setenv("DRIFT_VALUE_DIFF_KEYS", "TELEGRAM_TOKEN")
+    with pytest.raises(SystemExit):
+        drift._value_diff_keys()
+    monkeypatch.delenv("DRIFT_VALUE_DIFF_KEYS")
+    assert drift._value_diff_keys() == []
