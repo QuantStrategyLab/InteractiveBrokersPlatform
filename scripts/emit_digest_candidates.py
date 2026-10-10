@@ -464,6 +464,10 @@ def emit_digest_candidates(
         ),
         "account_facts_source": facts_source,
         "account_facts_ephemeral_written": facts_written,
+        "holdings_present": any(
+            isinstance(row, Mapping) and bool(row.get("holdings"))
+            for row in (payload.get("runs") or [])
+        ),
     }
 
 

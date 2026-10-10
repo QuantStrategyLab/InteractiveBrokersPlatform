@@ -66,7 +66,7 @@
 | `fill_count` / `order_count` | **不**读取 `summary.orders_*_count` | **必须** `null` + `counts_unknown` + `ibkr_fills_not_projected`；禁止把 quiet/dry-run 的 0 写成已验证零 |
 | `cycle_count` | 同策略同业务日 covering report 数 | — |
 | `equity` | 可选 account-facts `broker_reported_balances[].net_assets`（USD） | 省略字段；不猜 |
-| `holdings` | 当前投影**无**持仓明细 | 省略；不猜 |
+| `holdings` + `holdings_scope` | 运行时 `summary.account_facts.broker_reported_positions`（仅 STK，`broker_reported_positions_scope=stocks_only`，含可选 `avg_cost`）→ 归档 facts 投影透传 → 候选 `holdings` + `holdings_scope=stocks_only` | 无持仓/异常/格式不符/空头负数 → 整体省略（不写空数组）；发往 console account-facts sync 前剥离（exact-key 合同）；需 Cloud Run 发版后新归档才出现 |
 | `signal_summary` / `rebalance_*` | `execution_receipt.outcome` 或 status/stage 映射 | 无周期证据则整行不产出 |
 
 ## 本机投影（合成 / 已有 JSON）
