@@ -7,8 +7,10 @@ with its single mutating ``gcloud "${gcloud_args[@]}"`` call replaced by a
 capture, then diffs the captured env/secret/label arguments against the
 serving (100% traffic) Cloud Run revision.
 
-Prints KEY NAMES ONLY. Plain env values are compared in-process and never
-printed; secret-backed keys print only the Secret Manager reference
+Prints KEY NAMES ONLY by default. Plain env values are compared in-process and
+not printed, except an opt-in field-level diff for allowlisted deployment-intent
+keys (DRIFT_VALUE_DIFF_KEYS, currently only RUNTIME_TARGET_JSON; credential-like
+field names masked); secret-backed keys print only the Secret Manager reference
 (secret name + version), never a secret value. Changes nothing in Cloud Run,
 Secret Manager, IAM, Scheduler, or traffic.
 """
@@ -198,6 +200,70 @@ def diff(current: dict[str, Any], planned: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Only these plain keys may have a field-level value diff printed, and only when
+# DRIFT_VALUE_DIFF_KEYS opts in. RUNTIME_TARGET_JSON is deployment intent (not
+# credential material); credential-looking field names are still masked.
+VALUE_DIFF_ALLOWED_KEYS = frozenset({"RUNTIME_TARGET_JSON"})
+_CREDENTIAL_HINTS = ("token", "secret", "password", "passwd", "credential", "api_key", "apikey",
+                     "private_key", "auth", "cookie", "session")
+MASK = "<masked>"
+
+
+def _looks_credential(name: str) -> bool:
+    lowered = name.lower()
+    return any(hint in lowered for hint in _CREDENTIAL_HINTS)
+
+
+def _flatten(value: Any, path: str = "") -> dict[str, Any]:
+    if isinstance(value, dict):
+        if not value:
+            return {path or "$": {}}
+        out: dict[str, Any] = {}
+        for key in sorted(value):
+            child = f"{path}.{key}" if path else str(key)
+            if _looks_credential(str(key)):
+                out[child] = MASK
+            else:
+                out.update(_flatten(value[key], child))
+        return out
+    return {path or "$": value}
+
+
+def value_field_diff(before_raw: str, after_raw: str) -> dict[str, Any]:
+    """Field-level diff of two JSON object strings; credential-like names masked."""
+    import hashlib
+
+    result: dict[str, Any] = {
+        "before_sha256": hashlib.sha256(before_raw.encode("utf-8")).hexdigest(),
+        "after_sha256": hashlib.sha256(after_raw.encode("utf-8")).hexdigest(),
+    }
+    try:
+        before = json.loads(before_raw)
+        after = json.loads(after_raw)
+    except ValueError:
+        result["parse_error"] = True
+        return result
+    result["semantically_equal"] = before == after
+    flat_before, flat_after = _flatten(before), _flatten(after)
+    fields = []
+    for path in sorted(set(flat_before) | set(flat_after)):
+        b = flat_before.get(path, "<absent>")
+        a = flat_after.get(path, "<absent>")
+        if b != a:
+            fields.append({"path": path, "serving": b, "sync_would_write": a})
+    result["changed_fields"] = fields
+    return result
+
+
+def _value_diff_keys() -> list[str]:
+    raw = os.environ.get("DRIFT_VALUE_DIFF_KEYS", "")
+    keys = [k.strip() for k in raw.split(",") if k.strip()]
+    bad = [k for k in keys if k not in VALUE_DIFF_ALLOWED_KEYS]
+    if bad:
+        raise SystemExit(f"DRIFT_VALUE_DIFF_KEYS not allowlisted: {', '.join(bad)}")
+    return keys
+
+
 def _gcloud_json(*args: str) -> Any:
     out = subprocess.run(["gcloud", *args, "--format=json"], check=True, capture_output=True, text=True).stdout
     return json.loads(out)
@@ -240,6 +306,7 @@ def main() -> int:
     else:
         runs.append({"SYNC_PLAN_JSON": os.environ["SYNC_PLAN_JSON"]})
 
+    value_keys = _value_diff_keys()
     report: list[dict[str, Any]] = []
     for overrides in runs:
         for argv in capture(script, {**os.environ, **overrides}):
@@ -248,6 +315,11 @@ def main() -> int:
             current = revision_state(_gcloud_json("run", "revisions", "describe", rev,
                                                   f"--project={project}", f"--region={region}"))
             entry = {"service": planned["service"], "serving_revision": rev, **diff(current, planned)}
+            for key in value_keys:
+                if key in entry["changed_plain_value_keys"]:
+                    entry.setdefault("value_field_diffs", {})[key] = value_field_diff(
+                        current["plain"][key], planned["update_env"][key]
+                    )
             report.append(entry)
 
     print(json.dumps({"schema": "qsl.env_sync_drift.v1", "project": project, "services": report}, indent=2))
@@ -263,6 +335,13 @@ def main() -> int:
                 fh.writelines(
                     f"- secret ref {c['key']}: {c['before']} -> {c['after']}\n" for c in e["changed_secret_refs"]
                 )
+                for key, vd in (e.get("value_field_diffs") or {}).items():
+                    fh.write(f"- {key} field diff (semantically_equal={vd.get('semantically_equal')}):\n")
+                    fh.writelines(
+                        f"  - `{f['path']}`: serving=`{json.dumps(f['serving'], ensure_ascii=False)}` -> "
+                        f"sync=`{json.dumps(f['sync_would_write'], ensure_ascii=False)}`\n"
+                        for f in vd.get("changed_fields", [])
+                    )
                 fh.write(f"- unchanged keys: {e['unchanged_key_count']}\n\n")
     return 0
 
