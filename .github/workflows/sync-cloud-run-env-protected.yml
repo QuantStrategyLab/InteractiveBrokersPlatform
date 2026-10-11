@@ -662,7 +662,7 @@ jobs:
           docker build --pull -t "${image}" source
           # RS-08 guard: block the deploy if the image's installed UES revision differs from
           # strategy_release / runtime-risk binding (live would reject every SOXL rebalance).
-          python3 scripts/verify_image_ues_release_binding.py --image "${image}" --lockfile source/uv.lock
+          python3 scripts/verify_image_ues_release_binding.py --image "${image}" --lockfile source/uv.lock --report-json "${RUNNER_TEMP}/ues-binding-coverage.json"
           docker push "${image}"
           image_digest="$(gcloud artifacts docker images describe "${image}" --project="${GCP_PROJECT_ID}" --format='value(image_summary.digest)')"
           if [[ ! "${image_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
@@ -693,6 +693,12 @@ jobs:
               --no-traffic \
               --quiet
           done
+
+      - name: Summarize build-time UES binding coverage
+        continue-on-error: true
+        if: always() && steps.config.outputs.deploy_enabled == 'true'
+        run: |
+          python3 scripts/verify_image_ues_release_binding.py --summarize-report "${RUNNER_TEMP}/ues-binding-coverage.json" >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Verify no-traffic deployment readback
         if: steps.config.outputs.deploy_enabled == 'true'
