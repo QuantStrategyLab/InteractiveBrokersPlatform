@@ -8,6 +8,8 @@ import re
 from typing import Any
 
 import pandas as pd
+
+from application import signal_provenance
 from quant_platform_kit.common.strategy_plugins import (
     build_strategy_plugin_alert_messages,
     build_strategy_plugin_error_notification_lines,
@@ -72,12 +74,26 @@ def _frame_column(frame: pd.DataFrame, name: str) -> pd.Series | None:
     return None
 
 
-def _coerce_yfinance_candles(frame: pd.DataFrame) -> list[dict[str, Any]]:
+_YFINANCE_PRICE_BASIS: dict[str, str] = {}
+_IBKR_HISTORY_NOTE = "ADJUSTED_LAST (dividend_adjusted) unless QPK fell back to TRADES (split_only)"
+
+
+def yfinance_price_basis(symbol: str) -> str:
+    """Price-basis label of the last yfinance fetch for ``symbol`` (provenance only)."""
+    return _YFINANCE_PRICE_BASIS.get(str(symbol or "").strip().upper(), signal_provenance.UNKNOWN)
+
+
+def _coerce_yfinance_candles(frame: pd.DataFrame, *, symbol: str | None = None) -> list[dict[str, Any]]:
     if frame is None or frame.empty:
         return []
     close_series = _frame_column(frame, "Adj Close")
+    basis = signal_provenance.DIVIDEND_ADJUSTED
     if close_series is None:
         close_series = _frame_column(frame, "Close")
+        # auto_adjust=False: yfinance "Close" is split-adjusted only.
+        basis = signal_provenance.SPLIT_ONLY
+    if close_series is not None and symbol:
+        _YFINANCE_PRICE_BASIS[str(symbol).strip().upper()] = basis
     if close_series is None:
         return []
     open_series = _frame_column(frame, "Open")
@@ -117,7 +133,7 @@ def fetch_yfinance_historical_candles(symbol: str, *, duration: str = "2 Y", bar
         )
     except Exception:
         return []
-    return _coerce_yfinance_candles(frame)
+    return _coerce_yfinance_candles(frame, symbol=str(symbol).strip().upper())
 
 
 @dataclass(frozen=True)
@@ -185,6 +201,15 @@ class IBKRRuntimeStrategyAdapters:
         except Exception:
             return ()
 
+    def _fallback_source_and_basis(self, symbol) -> tuple[str, str]:
+        if self.fallback_historical_candles_fn is fetch_yfinance_historical_candles:
+            return "yfinance", yfinance_price_basis(symbol)
+        return "fallback_provider", signal_provenance.UNKNOWN
+
+    def _record_fallback(self, symbol, dates) -> None:
+        source, basis = self._fallback_source_and_basis(symbol)
+        signal_provenance.record(symbol, source=source, price_basis=basis, dates=dates)
+
     def get_historical_close(self, ib, symbol, duration="2 Y", bar_size="1 day"):
         fallback_candles = self._get_fallback_historical_candles(symbol, duration=duration, bar_size=bar_size)
         fallback_points = tuple(
@@ -193,6 +218,7 @@ class IBKRRuntimeStrategyAdapters:
             if "close" in candle
         )
         if fallback_points:
+            self._record_fallback(symbol, [as_of for as_of, _ in fallback_points])
             return pd.Series(
                 data=[close for _, close in fallback_points],
                 index=pd.to_datetime([as_of for as_of, _ in fallback_points]),
@@ -205,6 +231,13 @@ class IBKRRuntimeStrategyAdapters:
             bar_size=bar_size,
         )
         points = tuple(series.points or ())
+        signal_provenance.record(
+            symbol,
+            source="ibkr_historical",
+            price_basis=signal_provenance.UNKNOWN,
+            dates=[point.as_of for point in points],
+            note=_IBKR_HISTORY_NOTE,
+        )
         if points:
             return pd.Series(
                 data=[point.close for point in points],
@@ -215,6 +248,7 @@ class IBKRRuntimeStrategyAdapters:
     def get_historical_candles(self, ib, symbol, duration="2 Y", bar_size="1 day"):
         fallback_candles = self._get_fallback_historical_candles(symbol, duration=duration, bar_size=bar_size)
         if fallback_candles:
+            self._record_fallback(symbol, [candle.get("as_of") for candle in fallback_candles])
             return list(fallback_candles)
 
         candles = self.fetch_historical_price_candles_fn(
@@ -222,6 +256,22 @@ class IBKRRuntimeStrategyAdapters:
             symbol,
             duration=duration,
             bar_size=bar_size,
+        )
+        candle_dates: list[Any] = []
+        if isinstance(candles, (list, tuple)):  # never consume a one-shot iterator
+            try:
+                candle_dates = [
+                    candle.get("as_of") if isinstance(candle, dict) else getattr(candle, "as_of", None)
+                    for candle in candles
+                ]
+            except Exception:
+                candle_dates = []
+        signal_provenance.record(
+            symbol,
+            source="ibkr_historical",
+            price_basis=signal_provenance.UNKNOWN,
+            dates=candle_dates,
+            note=_IBKR_HISTORY_NOTE,
         )
         return candles
 

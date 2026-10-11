@@ -46,6 +46,7 @@ from application.runtime_deadline import (
     enforce_runtime_deadline,
     recycle_current_process_after_response,
 )
+from application import signal_provenance
 from application.runtime_strategy_adapters import (
     build_runtime_strategy_adapters,
     fetch_yfinance_historical_candles,
@@ -1478,6 +1479,20 @@ def run_strategy_core(
     )
 
 
+def attach_signal_data_provenance(report) -> None:
+    """Attach this run's non-sensitive signal data provenance; never raises."""
+    try:
+        provenance = signal_provenance.snapshot()
+        if provenance and isinstance(report, dict):
+            diagnostics = report.get("diagnostics")
+            if not isinstance(diagnostics, dict):
+                diagnostics = {}
+                report["diagnostics"] = diagnostics
+            diagnostics["signal_data_provenance"] = provenance
+    except Exception:
+        return
+
+
 def _handle_request(
     *,
     dry_run_only_override: bool | None = None,
@@ -1495,6 +1510,7 @@ def _handle_request(
 
     log_context = build_request_log_context()
     report = build_execution_report(log_context, dry_run_only_override=dry_run_only_override)
+    signal_provenance.reset()
     if report_collector is not None:
         # Register the mutable report before any deadline-bound setup work so a
         # timeout while loading strategy plugins still leaves a report to persist.
@@ -1820,6 +1836,7 @@ def _handle_request(
     finally:
         if lock_acquired:
             STRATEGY_RUN_LOCK.release()
+        attach_signal_data_provenance(report)
         if "execution_receipt" not in report:
             try:
                 attach_terminal_fallback_execution_receipt(report)
