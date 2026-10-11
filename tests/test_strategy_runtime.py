@@ -1384,7 +1384,7 @@ def test_value_target_runtime_builds_semiconductor_inputs(monkeypatch):
         ),
         runtime_settings=_build_runtime_settings(profile="soxl_soxx_trend_income"),
         runtime_config={},
-        merged_runtime_config={"managed_symbols": ("SOXL", "SOXX", "QQQI", "SPYI", "BOXX")},
+        merged_runtime_config={"managed_symbols": ("SOXL", "SOXX", "QQQI", "SPYI", "BOXX"), "trend_ma_window": 140},
         status_icon="🚀",
         logger=lambda _message: None,
     )

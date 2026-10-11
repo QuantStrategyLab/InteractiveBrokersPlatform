@@ -314,6 +314,24 @@ def _loaded_history_to_rows(history):
     return history
 
 
+def required_trend_ma_window(config: Mapping[str, Any]) -> int:
+    """Return the manifest/merged ``trend_ma_window``; never guess a default.
+
+    The merged runtime config starts from ``manifest.default_config``, so the key
+    is always present for semiconductor-rotation profiles. A missing or invalid
+    value now fails closed instead of silently using 150 (RS-08 fix 2).
+    """
+    raw = config.get("trend_ma_window") if isinstance(config, Mapping) else None
+    if raw is None or isinstance(raw, bool) or str(raw).strip() == "":
+        raise ValueError("trend_ma_window missing from merged strategy config (manifest default_config)")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"trend_ma_window must be an integer, got {raw!r}") from exc
+    if value <= 0 or value != float(raw):
+        raise ValueError(f"trend_ma_window must be a positive integer, got {raw!r}")
+    return value
+
 @dataclass(frozen=True)
 class StrategyEvaluationResult:
     decision: StrategyDecision
@@ -1509,7 +1527,7 @@ class LoadedStrategyRuntime:
             return build_semiconductor_rotation_inputs(
                 ib,
                 historical_close_loader,
-                trend_ma_window=int(self.merged_runtime_config.get("trend_ma_window", 150)),
+                trend_ma_window=required_trend_ma_window(self.merged_runtime_config),
             )
         if _BENCHMARK_HISTORY_INPUT in self.required_inputs:
             if historical_candle_loader is None:
