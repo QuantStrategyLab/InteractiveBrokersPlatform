@@ -18,8 +18,8 @@ Sources of the installed revision (all given must agree):
 Expected revisions come from each planned target's RUNTIME_TARGET_JSON
 (SYNC_PLAN_JSON targets[].env), else CLOUD_RUN_SERVICE_TARGETS_JSON runtime
 targets, else RUNTIME_TARGET_JSON. A target without a strategy_release and
-without a binding ues_revision is reported and not blocked. Prints only service
-names, release ids and commit SHAs. Read-only; does not touch Cloud Run.
+without a binding ues_revision is reported and not blocked. Prints only
+ordinal target aliases and validated commit SHAs. Read-only; does not touch Cloud Run.
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ def revision_from_image(image: str) -> str:
     values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
     stamp, direct = values.get("UES_STAMP", "").strip(), values.get("UES_DIRECT_URL", "").strip()
     if stamp and direct and stamp != direct:
-        raise GuardError(f"image UES stamp {stamp} != installed direct_url {direct}")
+        raise GuardError("image UES stamp differs from installed direct_url")
     revision = stamp or direct
     if not SHA_RE.match(revision):
         raise GuardError("image has no installed UES commit")
@@ -123,32 +123,98 @@ def expected_revisions(runtime_target: Mapping[str, Any]) -> dict[str, str]:
     return expected
 
 
-def check(installed: Mapping[str, str], targets: Iterable[tuple[str, Mapping[str, Any]]]) -> list[str]:
-    """Return failure lines; prints a non-sensitive report."""
+STATES = ("verified", "mismatch", "not_covered", "uncomputable", "error")
+
+
+def new_report() -> dict[str, Any]:
+    """Bounded, allowlisted build-time evidence; never a live deployment attestation."""
+    return {
+        "schema_version": 1,
+        "evidence_scope": "built_image_and_planned_targets",
+        "status": "uncomputable",
+        "target_counts": {state: 0 for state in STATES},
+        "installed_revisions": {},
+    }
+
+
+def safe_revision(value: str) -> str | None:
+    return value if SHA_RE.fullmatch(value) else None
+
+
+def check(
+    installed: Mapping[str, str], targets: Iterable[tuple[str, Mapping[str, Any]]],
+    *, report: dict[str, Any] | None = None,
+) -> list[str]:
+    """Keep validation decisions unchanged; optionally collect sanitized coverage."""
+    report = report if report is not None else new_report()
     failures: list[str] = []
     values = set(installed.values())
-    for label, rev in installed.items():
-        print(f"installed_ues_revision[{label}]={rev}")
+    for label in ("lockfile", "image", "explicit"):
+        if label in installed:
+            revision = safe_revision(installed[label])
+            report["installed_revisions"][label] = revision
+            print(f"installed_ues_revision[{label}]={revision or 'unavailable'}")
+    targets = list(targets)
     if len(values) != 1:
-        failures.append("installed UES revision sources disagree: "
-                        + ", ".join(f"{k}={v}" for k, v in sorted(installed.items())))
+        report["status"] = "mismatch"
+        report["target_counts"]["uncomputable"] = len(targets)
+        failures.append("installed UES revision sources disagree")
         return failures
     (revision,) = values
-    targets = list(targets)
     if not targets:
         failures.append("no runtime target resolved; cannot verify the strategy release binding")
-    for service, runtime_target in targets:
+    for ordinal, (_, runtime_target) in enumerate(targets, 1):
+        alias = f"target-{ordinal}"
         expected = expected_revisions(runtime_target or {})
-        release_id = ((runtime_target or {}).get("strategy_release") or {}).get("release_id")
         if not expected:
-            print(f"service={service or '?'} no strategy_release/binding ues_revision: not blocked")
+            report["target_counts"]["not_covered"] += 1
+            print(f"{alias}: not_covered (no revision binding; not blocked)")
             continue
+        state = "verified"
         for field, value in sorted(expected.items()):
             ok = value == revision
-            print(f"service={service or '?'} release_id={release_id} {field}={value} match={ok}")
+            print(f"{alias} {field}={safe_revision(value) or 'unavailable'} match={ok}")
             if not ok:
-                failures.append(f"{service or '?'}: {field}={value} != installed {revision}")
+                state = "mismatch"
+                failures.append(f"{alias}: {field} differs from installed revision")
+        report["target_counts"][state] += 1
+    counts = report["target_counts"]
+    report["status"] = (
+        "mismatch" if failures and targets else
+        "uncomputable" if not targets else
+        "not_covered" if counts["not_covered"] else "verified"
+    )
     return failures
+
+
+def write_report(path: Path | None, report: dict[str, Any]) -> None:
+    # Reporting is optional and cannot change validation or deployment decisions.
+    if path is not None:
+        try:
+            path.write_text(json.dumps(report, sort_keys=True) + "\n", encoding="utf-8")
+        except OSError:
+            print("::warning::UES coverage report could not be written", file=sys.stderr)
+
+
+def summarize_report(path: Path) -> None:
+    """Render only validated enum/count fields, never arbitrary report strings."""
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+        if report.get("schema_version") != 1:
+            raise ValueError("schema")
+        status = report["status"]
+        counts = report["target_counts"]
+        if status not in STATES or any(
+            type(counts[state]) is not int or not 0 <= counts[state] <= 1_000_000
+            for state in STATES
+        ):
+            raise ValueError("invalid summary")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        print("UES build-time binding coverage: report unavailable.")
+        return
+    print(f"UES build-time binding coverage: {status}.")
+    print("Planned targets: " + ", ".join(f"{state}={counts[state]}" for state in STATES) + ".")
+    print("Build-time evidence only; this does not verify a live deployed revision.")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -156,7 +222,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--image")
     parser.add_argument("--lockfile", type=Path)
     parser.add_argument("--installed-revision")
+    parser.add_argument("--report-json", type=Path, help="Optional sanitized coverage output; does not change validation")
+    parser.add_argument("--summarize-report", type=Path, help="Render existing coverage output without running validation")
     args = parser.parse_args(argv)
+    if args.summarize_report:
+        summarize_report(args.summarize_report)
+        return 0
+    report = new_report()
     try:
         installed: dict[str, str] = {}
         if args.lockfile:
@@ -167,17 +239,21 @@ def main(argv: list[str] | None = None) -> int:
             installed["explicit"] = args.installed_revision.strip()
         if not installed:
             raise GuardError("give --image, --lockfile or --installed-revision")
-        failures = check(installed, runtime_targets_from_env(os.environ))
+        failures = check(installed, runtime_targets_from_env(os.environ), report=report)
     except (GuardError, OSError, ValueError, subprocess.TimeoutExpired) as exc:
-        print(f"::error::UES release binding guard could not verify: {exc}", file=sys.stderr)
+        report["status"] = "error"
+        # Exceptions may contain image names, paths, probe stderr, or runtime JSON.
+        print(f"::error::UES release binding guard could not verify ({type(exc).__name__})", file=sys.stderr)
+        write_report(args.report_json, report)
         return 1
+    write_report(args.report_json, report)
     if failures:
         for line in failures:
             print(f"::error::UES release binding mismatch: {line}", file=sys.stderr)
         print("Deploy blocked: update strategy_release.strategy_revision and runtime_risk_limits.binding."
               "ues_revision together with the UES pin (or keep the pin) before deploying.", file=sys.stderr)
         return 1
-    print("UES release binding guard: OK")
+    print(f"UES release binding guard: not blocked; coverage={report['status']}")
     return 0
 
 
