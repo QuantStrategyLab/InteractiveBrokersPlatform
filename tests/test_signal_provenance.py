@@ -59,12 +59,19 @@ def test_recorder_normalizes_unknown_basis_and_never_raises():
     assert signal_provenance.snapshot() == {}
 
 
-def test_yfinance_adj_close_is_labelled_dividend_adjusted_and_output_unchanged():
+def test_yfinance_signal_uses_split_only_close_not_adj_close():
     frame = _frame(["Open", "High", "Low", "Close", "Adj Close", "Volume"])
     frame["Adj Close"] = [9.0, 10.0, 11.0]
     candles = rsa._coerce_yfinance_candles(frame, symbol="SOXL")
-    assert [c["close"] for c in candles] == [9.0, 10.0, 11.0]  # same column choice as before
-    assert rsa.yfinance_price_basis("soxl") == "dividend_adjusted"
+    assert [c["close"] for c in candles] == [10.0, 11.0, 12.0]  # RS-08 fix 3: Close, not Adj Close
+    assert rsa.yfinance_price_basis("soxl") == "split_only"
+
+
+def test_yfinance_adj_close_only_used_when_close_missing():
+    frame = _frame(["Open", "Adj Close"])
+    candles = rsa._coerce_yfinance_candles(frame, symbol="QQQ")
+    assert len(candles) == 3
+    assert rsa.yfinance_price_basis("QQQ") == "dividend_adjusted"
 
 
 def test_yfinance_close_only_is_labelled_split_only():
@@ -86,7 +93,7 @@ def test_adapter_records_yfinance_fallback_history(monkeypatch):
     assert list(closes.values) == [10.0, 11.0, 12.0]
     assert len(candles) == 3
     symbols = signal_provenance.snapshot()["symbols"]
-    assert symbols["SOXL"] == {"source": "yfinance", "price_basis": "dividend_adjusted", "rows": 3,
+    assert symbols["SOXL"] == {"source": "yfinance", "price_basis": "split_only", "rows": 3,
                                "first_date": "2026-10-07", "last_date": "2026-10-09", "fetch_count": 1}
     assert symbols["QQQ"]["source"] == "yfinance"
 
@@ -102,9 +109,9 @@ def test_adapter_records_ibkr_history_when_fallback_empty():
     assert got == candles
     symbols = signal_provenance.snapshot()["symbols"]
     assert symbols["SOXX"]["source"] == "ibkr_historical"
-    assert symbols["SOXX"]["price_basis"] == "unknown"
+    assert symbols["SOXX"]["price_basis"] == "split_only"
     assert symbols["SOXX"]["rows"] == 2
-    assert "ADJUSTED_LAST" in symbols["SOXX"]["note"]
+    assert "TRADES" in symbols["SOXX"]["note"]
     assert symbols["QQQ"]["rows"] == 1
 
 
@@ -135,3 +142,63 @@ def test_main_attaches_provenance_to_report(strategy_module):
     signal_provenance.reset()
     strategy_module.attach_signal_data_provenance(empty)
     assert empty == {}
+
+
+def test_ibkr_history_requests_go_through_split_only_proxy():
+    seen = []
+
+    def fetch_series(ib, symbol, **_kw):
+        seen.append(ib)
+        return SimpleNamespace(points=())
+
+    adapters = rsa.build_runtime_strategy_adapters(
+        strategy_runtime=SimpleNamespace(), strategy_profile="soxl_soxx_trend_income",
+        translator=lambda key, **_kw: key, pacing_sec=0.0, resolve_run_as_of_date_fn=lambda: None,
+        fetch_historical_price_series_fn=fetch_series,
+        fetch_historical_price_candles_fn=lambda ib, *_a, **_k: seen.append(ib) or [],
+        map_strategy_decision_fn=lambda *_a, **_k: (),
+        fallback_historical_candles_fn=lambda *_a, **_k: [],
+    )
+    adapters.get_historical_close("raw-ib", "SOXX")
+    adapters.get_historical_candles("raw-ib", "QQQ")
+    assert all(isinstance(ib, rsa.SplitOnlyHistoricalIB) for ib in seen) and len(seen) == 2
+
+
+def test_split_only_proxy_suppresses_adjusted_last_and_delegates_rest():
+    calls = []
+
+    class FakeIB:
+        marker = "ok"
+
+        def reqHistoricalData(self, contract, **kwargs):  # noqa: N802
+            calls.append(kwargs["whatToShow"])
+            return ["bar"]
+
+        def qualifyContracts(self, contract):  # noqa: N802
+            return [contract]
+
+    proxy = rsa.SplitOnlyHistoricalIB(FakeIB())
+    assert proxy.reqHistoricalData("c", whatToShow="ADJUSTED_LAST") == []
+    assert proxy.reqHistoricalData("c", whatToShow="TRADES") == ["bar"]
+    assert proxy.qualifyContracts("c") == ["c"]
+    assert proxy.marker == "ok"
+    assert calls == ["TRADES"]
+
+
+def test_qpk_history_fetch_falls_back_to_trades_through_proxy():
+    from quant_platform_kit.ibkr import market_data
+
+    asked = []
+
+    class FakeIB:
+        def qualifyContracts(self, contract):  # noqa: N802
+            return [contract]
+
+        def reqHistoricalData(self, contract, **kwargs):  # noqa: N802
+            asked.append(kwargs["whatToShow"])
+            return [SimpleNamespace(date=datetime(2026, 10, 9), close=5.0)]
+
+    series = market_data.fetch_historical_price_series(
+        rsa.SplitOnlyHistoricalIB(FakeIB()), "SOXX", stock_factory=lambda *a, **k: SimpleNamespace())
+    assert asked == ["TRADES"]
+    assert [p.close for p in series.points] == [5.0]
