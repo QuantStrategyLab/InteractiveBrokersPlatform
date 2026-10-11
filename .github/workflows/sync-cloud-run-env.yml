@@ -655,6 +655,9 @@ jobs:
 
           gcloud auth configure-docker "${artifact_registry_hostname}" --quiet
           docker build --pull -t "${image}" source
+          # RS-08 guard: block the deploy if the image's installed UES revision differs from
+          # strategy_release / runtime-risk binding (live would reject every SOXL rebalance).
+          python3 scripts/verify_image_ues_release_binding.py --image "${image}" --lockfile source/uv.lock
           docker push "${image}"
           image_digest="$(gcloud artifacts docker images describe "${image}" --project="${GCP_PROJECT_ID}" --format='value(image_summary.digest)')"
           if [[ ! "${image_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
