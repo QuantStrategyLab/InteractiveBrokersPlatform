@@ -19,11 +19,12 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: "Account-facts target to emit for"
+        description: "all-enabled = same targets as the schedule; or a single account-facts target"
         required: false
         type: choice
-        default: primary-live
+        default: all-enabled
         options:
+          - all-enabled
           - primary-live
           - additional-1
           - additional-2
@@ -47,7 +48,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: ${{ fromJSON(github.event_name == 'schedule' && format('["primary-live"{0}{1}]', vars.IBKR_ACCOUNT_FACTS_ADDITIONAL_DAILY_ENABLED == 'true' && ',"additional-1"' || '', vars.IBKR_ACCOUNT_FACTS_REMAINING_DAILY_ENABLED == 'true' && ',"additional-2","additional-3"' || '') || format('["{0}"]', inputs.target || 'primary-live')) }}
+        target: ${{ fromJSON((github.event_name == 'schedule' || inputs.target == 'all-enabled') && format('["primary-live"{0}{1}]', vars.IBKR_ACCOUNT_FACTS_ADDITIONAL_DAILY_ENABLED == 'true' && ',"additional-1"' || '', vars.IBKR_ACCOUNT_FACTS_REMAINING_DAILY_ENABLED == 'true' && ',"additional-2","additional-3"' || '') || format('["{0}"]', inputs.target || 'primary-live')) }}
     permissions:
       contents: read
       id-token: write
