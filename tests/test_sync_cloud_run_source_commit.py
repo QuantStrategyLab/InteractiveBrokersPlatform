@@ -8,7 +8,7 @@ import subprocess
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKFLOW = ROOT / ".github" / "workflows" / "sync-cloud-run-env.yml"
+WORKFLOW = ROOT / ".github" / "workflows" / "sync-cloud-run-env-protected.yml"
 
 
 def _source_validation_script() -> str:

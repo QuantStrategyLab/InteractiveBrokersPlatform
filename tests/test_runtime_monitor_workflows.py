@@ -19,6 +19,7 @@ def test_execution_report_heartbeat_has_market_neutral_daily_schedule() -> None:
 
     assert 'cron: "20 22 * * *"' in workflow
     assert 'cron: "20 22 * * 1-5"' not in workflow
+    workflow = (ROOT / ".github/workflows/execution-report-heartbeat-protected.yml").read_text()
     assert "RUNTIME_HEARTBEAT_MARKET_AWARE:" in workflow
     assert "RUNTIME_HEARTBEAT_PUBLICATION_GRACE_MINUTES:" in workflow
     assert "RUNTIME_HEARTBEAT_SCHEDULER_LOCATION:" in workflow
@@ -32,10 +33,10 @@ def test_execution_report_heartbeat_has_market_neutral_daily_schedule() -> None:
 def test_runtime_monitor_workflows_retry_gcp_authentication() -> None:
     workflows = {
         name: (ROOT / ".github/workflows" / name).read_text()
-        for name in ("execution-report-heartbeat.yml", "runtime-guard.yml")
+        for name in ("execution-report-heartbeat-protected.yml", "runtime-guard-protected.yml")
     }
-    heartbeat_job = _job_block(workflows["execution-report-heartbeat.yml"], "heartbeat")
-    runtime_guard = workflows["runtime-guard.yml"]
+    heartbeat_job = _job_block(workflows["execution-report-heartbeat-protected.yml"], "heartbeat")
+    runtime_guard = workflows["runtime-guard-protected.yml"]
 
     for workflow in (heartbeat_job, runtime_guard):
         assert workflow.count("google-github-actions/auth@v3") == 2
@@ -72,7 +73,8 @@ def test_manual_healthy_notify_is_typed_and_explicitly_opt_in() -> None:
     assert "type: boolean" in block
     assert "default: false" in block
     assert "required: false" in block
-    line = next(line for line in workflow.splitlines() if "RUNTIME_HEARTBEAT_NOTIFY_ON_SUCCESS:" in line)
+    runtime = (ROOT / ".github/workflows/execution-report-heartbeat-protected.yml").read_text()
+    line = next(line for line in runtime.splitlines() if "RUNTIME_HEARTBEAT_NOTIFY_ON_SUCCESS:" in line)
     assert "inputs.notify_on_success" in line
     assert "github.event.inputs" not in line
     assert "vars.RUNTIME_HEARTBEAT_NOTIFY_ON_SUCCESS" not in line
@@ -80,7 +82,7 @@ def test_manual_healthy_notify_is_typed_and_explicitly_opt_in() -> None:
 
 
 def test_schedule_and_manual_default_never_inherit_legacy_success_variable() -> None:
-    workflow = (ROOT / ".github/workflows/execution-report-heartbeat.yml").read_text()
+    workflow = (ROOT / ".github/workflows/execution-report-heartbeat-protected.yml").read_text()
     for event in ("schedule", "workflow_dispatch", "repository_dispatch"):
         for explicit_input in (None, False, True):
             for repository_value in (None, "false", "true"):
@@ -93,9 +95,10 @@ def test_manual_quiet_control_preserves_existing_alert_and_report_steps() -> Non
     workflow = (ROOT / ".github/workflows/execution-report-heartbeat.yml").read_text()
     alert_block = _manual_input_block(workflow, "fail_workflow_on_alert")
     assert 'default: "true"' in alert_block
-    assert "RUNTIME_HEARTBEAT_FAIL_WORKFLOW_ON_ALERT: ${{ inputs.fail_workflow_on_alert || vars.RUNTIME_HEARTBEAT_FAIL_WORKFLOW_ON_ALERT || 'true' }}" in workflow
-    assert "uv run --no-sync python scripts/execution_report_heartbeat.py" in workflow
-    assert "Publish read-only runtime execution evidence" in workflow
+    runtime = (ROOT / ".github/workflows/execution-report-heartbeat-protected.yml").read_text()
+    assert "RUNTIME_HEARTBEAT_FAIL_WORKFLOW_ON_ALERT: ${{ inputs.fail_workflow_on_alert || vars.RUNTIME_HEARTBEAT_FAIL_WORKFLOW_ON_ALERT || 'true' }}" in runtime
+    assert "uv run --no-sync python scripts/execution_report_heartbeat.py" in runtime
+    assert "Publish read-only runtime execution evidence" in runtime
     assert 'cron: "20 22 * * *"' in workflow
 
 
@@ -105,6 +108,7 @@ def test_ibkr_manual_validation_does_not_opt_into_drills_or_account_facts() -> N
     account_facts = _manual_input_block(workflow, "account_facts_target")
     assert "type: boolean" in digest and "default: false" in digest
     assert "default: disabled" in account_facts
-    assert "always() && (github.event_name == 'schedule' || inputs.send_daily_dry_run_digest)" in workflow
+    runtime = (ROOT / ".github/workflows/execution-report-heartbeat-protected.yml").read_text()
+    assert "always() && (github.event_name == 'schedule' || inputs.send_daily_dry_run_digest)" in runtime
     assert "inputs.account_facts_target == 'primary-live'" in workflow
     assert "inputs.account_facts_target == 'additional-1'" in workflow

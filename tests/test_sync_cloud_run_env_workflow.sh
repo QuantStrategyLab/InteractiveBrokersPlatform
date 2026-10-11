@@ -2,13 +2,14 @@
 set -euo pipefail
 
 repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
-workflow_file="$repo_dir/.github/workflows/sync-cloud-run-env.yml"
+caller_file="$repo_dir/.github/workflows/sync-cloud-run-env.yml"
+workflow_file="$repo_dir/.github/workflows/sync-cloud-run-env-protected.yml"
 
-if grep -Fq 'workflow_run:' "$workflow_file"; then
+if grep -Fq 'workflow_run:' "$caller_file"; then
   echo "deploy workflow must require a manual dispatch" >&2
   exit 1
 fi
-grep -Fq "if: github.event_name == 'workflow_dispatch'" "$workflow_file"
+grep -Fq "if: github.event_name == 'workflow_dispatch'" "$caller_file"
 
 grep -Fq 'GCP_WORKLOAD_IDENTITY_PROVIDER: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main' "$workflow_file"
 grep -Fq 'GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com' "$workflow_file"
@@ -27,8 +28,8 @@ grep -Fq 'gcloud storage cp --quiet "${RECOVERY_STATE_LEDGER_URI}" "${recovery_s
 grep -Fq 'echo "IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PATH=${recovery_state_ledger_path}" >> "$GITHUB_ENV"' "$workflow_file"
 
 grep -Fq 'ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION: ${{ vars.ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION }}' "$workflow_file"
-grep -Fq 'target:' "$workflow_file"
-grep -Fq 'default: hk-verify' "$workflow_file"
+grep -Fq 'target:' "$caller_file"
+grep -Fq 'default: hk-verify' "$caller_file"
 grep -Fq 'INPUT_DEPLOY_IMAGE: ${{ inputs.deploy_image }}' "$workflow_file"
 grep -Fq '[ "${INPUT_DEPLOY_IMAGE:-true}" = "true" ]; }; then' "$workflow_file"
 grep -Fq '[ "${INPUT_SYNC_ENV:-true}" = "true" ]; }; then' "$workflow_file"
@@ -42,13 +43,13 @@ grep -Fq 'echo "IBKR_MARKET_EXCHANGE=SEHK"' "$workflow_file"
 grep -Fq 'echo "CLOUD_RUN_ENV_SYNC_WAIT_FOR_COMMIT=false" >> "$GITHUB_ENV"' "$workflow_file"
 grep -Fq 'CLOUD_RUN_SERVICE: ${{ secrets.CLOUD_RUN_SERVICE }}' "$workflow_file"
 grep -Fq 'CLOUD_RUN_SERVICES: ${{ secrets.CLOUD_RUN_SERVICES }}' "$workflow_file"
-grep -Fq 'CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ vars.CLOUD_RUN_SERVICE_TARGETS_JSON || secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}' "$workflow_file"
+grep -Fq 'CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ vars.CLOUD_RUN_SERVICE_TARGETS_JSON || secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}' "$caller_file"
 grep -Fq 'CLOUD_RUN_ENV_SYNC_WAIT_FOR_COMMIT: ${{ vars.CLOUD_RUN_ENV_SYNC_WAIT_FOR_COMMIT }}' "$workflow_file"
 grep -Fq 'CLOUD_SCHEDULER_LOCATION: ${{ vars.CLOUD_SCHEDULER_LOCATION }}' "$workflow_file"
 grep -Fq 'CLOUD_SCHEDULER_MAIN_TIME: ${{ vars.CLOUD_SCHEDULER_MAIN_TIME }}' "$workflow_file"
 grep -Fq 'CLOUD_SCHEDULER_PROBE_TIME: ${{ vars.CLOUD_SCHEDULER_PROBE_TIME }}' "$workflow_file"
 grep -Fq 'CLOUD_SCHEDULER_PRECHECK_TIME: ${{ vars.CLOUD_SCHEDULER_PRECHECK_TIME }}' "$workflow_file"
-grep -Fq 'RUNTIME_TARGET_JSON: ${{ vars.RUNTIME_TARGET_JSON || secrets.RUNTIME_TARGET_JSON }}' "$workflow_file"
+grep -Fq 'RUNTIME_TARGET_JSON: ${{ vars.RUNTIME_TARGET_JSON || secrets.RUNTIME_TARGET_JSON }}' "$caller_file"
 grep -Fq 'ACCOUNT_GROUP: ${{ vars.ACCOUNT_GROUP }}' "$workflow_file"
 grep -Fq 'IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME: ${{ vars.IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME }}' "$workflow_file"
 grep -Fq 'IBKR_STRATEGY_PLUGIN_MOUNTS_JSON: ${{ vars.IBKR_STRATEGY_PLUGIN_MOUNTS_JSON }}' "$workflow_file"
@@ -93,7 +94,7 @@ grep -Fq 'Cloud Run env sync did not resolve any targets' "$workflow_file"
 grep -Fq 'TELEGRAM_TOKEN_SECRET_NAME or TELEGRAM_TOKEN' "$workflow_file"
 
 grep -Fq 'Wait for Cloud Run deployment of current commit' "$workflow_file"
-grep -Fq 'target_sha="${GITHUB_SHA}"' "$workflow_file"
+grep -Fq 'target_sha="${SOURCE_COMMIT}"' "$workflow_file"
 grep -Fq 'Skipping Cloud Run commit wait because CLOUD_RUN_ENV_SYNC_WAIT_FOR_COMMIT is disabled.' "$workflow_file"
 grep -Fq 'for target in plan["targets"]:' "$workflow_file"
 grep -Fq "gcloud run services describe \"\${cloud_run_service}\" --region \"\${CLOUD_RUN_REGION}\" --format='value(spec.template.metadata.labels.commit-sha)'" "$workflow_file"

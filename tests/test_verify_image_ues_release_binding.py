@@ -79,7 +79,7 @@ def test_main_exit_codes(monkeypatch, capsys):
 
 
 def test_deploy_workflow_runs_guard_before_push_and_deploy():
-    workflow = Path(".github/workflows/sync-cloud-run-env.yml").read_text(encoding="utf-8")
+    workflow = Path(".github/workflows/sync-cloud-run-env-protected.yml").read_text(encoding="utf-8")
     guard_at = workflow.index("scripts/verify_image_ues_release_binding.py --image")
     assert workflow.index("docker build --pull") < guard_at < workflow.index('docker push "${image}"')
     assert guard_at < workflow.index("gcloud run deploy")

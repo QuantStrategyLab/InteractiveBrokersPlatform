@@ -6,7 +6,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKFLOW = ROOT / ".github" / "workflows" / "sync-cloud-run-env.yml"
+CALLER = ROOT / ".github" / "workflows" / "sync-cloud-run-env.yml"
+WORKFLOW = ROOT / ".github" / "workflows" / "sync-cloud-run-env-protected.yml"
 READBACK = ROOT / "scripts" / "verify_cloud_run_no_traffic_deploy.py"
 
 
@@ -33,12 +34,13 @@ def test_image_deploy_is_no_traffic_only() -> None:
 
 def test_env_sync_does_not_imply_traffic_or_scheduler() -> None:
     workflow = _workflow()
-    assert "      approve_traffic_shift:" in workflow
-    assert "      approve_scheduler_sync:" in workflow
-    assert '        default: false\n' in workflow.split("      approve_traffic_shift:", 1)[1].split(
+    caller = CALLER.read_text(encoding="utf-8")
+    assert "      approve_traffic_shift:" in caller
+    assert "      approve_scheduler_sync:" in caller
+    assert '        default: false\n' in caller.split("      approve_traffic_shift:", 1)[1].split(
         "      approve_scheduler_sync:", 1
     )[0]
-    assert '        default: false\n' in workflow.split("      approve_scheduler_sync:", 1)[1].split(
+    assert '        default: false\n' in caller.split("      approve_scheduler_sync:", 1)[1].split(
         "\nenv:", 1
     )[0]
 
@@ -80,7 +82,8 @@ def test_configured_requires_exact_service_before_mutations() -> None:
     assert 'configured_service requires an exact private inventory service_name' in workflow
     # Blank configured_service must not silently expand to every inventory target.
     assert 'blank keeps all configured targets' not in workflow.lower()
-    assert 'description: "Exact inventory service_name required for configured target."' in workflow
+    caller = CALLER.read_text(encoding="utf-8")
+    assert 'description: "Exact inventory service_name required for configured target."' in caller
 
 
 def test_no_traffic_deploy_has_capture_verify_and_fail_closed_script() -> None:

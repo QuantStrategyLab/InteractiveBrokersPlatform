@@ -5,7 +5,7 @@ WORKFLOW = (
     Path(__file__).resolve().parents[1]
     / ".github"
     / "workflows"
-    / "collect-reconciliation-evidence.yml"
+    / "collect-reconciliation-evidence-protected.yml"
 )
 
 
