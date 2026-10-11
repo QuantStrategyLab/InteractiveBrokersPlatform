@@ -222,3 +222,38 @@ def test_account_labels_from_runtime_report_selector():
     row = payload["runs"][0]
     assert row["account_hint"] == "U00000001"
     assert row["account_scope"] == "live-synthetic"
+
+
+# NOTIFY-04: business day is the New York (XNYS) trading day for every target.
+import pytest as _pytest  # noqa: E402
+
+from scripts.project_digest_candidates import ny_trading_day  # noqa: E402
+
+
+@_pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("2026-10-09T20:01:00Z", "2026-10-09"),  # Fri 16:01 ET
+        ("2026-10-10T00:30:00Z", "2026-10-09"),  # Fri 20:30 ET, Sat in UTC
+        ("2026-10-10T08:30:00+08:00", "2026-10-09"),  # Asia/Shanghai Sat morning
+        ("2026-10-10T15:00:00Z", "2026-10-09"),  # Sat in NY -> last session (Fri)
+        ("2026-10-12T03:59:00Z", "2026-10-09"),  # Sun 23:59 ET -> last session (Fri)
+        ("2026-10-12T04:00:00Z", "2026-10-12"),  # Mon 00:00 ET (NYSE open on Columbus Day)
+        ("2026-10-09", "2026-10-09"),  # date-only kept as calendar day
+        ("2026-10-11", "2026-10-09"),  # Sunday date-only -> Friday
+        ("2026-11-26T18:00:00Z", "2026-11-25"),  # Thanksgiving -> prior session
+        ("2026-10-09T23:59:00", "2026-10-09"),  # naive = UTC -> Fri 19:59 ET
+        ("", ""),
+        ("garbage", ""),
+    ],
+)
+def test_ny_trading_day(raw, expected):
+    assert ny_trading_day(raw) == expected
+
+
+def test_targets_running_after_utc_midnight_share_the_ny_trading_day():
+    from scripts.project_digest_candidates import _business_day_from_report
+
+    primary = {"started_at": "2026-10-09T20:01:00Z"}
+    additional = {"started_at": "2026-10-10T00:45:00Z"}
+    assert _business_day_from_report(primary) == _business_day_from_report(additional) == "2026-10-09"
