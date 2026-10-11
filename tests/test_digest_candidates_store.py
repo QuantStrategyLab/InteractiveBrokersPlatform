@@ -49,8 +49,24 @@ def test_object_uri_rejects_unsafe_input(tmp_path):
 
 
 def test_workflow_is_dry_run_without_store_variable():
-    wf = (Path(__file__).resolve().parents[1] / ".github/workflows/digest-candidates-daily.yml").read_text(encoding="utf-8")
+    wf = (Path(__file__).resolve().parents[1] / ".github/workflows/digest-candidates-emit.yml").read_text(encoding="utf-8")
     assert "DIGEST_CANDIDATES_GCS_URI: ${{ vars.DIGEST_CANDIDATES_GCS_URI || '' }}" in wf
     assert "dry_run: vars.DIGEST_CANDIDATES_GCS_URI is unset" in wf
-    assert "actions/upload-artifact" not in wf
+    # Artifact capture exists only as the manual opt-in; the scheduled caller never enables it.
+    assert "if: ${{ inputs.capture_artifact }}" in wf
+    daily = (Path(__file__).resolve().parents[1] / ".github/workflows/digest-candidates-daily.yml").read_text(encoding="utf-8")
+    assert "capture_artifact" not in daily
     assert "SYNC_TOKEN" not in wf
+
+
+def test_target_json_variables_only_reach_jobs_as_masked_secrets():
+    root = Path(__file__).resolve().parents[1] / ".github/workflows"
+    emit = (root / "digest-candidates-emit.yml").read_text(encoding="utf-8")
+    assert "vars.CLOUD_RUN_SERVICE_TARGETS_JSON" not in emit
+    assert "vars.RUNTIME_TARGET_JSON" not in emit
+    assert "CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}" in emit
+    for caller in ("digest-candidates-daily.yml", "execution-report-heartbeat.yml"):
+        text = (root / caller).read_text(encoding="utf-8")
+        assert "uses: ./.github/workflows/digest-candidates-emit.yml" in text
+    daily = (root / "digest-candidates-daily.yml").read_text(encoding="utf-8")
+    assert "steps:" not in daily  # no step of the caller can echo the variable
