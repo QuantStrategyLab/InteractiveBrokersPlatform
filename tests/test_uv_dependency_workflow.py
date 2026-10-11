@@ -27,15 +27,18 @@ def test_pyproject_declares_runtime_and_test_dependencies() -> None:
 def test_ci_docker_and_runtime_monitoring_use_uv_lock() -> None:
     ci = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
-    env_sync = Path(".github/workflows/sync-cloud-run-env.yml").read_text(encoding="utf-8")
-    runtime_guard = Path(".github/workflows/runtime-guard.yml").read_text(encoding="utf-8")
+    env_sync = Path(".github/workflows/sync-cloud-run-env-protected.yml").read_text(encoding="utf-8")
+    runtime_guard = Path(".github/workflows/runtime-guard-protected.yml").read_text(encoding="utf-8")
     runtime_target_lifecycle = Path(".github/workflows/runtime-target-lifecycle.yml").read_text(
         encoding="utf-8"
     )
     execution_report_heartbeat = Path(".github/workflows/execution-report-heartbeat.yml").read_text(
         encoding="utf-8"
     )
-    heartbeat_job = _job_block(execution_report_heartbeat, "heartbeat")
+    protected_heartbeat = Path(".github/workflows/execution-report-heartbeat-protected.yml").read_text(
+        encoding="utf-8"
+    )
+    heartbeat_job = _job_block(protected_heartbeat, "heartbeat")
     publisher_job = _job_block(execution_report_heartbeat, "account-facts-publisher")
     lockfile = Path("uv.lock").read_text(encoding="utf-8")
 
@@ -56,7 +59,7 @@ def test_ci_docker_and_runtime_monitoring_use_uv_lock() -> None:
     assert "uv run --no-sync python scripts/cloud_run_runtime_guard.py" in runtime_guard
     assert "uv run --no-sync python scripts/cloud_run_runtime_guard.py" in runtime_target_lifecycle
     assert "uv run --no-sync python scripts/execution_report_heartbeat.py" in runtime_target_lifecycle
-    assert "uv run --no-sync python scripts/execution_report_heartbeat.py" in execution_report_heartbeat
+    assert "uv run --no-sync python scripts/execution_report_heartbeat.py" in heartbeat_job
     assert "uv run --no-sync python scripts/publish_account_facts_from_report.py" in publisher_job
     assert publisher_job.count(setup_uv) == 1
     assert publisher_job.count("uv sync --frozen --no-dev") == 1
@@ -68,6 +71,7 @@ def test_ci_docker_and_runtime_monitoring_use_uv_lock() -> None:
     assert 'name = "pandas-market-calendars"' in lockfile
     assert 'pandas-market-calendars==5.4.0' not in runtime_target_lifecycle
     assert 'pandas-market-calendars==5.4.0' not in execution_report_heartbeat
+    assert 'pandas-market-calendars==5.4.0' not in heartbeat_job
     assert "Traceback|ImportError|ModuleNotFoundError" in runtime_target_lifecycle
     assert "IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_URI" in env_sync
     assert "Fetch opt-in immutable recovery state ledger" in env_sync

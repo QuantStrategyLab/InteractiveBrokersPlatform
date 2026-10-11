@@ -7,7 +7,7 @@ from scripts import build_cloud_run_env_sync_plan as sync_plan
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKFLOW = ROOT / ".github" / "workflows" / "sync-cloud-run-env.yml"
+WORKFLOW = ROOT / ".github" / "workflows" / "sync-cloud-run-env-protected.yml"
 MAIN = ROOT / "main.py"
 
 

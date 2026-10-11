@@ -9,8 +9,9 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import env_sync_drift_check as drift
 
-SYNC = ROOT / ".github/workflows/sync-cloud-run-env.yml"
-DRIFT = ROOT / ".github/workflows/env-sync-drift-check.yml"
+SYNC = ROOT / ".github/workflows/sync-cloud-run-env-protected.yml"
+DRIFT_CALLER = ROOT / ".github/workflows/env-sync-drift-check.yml"
+DRIFT = ROOT / ".github/workflows/env-sync-drift-check-protected.yml"
 
 
 def _job_env(path: Path) -> dict[str, str]:
@@ -42,10 +43,17 @@ def test_drift_workflow_env_mirrors_sync_workflow():
 
 def test_drift_workflow_is_read_only():
     text = DRIFT.read_text(encoding="utf-8")
-    assert "workflow_dispatch" in text
+    assert "workflow_dispatch" in DRIFT_CALLER.read_text(encoding="utf-8")
+    assert "workflow_call" in text
     for forbidden in ("services update", "update-traffic", "services replace", "add-iam-policy-binding",
                       "secrets versions add", "scheduler jobs", "curl "):
         assert forbidden not in text
+
+
+def test_default_workflow_reads_protected_sync_implementation(monkeypatch):
+    monkeypatch.chdir(ROOT)
+    assert drift.WORKFLOW.resolve() == SYNC.resolve()
+    assert drift.load_step_script() == drift.load_step_script(SYNC)
 
 
 def test_step_script_capture_replaces_only_mutation():

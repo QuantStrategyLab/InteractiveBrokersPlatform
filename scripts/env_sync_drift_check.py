@@ -2,7 +2,7 @@
 """Read-only drift check: what would a full ``sync-cloud-run-env`` env sync change?
 
 Re-runs the exact "Sync Cloud Run environment" step script from
-``.github/workflows/sync-cloud-run-env.yml`` (read from the checked-out ref)
+``.github/workflows/sync-cloud-run-env-protected.yml`` (read from the checked-out ref)
 with its single mutating ``gcloud "${gcloud_args[@]}"`` call replaced by a
 capture, then diffs the captured env/secret/label arguments against the
 serving (100% traffic) Cloud Run revision.
@@ -24,7 +24,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-WORKFLOW = Path(".github/workflows/sync-cloud-run-env.yml")
+WORKFLOW = Path(".github/workflows/sync-cloud-run-env-protected.yml")
 STEP_NAME = "Sync Cloud Run environment"
 MUTATING_LINE = 'gcloud "${gcloud_args[@]}"'
 CAPTURE_LINE = (

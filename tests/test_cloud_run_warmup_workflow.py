@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 def test_env_sync_creates_non_trading_health_warmup_with_retries() -> None:
-    workflow = Path(".github/workflows/sync-cloud-run-env.yml").read_text(encoding="utf-8")
+    workflow = Path(".github/workflows/sync-cloud-run-env-protected.yml").read_text(encoding="utf-8")
 
     assert 'scheduler.get("probe_time")' in workflow
     assert 'warmup_job_name="${cloud_run_service%-service}-warmup-scheduler"' in workflow
@@ -16,7 +16,7 @@ def test_env_sync_creates_non_trading_health_warmup_with_retries() -> None:
 
 
 def test_main_scheduler_update_is_post_only_and_oidc_authenticated() -> None:
-    workflow = Path(".github/workflows/sync-cloud-run-env.yml").read_text(encoding="utf-8")
+    workflow = Path(".github/workflows/sync-cloud-run-env-protected.yml").read_text(encoding="utf-8")
     for command in (
         'gcloud scheduler jobs update http "${job_name}"',
         'gcloud scheduler jobs create http "${job_name}"',
@@ -30,7 +30,7 @@ def test_main_scheduler_update_is_post_only_and_oidc_authenticated() -> None:
 
 
 def test_cloud_run_deploy_is_private_internal_and_serial() -> None:
-    workflow = Path(".github/workflows/sync-cloud-run-env.yml").read_text(encoding="utf-8")
+    workflow = Path(".github/workflows/sync-cloud-run-env-protected.yml").read_text(encoding="utf-8")
     deploy_block = workflow.split('gcloud run deploy "${cloud_run_service}"', 1)[1]
     deploy_block = deploy_block.split("--quiet", 1)[0]
 
@@ -75,7 +75,7 @@ def _resolve_sync_plan(tmp_path, monkeypatch, *, selector="service-b", target="c
     import sys
     import textwrap
 
-    workflow = Path(".github/workflows/sync-cloud-run-env.yml").read_text(encoding="utf-8")
+    workflow = Path(".github/workflows/sync-cloud-run-env-protected.yml").read_text(encoding="utf-8")
     step = workflow.split("      - name: Resolve admissible Cloud Run targets\n", 1)[1].split("      - name:", 1)[0]
     script = textwrap.dedent(step.split("        run: |\n", 1)[1])
     plan = {"mode": mode, "targets": [{"service_name": service, "env": {"RUNTIME_TARGET_ENABLED": "false"}} for service in (services or ["service-a", "service-b"])]}
@@ -159,10 +159,11 @@ def test_single_target_sync_skips_global_cleanup_before_other_service_mutation()
     import subprocess
     import textwrap
 
-    workflow = Path(".github/workflows/sync-cloud-run-env.yml").read_text(encoding="utf-8")
-    assert "      configured_service:\n" in workflow
+    workflow = Path(".github/workflows/sync-cloud-run-env-protected.yml").read_text(encoding="utf-8")
+    caller = Path(".github/workflows/sync-cloud-run-env.yml").read_text(encoding="utf-8")
+    assert "      configured_service:\n" in caller
     assert "INPUT_CONFIGURED_SERVICE: ${{ inputs.configured_service }}" in workflow
-    assert "Exact inventory service_name required for configured target." in workflow
+    assert "Exact inventory service_name required for configured target." in caller
     scope_guard = "(env.WORKFLOW_TARGET != 'configured' || env.INPUT_CONFIGURED_SERVICE == '')"
     for name in ("Prune old Cloud Run revisions", "Clean up old Cloud Run images"):
         step = workflow.split(f"      - name: {name}\n", 1)[1].split("      - name:", 1)[0]

@@ -1,0 +1,1641 @@
+name: Deploy Cloud Run (protected execution)
+
+# Register the original JSON as a workflow secret before any runner step header.
+# This masks the passed value, not every extracted field or reserialized variant.
+on:
+  workflow_call:
+    inputs:
+      target:
+        type: string
+        required: false
+      configured_service:
+        type: string
+        required: false
+      source_commit:
+        type: string
+        required: false
+      cloud_run_region:
+        type: string
+        required: false
+      cloud_run_service:
+        type: string
+        required: false
+      account_group:
+        type: string
+        required: false
+      account_group_config_secret_name:
+        type: string
+        required: false
+      deploy_image:
+        type: boolean
+        required: false
+      sync_env:
+        type: boolean
+        required: false
+      approve_traffic_shift:
+        type: boolean
+        required: false
+      approve_scheduler_sync:
+        type: boolean
+        required: false
+    secrets:
+      CLOUD_RUN_SERVICE:
+        required: false
+      CLOUD_RUN_SERVICES:
+        required: false
+      CLOUD_RUN_SERVICE_TARGETS_JSON:
+        required: false
+      GLOBAL_TELEGRAM_CHAT_ID:
+        required: false
+      RUNTIME_TARGET_JSON:
+        required: false
+      STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD:
+        required: false
+      STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN:
+        required: false
+      STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN:
+        required: false
+      STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN:
+        required: false
+      TELEGRAM_TOKEN:
+        required: false
+      TG_TOKEN:
+        required: false
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: interactivebrokersquant
+  GCP_WORKLOAD_IDENTITY_PROVIDER: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
+  GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com
+  GCP_RUNTIME_SERVICE_ACCOUNT: ibkr-platform-runtime@interactivebrokersquant.iam.gserviceaccount.com
+  GCP_SCHEDULER_SERVICE_ACCOUNT: ibkr-platform-scheduler@interactivebrokersquant.iam.gserviceaccount.com
+  GCP_ARTIFACT_REGISTRY_REPOSITORY: cloud-run-source-deploy
+
+jobs:
+  sync-cloud-run-env:
+    name: Deploy / Sync Cloud Run
+    # Production deployment and environment sync require an explicit operator dispatch.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    env:
+      ENABLE_GITHUB_CLOUD_RUN_DEPLOY: ${{ vars.ENABLE_GITHUB_CLOUD_RUN_DEPLOY }}
+      ENABLE_GITHUB_ENV_SYNC: ${{ vars.ENABLE_GITHUB_ENV_SYNC }}
+      ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION: ${{ vars.ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION }}
+      QSL_ENABLE_CLOUD_RUN_AUTOMATION: ${{ vars.QSL_ENABLE_CLOUD_RUN_AUTOMATION }}
+      CLOUD_RUN_CLEANUP_ENABLED: ${{ vars.CLOUD_RUN_CLEANUP_ENABLED }}
+      WORKFLOW_TARGET: ${{ inputs.target || 'configured' }}
+      INPUT_CONFIGURED_SERVICE: ${{ inputs.configured_service }}
+      INPUT_SOURCE_COMMIT: ${{ inputs.source_commit }}
+      SOURCE_COMMIT: ${{ inputs.source_commit || github.sha }}
+      INPUT_CLOUD_RUN_REGION: ${{ inputs.cloud_run_region }}
+      INPUT_CLOUD_RUN_SERVICE: ${{ inputs.cloud_run_service }}
+      INPUT_ACCOUNT_GROUP: ${{ inputs.account_group }}
+      INPUT_ACCOUNT_GROUP_CONFIG_SECRET_NAME: ${{ inputs.account_group_config_secret_name }}
+      INPUT_DEPLOY_IMAGE: ${{ inputs.deploy_image }}
+      INPUT_SYNC_ENV: ${{ inputs.sync_env }}
+      INPUT_APPROVE_TRAFFIC_SHIFT: ${{ inputs.approve_traffic_shift }}
+      INPUT_APPROVE_SCHEDULER_SYNC: ${{ inputs.approve_scheduler_sync }}
+      GCP_ARTIFACT_REGISTRY_HOSTNAME: ${{ vars.GCP_ARTIFACT_REGISTRY_HOSTNAME }}
+      CLOUD_RUN_REGION: ${{ vars.CLOUD_RUN_REGION }}
+      CLOUD_RUN_SERVICE: ${{ secrets.CLOUD_RUN_SERVICE }}
+      CLOUD_RUN_SERVICES: ${{ secrets.CLOUD_RUN_SERVICES }}
+      # This is the validated non-secret service inventory maintained by the
+      # control plane; legacy Secret support is only a migration fallback.
+      CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}
+      CLOUD_RUN_ENV_SYNC_WAIT_FOR_COMMIT: ${{ vars.CLOUD_RUN_ENV_SYNC_WAIT_FOR_COMMIT }}
+      CLOUD_SCHEDULER_LOCATION: ${{ vars.CLOUD_SCHEDULER_LOCATION }}
+      CLOUD_SCHEDULER_MAIN_TIME: ${{ vars.CLOUD_SCHEDULER_MAIN_TIME }}
+      CLOUD_SCHEDULER_PROBE_TIME: ${{ vars.CLOUD_SCHEDULER_PROBE_TIME }}
+      CLOUD_SCHEDULER_PRECHECK_TIME: ${{ vars.CLOUD_SCHEDULER_PRECHECK_TIME }}
+      TELEGRAM_TOKEN_SECRET_NAME: ${{ vars.TELEGRAM_TOKEN_SECRET_NAME }}
+      # This is validated deployment intent, not credential material. Prefer the
+      # control-plane variable while retaining a legacy-secret fallback during migration.
+      RUNTIME_TARGET_JSON: ${{ secrets.RUNTIME_TARGET_JSON }}
+      ACCOUNT_GROUP: ${{ vars.ACCOUNT_GROUP }}
+      IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME: ${{ vars.IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME }}
+      IBKR_FEATURE_SNAPSHOT_PATH: ${{ vars.IBKR_FEATURE_SNAPSHOT_PATH }}
+      IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH: ${{ vars.IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH }}
+      IBKR_FEATURE_SNAPSHOT_FALLBACK_MODE: ${{ vars.IBKR_FEATURE_SNAPSHOT_FALLBACK_MODE }}
+      IBKR_FEATURE_SNAPSHOT_FALLBACK_CACHE_DIR: ${{ vars.IBKR_FEATURE_SNAPSHOT_FALLBACK_CACHE_DIR }}
+      IBKR_FEATURE_SNAPSHOT_MAX_STALE_DAYS: ${{ vars.IBKR_FEATURE_SNAPSHOT_MAX_STALE_DAYS }}
+      IBKR_STRATEGY_CONFIG_PATH: ${{ vars.IBKR_STRATEGY_CONFIG_PATH }}
+      IBKR_STRATEGY_PLUGIN_MOUNTS_JSON: ${{ vars.IBKR_STRATEGY_PLUGIN_MOUNTS_JSON }}
+      IBKR_RECONCILIATION_OUTPUT_PATH: ${{ vars.IBKR_RECONCILIATION_OUTPUT_PATH }}
+      IBKR_DRY_RUN_ONLY: ${{ vars.IBKR_DRY_RUN_ONLY }}
+      IBKR_EXECUTION_DEDUP_ENABLED: ${{ vars.IBKR_EXECUTION_DEDUP_ENABLED }}
+      IBKR_PAPER_LIQUIDATE_ONLY: ${{ vars.IBKR_PAPER_LIQUIDATE_ONLY }}
+      IBKR_FORCE_RUN: ${{ vars.IBKR_FORCE_RUN }}
+      IBKR_MARKET: ${{ vars.IBKR_MARKET }}
+      IBKR_MARKET_CALENDAR: ${{ vars.IBKR_MARKET_CALENDAR }}
+      IBKR_MARKET_CURRENCY: ${{ vars.IBKR_MARKET_CURRENCY }}
+      IBKR_MARKET_DATA_SYMBOL_SUFFIX: ${{ vars.IBKR_MARKET_DATA_SYMBOL_SUFFIX }}
+      IBKR_MARKET_EXCHANGE: ${{ vars.IBKR_MARKET_EXCHANGE }}
+      IBKR_MARKET_TIMEZONE: ${{ vars.IBKR_MARKET_TIMEZONE }}
+      IBKR_MIN_RESERVED_CASH_USD: ${{ vars.IBKR_MIN_RESERVED_CASH_USD }}
+      IBKR_RESERVED_CASH_RATIO: ${{ vars.IBKR_RESERVED_CASH_RATIO }}
+      IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD: ${{ vars.IBKR_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD }}
+      INCOME_LAYER_ENABLED: ${{ vars.INCOME_LAYER_ENABLED }}
+      INCOME_LAYER_START_USD: ${{ vars.INCOME_LAYER_START_USD }}
+      INCOME_LAYER_MAX_RATIO: ${{ vars.INCOME_LAYER_MAX_RATIO }}
+      IBKR_CASH_ONLY_EXECUTION: ${{ vars.IBKR_CASH_ONLY_EXECUTION }}
+      CASH_ONLY_EXECUTION: ${{ vars.CASH_ONLY_EXECUTION }}
+      DCA_MODE: ${{ vars.DCA_MODE }}
+      DCA_BASE_INVESTMENT_USD: ${{ vars.DCA_BASE_INVESTMENT_USD }}
+      IBIT_ZSCORE_EXIT_ENABLED: ${{ vars.IBIT_ZSCORE_EXIT_ENABLED }}
+      IBIT_ZSCORE_EXIT_MODE: ${{ vars.IBIT_ZSCORE_EXIT_MODE }}
+      IBIT_ZSCORE_EXIT_PARKING_SYMBOL: ${{ vars.IBIT_ZSCORE_EXIT_PARKING_SYMBOL }}
+      IBIT_ZSCORE_EXIT_RISK_REDUCED_EXPOSURE: ${{ vars.IBIT_ZSCORE_EXIT_RISK_REDUCED_EXPOSURE }}
+      IBIT_ZSCORE_EXIT_RISK_OFF_EXPOSURE: ${{ vars.IBIT_ZSCORE_EXIT_RISK_OFF_EXPOSURE }}
+      IBIT_ZSCORE_EXIT_ALLOW_OUTSIDE_EXECUTION_WINDOW: ${{ vars.IBIT_ZSCORE_EXIT_ALLOW_OUTSIDE_EXECUTION_WINDOW }}
+      IBKR_MARKET_SIGNAL_HANDOFF_INDEX_URI: ${{ vars.IBKR_MARKET_SIGNAL_HANDOFF_INDEX_URI }}
+      IBKR_MARKET_SIGNAL_HANDOFF_MANIFEST_URI: ${{ vars.IBKR_MARKET_SIGNAL_HANDOFF_MANIFEST_URI }}
+      IBKR_MARKET_SIGNAL_CONSUMPTION_AUDIT_URI: ${{ vars.IBKR_MARKET_SIGNAL_CONSUMPTION_AUDIT_URI }}
+      IBKR_MARKET_SIGNAL_CACHE_DIR: ${{ vars.IBKR_MARKET_SIGNAL_CACHE_DIR }}
+      IBKR_MARKET_SIGNAL_REQUIRED: ${{ vars.IBKR_MARKET_SIGNAL_REQUIRED }}
+      IBKR_MARKET_SIGNAL_FALLBACK_MODE: ${{ vars.IBKR_MARKET_SIGNAL_FALLBACK_MODE }}
+      IBKR_MARKET_SIGNAL_MAX_STALE_DAYS: ${{ vars.IBKR_MARKET_SIGNAL_MAX_STALE_DAYS }}
+      STRATEGY_PLUGIN_ALERT_CHANNELS: ${{ vars.STRATEGY_PLUGIN_ALERT_CHANNELS }}
+      STRATEGY_PLUGIN_ALERT_EMAIL_RECIPIENTS: ${{ vars.STRATEGY_PLUGIN_ALERT_EMAIL_RECIPIENTS }}
+      STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_EMAIL: ${{ vars.STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_EMAIL }}
+      STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD_SECRET_NAME: ${{ vars.STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD_SECRET_NAME }}
+      STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_HOST: ${{ vars.STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_HOST }}
+      STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_PORT: ${{ vars.STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_PORT }}
+      STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_SECURITY: ${{ vars.STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_SECURITY }}
+      STRATEGY_PLUGIN_ALERT_SMS_RECIPIENTS: ${{ vars.STRATEGY_PLUGIN_ALERT_SMS_RECIPIENTS }}
+      STRATEGY_PLUGIN_ALERT_SMS_PROVIDER: ${{ vars.STRATEGY_PLUGIN_ALERT_SMS_PROVIDER }}
+      STRATEGY_PLUGIN_ALERT_SMS_ACCOUNT_ID: ${{ vars.STRATEGY_PLUGIN_ALERT_SMS_ACCOUNT_ID }}
+      STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN_SECRET_NAME: ${{ vars.STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN_SECRET_NAME }}
+      STRATEGY_PLUGIN_ALERT_SMS_SENDER: ${{ vars.STRATEGY_PLUGIN_ALERT_SMS_SENDER }}
+      STRATEGY_PLUGIN_ALERT_SMS_MESSAGING_SERVICE_ID: ${{ vars.STRATEGY_PLUGIN_ALERT_SMS_MESSAGING_SERVICE_ID }}
+      STRATEGY_PLUGIN_ALERT_SMS_API_BASE_URL: ${{ vars.STRATEGY_PLUGIN_ALERT_SMS_API_BASE_URL }}
+      STRATEGY_PLUGIN_ALERT_SMS_BODY_MAX_CHARS: ${{ vars.STRATEGY_PLUGIN_ALERT_SMS_BODY_MAX_CHARS }}
+      STRATEGY_PLUGIN_ALERT_PUSH_RECIPIENTS: ${{ vars.STRATEGY_PLUGIN_ALERT_PUSH_RECIPIENTS }}
+      STRATEGY_PLUGIN_ALERT_PUSH_PROVIDER: ${{ vars.STRATEGY_PLUGIN_ALERT_PUSH_PROVIDER }}
+      STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN_SECRET_NAME: ${{ vars.STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN_SECRET_NAME }}
+      STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN_SECRET_NAME: ${{ vars.STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN_SECRET_NAME }}
+      STRATEGY_PLUGIN_ALERT_PUSH_API_BASE_URL: ${{ vars.STRATEGY_PLUGIN_ALERT_PUSH_API_BASE_URL }}
+      STRATEGY_PLUGIN_ALERT_PUSH_DEVICE: ${{ vars.STRATEGY_PLUGIN_ALERT_PUSH_DEVICE }}
+      STRATEGY_PLUGIN_ALERT_PUSH_PRIORITY: ${{ vars.STRATEGY_PLUGIN_ALERT_PUSH_PRIORITY }}
+      STRATEGY_PLUGIN_ALERT_PUSH_TAGS: ${{ vars.STRATEGY_PLUGIN_ALERT_PUSH_TAGS }}
+      STRATEGY_PLUGIN_ALERT_PUSH_BODY_MAX_CHARS: ${{ vars.STRATEGY_PLUGIN_ALERT_PUSH_BODY_MAX_CHARS }}
+      STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS: ${{ vars.STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS }}
+      STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME: ${{ vars.STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME }}
+      STRATEGY_PLUGIN_ALERT_TELEGRAM_API_BASE_URL: ${{ vars.STRATEGY_PLUGIN_ALERT_TELEGRAM_API_BASE_URL }}
+      STRATEGY_PLUGIN_ALERT_TELEGRAM_PARSE_MODE: ${{ vars.STRATEGY_PLUGIN_ALERT_TELEGRAM_PARSE_MODE }}
+      STRATEGY_PLUGIN_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW: ${{ vars.STRATEGY_PLUGIN_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW }}
+      STRATEGY_PLUGIN_ALERT_TELEGRAM_BODY_MAX_CHARS: ${{ vars.STRATEGY_PLUGIN_ALERT_TELEGRAM_BODY_MAX_CHARS }}
+      # Strategy-owned defaults continue to come from UsEquityStrategies; this workflow only syncs platform/runtime inputs.
+      EXECUTION_REPORT_GCS_URI: ${{ vars.EXECUTION_REPORT_GCS_URI }}
+      # Empty by default. When explicitly set, the workflow downloads one
+      # immutable, private recovery ledger before deriving its sync plan.
+      IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_URI: ${{ vars.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_URI }}
+      GLOBAL_TELEGRAM_CHAT_ID: ${{ secrets.GLOBAL_TELEGRAM_CHAT_ID }}
+      NOTIFY_LANG: ${{ vars.NOTIFY_LANG }}
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD: ${{ secrets.STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD }}
+      STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN: ${{ secrets.STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN }}
+      STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN: ${{ secrets.STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN }}
+      STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN: ${{ secrets.STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN }}
+      STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN: ${{ secrets.TG_TOKEN }}
+    steps:
+      - name: Check whether Cloud Run automation is enabled
+        id: config
+        run: |
+          set -euo pipefail
+
+          write_github_output() {
+            printf '%s\n' "$@" >> "$GITHUB_OUTPUT"
+          }
+
+          deploy_enabled=false
+          env_sync_enabled=false
+          traffic_shift_enabled=false
+          scheduler_sync_enabled=false
+
+          # QSL_ENABLE_CLOUD_RUN_AUTOMATION overrides ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION
+          ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION="${QSL_ENABLE_CLOUD_RUN_AUTOMATION:-$ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION}"
+          if [ "${GITHUB_EVENT_NAME:-}" = "push" ] && [ "${ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION:-}" != "true" ]; then
+            write_github_output \
+              "deploy_enabled=false" \
+              "env_sync_enabled=false" \
+              "traffic_shift_enabled=false" \
+              "scheduler_sync_enabled=false" \
+              "enabled=false"
+            echo "Skipping Cloud Run automation on push because ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION is not true." >&2
+            exit 0
+          fi
+
+          if [ "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch" ] && [ "${WORKFLOW_TARGET:-configured}" = "hk-verify" ]; then
+            if [ "${INPUT_DEPLOY_IMAGE:-true}" = "true" ]; then
+              deploy_enabled=true
+            fi
+            if [ "${INPUT_SYNC_ENV:-true}" = "true" ]; then
+              env_sync_enabled=true
+            fi
+          else
+            if [ "${ENABLE_GITHUB_CLOUD_RUN_DEPLOY:-}" = "true" ] \
+              && { [ "${GITHUB_EVENT_NAME:-}" != "workflow_dispatch" ] || [ "${INPUT_DEPLOY_IMAGE:-true}" = "true" ]; }; then
+              deploy_enabled=true
+            fi
+
+            if [ "${ENABLE_GITHUB_ENV_SYNC:-}" = "true" ] \
+              && { [ "${GITHUB_EVENT_NAME:-}" != "workflow_dispatch" ] || [ "${INPUT_SYNC_ENV:-true}" = "true" ]; }; then
+              env_sync_enabled=true
+            fi
+          fi
+
+          if [ "${INPUT_APPROVE_TRAFFIC_SHIFT:-false}" = "true" ]; then
+            traffic_shift_enabled=true
+          fi
+          if [ "${INPUT_APPROVE_SCHEDULER_SYNC:-false}" = "true" ]; then
+            scheduler_sync_enabled=true
+          fi
+
+          if [ "${WORKFLOW_TARGET:-configured}" = "configured" ] && [ -z "${INPUT_CONFIGURED_SERVICE:-}" ]; then
+            if [ "${deploy_enabled}" = "true" ] || [ "${env_sync_enabled}" = "true" ] || [ "${traffic_shift_enabled}" = "true" ] || [ "${scheduler_sync_enabled}" = "true" ]; then
+              echo "configured target requires exact configured_service; refusing multi-service default mutations." >&2
+              exit 1
+            fi
+          fi
+
+          if { [ "${deploy_enabled}" = "true" ] || [ "${env_sync_enabled}" = "true" ] || [ "${traffic_shift_enabled}" = "true" ] || [ "${scheduler_sync_enabled}" = "true" ]; } \
+            && [ "${GITHUB_REF:-}" != "refs/heads/main" ]; then
+            echo "Cloud Run mutations require the trusted main workflow ref." >&2
+            exit 1
+          fi
+
+          if [ "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch" ] && [ "${deploy_enabled}" = "true" ] \
+            && [ -n "${INPUT_SOURCE_COMMIT:-}" ] \
+            && [[ ! "${INPUT_SOURCE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Explicit source_commit must be a full 40-character SHA." >&2
+            exit 1
+          fi
+
+          write_github_output \
+            "deploy_enabled=${deploy_enabled}" \
+            "env_sync_enabled=${env_sync_enabled}" \
+            "traffic_shift_enabled=${traffic_shift_enabled}" \
+            "scheduler_sync_enabled=${scheduler_sync_enabled}"
+
+          if [ "${deploy_enabled}" != "true" ] && [ "${env_sync_enabled}" != "true" ] && [ "${traffic_shift_enabled}" != "true" ] && [ "${scheduler_sync_enabled}" != "true" ]; then
+            write_github_output "enabled=false"
+            echo "Skipping Cloud Run automation because ENABLE_GITHUB_CLOUD_RUN_DEPLOY and ENABLE_GITHUB_ENV_SYNC are not true." >&2
+            exit 0
+          fi
+
+          write_github_output "enabled=true"
+
+      - name: Checkout repository
+        if: steps.config.outputs.enabled == 'true'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Checkout selected image source
+        if: steps.config.outputs.deploy_enabled == 'true'
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ env.SOURCE_COMMIT }}
+          path: source
+          persist-credentials: false
+
+      - name: Verify selected image source
+        if: steps.config.outputs.deploy_enabled == 'true'
+        run: |
+          set -euo pipefail
+          if [[ ! "${SOURCE_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Selected source must be a full commit SHA." >&2
+            exit 1
+          fi
+          checked_out_sha="$(git -C source rev-parse HEAD)"
+          if [ "${checked_out_sha}" != "${SOURCE_COMMIT}" ]; then
+            echo "Checked-out image source does not match source_commit." >&2
+            exit 1
+          fi
+
+      - name: Apply HK verify-only dispatch defaults
+        if: steps.config.outputs.enabled == 'true' && github.event_name == 'workflow_dispatch' && inputs.target == 'hk-verify'
+        run: |
+          set -euo pipefail
+
+          service="${INPUT_CLOUD_RUN_SERVICE:-interactive-brokers-hk-verify-service}"
+          account_group="${INPUT_ACCOUNT_GROUP:-hk-verify}"
+          region="${INPUT_CLOUD_RUN_REGION:-${CLOUD_RUN_REGION:-}}"
+          runtime_target="$(SERVICE="${service}" ACCOUNT_GROUP_VALUE="${account_group}" python3 - <<'PY'
+          import json
+          import os
+
+          print(
+              json.dumps(
+                  {
+                      "platform_id": "ibkr",
+                      "strategy_profile": "hk_global_etf_tactical_rotation",
+                      "deployment_selector": os.environ["ACCOUNT_GROUP_VALUE"],
+                      "account_scope": os.environ["ACCOUNT_GROUP_VALUE"],
+                      "execution_mode": "paper",
+                      "dry_run_only": True,
+                      "service_name": os.environ["SERVICE"],
+                  },
+                  separators=(",", ":"),
+              )
+          )
+          PY
+          )"
+
+          {
+            echo "CLOUD_RUN_SERVICE=${service}"
+            echo "CLOUD_RUN_SERVICES="
+            echo "CLOUD_RUN_SERVICE_TARGETS_JSON="
+            echo "ACCOUNT_GROUP=${account_group}"
+            echo "RUNTIME_TARGET_JSON=${runtime_target}"
+            echo "IBKR_DRY_RUN_ONLY=true"
+            echo "IBKR_MARKET=HK"
+            echo "IBKR_MARKET_CALENDAR=XHKG"
+            echo "IBKR_MARKET_CURRENCY=HKD"
+            echo "IBKR_MARKET_DATA_SYMBOL_SUFFIX=.HK"
+            echo "IBKR_MARKET_EXCHANGE=SEHK"
+            echo "IBKR_MARKET_TIMEZONE=Asia/Hong_Kong"
+          } >> "$GITHUB_ENV"
+
+          if [ -n "${region}" ]; then
+            echo "CLOUD_RUN_REGION=${region}" >> "$GITHUB_ENV"
+          fi
+          if [ -n "${INPUT_ACCOUNT_GROUP_CONFIG_SECRET_NAME:-}" ]; then
+            echo "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=${INPUT_ACCOUNT_GROUP_CONFIG_SECRET_NAME}" >> "$GITHUB_ENV"
+          fi
+          if [ "${INPUT_DEPLOY_IMAGE:-true}" != "true" ]; then
+            echo "CLOUD_RUN_ENV_SYNC_WAIT_FOR_COMMIT=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Set up Python for runtime target admission
+        if: steps.config.outputs.enabled == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        if: steps.config.outputs.enabled == 'true'
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        if: steps.config.outputs.enabled == 'true'
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          version: ">= 416.0.0"
+
+      - name: Fetch opt-in immutable recovery state ledger
+        if: steps.config.outputs.enabled == 'true' && env.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_URI != ''
+        env:
+          RECOVERY_STATE_LEDGER_URI: ${{ env.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_URI }}
+        run: |
+          set -euo pipefail
+          case "${RECOVERY_STATE_LEDGER_URI}" in
+            gs://qsl-reconciliation-recovery-private-ibkr/reconciliation-recovery/ibkr/state/*.json) ;;
+            *)
+              echo "Recovery state ledger URI must use the dedicated private immutable prefix." >&2
+              exit 1
+              ;;
+          esac
+          recovery_state_ledger_path="${RUNNER_TEMP}/ibkr-reconciliation-recovery-state-ledger.json"
+          gcloud storage cp --quiet "${RECOVERY_STATE_LEDGER_URI}" "${recovery_state_ledger_path}" >/dev/null
+          chmod 600 "${recovery_state_ledger_path}"
+          echo "IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PATH=${recovery_state_ledger_path}" >> "$GITHUB_ENV"
+
+      - name: Install strategy status dependencies
+        if: steps.config.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip uv
+          uv sync --frozen --no-dev
+      - name: Resolve admissible Cloud Run targets
+        id: strategy_requirements
+        if: steps.config.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          sync_plan_json="$(uv run --no-sync python scripts/build_cloud_run_env_sync_plan.py --json)"
+          export SYNC_PLAN_JSON="${sync_plan_json}"
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          plan = json.loads(os.environ["SYNC_PLAN_JSON"])
+          selected = os.environ.get("INPUT_CONFIGURED_SERVICE", "")
+          if os.environ.get("WORKFLOW_TARGET", "configured") == "configured":
+              if not selected:
+                  raise SystemExit("configured target requires exact configured_service matching one admitted inventory service_name")
+              if not re.fullmatch(r"[a-z][a-z0-9-]{0,62}", selected) or plan.get("mode") != "per_service":
+                  raise SystemExit("configured_service requires an exact private inventory service_name")
+              matches = [target for target in plan["targets"] if target.get("service_name") == selected]
+              if len(matches) != 1:
+                  raise SystemExit("configured_service must match exactly one admitted inventory target")
+              plan["targets"] = matches
+              # Reconciliation also reads inventory and legacy env; scope every source.
+              inventory = json.dumps({"targets": [{"service_name": selected}]})
+              with Path(os.environ["GITHUB_ENV"]).open("a") as handle:
+                  handle.write(f"CLOUD_RUN_SERVICE_TARGETS_JSON={inventory}\n")
+                  handle.write(f"CLOUD_RUN_SERVICE={selected}\nCLOUD_RUN_SERVICES={selected}\n")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as handle:
+              handle.write("sync_plan_json<<__SYNC_PLAN_JSON__\n")
+              handle.write(json.dumps(plan) + "\n__SYNC_PLAN_JSON__\n")
+          PY
+
+      - name: Validate env sync inputs
+        if: steps.config.outputs.env_sync_enabled == 'true'
+        env:
+          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
+        run: |
+          set -euo pipefail
+
+          required_vars=(
+            CLOUD_RUN_REGION
+          )
+
+          missing_vars=()
+          for var_name in "${required_vars[@]}"; do
+            if [ -z "${!var_name:-}" ]; then
+              missing_vars+=("${var_name}")
+            fi
+          done
+
+          if [ -z "${TELEGRAM_TOKEN_SECRET_NAME:-}" ] && [ -z "${TELEGRAM_TOKEN:-}" ]; then
+            missing_vars+=("TELEGRAM_TOKEN_SECRET_NAME or TELEGRAM_TOKEN")
+          fi
+
+          python - <<'PY'
+          import json
+          import os
+          plan = json.loads(os.environ["SYNC_PLAN_JSON"])
+          targets = plan.get("targets") or []
+          if not targets:
+              raise SystemExit("Cloud Run env sync did not resolve any targets")
+          for target in targets:
+              service_name = str(target.get("service_name") or "").strip()
+              if not service_name:
+                  raise SystemExit("Cloud Run sync target is missing service_name")
+              if not isinstance(target.get("env"), dict):
+                  raise SystemExit(f"Cloud Run sync target {service_name} is missing env")
+          PY
+
+          if [ "${#missing_vars[@]}" -gt 0 ]; then
+            echo "Cloud Run env sync is enabled, but these values are missing:" >&2
+            printf '  - %s\n' "${missing_vars[@]}" >&2
+            exit 1
+          fi
+
+      - name: Validate deploy inputs
+        if: steps.config.outputs.deploy_enabled == 'true'
+        run: |
+          set -euo pipefail
+
+          if [ -z "${CLOUD_RUN_REGION:-}" ]; then
+            echo "Cloud Run deploy is enabled, but CLOUD_RUN_REGION is missing." >&2
+            exit 1
+          fi
+
+          mapfile -t target_services < <(python - <<'PY'
+          import json
+          import os
+
+          raw_targets = os.environ.get("CLOUD_RUN_SERVICE_TARGETS_JSON", "").strip()
+          if raw_targets:
+              payload = json.loads(raw_targets)
+              entries = payload.get("targets") if isinstance(payload, dict) else payload
+              if not isinstance(entries, list):
+                  raise SystemExit("CLOUD_RUN_SERVICE_TARGETS_JSON must be a JSON array or an object with targets")
+              for entry in entries:
+                  if not isinstance(entry, dict):
+                      raise SystemExit("Each Cloud Run deploy target must be an object")
+                  service = (
+                      entry.get("service")
+                      or entry.get("service_name")
+                      or entry.get("cloud_run_service")
+                  )
+                  runtime_target = entry.get("runtime_target") or entry.get("runtime_target_json")
+                  if not service and isinstance(runtime_target, str):
+                      runtime_target = json.loads(runtime_target)
+                  if not service and isinstance(runtime_target, dict):
+                      service = runtime_target.get("service_name")
+                  service = str(service or "").strip()
+                  if service:
+                      print(service)
+              raise SystemExit(0)
+
+          raw_services = os.environ.get("CLOUD_RUN_SERVICES", "").strip() or os.environ.get("CLOUD_RUN_SERVICE", "").strip()
+          for chunk in raw_services.replace(";", ",").replace("\n", ",").split(","):
+              service = chunk.strip()
+              if service:
+                  print(service)
+          PY
+          )
+
+          if [ "${#target_services[@]}" -eq 0 ]; then
+            echo "Cloud Run deploy is enabled, but no services were found in CLOUD_RUN_SERVICE_TARGETS_JSON, CLOUD_RUN_SERVICES, or CLOUD_RUN_SERVICE." >&2
+            exit 1
+          fi
+
+      - name: Require configured scheduler migration before HK verify
+        if: steps.config.outputs.env_sync_enabled == 'true' && env.WORKFLOW_TARGET == 'hk-verify'
+        run: |
+          set -euo pipefail
+          scheduler_location="${CLOUD_SCHEDULER_LOCATION:-${CLOUD_RUN_REGION}}"
+          if gcloud scheduler jobs describe "interactive-brokers-monitor-dispatcher-scheduler" \
+            --project="${GCP_PROJECT_ID}" \
+            --location="${scheduler_location}" >/dev/null 2>&1; then
+            echo "HK verify scheduler migration requires the configured migration first." >&2
+            exit 1
+          fi
+
+      - name: Capture no-traffic deployment baseline
+        if: steps.config.outputs.deploy_enabled == 'true'
+        env:
+          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
+          DEPLOY_READBACK_DIR: ${{ runner.temp }}/cloud-run-no-traffic-baseline
+        run: |
+          set -euo pipefail
+          mkdir -p "${DEPLOY_READBACK_DIR}"
+          mapfile -t target_services < <(python - <<'PY'
+          import json
+          import os
+          plan = json.loads(os.environ["SYNC_PLAN_JSON"])
+          for target in plan["targets"]:
+              print(target["service_name"])
+          PY
+          )
+          if [ "${#target_services[@]}" -eq 0 ]; then
+            echo "Cloud Run deploy did not resolve any targets." >&2
+            exit 1
+          fi
+          for cloud_run_service in "${target_services[@]}"; do
+            python3 scripts/verify_cloud_run_no_traffic_deploy.py capture \
+              --project="${GCP_PROJECT_ID}" \
+              --region="${CLOUD_RUN_REGION}" \
+              --service="${cloud_run_service}" \
+              --scheduler-location="${CLOUD_SCHEDULER_LOCATION:-${CLOUD_RUN_REGION}}" \
+              --output="${DEPLOY_READBACK_DIR}/${cloud_run_service}.json"
+          done
+
+      - name: Verify deployed runtime target admission before traffic shift
+        if: steps.config.outputs.deploy_enabled == 'true'
+        env:
+          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
+        run: |
+          set -euo pipefail
+          uv run --no-sync python scripts/verify_deployed_runtime_target_admission.py \
+            --project="${GCP_PROJECT_ID}" \
+            --region="${CLOUD_RUN_REGION}"
+
+      - name: Build, push, and deploy Cloud Run image
+        id: deploy
+        if: steps.config.outputs.deploy_enabled == 'true'
+        env:
+          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t target_services < <(python - <<'PY'
+          import json
+          import os
+
+          raw_plan = os.environ.get("SYNC_PLAN_JSON", "").strip()
+          if raw_plan:
+              plan = json.loads(raw_plan)
+              for target in plan["targets"]:
+                  service = str(target.get("service_name") or "").strip()
+                  if service:
+                      print(service)
+              raise SystemExit(0)
+
+          raw_targets = os.environ.get("CLOUD_RUN_SERVICE_TARGETS_JSON", "").strip()
+          if raw_targets:
+              payload = json.loads(raw_targets)
+              entries = payload.get("targets") if isinstance(payload, dict) else payload
+              for entry in entries:
+                  service = (
+                      entry.get("service")
+                      or entry.get("service_name")
+                      or entry.get("cloud_run_service")
+                  )
+                  runtime_target = entry.get("runtime_target") or entry.get("runtime_target_json")
+                  if not service and isinstance(runtime_target, str):
+                      runtime_target = json.loads(runtime_target)
+                  if not service and isinstance(runtime_target, dict):
+                      service = runtime_target.get("service_name")
+                  service = str(service or "").strip()
+                  if service:
+                      print(service)
+              raise SystemExit(0)
+
+          raw_services = os.environ.get("CLOUD_RUN_SERVICES", "").strip() or os.environ.get("CLOUD_RUN_SERVICE", "").strip()
+          for chunk in raw_services.replace(";", ",").replace("\n", ",").split(","):
+              service = chunk.strip()
+              if service:
+                  print(service)
+          PY
+          )
+          if [ "${#target_services[@]}" -eq 0 ]; then
+            echo "Cloud Run deploy did not resolve any targets." >&2
+            exit 1
+          fi
+
+          artifact_registry_hostname="${GCP_ARTIFACT_REGISTRY_HOSTNAME:-${CLOUD_RUN_REGION}-docker.pkg.dev}"
+          image_repo="${artifact_registry_hostname}/${GCP_PROJECT_ID}/${GCP_ARTIFACT_REGISTRY_REPOSITORY}/interactivebrokersplatform/cloud-run"
+          image="${image_repo}:${SOURCE_COMMIT}-${GITHUB_RUN_ID}"
+
+          gcloud auth configure-docker "${artifact_registry_hostname}" --quiet
+          docker build --pull -t "${image}" source
+          # RS-08 guard: block the deploy if the image's installed UES revision differs from
+          # strategy_release / runtime-risk binding (live would reject every SOXL rebalance).
+          python3 scripts/verify_image_ues_release_binding.py --image "${image}" --lockfile source/uv.lock
+          docker push "${image}"
+          image_digest="$(gcloud artifacts docker images describe "${image}" --project="${GCP_PROJECT_ID}" --format='value(image_summary.digest)')"
+          if [[ ! "${image_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Artifact Registry did not return a valid image digest." >&2
+            exit 1
+          fi
+          immutable_image="${image_repo}@${image_digest}"
+          echo "image_digest=${image_digest}" >> "${GITHUB_OUTPUT}"
+
+          for cloud_run_service in "${target_services[@]}"; do
+            gcloud run deploy "${cloud_run_service}" \
+              --project="${GCP_PROJECT_ID}" \
+              --region="${CLOUD_RUN_REGION}" \
+              --platform=managed \
+              --image="${immutable_image}" \
+              --service-account="${GCP_RUNTIME_SERVICE_ACCOUNT}" \
+              --no-allow-unauthenticated \
+              --ingress=internal \
+              --max-instances=1 \
+              --concurrency=1 \
+              --memory=512Mi \
+              --cpu=1 \
+              --timeout=300s \
+              --network=default \
+              --subnet=default \
+              --vpc-egress=private-ranges-only \
+              --labels="managed-by=github-actions,commit-sha=${SOURCE_COMMIT},github-run-id=${GITHUB_RUN_ID}" \
+              --no-traffic \
+              --quiet
+          done
+
+      - name: Verify no-traffic deployment readback
+        if: steps.config.outputs.deploy_enabled == 'true'
+        env:
+          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
+          DEPLOY_READBACK_DIR: ${{ runner.temp }}/cloud-run-no-traffic-baseline
+          EXPECTED_IMAGE_DIGEST: ${{ steps.deploy.outputs.image_digest }}
+        run: |
+          set -euo pipefail
+          mapfile -t target_services < <(python - <<'PY'
+          import json
+          import os
+          plan = json.loads(os.environ["SYNC_PLAN_JSON"])
+          for target in plan["targets"]:
+              print(target["service_name"])
+          PY
+          )
+          for cloud_run_service in "${target_services[@]}"; do
+            python3 scripts/verify_cloud_run_no_traffic_deploy.py verify \
+              --project="${GCP_PROJECT_ID}" \
+              --region="${CLOUD_RUN_REGION}" \
+              --service="${cloud_run_service}" \
+              --scheduler-location="${CLOUD_SCHEDULER_LOCATION:-${CLOUD_RUN_REGION}}" \
+              --before="${DEPLOY_READBACK_DIR}/${cloud_run_service}.json" \
+              --expected-sha="${SOURCE_COMMIT}" \
+              --expected-image-digest="${EXPECTED_IMAGE_DIGEST}"
+          done
+
+      - name: Wait for Cloud Run deployment of current commit
+        if: steps.config.outputs.deploy_enabled == 'true' && steps.config.outputs.env_sync_enabled == 'true'
+        env:
+          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t target_services < <(python - <<'PY'
+          import json
+          import os
+          plan = json.loads(os.environ["SYNC_PLAN_JSON"])
+          for target in plan["targets"]:
+              print(target["service_name"])
+          PY
+          )
+          if [ "${#target_services[@]}" -eq 0 ]; then
+            echo "Cloud Run env sync did not resolve any targets." >&2
+            exit 1
+          fi
+
+          case "${CLOUD_RUN_ENV_SYNC_WAIT_FOR_COMMIT:-true}" in
+            false|False|FALSE|0|no|No|NO|off|Off|OFF)
+              echo "Skipping Cloud Run commit wait because CLOUD_RUN_ENV_SYNC_WAIT_FOR_COMMIT is disabled."
+              exit 0
+              ;;
+          esac
+
+          target_sha="${SOURCE_COMMIT}"
+
+          for cloud_run_service in "${target_services[@]}"; do
+            deadline=$((SECONDS + 1800))
+
+            while true; do
+              deployed_sha="$(gcloud run services describe "${cloud_run_service}" --region "${CLOUD_RUN_REGION}" --format='value(spec.template.metadata.labels.commit-sha)' 2>/dev/null || true)"
+              if [ -n "${deployed_sha}" ] && [ "${deployed_sha}" = "${target_sha}" ]; then
+                echo "Cloud Run service ${cloud_run_service} is on commit ${deployed_sha}."
+                break
+              fi
+
+              if [ "${SECONDS}" -ge "${deadline}" ]; then
+                echo "Timed out waiting for Cloud Run service ${cloud_run_service} to deploy commit ${target_sha}. Last seen commit: ${deployed_sha:-<none>}" >&2
+                exit 1
+              fi
+
+              echo "Waiting for Cloud Run service ${cloud_run_service} to deploy commit ${target_sha}. Last seen commit: ${deployed_sha:-<none>}" >&2
+              sleep 10
+            done
+          done
+
+      - name: Sync Cloud Run environment
+        if: steps.config.outputs.env_sync_enabled == 'true'
+        env:
+          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t target_services < <(python - <<'PY'
+          import json
+          import os
+          plan = json.loads(os.environ["SYNC_PLAN_JSON"])
+          for target in plan["targets"]:
+              print(target["service_name"])
+          PY
+          )
+          if [ "${#target_services[@]}" -eq 0 ]; then
+            echo "Cloud Run env sync did not resolve any targets." >&2
+            exit 1
+          fi
+
+          emit_target_env_pairs() {
+            local target_index="$1"
+            SYNC_TARGET_INDEX="${target_index}" python - <<'PY'
+          import json
+          import os
+          plan = json.loads(os.environ["SYNC_PLAN_JSON"])
+          target = plan["targets"][int(os.environ["SYNC_TARGET_INDEX"])]
+          for key, value in sorted(target["env"].items()):
+              print(f"{key}={value}")
+          PY
+          }
+
+          emit_target_remove_env_vars() {
+            local target_index="$1"
+            SYNC_TARGET_INDEX="${target_index}" python - <<'PY'
+          import json
+          import os
+          plan = json.loads(os.environ["SYNC_PLAN_JSON"])
+          target = plan["targets"][int(os.environ["SYNC_TARGET_INDEX"])]
+          for key in sorted(target.get("remove_env_vars") or []):
+              print(key)
+          PY
+          }
+
+          emit_target_label_pairs() {
+            local target_index="$1"
+            SYNC_TARGET_INDEX="${target_index}" python - <<'PY'
+          import json
+          import os
+          plan = json.loads(os.environ["SYNC_PLAN_JSON"])
+          target = plan["targets"][int(os.environ["SYNC_TARGET_INDEX"])]
+          strategy_profile = str(target.get("strategy_profile") or "").strip()
+          if strategy_profile:
+              print(f"strategy={strategy_profile}")
+          PY
+          }
+
+          join_by_delimiter() {
+            local delimiter="$1"
+            shift
+            local output=""
+            local item
+            for item in "$@"; do
+              if [ -z "${output}" ]; then
+                output="${item}"
+              else
+                output="${output}${delimiter}${item}"
+              fi
+            done
+            printf '%s' "${output}"
+          }
+
+          shared_env_pairs=()
+          shared_secret_pairs=()
+
+          shared_remove_env_vars=(
+            "IB_GATEWAY_HOST"
+            "IB_GATEWAY_PORT"
+            "TELEGRAM_CHAT_ID"
+            "IB_CLIENT_ID"
+            "IB_GATEWAY_INSTANCE_NAME"
+            "IB_GATEWAY_MODE"
+            "CRISIS_ALERT_GOOGLE_VOICE_TO"
+            "CRISIS_ALERT_GOOGLE_VOICE_GATEWAY"
+            "CRISIS_ALERT_GOOGLE_VOICE_GMAIL_USER"
+            "CRISIS_ALERT_GOOGLE_VOICE_GMAIL_APP_PASSWORD"
+            "CRISIS_ALERT_GOOGLE_VOICE_RECIPIENTS"
+            "CRISIS_ALERT_GOOGLE_VOICE_SENDER_EMAIL"
+            "CRISIS_ALERT_GOOGLE_VOICE_SENDER_PASSWORD"
+            "CRISIS_ALERT_GOOGLE_VOICE_SMTP_HOST"
+            "CRISIS_ALERT_GOOGLE_VOICE_SMTP_PORT"
+            "CRISIS_ALERT_GOOGLE_VOICE_SMTP_SECURITY"
+            "CRISIS_ALERT_SMTP_FROM"
+            "CRISIS_ALERT_SMTP_HOST"
+            "CRISIS_ALERT_SMTP_PORT"
+            "CRISIS_ALERT_SMTP_USERNAME"
+            "CRISIS_ALERT_SMTP_PASSWORD"
+            "CRISIS_ALERT_SMTP_STARTTLS"
+            "CRISIS_ALERT_SMTP_SSL"
+            "CRISIS_ALERT_CHANNELS"
+            "CRISIS_ALERT_EMAIL_RECIPIENTS"
+            "CRISIS_ALERT_EMAIL_SENDER_EMAIL"
+            "CRISIS_ALERT_EMAIL_SENDER_PASSWORD"
+            "CRISIS_ALERT_EMAIL_SMTP_HOST"
+            "CRISIS_ALERT_EMAIL_SMTP_PORT"
+            "CRISIS_ALERT_EMAIL_SMTP_SECURITY"
+            "CRISIS_ALERT_SMS_RECIPIENTS"
+            "CRISIS_ALERT_SMS_PROVIDER"
+            "CRISIS_ALERT_SMS_ACCOUNT_ID"
+            "CRISIS_ALERT_SMS_AUTH_TOKEN"
+            "CRISIS_ALERT_SMS_SENDER"
+            "CRISIS_ALERT_SMS_MESSAGING_SERVICE_ID"
+            "CRISIS_ALERT_SMS_API_BASE_URL"
+            "CRISIS_ALERT_SMS_BODY_MAX_CHARS"
+            "CRISIS_ALERT_PUSH_RECIPIENTS"
+            "CRISIS_ALERT_PUSH_PROVIDER"
+            "CRISIS_ALERT_PUSH_APP_TOKEN"
+            "CRISIS_ALERT_PUSH_ACCESS_TOKEN"
+            "CRISIS_ALERT_PUSH_API_BASE_URL"
+            "CRISIS_ALERT_PUSH_DEVICE"
+            "CRISIS_ALERT_PUSH_PRIORITY"
+            "CRISIS_ALERT_PUSH_TAGS"
+            "CRISIS_ALERT_PUSH_BODY_MAX_CHARS"
+            "CRISIS_ALERT_TELEGRAM_CHAT_IDS"
+            "CRISIS_ALERT_TELEGRAM_BOT_TOKEN"
+            "CRISIS_ALERT_TELEGRAM_API_BASE_URL"
+            "CRISIS_ALERT_TELEGRAM_PARSE_MODE"
+            "CRISIS_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW"
+            "CRISIS_ALERT_TELEGRAM_BODY_MAX_CHARS"
+          )
+          shared_remove_secret_vars=(
+            "CRISIS_ALERT_SMTP_PASSWORD"
+            "CRISIS_ALERT_GOOGLE_VOICE_GMAIL_APP_PASSWORD"
+            "CRISIS_ALERT_GOOGLE_VOICE_SENDER_PASSWORD"
+            "CRISIS_ALERT_EMAIL_SENDER_PASSWORD"
+            "CRISIS_ALERT_SMS_AUTH_TOKEN"
+            "CRISIS_ALERT_PUSH_APP_TOKEN"
+            "CRISIS_ALERT_PUSH_ACCESS_TOKEN"
+            "CRISIS_ALERT_TELEGRAM_BOT_TOKEN"
+          )
+
+          if [ -n "${TELEGRAM_TOKEN_SECRET_NAME:-}" ]; then
+            shared_secret_pairs+=("TELEGRAM_TOKEN=${TELEGRAM_TOKEN_SECRET_NAME}:latest")
+          else
+            shared_env_pairs+=("TELEGRAM_TOKEN=${TELEGRAM_TOKEN}")
+            shared_remove_secret_vars+=("TELEGRAM_TOKEN")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD_SECRET_NAME:-}" ]; then
+            shared_secret_pairs+=("STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD=${STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD_SECRET_NAME}:latest")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD")
+          elif [ -n "${STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD=${STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD}")
+            shared_remove_secret_vars+=("STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD")
+            shared_remove_secret_vars+=("STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN_SECRET_NAME:-}" ]; then
+            shared_secret_pairs+=("STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN=${STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN_SECRET_NAME}:latest")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN")
+          elif [ -n "${STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN=${STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN}")
+            shared_remove_secret_vars+=("STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN")
+            shared_remove_secret_vars+=("STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN_SECRET_NAME:-}" ]; then
+            shared_secret_pairs+=("STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN=${STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN_SECRET_NAME}:latest")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN")
+          elif [ -n "${STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN=${STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN}")
+            shared_remove_secret_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN")
+            shared_remove_secret_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_APP_TOKEN")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN_SECRET_NAME:-}" ]; then
+            shared_secret_pairs+=("STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN=${STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN_SECRET_NAME}:latest")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN")
+          elif [ -n "${STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN=${STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN}")
+            shared_remove_secret_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN")
+            shared_remove_secret_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME:-}" ]; then
+            shared_secret_pairs+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN=${STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME}:latest")
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN")
+          elif [ -n "${STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN=${STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN}")
+            shared_remove_secret_vars+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN")
+            shared_remove_secret_vars+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_CHANNELS:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_CHANNELS=${STRATEGY_PLUGIN_ALERT_CHANNELS}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_CHANNELS")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_EMAIL_RECIPIENTS:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_EMAIL_RECIPIENTS=${STRATEGY_PLUGIN_ALERT_EMAIL_RECIPIENTS}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_EMAIL_RECIPIENTS")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_EMAIL:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_EMAIL=${STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_EMAIL}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_EMAIL")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_HOST:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_HOST=${STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_HOST}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_HOST")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_PORT:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_PORT=${STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_PORT}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_PORT")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_SECURITY:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_SECURITY=${STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_SECURITY}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_EMAIL_SMTP_SECURITY")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_SMS_RECIPIENTS:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_SMS_RECIPIENTS=${STRATEGY_PLUGIN_ALERT_SMS_RECIPIENTS}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_SMS_RECIPIENTS")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_SMS_PROVIDER:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_SMS_PROVIDER=${STRATEGY_PLUGIN_ALERT_SMS_PROVIDER}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_SMS_PROVIDER")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_SMS_ACCOUNT_ID:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_SMS_ACCOUNT_ID=${STRATEGY_PLUGIN_ALERT_SMS_ACCOUNT_ID}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_SMS_ACCOUNT_ID")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_SMS_SENDER:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_SMS_SENDER=${STRATEGY_PLUGIN_ALERT_SMS_SENDER}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_SMS_SENDER")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_SMS_MESSAGING_SERVICE_ID:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_SMS_MESSAGING_SERVICE_ID=${STRATEGY_PLUGIN_ALERT_SMS_MESSAGING_SERVICE_ID}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_SMS_MESSAGING_SERVICE_ID")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_SMS_API_BASE_URL:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_SMS_API_BASE_URL=${STRATEGY_PLUGIN_ALERT_SMS_API_BASE_URL}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_SMS_API_BASE_URL")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_SMS_BODY_MAX_CHARS:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_SMS_BODY_MAX_CHARS=${STRATEGY_PLUGIN_ALERT_SMS_BODY_MAX_CHARS}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_SMS_BODY_MAX_CHARS")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_PUSH_RECIPIENTS:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_PUSH_RECIPIENTS=${STRATEGY_PLUGIN_ALERT_PUSH_RECIPIENTS}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_RECIPIENTS")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_PUSH_PROVIDER:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_PUSH_PROVIDER=${STRATEGY_PLUGIN_ALERT_PUSH_PROVIDER}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_PROVIDER")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_PUSH_API_BASE_URL:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_PUSH_API_BASE_URL=${STRATEGY_PLUGIN_ALERT_PUSH_API_BASE_URL}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_API_BASE_URL")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_PUSH_DEVICE:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_PUSH_DEVICE=${STRATEGY_PLUGIN_ALERT_PUSH_DEVICE}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_DEVICE")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_PUSH_PRIORITY:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_PUSH_PRIORITY=${STRATEGY_PLUGIN_ALERT_PUSH_PRIORITY}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_PRIORITY")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_PUSH_TAGS:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_PUSH_TAGS=${STRATEGY_PLUGIN_ALERT_PUSH_TAGS}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_TAGS")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_PUSH_BODY_MAX_CHARS:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_PUSH_BODY_MAX_CHARS=${STRATEGY_PLUGIN_ALERT_PUSH_BODY_MAX_CHARS}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_PUSH_BODY_MAX_CHARS")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS=${STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_TELEGRAM_API_BASE_URL:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_API_BASE_URL=${STRATEGY_PLUGIN_ALERT_TELEGRAM_API_BASE_URL}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_API_BASE_URL")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_TELEGRAM_PARSE_MODE:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_PARSE_MODE=${STRATEGY_PLUGIN_ALERT_TELEGRAM_PARSE_MODE}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_PARSE_MODE")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW=${STRATEGY_PLUGIN_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_DISABLE_WEB_PAGE_PREVIEW")
+          fi
+
+          if [ -n "${STRATEGY_PLUGIN_ALERT_TELEGRAM_BODY_MAX_CHARS:-}" ]; then
+            shared_env_pairs+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_BODY_MAX_CHARS=${STRATEGY_PLUGIN_ALERT_TELEGRAM_BODY_MAX_CHARS}")
+          else
+            shared_remove_env_vars+=("STRATEGY_PLUGIN_ALERT_TELEGRAM_BODY_MAX_CHARS")
+          fi
+
+          for target_index in "${!target_services[@]}"; do
+            cloud_run_service="${target_services[${target_index}]}"
+            mapfile -t target_env_pairs < <(emit_target_env_pairs "${target_index}")
+            mapfile -t target_remove_env_vars < <(emit_target_remove_env_vars "${target_index}")
+            mapfile -t target_label_pairs < <(emit_target_label_pairs "${target_index}")
+            env_pairs=("${target_env_pairs[@]}" "${shared_env_pairs[@]}")
+            remove_env_vars=("${target_remove_env_vars[@]}" "${shared_remove_env_vars[@]}")
+            secret_pairs=("${shared_secret_pairs[@]}")
+            remove_secret_vars=("${shared_remove_secret_vars[@]}")
+
+            gcloud_args=(
+              run services update "${cloud_run_service}"
+              --region "${CLOUD_RUN_REGION}"
+              --concurrency 1
+              --max-instances 1
+              --no-traffic
+              --remove-env-vars "$(IFS=,; echo "${remove_env_vars[*]}")"
+              --update-env-vars "^|^$(join_by_delimiter "|" "${env_pairs[@]}")"
+            )
+
+            if [ "${#remove_secret_vars[@]}" -gt 0 ]; then
+              gcloud_args+=(--remove-secrets "$(IFS=,; echo "${remove_secret_vars[*]}")")
+            fi
+
+            if [ "${#secret_pairs[@]}" -gt 0 ]; then
+              gcloud_args+=(--update-secrets "$(IFS=,; echo "${secret_pairs[*]}")")
+            fi
+
+            if [ "${#target_label_pairs[@]}" -gt 0 ]; then
+              gcloud_args+=(--update-labels "$(IFS=,; echo "${target_label_pairs[*]}")")
+            fi
+
+            gcloud "${gcloud_args[@]}"
+          done
+
+      - name: Reconcile Cloud Run traffic
+        if: steps.config.outputs.traffic_shift_enabled == 'true'
+        env:
+          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
+        run: |
+          set -euo pipefail
+          python3 scripts/reconcile_cloud_runtime.py \
+            --platform=ibkr \
+            --project="${GCP_PROJECT_ID}" \
+            --region="${CLOUD_RUN_REGION}" \
+            --ensure-latest-traffic
+
+      - name: Verify strategy plugin mounts
+        if: steps.config.outputs.env_sync_enabled == 'true'
+        env:
+          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
+          STRATEGY_PLUGIN_MOUNT_ENV_NAMES: IBKR_STRATEGY_PLUGIN_MOUNTS_JSON
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_cloud_run_strategy_plugin_mounts.py
+
+      - name: Sync Cloud Scheduler schedule
+        if: steps.config.outputs.scheduler_sync_enabled == 'true'
+        env:
+          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
+        run: |
+          set -euo pipefail
+
+          scheduler_location="${CLOUD_SCHEDULER_LOCATION:-${CLOUD_RUN_REGION}}"
+          if [ -z "${scheduler_location}" ]; then
+            echo "Cloud Scheduler schedule sync requires CLOUD_RUN_REGION or CLOUD_SCHEDULER_LOCATION." >&2
+            exit 1
+          fi
+          if [ -z "${GCP_SCHEDULER_SERVICE_ACCOUNT:-}" ]; then
+            echo "Cloud Scheduler schedule sync requires GCP_SCHEDULER_SERVICE_ACCOUNT." >&2
+            exit 1
+          fi
+
+          mapfile -t scheduler_updates < <(python - <<'PY'
+          import json
+          import os
+
+          def configured_time(name: str, default: str) -> str:
+              return os.environ.get(name, "").strip() or default
+
+          plan = json.loads(os.environ["SYNC_PLAN_JSON"])
+          for target in plan["targets"]:
+              service_name = str(target["service_name"]).strip()
+              env = target.get("env") or {}
+              scheduler = target.get("scheduler") or {}
+              timezone = str(scheduler.get("timezone") or env.get("IBKR_MARKET_TIMEZONE") or "").strip()
+              market = str(env.get("IBKR_MARKET") or "").strip().upper()
+              if not timezone:
+                  timezone = "Asia/Hong_Kong" if market == "HK" else "America/New_York"
+              print(
+                  "\t".join(
+                      [
+                          service_name,
+                          timezone,
+                          str(scheduler.get("main_time") or configured_time("CLOUD_SCHEDULER_MAIN_TIME", "45 15 * * 1-5")),
+                          str(scheduler.get("probe_time") or configured_time("CLOUD_SCHEDULER_PROBE_TIME", "35 9,15 * * 1-5")),
+                          str(scheduler.get("precheck_time") or configured_time("CLOUD_SCHEDULER_PRECHECK_TIME", "45 9 * * 1-5")),
+                          str(bool(target.get("standard_execution_enabled", False))).lower(),
+                          str(bool(target.get("drill_precheck_enabled", False))).lower(),
+                          str(scheduler.get("attempt_deadline") or ""),
+                      ]
+                  )
+              )
+          PY
+          )
+
+          for update in "${scheduler_updates[@]}"; do
+            IFS=$'\t' read -r cloud_run_service market_timezone main_time warmup_time precheck_time standard_execution_enabled drill_precheck_enabled main_attempt_deadline <<< "${update}"
+            if [ -z "${cloud_run_service}" ] || [ -z "${market_timezone}" ]; then
+              continue
+            fi
+
+            service_url="$(gcloud run services describe "${cloud_run_service}" \
+              --project="${GCP_PROJECT_ID}" \
+              --region="${CLOUD_RUN_REGION}" \
+              --format='value(status.url)' 2>/dev/null || true)"
+            if [ -z "${service_url}" ]; then
+              echo "Unable to resolve Cloud Run service URL for ${cloud_run_service}; cannot sync scheduler URI." >&2
+              exit 1
+            fi
+            gcloud run services add-iam-policy-binding "${cloud_run_service}" \
+              --project="${GCP_PROJECT_ID}" \
+              --region="${CLOUD_RUN_REGION}" \
+              --member="serviceAccount:${GCP_SCHEDULER_SERVICE_ACCOUNT}" \
+              --role="roles/run.invoker" \
+              --quiet
+            gcloud run services add-iam-policy-binding "${cloud_run_service}" \
+              --project="${GCP_PROJECT_ID}" \
+              --region="${CLOUD_RUN_REGION}" \
+              --member="serviceAccount:${GCP_RUNTIME_SERVICE_ACCOUNT}" \
+              --role="roles/run.invoker" \
+              --quiet
+
+            scheduler_job_candidates=()
+            if [[ "${cloud_run_service}" == *-service ]]; then
+              scheduler_job_candidates+=("${cloud_run_service%-service}-scheduler")
+            fi
+            scheduler_job_candidates+=("${cloud_run_service}-scheduler")
+
+            job_name=""
+            current_schedule=""
+            job_exists="false"
+            for candidate_job in "${scheduler_job_candidates[@]}"; do
+              current_schedule="$(gcloud scheduler jobs describe "${candidate_job}" \
+                --project="${GCP_PROJECT_ID}" \
+                --location="${scheduler_location}" \
+                --format='value(schedule)' 2>/dev/null || true)"
+              if [ -n "${current_schedule}" ]; then
+                job_name="${candidate_job}"
+                job_exists="true"
+                break
+              fi
+            done
+
+            if [ -z "${current_schedule}" ]; then
+              job_name="${scheduler_job_candidates[0]}"
+              current_schedule="0 0 * * *"
+            fi
+
+            desired_schedule="$(CURRENT_SCHEDULE="${current_schedule}" SCHEDULE_TIME="${main_time}" python - <<'PY'
+          import os
+
+          current_fields = os.environ["CURRENT_SCHEDULE"].split()
+          time_fields = os.environ["SCHEDULE_TIME"].split()
+          if len(current_fields) != 5:
+              raise SystemExit(f"Cloud Scheduler schedule must have 5 fields: {os.environ['CURRENT_SCHEDULE']!r}")
+          if len(time_fields) == 5:
+              print(" ".join(time_fields))
+          elif len(time_fields) == 2:
+              print(" ".join([*time_fields, *current_fields[2:]]))
+          else:
+              raise SystemExit(
+                  f"Cloud Scheduler override must have 2 time fields or 5 cron fields: {os.environ['SCHEDULE_TIME']!r}"
+              )
+          PY
+            )"
+
+            desired_warmup_schedule="$(CURRENT_SCHEDULE="${desired_schedule}" SCHEDULE_TIME="${warmup_time}" python - <<'PY'
+          import os
+
+          current_fields = os.environ["CURRENT_SCHEDULE"].split()
+          time_fields = os.environ["SCHEDULE_TIME"].split()
+          if len(current_fields) != 5:
+              raise SystemExit(f"Cloud Scheduler schedule must have 5 fields: {os.environ['CURRENT_SCHEDULE']!r}")
+          if len(time_fields) == 5:
+              print(" ".join(time_fields))
+          elif len(time_fields) == 2:
+              print(" ".join([*time_fields, *current_fields[2:]]))
+          else:
+              raise SystemExit(
+                  f"Cloud Scheduler override must have 2 time fields or 5 cron fields: {os.environ['SCHEDULE_TIME']!r}"
+              )
+          PY
+            )"
+
+            desired_precheck_schedule="$(CURRENT_SCHEDULE="${desired_schedule}" SCHEDULE_TIME="${precheck_time}" python - <<'PY'
+          import os
+
+          current_fields = os.environ["CURRENT_SCHEDULE"].split()
+          time_fields = os.environ["SCHEDULE_TIME"].split()
+          if len(current_fields) != 5:
+              raise SystemExit(f"Cloud Scheduler schedule must have 5 fields: {os.environ['CURRENT_SCHEDULE']!r}")
+          if len(time_fields) == 5:
+              print(" ".join(time_fields))
+          elif len(time_fields) == 2:
+              print(" ".join([*time_fields, *current_fields[2:]]))
+          else:
+              raise SystemExit(
+                  f"Cloud Scheduler override must have 2 time fields or 5 cron fields: {os.environ['SCHEDULE_TIME']!r}"
+              )
+          PY
+            )"
+
+            scheduler_uri="${service_url}/run"
+            main_attempt_deadline_args=()
+            if [ -n "${main_attempt_deadline}" ]; then
+              main_attempt_deadline_args+=(--attempt-deadline="${main_attempt_deadline}")
+            fi
+            if [ "${job_exists}" = "true" ]; then
+              echo "Updating Cloud Scheduler job ${job_name} schedule to ${desired_schedule}, timezone to ${market_timezone}, and URI to ${scheduler_uri}."
+              gcloud scheduler jobs update http "${job_name}" \
+                --project="${GCP_PROJECT_ID}" \
+                --location="${scheduler_location}" \
+                --uri="${scheduler_uri}" \
+                --schedule="${desired_schedule}" \
+                --time-zone="${market_timezone}" \
+                --http-method=POST \
+                --oidc-service-account-email="${GCP_SCHEDULER_SERVICE_ACCOUNT}" \
+                --oidc-token-audience="${service_url}" \
+                "${main_attempt_deadline_args[@]}" \
+                --quiet
+            else
+              echo "Creating Cloud Scheduler job ${job_name} schedule ${desired_schedule}, timezone ${market_timezone}, and URI ${scheduler_uri}."
+              gcloud scheduler jobs create http "${job_name}" \
+                --project="${GCP_PROJECT_ID}" \
+                --location="${scheduler_location}" \
+                --uri="${scheduler_uri}" \
+                --schedule="${desired_schedule}" \
+                --time-zone="${market_timezone}" \
+                --http-method=POST \
+                --oidc-service-account-email="${GCP_SCHEDULER_SERVICE_ACCOUNT}" \
+                --oidc-token-audience="${service_url}" \
+                "${main_attempt_deadline_args[@]}" \
+                --quiet
+            fi
+
+            warmup_job_name="${cloud_run_service%-service}-warmup-scheduler"
+            warmup_uri="${service_url}/health"
+            if gcloud scheduler jobs describe "${warmup_job_name}" \
+              --project="${GCP_PROJECT_ID}" \
+              --location="${scheduler_location}" >/dev/null 2>&1; then
+              echo "Updating Cloud Scheduler warmup ${warmup_job_name} to ${desired_warmup_schedule}."
+              gcloud scheduler jobs update http "${warmup_job_name}" \
+                --project="${GCP_PROJECT_ID}" \
+                --location="${scheduler_location}" \
+                --uri="${warmup_uri}" \
+                --schedule="${desired_warmup_schedule}" \
+                --time-zone="${market_timezone}" \
+                --http-method=GET \
+                --oidc-service-account-email="${GCP_SCHEDULER_SERVICE_ACCOUNT}" \
+                --oidc-token-audience="${service_url}" \
+                --attempt-deadline=60s \
+                --max-retry-attempts=2 \
+                --min-backoff=15s \
+                --max-backoff=60s \
+                --max-doublings=2 \
+                --quiet
+            else
+              echo "Creating Cloud Scheduler warmup ${warmup_job_name} at ${desired_warmup_schedule}."
+              gcloud scheduler jobs create http "${warmup_job_name}" \
+                --project="${GCP_PROJECT_ID}" \
+                --location="${scheduler_location}" \
+                --uri="${warmup_uri}" \
+                --schedule="${desired_warmup_schedule}" \
+                --time-zone="${market_timezone}" \
+                --http-method=GET \
+                --oidc-service-account-email="${GCP_SCHEDULER_SERVICE_ACCOUNT}" \
+                --oidc-token-audience="${service_url}" \
+                --attempt-deadline=60s \
+                --max-retry-attempts=2 \
+                --min-backoff=15s \
+                --max-backoff=60s \
+                --max-doublings=2 \
+                --quiet
+            fi
+
+            precheck_job_name="${cloud_run_service%-service}-precheck-scheduler"
+            precheck_uri="${service_url}/dry-run"
+            precheck_retry_attempts=3
+            precheck_retry_duration=900s
+            if [ "${drill_precheck_enabled}" = "true" ]; then
+              precheck_retry_attempts=0
+              precheck_retry_duration=0s
+            fi
+            precheck_state="$(gcloud scheduler jobs describe "${precheck_job_name}" \
+              --project="${GCP_PROJECT_ID}" \
+              --location="${scheduler_location}" \
+              --format='value(state)' 2>/dev/null || true)"
+            if [ -n "${precheck_state}" ]; then
+              echo "Updating Cloud Scheduler precheck ${precheck_job_name} to ${desired_precheck_schedule}."
+              gcloud scheduler jobs update http "${precheck_job_name}" \
+                --project="${GCP_PROJECT_ID}" \
+                --location="${scheduler_location}" \
+                --uri="${precheck_uri}" \
+                --schedule="${desired_precheck_schedule}" \
+                --time-zone="${market_timezone}" \
+                --http-method=POST \
+                --oidc-service-account-email="${GCP_SCHEDULER_SERVICE_ACCOUNT}" \
+                --oidc-token-audience="${service_url}" \
+                --attempt-deadline=180s \
+                --max-retry-attempts="${precheck_retry_attempts}" \
+                --min-backoff=120s \
+                --max-backoff=300s \
+                --max-retry-duration="${precheck_retry_duration}" \
+                --quiet
+            else
+              echo "Creating Cloud Scheduler precheck ${precheck_job_name} at ${desired_precheck_schedule}."
+              gcloud scheduler jobs create http "${precheck_job_name}" \
+                --project="${GCP_PROJECT_ID}" \
+                --location="${scheduler_location}" \
+                --uri="${precheck_uri}" \
+                --schedule="${desired_precheck_schedule}" \
+                --time-zone="${market_timezone}" \
+                --http-method=POST \
+                --oidc-service-account-email="${GCP_SCHEDULER_SERVICE_ACCOUNT}" \
+                --oidc-token-audience="${service_url}" \
+                --attempt-deadline=180s \
+                --max-retry-attempts="${precheck_retry_attempts}" \
+                --min-backoff=120s \
+                --max-backoff=300s \
+                --max-retry-duration="${precheck_retry_duration}" \
+                --quiet
+            fi
+            managed_scheduler_jobs=("${job_name}" "${warmup_job_name}" "${precheck_job_name}")
+            for managed_job_name in "${managed_scheduler_jobs[@]}"; do
+              managed_job_state="$(gcloud scheduler jobs describe "${managed_job_name}" \
+                --project="${GCP_PROJECT_ID}" \
+                --location="${scheduler_location}" \
+                --format='value(state)')"
+              job_enabled="${standard_execution_enabled}"
+              if [ "${managed_job_name}" = "${precheck_job_name}" ] && [ "${drill_precheck_enabled}" = "true" ]; then
+                job_enabled=true
+              fi
+              case "${job_enabled}" in
+                1|true|yes|on)
+                  if [ "${managed_job_state}" = "PAUSED" ]; then
+                    echo "Resuming approved Cloud Scheduler job ${managed_job_name}."
+                    gcloud scheduler jobs resume "${managed_job_name}" \
+                      --project="${GCP_PROJECT_ID}" \
+                      --location="${scheduler_location}" \
+                      --quiet
+                  fi
+                  desired_scheduler_state="ENABLED"
+                  ;;
+                *)
+                  if [ "${managed_job_state}" != "PAUSED" ]; then
+                    echo "Pausing Cloud Scheduler job ${managed_job_name} because it is not approved for this target."
+                    gcloud scheduler jobs pause "${managed_job_name}" \
+                      --project="${GCP_PROJECT_ID}" \
+                      --location="${scheduler_location}" \
+                      --quiet
+                  fi
+                  desired_scheduler_state="PAUSED"
+                  ;;
+              esac
+              managed_job_state_after="$(gcloud scheduler jobs describe "${managed_job_name}" \
+                --project="${GCP_PROJECT_ID}" \
+                --location="${scheduler_location}" \
+                --format='value(state)')"
+              if [ "${managed_job_state_after}" != "${desired_scheduler_state}" ]; then
+                echo "Scheduler state readback failed for ${managed_job_name}: expected ${desired_scheduler_state}, got ${managed_job_state_after:-<none>}." >&2
+                exit 1
+              fi
+            done
+          done
+
+          reconcile_args=(
+            --platform=ibkr
+            --project="${GCP_PROJECT_ID}"
+            --region="${CLOUD_RUN_REGION}"
+            --scheduler-location="${scheduler_location}"
+            --delete-legacy-schedulers
+          )
+          if [ "${WORKFLOW_TARGET:-configured}" != "configured" ] || [ -z "${INPUT_CONFIGURED_SERVICE:-}" ]; then
+            python3 scripts/reconcile_cloud_runtime.py "${reconcile_args[@]}"
+          fi
+
+          for update in "${scheduler_updates[@]}"; do
+            IFS=$'\t' read -r cloud_run_service _ <<< "${update}"
+            legacy_env_names="$(gcloud run services describe "${cloud_run_service}" \
+              --project="${GCP_PROJECT_ID}" \
+              --region="${CLOUD_RUN_REGION}" \
+              --format='value(spec.template.spec.containers[0].env[].name)')"
+            if ! printf '%s\n' "${legacy_env_names}" | tr ';' '\n' | grep -Fxq 'IBKR_MONITOR_DISPATCH_TARGETS_JSON'; then
+              continue
+            fi
+            echo "Removing retired monitor dispatcher configuration from ${cloud_run_service}."
+            gcloud run services update "${cloud_run_service}" \
+              --project="${GCP_PROJECT_ID}" \
+              --region="${CLOUD_RUN_REGION}" \
+              --remove-env-vars=IBKR_MONITOR_DISPATCH_TARGETS_JSON \
+              --quiet
+          done
+
+      - name: Prune old Cloud Run revisions
+        if: steps.config.outputs.deploy_enabled == 'true' && env.CLOUD_RUN_CLEANUP_ENABLED == 'true' && (env.WORKFLOW_TARGET != 'configured' || env.INPUT_CONFIGURED_SERVICE == '')
+        env:
+          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t target_services < <(python - <<'PY'
+          import json
+          import os
+
+          raw_plan = os.environ.get("SYNC_PLAN_JSON", "").strip()
+          if raw_plan:
+              plan = json.loads(raw_plan)
+              for target in plan["targets"]:
+                  print(target["service_name"])
+              raise SystemExit(0)
+
+          raw_targets = os.environ.get("CLOUD_RUN_SERVICE_TARGETS_JSON", "").strip()
+          if raw_targets:
+              payload = json.loads(raw_targets)
+              entries = payload.get("targets") if isinstance(payload, dict) else payload
+              for entry in entries:
+                  service = (
+                      entry.get("service")
+                      or entry.get("service_name")
+                      or entry.get("cloud_run_service")
+                  )
+                  runtime_target = entry.get("runtime_target") or entry.get("runtime_target_json")
+                  if not service and isinstance(runtime_target, str):
+                      runtime_target = json.loads(runtime_target)
+                  if not service and isinstance(runtime_target, dict):
+                      service = runtime_target.get("service_name")
+                  service = str(service or "").strip()
+                  if service:
+                      print(service)
+              raise SystemExit(0)
+
+          raw_services = os.environ.get("CLOUD_RUN_SERVICES", "").strip() or os.environ.get("CLOUD_RUN_SERVICE", "").strip()
+          for chunk in raw_services.replace(";", ",").replace("\n", ",").split(","):
+              service = chunk.strip()
+              if service:
+                  print(service)
+          PY
+          )
+
+          for cloud_run_service in "${target_services[@]}"; do
+            keep_revisions="$(
+              gcloud run services describe "${cloud_run_service}" \
+                --region "${CLOUD_RUN_REGION}" \
+                --format=json \
+              | python -c '
+          import json
+          import sys
+          service = json.load(sys.stdin)
+          revisions = {
+              item.get("revisionName")
+              for item in service.get("status", {}).get("traffic", [])
+              if item.get("revisionName") and int(item.get("percent") or 0) > 0
+          }
+          latest_ready = service.get("status", {}).get("latestReadyRevisionName")
+          if latest_ready:
+              revisions.add(latest_ready)
+          for revision in sorted(revisions):
+              print(revision)
+          '
+            )"
+
+            if [ -z "${keep_revisions}" ]; then
+              echo "No active Cloud Run revision found for ${cloud_run_service}; skipping revision prune." >&2
+              continue
+            fi
+
+            mapfile -t revisions_to_delete < <(
+              gcloud run revisions list \
+                --service "${cloud_run_service}" \
+                --region "${CLOUD_RUN_REGION}" \
+                --format='value(metadata.name)' \
+              | grep -Fvx -f <(printf '%s\n' "${keep_revisions}") || true
+            )
+
+            for revision in "${revisions_to_delete[@]}"; do
+              echo "Deleting old Cloud Run revision ${revision} for ${cloud_run_service}."
+              gcloud run revisions delete "${revision}" \
+                --region "${CLOUD_RUN_REGION}" \
+                --quiet 2>&1 || true
+            done
+          done
+
+      - name: Clean up old Cloud Run images
+        if: steps.config.outputs.deploy_enabled == 'true' && env.CLOUD_RUN_CLEANUP_ENABLED == 'true' && (env.WORKFLOW_TARGET != 'configured' || env.INPUT_CONFIGURED_SERVICE == '')
+        run: |
+          set -euo pipefail
+
+          artifact_registry_hostname="${GCP_ARTIFACT_REGISTRY_HOSTNAME:-${CLOUD_RUN_REGION}-docker.pkg.dev}"
+          image_repo="${artifact_registry_hostname}/${GCP_PROJECT_ID}/${GCP_ARTIFACT_REGISTRY_REPOSITORY}/interactivebrokersplatform/cloud-run"
+          old_digests="$(gcloud artifacts docker images list "${image_repo}" \
+            --project="${GCP_PROJECT_ID}" \
+            --include-tags \
+            --format=json \
+            | python -c 'import json,os,sys; keep=os.environ["SOURCE_COMMIT"]; rows=json.load(sys.stdin); print("\n".join(row["version"] for row in rows if not any(keep in tag for tag in (row.get("tags") or []))))')"
+
+          while IFS= read -r digest; do
+            if [ -z "${digest}" ]; then
+              continue
+            fi
+            gcloud artifacts docker images delete "${image_repo}@${digest}" \
+              --project="${GCP_PROJECT_ID}" \
+              --delete-tags \
+              --async \
+              --quiet
+          done <<< "${old_digests}"

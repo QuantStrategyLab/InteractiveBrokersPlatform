@@ -222,7 +222,9 @@ def test_workflow_static_safety_constraints():
 def test_existing_runtime_workflows_unchanged_reference():
     for name in (
         "execution-report-heartbeat.yml",
+        "execution-report-heartbeat-protected.yml",
         "runtime-guard.yml",
+        "runtime-guard-protected.yml",
         "runtime-target-lifecycle.yml",
     ):
         text = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
