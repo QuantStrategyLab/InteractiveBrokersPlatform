@@ -339,16 +339,90 @@ def _strategy_from_report(report: Mapping[str, Any]) -> str:
     )
 
 
+_NY_TZ_NAME = "America/New_York"
+_MARKET_CALENDAR = "XNYS"
+
+
+def _parse_timestamp(raw: str):
+    """Parse an ISO-8601 timestamp; naive values are treated as UTC."""
+
+    import datetime as _dt
+
+    text = raw.strip()
+    if not text:
+        return None
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    try:
+        value = _dt.datetime.fromisoformat(text)
+    except ValueError:
+        if len(text) >= 10 and text[4] == "-" and text[7] == "-":
+            try:
+                return _dt.datetime.combine(_dt.date.fromisoformat(text[:10]), _dt.time(12), tzinfo=_dt.timezone.utc)
+            except ValueError:
+                return None
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=_dt.timezone.utc)
+    return value
+
+
+def _previous_or_same_session(day):
+    """Latest XNYS session on or before ``day`` (weekday fallback without calendar)."""
+
+    import datetime as _dt
+
+    try:
+        import pandas_market_calendars as mcal
+
+        calendar = mcal.get_calendar(_MARKET_CALENDAR)
+        sessions = calendar.valid_days(start_date=day - _dt.timedelta(days=10), end_date=day)
+        if len(sessions):
+            return sessions[-1].date()
+    except Exception:  # noqa: BLE001 - calendar unavailable: weekday fallback
+        pass
+    while day.weekday() >= 5:
+        day -= _dt.timedelta(days=1)
+    return day
+
+
+def ny_trading_day(raw: str) -> str:
+    """NOTIFY-04: business day = New York (XNYS) trading day of a timestamp.
+
+    The timestamp is converted to America/New_York first (a post-close run at
+    20:30 ET is already the next calendar day in UTC / Asia/Shanghai), then
+    rolled back to the latest XNYS session on or before that NY date, so a
+    weekend/holiday refresh is attributed to the last trading day.
+    """
+
+    from zoneinfo import ZoneInfo
+
+    import datetime as _dt
+
+    text = raw.strip()
+    if len(text) == 10:
+        # Date-only values are already calendar days; do not shift through UTC.
+        try:
+            ny_date = _dt.date.fromisoformat(text)
+        except ValueError:
+            return ""
+        return _previous_or_same_session(ny_date).isoformat()
+    value = _parse_timestamp(text)
+    if value is None:
+        return ""
+    ny_date = value.astimezone(ZoneInfo(_NY_TZ_NAME)).date()
+    return _previous_or_same_session(ny_date).isoformat()
+
+
 def _business_day_from_report(report: Mapping[str, Any]) -> str:
     started = _as_str(report.get("started_at"))
-    if len(started) >= 10 and started[4] == "-" and started[7] == "-":
-        return started[:10]
+    day = ny_trading_day(started) if started else ""
+    if day:
+        return day
     summary = _as_mapping(report.get("summary")) or {}
     facts = _as_mapping(summary.get("account_facts")) or {}
     observed = _as_str(facts.get("observed_at"))
-    if len(observed) >= 10 and observed[4] == "-" and observed[7] == "-":
-        return observed[:10]
-    return ""
+    return ny_trading_day(observed) if observed else ""
 
 
 def _normalize_reports(payload: Mapping[str, Any] | Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
