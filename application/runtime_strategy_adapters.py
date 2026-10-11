@@ -75,7 +75,29 @@ def _frame_column(frame: pd.DataFrame, name: str) -> pd.Series | None:
 
 
 _YFINANCE_PRICE_BASIS: dict[str, str] = {}
-_IBKR_HISTORY_NOTE = "ADJUSTED_LAST (dividend_adjusted) unless QPK fell back to TRADES (split_only)"
+_IBKR_HISTORY_NOTE = "IBKR TRADES bars (split-adjusted); ADJUSTED_LAST suppressed for signals"
+
+
+class SplitOnlyHistoricalIB:
+    """Proxy around an ``ib`` client for signal-history requests only (RS-08 fix 3).
+
+    QPK requests ``ADJUSTED_LAST`` (dividend-adjusted) first and falls back to
+    ``TRADES`` when that returns nothing. Answering ``ADJUSTED_LAST`` with no bars
+    makes QPK use split-adjusted ``TRADES`` bars, matching the yfinance ``Close``
+    basis. Every other attribute is delegated unchanged; only historical-data
+    calls made through this proxy are affected.
+    """
+
+    def __init__(self, ib: Any) -> None:
+        self._ib = ib
+
+    def reqHistoricalData(self, *args: Any, **kwargs: Any) -> Any:  # noqa: N802 - ib_insync API name
+        if str(kwargs.get("whatToShow") or "").upper() == "ADJUSTED_LAST":
+            return []
+        return self._ib.reqHistoricalData(*args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._ib, name)
 
 
 def yfinance_price_basis(symbol: str) -> str:
@@ -86,12 +108,14 @@ def yfinance_price_basis(symbol: str) -> str:
 def _coerce_yfinance_candles(frame: pd.DataFrame, *, symbol: str | None = None) -> list[dict[str, Any]]:
     if frame is None or frame.empty:
         return []
-    close_series = _frame_column(frame, "Adj Close")
-    basis = signal_provenance.DIVIDEND_ADJUSTED
+    # RS-08 fix 3: signals use split-only prices (backtest standard §4.4, same
+    # basis as Schwab). With auto_adjust=False yfinance "Close" is split-adjusted
+    # only; "Adj Close" (dividend-adjusted) is used only if "Close" is absent.
+    close_series = _frame_column(frame, "Close")
+    basis = signal_provenance.SPLIT_ONLY
     if close_series is None:
-        close_series = _frame_column(frame, "Close")
-        # auto_adjust=False: yfinance "Close" is split-adjusted only.
-        basis = signal_provenance.SPLIT_ONLY
+        close_series = _frame_column(frame, "Adj Close")
+        basis = signal_provenance.DIVIDEND_ADJUSTED
     if close_series is not None and symbol:
         _YFINANCE_PRICE_BASIS[str(symbol).strip().upper()] = basis
     if close_series is None:
@@ -225,7 +249,7 @@ class IBKRRuntimeStrategyAdapters:
             )
 
         series = self.fetch_historical_price_series_fn(
-            ib,
+            SplitOnlyHistoricalIB(ib),
             symbol,
             duration=duration,
             bar_size=bar_size,
@@ -234,7 +258,7 @@ class IBKRRuntimeStrategyAdapters:
         signal_provenance.record(
             symbol,
             source="ibkr_historical",
-            price_basis=signal_provenance.UNKNOWN,
+            price_basis=signal_provenance.SPLIT_ONLY,
             dates=[point.as_of for point in points],
             note=_IBKR_HISTORY_NOTE,
         )
@@ -252,7 +276,7 @@ class IBKRRuntimeStrategyAdapters:
             return list(fallback_candles)
 
         candles = self.fetch_historical_price_candles_fn(
-            ib,
+            SplitOnlyHistoricalIB(ib),
             symbol,
             duration=duration,
             bar_size=bar_size,
@@ -269,7 +293,7 @@ class IBKRRuntimeStrategyAdapters:
         signal_provenance.record(
             symbol,
             source="ibkr_historical",
-            price_basis=signal_provenance.UNKNOWN,
+            price_basis=signal_provenance.SPLIT_ONLY,
             dates=candle_dates,
             note=_IBKR_HISTORY_NOTE,
         )
