@@ -8,6 +8,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -299,3 +301,137 @@ def test_apply_additional_account_facts_target_loads_slot(monkeypatch):
     assert os.environ["IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE"] == "live-u15998061"
     assert "U15998061" in os.environ["IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON"]
     assert os.environ["IBKR_ACCOUNT_FACTS_REPORT_PREFIX"] == "gs://extra-bucket-a/reports"
+
+
+def _synthetic_additional_targets():
+    return {
+        f"additional-{index}": {
+            "project_id": "synthetic-project",
+            "report_prefix": f"gs://synthetic-extra-{index}/reports",
+            "target_id": f"ibkr-synthetic-extra-{index}",
+            "service_name": f"synthetic-service-{index}",
+            "runtime_revision": f"synthetic-revision-{index}",
+            "account_scope": f"synthetic-scope-{index}",
+            "account_selector": [f"U0000001{index}"],
+            "deployment_selector": f"synthetic-deployment-{index}",
+        }
+        for index in range(1, 4)
+    }
+
+
+@pytest.mark.parametrize("target", ["additional-1", "additional-2", "additional-3"])
+@pytest.mark.parametrize("failure", ["missing", "malformed", "primary_collision"])
+def test_emit_cli_rejects_invalid_additional_config_before_loading_primary_report(
+    monkeypatch, tmp_path, capsys, target, failure
+):
+    output = tmp_path / "candidates.json"
+    primary = {
+        "IBKR_ACCOUNT_FACTS_TARGET": target,
+        "IBKR_ACCOUNT_FACTS_TARGET_ID": "ibkr-synthetic-primary",
+        "IBKR_ACCOUNT_FACTS_REPORT_PREFIX": "gs://synthetic-primary/reports",
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON": '["U00000001"]',
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE": "synthetic-primary-scope",
+        "IBKR_DIGEST_CANDIDATES_OUTPUT_PATH": str(output),
+        "IBKR_DIGEST_OPAQUE_ACCOUNT_UID": "acct_opaque_synthetic",
+    }
+    for key, value in primary.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("IBKR_DIGEST_TARGET_ID", raising=False)
+    monkeypatch.delenv("IBKR_DIGEST_ACCOUNT_FACTS_PATH", raising=False)
+    if failure == "missing":
+        monkeypatch.delenv("IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON", raising=False)
+    elif failure == "malformed":
+        monkeypatch.setenv("IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON", "{broken")
+    else:
+        config = _synthetic_additional_targets()
+        config[target]["account_selector"] = ["U00000001"]
+        monkeypatch.setenv("IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON", json.dumps(config))
+
+    loaded = []
+    monkeypatch.setattr(emit, "_load_local_report", lambda _env: loaded.append(True) or _report())
+
+    assert emit.main([]) == 2
+    assert loaded == []
+    assert not output.exists()
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "skipped",
+        "reason": "target_config_unavailable" if failure == "missing" else "target_config_invalid",
+    }
+
+
+@pytest.mark.parametrize("target", ["additional-1", "additional-2", "additional-3"])
+def test_emit_cli_valid_additional_config_uses_selected_slot(monkeypatch, tmp_path, target):
+    config = _synthetic_additional_targets()
+    selected = config[target]
+    output = tmp_path / "candidates.json"
+    for key, value in {
+        "IBKR_ACCOUNT_FACTS_TARGET": target,
+        "IBKR_ACCOUNT_FACTS_TARGET_ID": "ibkr-synthetic-primary",
+        "IBKR_ACCOUNT_FACTS_REPORT_PREFIX": "gs://synthetic-primary/reports",
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON": '["U00000001"]',
+        "IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON": json.dumps(config),
+        "IBKR_DIGEST_CANDIDATES_OUTPUT_PATH": str(output),
+        "IBKR_DIGEST_OPAQUE_ACCOUNT_UID": "acct_opaque_synthetic",
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("IBKR_DIGEST_TARGET_ID", raising=False)
+    monkeypatch.delenv("IBKR_DIGEST_ACCOUNT_HINT", raising=False)
+    monkeypatch.delenv("IBKR_DIGEST_ACCOUNT_SCOPE", raising=False)
+    monkeypatch.delenv("IBKR_DIGEST_ACCOUNT_FACTS_PATH", raising=False)
+
+    loaded = []
+
+    def load_report(env):
+        loaded.append((env["IBKR_ACCOUNT_FACTS_REPORT_PREFIX"], env["IBKR_ACCOUNT_FACTS_TARGET_ID"]))
+        return _report()
+
+    monkeypatch.setattr(emit, "_load_local_report", load_report)
+
+    assert emit.main([]) == 0
+    assert loaded == [(selected["report_prefix"], selected["target_id"])]
+    row = json.loads(output.read_text())["runs"][0]
+    assert row["target_id"] == selected["target_id"]
+    assert row["account_scope"] == selected["account_scope"]
+    assert row["account_hint"] == selected["account_selector"][0]
+
+
+@pytest.mark.parametrize(
+    "target", ["additional-4", "additonal-1", "primary-lvie", "disabled", "ingress-diagnostic"]
+)
+def test_emit_cli_rejects_unknown_or_nonproducer_target_before_loading_report(
+    monkeypatch, tmp_path, capsys, target
+):
+    output = tmp_path / "candidates.json"
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_TARGET", target)
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_TARGET_ID", "ibkr-synthetic-primary")
+    monkeypatch.setenv("IBKR_DIGEST_CANDIDATES_OUTPUT_PATH", str(output))
+    monkeypatch.setenv("IBKR_DIGEST_OPAQUE_ACCOUNT_UID", "acct_opaque_synthetic")
+    monkeypatch.delenv("IBKR_DIGEST_TARGET_ID", raising=False)
+    monkeypatch.delenv("IBKR_DIGEST_ACCOUNT_FACTS_PATH", raising=False)
+    loaded = []
+    monkeypatch.setattr(emit, "_load_local_report", lambda _env: loaded.append(True) or _report())
+
+    assert emit.main([]) == 2
+    assert loaded == []
+    assert not output.exists()
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "skipped", "reason": "target_disabled"
+    }
+
+
+@pytest.mark.parametrize("target", [None, "", "primary-live"])
+def test_emit_cli_preserves_primary_and_unset_target_default(monkeypatch, tmp_path, target):
+    output = tmp_path / "candidates.json"
+    if target is None:
+        monkeypatch.delenv("IBKR_ACCOUNT_FACTS_TARGET", raising=False)
+    else:
+        monkeypatch.setenv("IBKR_ACCOUNT_FACTS_TARGET", target)
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_TARGET_ID", "ibkr-synthetic-primary")
+    monkeypatch.setenv("IBKR_DIGEST_CANDIDATES_OUTPUT_PATH", str(output))
+    monkeypatch.setenv("IBKR_DIGEST_OPAQUE_ACCOUNT_UID", "acct_opaque_synthetic")
+    monkeypatch.delenv("IBKR_DIGEST_TARGET_ID", raising=False)
+    monkeypatch.delenv("IBKR_DIGEST_ACCOUNT_FACTS_PATH", raising=False)
+    monkeypatch.setattr(emit, "_load_local_report", lambda _env: _report())
+
+    assert emit.main([]) == 0
+    assert json.loads(output.read_text())["runs"][0]["target_id"] == "ibkr-synthetic-primary"

@@ -111,6 +111,12 @@ python3 -m pytest tests/test_project_digest_candidates.py tests/test_emit_digest
 
 本地 / CI 也可只设 `IBKR_DIGEST_RUNTIME_REPORT_PATH` 指向已落盘报告，完全跳过 GCS。
 
+选择 `additional-1` / `additional-2` / `additional-3` 时，CLI 必须先校验并加载对应的受保护配置。缺少配置返回 `target_config_unavailable`，格式或身份碰撞返回 `target_config_invalid`，退出码为 2；此时不读取报告、不写候选文件。不会回退到主槽位环境。正确槽位仍使用既有 account-facts 身份校验；错 target、跨账户或过期报告继续拒绝。
+
+`primary-live` 与未设置/空目标保留既有生产默认；其他显式目标（包括拼错的槽位及 ingress 诊断动作）返回 `target_disabled`、退出码 2，并在读取报告前停止。
+
+上述离线错槽位回归不解释真实报告 run `38339935851` 的四个 `runtime_target_mismatch`。该失败仍需各槽位的实际报告身份与受保护配置逐字段对照；guard 成功不能代替新报告和 producer receipt 的身份验收。
+
 ## 如何注入 QRS（人工，不自动改生产 Environment）
 
 中央文档：QuantRuntimeSettings `docs/digest-candidates-wiring.zh-CN.md`（PR #586）。
