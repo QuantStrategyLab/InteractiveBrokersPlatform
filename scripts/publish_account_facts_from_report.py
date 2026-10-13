@@ -92,12 +92,39 @@ _QRS_ACCOUNT_FACTS_ERROR_CODES = frozenset(
     }
 )
 _HTTP_ERROR_BODY_LIMIT = 16 * 1024
+_RUNTIME_TARGET_MISMATCH_FIELDS = (
+    "project_id",
+    "service_name",
+    "runtime_revision",
+    "account_scope",
+    "deployment_selector",
+    "account_selector",
+    "runtime_release_receipt.runtime_revision",
+)
+
+
+def _safe_mismatched_fields(value: object) -> list[str]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return []
+    present = {
+        field for field in value
+        if isinstance(field, str) and field in _RUNTIME_TARGET_MISMATCH_FIELDS
+    }
+    return [field for field in _RUNTIME_TARGET_MISMATCH_FIELDS if field in present]
 
 
 class _ProjectionError(ValueError):
-    def __init__(self, reason: str) -> None:
+    def __init__(self, reason: str, *, mismatched_fields: Sequence[str] = ()) -> None:
         super().__init__(reason)
         self.reason = reason
+        self.mismatched_fields = _safe_mismatched_fields(mismatched_fields)
+
+
+def _projection_error_result(exc: _ProjectionError) -> dict[str, Any]:
+    result: dict[str, Any] = {"status": "skipped", "reason": exc.reason}
+    if exc.reason == "runtime_target_mismatch" and exc.mismatched_fields:
+        result["mismatched_fields"] = exc.mismatched_fields
+    return result
 
 
 def _text(value: object) -> str:
@@ -498,7 +525,7 @@ def project_ibkr_account_facts_history(
             expected_deployment_selector=expected_deployment_selector,
         )
     except _ProjectionError as exc:
-        return {"status": "skipped", "reason": exc.reason}
+        return _projection_error_result(exc)
 
 
 def publish_ibkr_account_facts_history(
@@ -610,7 +637,7 @@ def publish_ibkr_account_facts_history(
             return _publish_failed(stage="unknown", category="unknown")
         return {"status": "published"}
     except _ProjectionError as exc:
-        return {"status": "skipped", "reason": exc.reason}
+        return _projection_error_result(exc)
 
 
 def _numeric_http_status(value: object) -> int | None:
@@ -782,6 +809,25 @@ def _format_cli_result(result: Mapping[str, Any]) -> str:
     )
 
 
+def _format_identity_mismatch_diagnostic(result: Mapping[str, Any]) -> str | None:
+    if result.get("status") != "skipped" or result.get("reason") != "runtime_target_mismatch":
+        return None
+    return json.dumps(
+        {
+            "reason": "runtime_target_mismatch",
+            "mismatched_fields": _safe_mismatched_fields(result.get("mismatched_fields")),
+        },
+        sort_keys=True,
+    )
+
+
+def _print_cli_result(result: Mapping[str, Any]) -> None:
+    print(_format_cli_result(result))
+    diagnostic = _format_identity_mismatch_diagnostic(result)
+    if diagnostic is not None:
+        print(diagnostic)
+
+
 class _NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, request: Request, *_args: object, **_kwargs: object) -> None:
         return None
@@ -862,7 +908,7 @@ def main() -> int:
             result = diagnose_account_facts_ingress(
                 sync_token=os.environ.get(IBKR_ACCOUNT_FACTS_SYNC_TOKEN_ENV, "")
             )
-            print(_format_cli_result(result))
+            _print_cli_result(result)
             return 0 if result.get("status") == "verified" else 1
         if target in IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS:
             os.environ.update(additional_target_environment(target))
@@ -904,10 +950,10 @@ def main() -> int:
             sync_token=os.environ.get(IBKR_ACCOUNT_FACTS_SYNC_TOKEN_ENV, ""),
             **expected,
         )
-        print(_format_cli_result(result))
+        _print_cli_result(result)
         return 0 if result["status"] in {"published", "unchanged"} else 1
     except _ProjectionError as exc:
-        print(f"skipped:{exc.reason}")
+        _print_cli_result(_projection_error_result(exc))
         return 1
     except Exception:
         print("skipped:publisher_error")
@@ -959,11 +1005,18 @@ def _project_ibkr_account_facts_history(
         "deployment_selector": _exact_text(target.get("deployment_selector")),
     }
     actual_selector = _selector(target.get("account_selector"))
-    if actual_fields != expected_fields or actual_selector != expected_selector:
-        raise _ProjectionError("runtime_target_mismatch")
+    mismatched_fields = [
+        field for field in actual_fields if actual_fields[field] != expected_fields[field]
+    ]
+    if actual_selector != expected_selector:
+        mismatched_fields.append("account_selector")
+    if mismatched_fields:
+        raise _ProjectionError("runtime_target_mismatch", mismatched_fields=mismatched_fields)
     receipt_revision = _text(receipt.get("runtime_revision")) if isinstance(receipt, Mapping) else ""
     if receipt_revision and receipt_revision != actual_fields["runtime_revision"]:
-        raise _ProjectionError("runtime_target_mismatch")
+        raise _ProjectionError(
+            "runtime_target_mismatch", mismatched_fields=["runtime_release_receipt.runtime_revision"]
+        )
 
     summary = report.get("summary")
     facts = summary.get("account_facts") if isinstance(summary, Mapping) else None
