@@ -12,6 +12,28 @@ WORKFLOWS = (
     "env-sync-drift-check", "notify-route-check", "collect-reconciliation-evidence",
 )
 
+# The route observer forwards these existing same-value settings as reusable
+# secrets so runner headers mask them; it does not create repository secrets.
+# This explicit contract is limited to this caller's six new fields.
+NOTIFY_ROUTE_ADDITIONAL_SECRET_CONTRACTS = {
+    "GCP_PROJECT_ID": (True, "'interactivebrokersquant'"),
+    "GCP_WORKLOAD_IDENTITY_PROVIDER": (
+        True, "'projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main'",
+    ),
+    "GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT": (
+        True, "'ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com'",
+    ),
+    "RUNTIME_GUARD_CLOUD_RUN_SERVICES": (False, "vars.RUNTIME_GUARD_CLOUD_RUN_SERVICES"),
+    "CLOUD_RUN_REGION": (False, "vars.CLOUD_RUN_REGION"),
+    "TELEGRAM_TOKEN_SECRET_NAME": (False, "vars.TELEGRAM_TOKEN_SECRET_NAME"),
+}
+
+
+def _assert_notify_route_additional_secret_contract(key: str, declared: str, passed: str) -> None:
+    required, expression = NOTIFY_ROUTE_ADDITIONAL_SECRET_CONTRACTS[key]
+    assert f"      {key}:\n        required: {str(required).lower()}" in declared
+    assert f"      {key}: ${{{{ {expression} }}}}" in passed
+
 
 def _block(text: str, key: str, indent: int) -> str:
     match = re.search(rf"(?m)^{' ' * indent}{re.escape(key)}:\s*\n", text)
@@ -68,15 +90,33 @@ def test_json_crosses_secret_boundary_before_any_execution(name: str) -> None:
     referenced = set(re.findall(r"secrets\.([A-Z][A-Z0-9_]*)", _block(callee, "jobs", 0)))
     assert referenced
     for key in referenced:
-        assert f"      {key}:\n        required: false" in declared
-        value = f"vars.{key} || secrets.{key}" if key in PROTECTED else f"secrets.{key}"
-        assert f"      {key}: ${{{{ {value} }}}}" in passed
+        if name == "notify-route-check" and key in NOTIFY_ROUTE_ADDITIONAL_SECRET_CONTRACTS:
+            _assert_notify_route_additional_secret_contract(key, declared, passed)
+        else:
+            assert f"      {key}:\n        required: false" in declared
+            value = f"vars.{key} || secrets.{key}" if key in PROTECTED else f"secrets.{key}"
+            assert f"      {key}: ${{{{ {value} }}}}" in passed
     for key in PROTECTED:
         assert f"vars.{key}" not in callee
         if key in referenced:
             assert f"{key}: ${{{{ secrets.{key} }}}}" in callee
     assert not _unsafe_json_env(caller)
     assert not _unsafe_json_env(callee)
+
+
+@pytest.mark.parametrize("key", NOTIFY_ROUTE_ADDITIONAL_SECRET_CONTRACTS)
+@pytest.mark.parametrize("mutation", ("required", "source"))
+def test_route_additional_contract_rejects_changed_required_or_source(key: str, mutation: str) -> None:
+    required, expression = NOTIFY_ROUTE_ADDITIONAL_SECRET_CONTRACTS[key]
+    declared = f"      {key}:\n        required: {str(required).lower()}\n"
+    passed = f"      {key}: ${{{{ {expression} }}}}\n"
+    _assert_notify_route_additional_secret_contract(key, declared, passed)
+    if mutation == "required":
+        declared = f"      {key}:\n        required: {str(not required).lower()}\n"
+    else:
+        passed = f"      {key}: ${{{{ vars.UNRELATED_PRIVATE_SETTING }}}}\n"
+    with pytest.raises(AssertionError):
+        _assert_notify_route_additional_secret_contract(key, declared, passed)
 
 
 def test_all_workflows_reject_variable_backed_json_in_env() -> None:

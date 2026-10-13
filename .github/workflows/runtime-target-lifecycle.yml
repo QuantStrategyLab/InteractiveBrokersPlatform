@@ -157,7 +157,8 @@ jobs:
             exit 0
           fi
 
-          export RUNTIME_TARGET_JSON="$(cat runtime-target.json)"
+          export RUNTIME_TARGET_JSON
+          RUNTIME_TARGET_JSON="$(cat runtime-target.json)"
           set +e
           uv run --no-sync python scripts/execution_report_heartbeat.py > execution-heartbeat.log 2>&1
           exit_code=$?
@@ -178,7 +179,8 @@ jobs:
         id: production_drift
         run: |
           set -uo pipefail
-          export RUNTIME_TARGET_JSON="$(cat runtime-target.json)"
+          export RUNTIME_TARGET_JSON
+          RUNTIME_TARGET_JSON="$(cat runtime-target.json)"
           set +e
           uv run --no-sync python scripts/production_drift_health_observe.py > production-drift.log 2>&1
           exit_code=$?
