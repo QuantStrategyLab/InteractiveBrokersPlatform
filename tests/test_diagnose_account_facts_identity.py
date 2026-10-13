@@ -1010,3 +1010,77 @@ def test_snapshot_issue_preserves_original_cli_failure_or_success_and_cloud_read
     assert reads == ["report", "cloud"]
     assert PRIVATE not in captured.out + captured.err
     assert not any(field in result for field in ("report_status", "skip_reason", "failure_category"))
+
+
+@pytest.mark.parametrize("status,field,reason", [
+    ("skipped", "skip_reason", "already_running"),
+    ("skipped", "skip_reason", "market_closed"),
+    ("skipped", "skip_reason", "ibkr_fractional_equity_api_unsupported"),
+    ("error", "failure_category", "strategy_execution_blocked"),
+    ("error", "failure_category", "strategy_deadline"),
+    ("error", "failure_category", "ibkr_gateway_unavailable"),
+    ("error", "failure_category", "ibkr_trading_permission"),
+    ("error", "failure_category", "ibkr_portfolio_snapshot"),
+])
+def test_report_stop_reason_is_declared_category_not_inferred_snapshot_cause(monkeypatch, status, field, reason):
+    from copy import deepcopy
+
+    expected, report, _ = _staged_report(monkeypatch)
+    report["summary"].pop("account_facts")
+    report["status"] = status
+    report["diagnostics"][field] = reason
+    original_report, original_expected = deepcopy(report), deepcopy(expected)
+    result = _diagnose(report, expected)
+    assert result["report_stop_reason"] == reason
+    assert result["snapshot_issue"] == "account_facts_absent"
+    assert result["reason"] == "runtime_target_mismatch"
+    assert result["projection_passed"] is False
+    assert report == original_report and expected == original_expected
+    assert PRIVATE not in json.dumps(result)
+
+
+@pytest.mark.parametrize("status,skip,failure,reason", [
+    ("ok", None, None, "no_declared_stop"),
+    ("skipped", PRIVATE, None, "unclassified_skip"),
+    ("error", None, PRIVATE, "unclassified_error"),
+    ("skipped", [], None, "unclassified_skip"),
+    ("error", None, {}, "unclassified_error"),
+    ("ok", "market_closed", None, "invalid_stop_context"),
+    ("skipped", "market_closed", "strategy_deadline", "invalid_stop_context"),
+    ("error", "market_closed", "strategy_deadline", "invalid_stop_context"),
+    ("pending", None, None, "unknown"),
+    (PRIVATE, None, None, "unknown"),
+    ([], None, None, "unknown"),
+])
+def test_report_stop_reason_rejects_conflicts_and_does_not_echo_free_text(monkeypatch, status, skip, failure, reason):
+    expected, report, _ = _staged_report(monkeypatch)
+    report["status"] = status
+    report["diagnostics"].update(skip_reason=skip, failure_category=failure)
+    result = _diagnose(report, expected)
+    assert result["report_stop_reason"] == reason
+    assert PRIVATE not in json.dumps(result)
+    assert result["projection_passed"] is False
+
+
+@pytest.mark.parametrize("broken", ["envelope", "scope", "provenance"])
+def test_report_stop_reason_is_unknown_before_existing_scope_proof(monkeypatch, broken):
+    expected, report, _ = _staged_report(monkeypatch)
+    report["status"] = "skipped"
+    report["diagnostics"]["skip_reason"] = "market_closed"
+    uri = expected["expected_report_prefix"] + "/r.json"
+    if broken == "envelope":
+        report["schema_version"] = PRIVATE
+    elif broken == "scope":
+        report["service_name"] = PRIVATE + "-other"
+    else:
+        uri = "gs://other-private-marker/r.json"
+    result = diagnostic.diagnose_identity(report, expected=expected, source_report_uri=uri, now=NOW, source_sha=SHA)
+    assert result["report_stop_reason"] == "unknown"
+    assert result["projection_passed"] is False
+
+
+def test_report_stop_reason_preflight_preserves_zero_cloud_calls(monkeypatch, capsys):
+    _environment(monkeypatch)
+    assert diagnostic.main(["--preflight"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["report_stop_reason"] == "unknown"
