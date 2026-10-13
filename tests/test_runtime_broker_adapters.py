@@ -478,3 +478,268 @@ def test_connect_ib_redacts_read_only_connection_diagnostics():
     assert "gateway.example.internal" not in rendered
     assert "4999" not in rendered
     assert "client_id" not in rendered
+
+
+def _paper_facts_snapshot(*, empty=False):
+    from datetime import datetime, timezone
+
+    return SimpleNamespace(
+        as_of=datetime(2026, 9, 30, 1, 0, 1, tzinfo=timezone.utc),
+        total_equity=10.0,
+        buying_power=10.0,
+        positions=() if empty else (
+            SimpleNamespace(
+                symbol="VOO", quantity=1.0, market_value=10.0,
+                average_cost=10.0, currency="USD",
+            ),
+        ),
+        metadata={
+            "account_ids": ("U00000001",),
+            "cash_balances": (
+                {"account_id": "U00000001", "currency": "USD", "CashBalance": 10},
+            ),
+            "private_native_marker": "synthetic-private-native-metadata",
+        },
+    )
+
+
+def _paper_facts_harness(snapshots):
+    observed = {"fetches": 0, "sleeps": [], "executions": [], "messages": [], "logs": [], "disconnects": 0}
+    remaining = iter(snapshots)
+
+    def disconnect():
+        observed["disconnects"] += 1
+
+    ib = SimpleNamespace(disconnect=disconnect)
+
+    def fetch(_ib, **_kwargs):
+        assert _ib is ib
+        observed["fetches"] += 1
+        item = next(remaining)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    def unexpected_order(*_args, **_kwargs):
+        pytest.fail("synthetic paper report tests must not submit an order")
+
+    def execute(_ib, positions, **kwargs):
+        assert _ib is ib
+        assert kwargs["submit_order_intent"] is unexpected_order
+        assert kwargs["dry_run_only"] is True
+        observed["executions"].append(positions)
+        return {
+            "mode": "dry_run", "execution_status": "dry_run" if positions else "no_op",
+            "positions_seen": len(positions), "orders_submitted": [], "orders_skipped": [],
+        }
+
+    def publish(**kwargs):
+        assert kwargs["detailed_text"] == kwargs["compact_text"]
+        observed["messages"].append(kwargs["detailed_text"])
+
+    adapters = _build_adapters(account_ids=("U00000001",), execution_mode="paper")
+    adapters = adapters.__class__(
+        **{
+            **adapters.__dict__, "fetch_portfolio_snapshot_fn": fetch,
+            "execute_paper_liquidation_fn": execute, "submit_order_intent_fn": unexpected_order,
+            "dry_run_only": True, "sleep_fn": observed["sleeps"].append,
+            "printer": lambda message, **_kwargs: observed["logs"].append(message),
+        }
+    )
+
+    def cycle(*, getter=None):
+        return adapters.run_paper_liquidation_cycle(
+            connect_ib_fn=lambda: ib,
+            get_current_portfolio_fn=getter or adapters.get_current_portfolio,
+            publish_notification_fn=publish,
+        )
+
+    return adapters, ib, observed, cycle
+
+
+def test_paper_portfolio_view_preserves_only_projected_native_facts():
+    import copy
+
+    from application.account_facts import build_ibkr_account_facts
+
+    snapshot = _paper_facts_snapshot()
+    before = copy.deepcopy(snapshot)
+    expected = build_ibkr_account_facts(snapshot)
+    adapters, ib, observed, _cycle = _paper_facts_harness([snapshot])
+
+    positions, values = adapters.get_current_portfolio(ib)
+
+    assert positions == {"VOO": {"quantity": 1.0, "avg_cost": 10.0}}
+    assert values == {"equity": 10.0, "buying_power": 10.0, "account_facts": expected}
+    assert expected["observed_at"] == "2026-09-30T01:00:01Z"
+    assert expected["net_assets"] is None
+    assert "private_native_marker" not in expected
+    assert snapshot == before
+    assert observed["fetches"] == 1
+
+
+@pytest.mark.parametrize("invalid", ["missing", "multi", "account_mismatch", "cash_missing", "cash_invalid", "naive_time"])
+def test_paper_portfolio_view_keeps_legacy_shape_when_native_facts_are_unknown(invalid):
+    snapshot = _paper_facts_snapshot()
+    if invalid == "missing":
+        snapshot.metadata = {}
+    elif invalid == "multi":
+        snapshot.metadata["account_ids"] = ("U00000001", "U00000002")
+    elif invalid == "account_mismatch":
+        snapshot.metadata["account_ids"] = ("U00000002",)
+    elif invalid == "cash_missing":
+        snapshot.metadata["cash_balances"] = ()
+    elif invalid == "cash_invalid":
+        snapshot.metadata["cash_balances"][0]["CashBalance"] = float("nan")
+    else:
+        snapshot.as_of = snapshot.as_of.replace(tzinfo=None)
+    adapters, ib, observed, _cycle = _paper_facts_harness([snapshot])
+
+    _positions, values = adapters.get_current_portfolio(ib)
+
+    assert values == {"equity": 10.0, "buying_power": 10.0}
+    assert observed["fetches"] == 1
+
+
+def test_paper_portfolio_view_optional_projector_failure_does_not_change_legacy_result(monkeypatch):
+    from application import runtime_broker_adapters as broker_adapters
+
+    def failed(_snapshot):
+        raise RuntimeError("synthetic-private-projector-failure")
+
+    monkeypatch.setattr(broker_adapters, "build_ibkr_account_facts", failed, raising=False)
+    adapters, ib, observed, _cycle = _paper_facts_harness([_paper_facts_snapshot()])
+
+    _positions, values = adapters.get_current_portfolio(ib)
+
+    assert values == {"equity": 10.0, "buying_power": 10.0}
+    assert observed["fetches"] == 1
+    assert not observed["logs"]
+
+
+def test_paper_cycle_preserves_native_facts_without_extra_fetch_or_fact_logging():
+    from application.account_facts import build_ibkr_account_facts
+    from application.cycle_result import coerce_strategy_cycle_result
+
+    snapshot = _paper_facts_snapshot()
+    _adapters, _ib, observed, cycle = _paper_facts_harness([snapshot])
+
+    result = cycle()
+
+    assert result.account_facts == build_ibkr_account_facts(snapshot)
+    assert type(result.account_facts) is dict
+    assert coerce_strategy_cycle_result(result) is result
+    assert result.result == "OK"
+    assert result.execution_summary["execution_status"] == "dry_run"
+    assert observed["fetches"] == 1
+    assert observed["sleeps"] == []
+    assert observed["executions"] == [{"VOO": {"quantity": 1.0, "avg_cost": 10.0}}]
+    assert len(observed["messages"]) == observed["disconnects"] == 1
+    rendered = "\n".join(observed["messages"] + observed["logs"])
+    assert "U00000001" not in rendered
+    assert result.account_facts["observed_at"] not in rendered
+    assert "synthetic-private-native-metadata" not in rendered
+
+
+@pytest.mark.parametrize("last_state", ["valid", "invalid", "empty"])
+def test_paper_cycle_uses_only_last_existing_retry_snapshot(last_state):
+    from datetime import timedelta
+
+    from application.account_facts import build_ibkr_account_facts
+
+    first = _paper_facts_snapshot(empty=True)
+    last = _paper_facts_snapshot(empty=last_state == "empty")
+    last.as_of += timedelta(seconds=1)
+    last.metadata["cash_balances"][0]["CashBalance"] = 20
+    if last_state == "invalid":
+        last.metadata["cash_balances"] = ()
+    _adapters, _ib, observed, cycle = _paper_facts_harness([first, last])
+
+    result = cycle()
+
+    assert result.account_facts == build_ibkr_account_facts(last)
+    assert result.account_facts != build_ibkr_account_facts(first)
+    assert observed["fetches"] == 2
+    assert observed["sleeps"] == [2.0]
+    assert len(observed["executions"]) == len(observed["messages"]) == observed["disconnects"] == 1
+
+
+@pytest.mark.parametrize("optional", [None, "invalid", [], {"account_ids": ["U00000001"]}])
+def test_paper_cycle_legacy_view_or_invalid_optional_shape_does_not_synthesize_facts(optional):
+    _adapters, _ib, observed, cycle = _paper_facts_harness([])
+    values = {"equity": 10.0, "buying_power": 10.0}
+    if optional is not None:
+        values["account_facts"] = optional
+
+    result = cycle(getter=lambda _ib: ({"VOO": {"quantity": 1.0, "avg_cost": 10.0}}, values))
+
+    assert result.account_facts == {}
+    assert observed["fetches"] == 0
+    assert len(observed["executions"]) == len(observed["messages"]) == observed["disconnects"] == 1
+
+
+@pytest.mark.parametrize("legacy_shape", ["missing_fields", "invalid_time", "invalid_cash", "wrong_currency", "complete"])
+def test_paper_cycle_does_not_trust_legacy_sidecar_claiming_native_schema(legacy_shape):
+    from application.account_facts import build_ibkr_account_facts
+
+    facts = build_ibkr_account_facts(_paper_facts_snapshot())
+    if legacy_shape == "missing_fields":
+        facts = {"schema_version": "ibkr_account_snapshot.v1", "account_ids": ["U00000001"]}
+    elif legacy_shape == "invalid_time":
+        facts["observed_at"] = "invalid"
+    elif legacy_shape == "invalid_cash":
+        facts["cash"] = [{"currency": "USD", "cash_balance": "invalid", "source_tag": "CashBalance"}]
+    elif legacy_shape == "wrong_currency":
+        facts["currency"] = "invalid"
+    _adapters, _ib, observed, cycle = _paper_facts_harness([])
+
+    result = cycle(getter=lambda _ib: (
+        {"VOO": {"quantity": 1.0, "avg_cost": 10.0}},
+        {"equity": 10.0, "buying_power": 10.0, "account_facts": facts},
+    ))
+
+    assert result.account_facts == {}
+    assert observed["fetches"] == 0
+    assert len(observed["executions"]) == len(observed["messages"]) == observed["disconnects"] == 1
+
+
+@pytest.mark.parametrize("retry", [False, True])
+def test_paper_cycle_native_fetch_failure_propagates_and_disconnects_without_execution(retry):
+    failure = RuntimeError("synthetic-snapshot-fetch-failed")
+    reads = [_paper_facts_snapshot(empty=True), failure] if retry else [failure]
+    _adapters, _ib, observed, cycle = _paper_facts_harness(reads)
+
+    with pytest.raises(RuntimeError, match="synthetic-snapshot-fetch-failed"):
+        cycle()
+
+    assert observed["fetches"] == (2 if retry else 1)
+    assert observed["sleeps"] == ([2.0] if retry else [])
+    assert observed["executions"] == observed["messages"] == []
+    assert observed["disconnects"] == 1
+
+
+@pytest.mark.parametrize(
+    ("selector", "expected_present"),
+    [(('U00000001',), True), (('default',), False), (('U00000002',), False), (('U00000001', 'U00000002'), False)],
+)
+def test_paper_cycle_facts_still_require_original_report_selector_guard(
+    selector, expected_present, strategy_module_factory, monkeypatch,
+):
+    from application.cycle_result import coerce_strategy_cycle_result
+
+    strategy_module = strategy_module_factory(IBKR_DRY_RUN_ONLY="true")
+    monkeypatch.setattr(
+        strategy_module, "RUNTIME_SETTINGS",
+        SimpleNamespace(runtime_target=SimpleNamespace(account_selector=selector)),
+    )
+    _adapters, _ib, observed, cycle = _paper_facts_harness([_paper_facts_snapshot()])
+    result = coerce_strategy_cycle_result(cycle())
+
+    summary = strategy_module._build_cycle_report_summary(
+        result, result.execution_summary, {}, dry_run=True,
+    )
+
+    assert ("account_facts" in summary) is expected_present
+    if expected_present:
+        assert summary["account_facts"] == result.account_facts
+    assert observed["fetches"] == 1
