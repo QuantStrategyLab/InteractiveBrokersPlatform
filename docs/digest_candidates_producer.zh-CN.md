@@ -121,6 +121,14 @@ publisher 遇到既有身份失配时保留首行 `skipped:runtime_target_mismat
 
 `mismatched_fields` 仅覆盖原拒绝顺序中第一失败检查段：先比较部署/账户身份，只有通过后才比较 receipt revision；更后的账户快照、时点等检查保持原顺序。该列表不是所有字段的完整差异证明。元数据只添加到身份失配的 `skipped` 结果，不进入成功的 account-facts payload，也不改变接受/拒绝决定；真实根因与恢复仍需对应私有事实及自然运行验收。
 
+### 四槽位只读身份诊断
+
+`.github/workflows/account-facts-identity-diagnose.yml` 仅允许在 `main` 手动运行，固定检查 `primary-live` 与三个 additional 槽位。先执行无网络配置预检，再复用现有 WIF；只读取受保护 prefix 下的最新报告及期望 service 的 Cloud Run metadata，不调用 publisher、Telegram、交易接口或写入 GCS，也不上传报告/artifact。原纯投影 guard、拒绝顺序和生产配置保持。
+
+`scripts/diagnose_account_facts_identity.py` 输出固定原因码、失配字段名、guard/freshness 状态、报告/配置/ready/receipt revision 的 equality 布尔及完整合法的 source SHA；缺身份为 `null`。`identity_verified` 仅表示原投影 guard 通过，不等于独立发布批准、依赖安装证明或自然候选恢复。36 小时/未来 5 分钟 freshness 边界沿用 publisher；退出 0 还需要新鲜报告和 ready revision 相等，失配/读取不可用退出 1，但仍输出脱敏诊断。
+
+Cloud Run 查询 region 明确沿用现有平台 `us-central1`，不从报告或公开 synthetic manifest 推断；独立调用时缺少/非法 `CLOUD_RUN_REGION` 则不查询服务、metadata unavailable。即使报告与当前服务相等，也不能据此更新期望 revision 或批准身份。该诊断不公开配置原值、账户/目标/service、URI、revision 值、金额、异常内容或 gcloud stderr；最新报告不是所有历史报告的覆盖证明，镜像/安装/config/risk 指纹未取得时继续 UNKNOWN。
+
 ## 如何注入 QRS（人工，不自动改生产 Environment）
 
 中央文档：QuantRuntimeSettings `docs/digest-candidates-wiring.zh-CN.md`（PR #586）。
