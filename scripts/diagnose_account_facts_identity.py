@@ -91,6 +91,7 @@ def _result(*, source_sha: object = None, reason: str, status: str = "unavailabl
         "serving_traffic": _traffic_result(),
         "account_facts_stages": dict.fromkeys(_ACCOUNT_FACTS_STAGES, "unknown"),
         "snapshot_issue": "unknown",
+        "report_stop_reason": "unknown",
     }
 
 
@@ -275,6 +276,40 @@ def _snapshot_issue(report: object, stages: Mapping[str, str]) -> str:
     return "unknown"
 
 
+def _report_stop_reason(report: object, stages: Mapping[str, str]) -> str:
+    """Expose a declared fixed category, never infer an omission's cause."""
+    try:
+        if any(stages.get(key) != "verified" for key in (
+            "report_envelope", "source_report_provenance", "scope_identity",
+        )) or not isinstance(report, Mapping):
+            return "unknown"
+        diagnostics = report.get("diagnostics")
+        if not isinstance(diagnostics, Mapping):
+            return "unknown"
+        status = report.get("status")
+        skip, failure = diagnostics.get("skip_reason"), diagnostics.get("failure_category")
+        if type(status) is not str:
+            return "unknown"
+        if status == "skipped":
+            if failure not in (None, ""):
+                return "invalid_stop_context"
+            allowed = {"already_running", "market_closed", "ibkr_fractional_equity_api_unsupported"}
+            return skip if type(skip) is str and skip in allowed else "unclassified_skip"
+        if status == "error":
+            if skip not in (None, ""):
+                return "invalid_stop_context"
+            allowed = {
+                "strategy_execution_blocked", "strategy_deadline", "ibkr_gateway_unavailable",
+                "ibkr_trading_permission", "ibkr_portfolio_snapshot",
+            }
+            return failure if type(failure) is str and failure in allowed else "unclassified_error"
+        if status == "ok":
+            return "no_declared_stop" if skip in (None, "") and failure in (None, "") else "invalid_stop_context"
+    except Exception:
+        pass  # Malformed optional context cannot change the original guard.
+    return "unknown"
+
+
 def diagnose_identity(
     report: Mapping[str, Any], *, expected: Mapping[str, Any], source_report_uri: str,
     now: datetime, cloud_run_metadata: object = None, source_sha: object = None,
@@ -330,6 +365,7 @@ def diagnose_identity(
         report, expected=expected, source_report_uri=source_report_uri,
     )
     result["snapshot_issue"] = _snapshot_issue(report, result["account_facts_stages"])
+    result["report_stop_reason"] = _report_stop_reason(report, result["account_facts_stages"])
     return result
 
 
