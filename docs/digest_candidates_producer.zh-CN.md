@@ -117,6 +117,10 @@ python3 -m pytest tests/test_project_digest_candidates.py tests/test_emit_digest
 
 上述离线错槽位回归不解释真实报告 run `38339935851` 的四个 `runtime_target_mismatch`。该失败仍需各槽位的实际报告身份与受保护配置逐字段对照；guard 成功不能代替新报告和 producer receipt 的身份验收。
 
+publisher 遇到既有身份失配时保留首行 `skipped:runtime_target_mismatch` 和退出码 1，并追加一行仅含固定 `reason` 与 `mismatched_fields` 的 JSON。字段只允许 `project_id`、`service_name`、`runtime_revision`、`account_scope`、`deployment_selector`、`account_selector` 和 `runtime_release_receipt.runtime_revision`；不会打印期望值、实际值、账户、service 映射或报告路径。异常类型也只记录既有比较的字段名；尚未通过报表结构校验的输入保留原原因码，不增加字段判断。
+
+`mismatched_fields` 仅覆盖原拒绝顺序中第一失败检查段：先比较部署/账户身份，只有通过后才比较 receipt revision；更后的账户快照、时点等检查保持原顺序。该列表不是所有字段的完整差异证明。元数据只添加到身份失配的 `skipped` 结果，不进入成功的 account-facts payload，也不改变接受/拒绝决定；真实根因与恢复仍需对应私有事实及自然运行验收。
+
 ## 如何注入 QRS（人工，不自动改生产 Environment）
 
 中央文档：QuantRuntimeSettings `docs/digest-candidates-wiring.zh-CN.md`（PR #586）。

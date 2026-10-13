@@ -294,7 +294,9 @@ def test_projection_rejects_invalid_observation_provenance_and_duplicate_cash():
 def test_projection_requires_revision_and_preserves_null_assets():
     missing_revision = _report()
     missing_revision["diagnostics"]["runtime_revision"] = None  # type: ignore[index]
-    assert _project(missing_revision) == {"status": "skipped", "reason": "runtime_target_mismatch"}
+    assert _project(missing_revision) == {
+        "status": "skipped", "reason": "runtime_target_mismatch", "mismatched_fields": ["runtime_revision"]
+    }
 
     unavailable_assets = _report()
     unavailable_assets["summary"]["account_facts"]["net_assets"] = None  # type: ignore[index]
@@ -323,7 +325,9 @@ def test_projection_rejects_snapshot_observation_outside_report_interval():
 
     padded_selector = _report()
     padded_selector["runtime_target"]["account_selector"] = [" U00000001"]  # type: ignore[index]
-    assert _project(padded_selector) == {"status": "skipped", "reason": "runtime_target_mismatch"}
+    assert _project(padded_selector) == {
+        "status": "skipped", "reason": "runtime_target_mismatch", "mismatched_fields": ["account_selector"]
+    }
 
 
 def test_publisher_posts_once_with_fresh_projected_payload_and_dedicated_token(monkeypatch):
@@ -1393,3 +1397,160 @@ def test_empty_named_report_preserves_latest_report_selection(monkeypatch, capsy
     assert latest == [True]
     assert loaded == ["gs://example-private/reports/ibkr/2026-10/20261001T120000Z.json"]
     assert capsys.readouterr().out.strip() == "published:unknown"
+
+
+_IDENTITY_DIAGNOSTIC_CASES = [
+    (("project_id",), "project_id"),
+    (("service_name",), "service_name"),
+    (("diagnostics", "runtime_revision"), "runtime_revision"),
+    (("account_scope",), "account_scope"),
+    (("runtime_target", "deployment_selector"), "deployment_selector"),
+    (("runtime_target", "account_selector"), "account_selector"),
+    (("runtime_release_receipt", "runtime_revision"), "runtime_release_receipt.runtime_revision"),
+]
+
+
+def _mutate_identity_field(report, path, value):
+    container = report
+    for key in path[:-1]:
+        container = container[key]
+    container[path[-1]] = value
+
+
+@pytest.mark.parametrize("path,field", _IDENTITY_DIAGNOSTIC_CASES)
+def test_identity_mismatch_reports_only_fixed_field_name(path, field):
+    report = _report()
+    marker = "PRIVATE_ACTUAL_IDENTITY_MARKER"
+    value = [marker] if field == "account_selector" else marker
+    _mutate_identity_field(report, path, value)
+
+    result = _project(report)
+
+    assert result == {
+        "status": "skipped", "reason": "runtime_target_mismatch", "mismatched_fields": [field]
+    }
+    assert marker not in json.dumps(result)
+
+
+@pytest.mark.parametrize("path,field", _IDENTITY_DIAGNOSTIC_CASES[:-1])
+@pytest.mark.parametrize("value", [None, {}, ["PRIVATE_TYPE_MARKER"], True, " PRIVATE_TYPE_MARKER"])
+def test_identity_mismatch_abnormal_values_keep_original_rejection(path, field, value):
+    report = _report()
+    _mutate_identity_field(report, path, value)
+
+    result = _project(report)
+
+    assert result == {
+        "status": "skipped", "reason": "runtime_target_mismatch", "mismatched_fields": [field]
+    }
+    assert "PRIVATE_TYPE_MARKER" not in json.dumps(result)
+
+
+def test_identity_diagnostic_stops_at_original_first_failed_check_group():
+    report = _report()
+    for path, field in _IDENTITY_DIAGNOSTIC_CASES:
+        value = ["PRIVATE_MULTI_MARKER"] if field == "account_selector" else "PRIVATE_MULTI_MARKER"
+        _mutate_identity_field(report, path, value)
+    report["summary"] = "PRIVATE_LATER_SUMMARY_MARKER"
+
+    result = _project(report)
+
+    assert result == {
+        "status": "skipped", "reason": "runtime_target_mismatch",
+        "mismatched_fields": [field for _, field in _IDENTITY_DIAGNOSTIC_CASES[:-1]],
+    }
+    assert "PRIVATE" not in json.dumps(result)
+
+
+def test_identity_diagnostic_does_not_read_receipt_after_earlier_mismatch():
+    class UnreadableReceipt(dict):
+        def get(self, *_args):
+            pytest.fail("receipt comparison must remain after first identity rejection")
+
+    report = _report()
+    report["project_id"] = "PRIVATE_FIRST_GROUP_MARKER"
+    report["runtime_release_receipt"] = UnreadableReceipt()
+    assert _project(report) == {
+        "status": "skipped", "reason": "runtime_target_mismatch",
+        "mismatched_fields": ["project_id"],
+    }
+
+
+@pytest.mark.parametrize("field,value", [("runtime_target", None), ("diagnostics", []), ("runtime_release_receipt", "PRIVATE_STRUCTURE_MARKER")])
+def test_unvalidated_report_keeps_original_reason_without_identity_metadata(field, value):
+    report = _report()
+    report[field] = value
+    report["project_id"] = "PRIVATE_PROJECT_MARKER"
+    assert _project(report) == {"status": "skipped", "reason": "runtime_report_invalid"}
+
+
+@pytest.mark.parametrize(
+    "fields,expected",
+    [
+        (None, []),
+        ({"project_id": "PRIVATE_VALUE_MARKER"}, []),
+        ("project_id PRIVATE_FIELD_MARKER", []),
+        (["account_selector", "PRIVATE_FIELD_MARKER", {}, "project_id", "project_id"], ["project_id", "account_selector"]),
+        ([None, True, 3], []),
+    ],
+)
+def test_cli_identity_diagnostic_filters_untrusted_metadata(fields, expected):
+    result = {
+        "status": "skipped", "reason": "runtime_target_mismatch", "mismatched_fields": fields,
+        "expected": "PRIVATE_EXPECTED_MARKER", "actual": "PRIVATE_ACTUAL_MARKER",
+        "source_report_uri": "gs://private-uri-marker/path",
+    }
+    output = publisher._format_identity_mismatch_diagnostic(result)
+    assert json.loads(output) == {
+        "reason": "runtime_target_mismatch", "mismatched_fields": expected
+    }
+    assert "PRIVATE" not in output and "private-uri-marker" not in output
+
+
+@pytest.mark.parametrize("status,reason", [("published", "runtime_target_mismatch"), ("skipped", "PRIVATE_REASON_MARKER")])
+def test_cli_identity_diagnostic_does_not_emit_for_other_outcomes(status, reason):
+    assert publisher._format_identity_mismatch_diagnostic({
+        "status": status, "reason": reason, "mismatched_fields": ["project_id"]
+    }) is None
+
+
+def test_cli_identity_mismatch_keeps_first_line_exit_and_hides_private_values(monkeypatch, capsys):
+    now = datetime(2026, 9, 30, 1, 1, tzinfo=timezone.utc)
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now
+
+    environment = {
+        "IBKR_ACCOUNT_FACTS_TARGET": "primary-live",
+        "IBKR_ACCOUNT_FACTS_REPORT_PREFIX": "gs://private-prefix-marker/reports",
+        "IBKR_ACCOUNT_FACTS_TARGET_ID": "private-target-marker",
+        "IBKR_ACCOUNT_FACTS_PROJECT_ID": "PRIVATE_EXPECTED_PROJECT_MARKER",
+        "IBKR_ACCOUNT_FACTS_SERVICE_NAME": "PRIVATE_EXPECTED_SERVICE_MARKER",
+        "IBKR_ACCOUNT_FACTS_RUNTIME_REVISION": "PRIVATE_EXPECTED_REVISION_MARKER",
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE": "PRIVATE_EXPECTED_SCOPE_MARKER",
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON": '["U00000999"]',
+        "IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR": "PRIVATE_EXPECTED_DEPLOYMENT_MARKER",
+        "IBKR_ACCOUNT_FACTS_SYNC_URL": publisher.IBKR_ACCOUNT_FACTS_SYNC_URL,
+        "IBKR_ACCOUNT_FACTS_SYNC_TOKEN": "PRIVATE_TOKEN_MARKER",
+    }
+    for key, value in environment.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("IBKR_ACCOUNT_FACTS_REPORT_NAME", raising=False)
+    monkeypatch.setattr(publisher, "datetime", FrozenDateTime)
+    monkeypatch.setattr(publisher, "_latest_report_uri", lambda **_kwargs: "gs://private-prefix-marker/reports/2026-09/20260930T010000Z.json")
+    monkeypatch.setattr(publisher, "_load_gcs_report", lambda *_args, **_kwargs: _report())
+    monkeypatch.setattr(publisher, "build_opener", lambda *_args: pytest.fail("mismatch must stop before POST"))
+
+    assert publisher.main() == 1
+    output = capsys.readouterr().out
+    lines = output.splitlines()
+    assert lines[0] == "skipped:runtime_target_mismatch"
+    assert len(lines) == 2
+    assert json.loads(lines[1]) == {
+        "reason": "runtime_target_mismatch",
+        "mismatched_fields": [field for _, field in _IDENTITY_DIAGNOSTIC_CASES[:-1]],
+    }
+    for marker in ["PRIVATE", "private-prefix-marker", "private-target-marker", "U00000001", "U00000999", "ibkr-primary-service"]:
+        assert marker not in output
