@@ -831,3 +831,182 @@ def test_preflight_and_failed_reads_keep_all_account_fact_stages_unknown(monkeyp
     assert diagnostic.main([], now=NOW) == 1
     result = json.loads(capsys.readouterr().out)
     assert result["account_facts_stages"] == dict.fromkeys(_STAGES, "unknown")
+
+
+def test_snapshot_issue_distinguishes_missing_facts_without_changing_revision_rejection(monkeypatch):
+    expected, report, _ = _staged_report(monkeypatch)
+    report["summary"].pop("account_facts")
+    result = _diagnose(report, expected)
+    assert result["snapshot_issue"] == "account_facts_absent"
+    assert result["account_facts_stages"]["snapshot_schema"] == "invalid"
+    assert result["projection_passed"] is False
+    assert result["reason"] == "runtime_target_mismatch"
+    assert result["mismatched_fields"] == ["runtime_revision"]
+
+
+_SNAPSHOT_ISSUES = frozenset({
+    "unknown", "none", "summary_absent", "summary_not_object",
+    "account_facts_absent", "account_facts_not_object", "snapshot_schema_missing",
+    "snapshot_schema_invalid", "currency_missing", "currency_invalid",
+})
+
+
+@pytest.mark.parametrize("failure,issue", [
+    ("summary_absent", "summary_absent"),
+    ("summary_null", "summary_not_object"),
+    ("summary_list", "summary_not_object"),
+    ("summary_private", "summary_not_object"),
+    ("facts_absent", "account_facts_absent"),
+    ("facts_null", "account_facts_not_object"),
+    ("facts_list", "account_facts_not_object"),
+    ("facts_private", "account_facts_not_object"),
+    ("schema_absent", "snapshot_schema_missing"),
+    ("schema_null", "snapshot_schema_invalid"),
+    ("schema_boolean", "snapshot_schema_invalid"),
+    ("schema_object", "snapshot_schema_invalid"),
+    ("schema_private", "snapshot_schema_invalid"),
+    ("currency_absent", "currency_missing"),
+    ("currency_null", "currency_invalid"),
+    ("currency_boolean", "currency_invalid"),
+    ("currency_object", "currency_invalid"),
+    ("currency_private", "currency_invalid"),
+    ("currency_non_usd", "currency_invalid"),
+    ("both_invalid", "snapshot_schema_invalid"),
+])
+def test_snapshot_issue_classifies_only_existing_invalid_snapshot_predicates(monkeypatch, failure, issue):
+    from copy import deepcopy
+
+    expected, report, facts = _staged_report(monkeypatch)
+    if failure.startswith("summary_"):
+        if failure == "summary_absent":
+            report.pop("summary")
+        else:
+            report["summary"] = {"summary_null": None, "summary_list": [], "summary_private": PRIVATE}[failure]
+    elif failure.startswith("facts_"):
+        if failure == "facts_absent":
+            report["summary"].pop("account_facts")
+        else:
+            report["summary"]["account_facts"] = {"facts_null": None, "facts_list": [], "facts_private": PRIVATE}[failure]
+    elif failure.startswith("schema_"):
+        if failure == "schema_absent":
+            facts.pop("schema_version")
+        else:
+            facts["schema_version"] = {"schema_null": None, "schema_boolean": True, "schema_object": {PRIVATE: PRIVATE}, "schema_private": PRIVATE}[failure]
+    elif failure.startswith("currency_"):
+        if failure == "currency_absent":
+            facts.pop("currency")
+        else:
+            facts["currency"] = {"currency_null": None, "currency_boolean": True, "currency_object": {PRIVATE: PRIVATE}, "currency_private": PRIVATE, "currency_non_usd": "EUR"}[failure]
+    else:
+        facts["schema_version"] = PRIVATE
+        facts["currency"] = PRIVATE
+    original_report, original_expected = deepcopy(report), deepcopy(expected)
+    result = _diagnose(report, expected)
+    stages = _assert_fixed_stages(result)
+    assert result["snapshot_issue"] == issue
+    assert result["snapshot_issue"] in _SNAPSHOT_ISSUES
+    assert stages["snapshot_schema"] == "invalid"
+    assert all(stages[name] == "unknown" for name in _STAGES[4:])
+    assert result["reason"] == "runtime_target_mismatch"
+    assert result["mismatched_fields"] == ["runtime_revision"]
+    assert report == original_report and expected == original_expected
+
+
+@pytest.mark.parametrize("failure", ["revision_only", "balance", "account", "observation", "positions"])
+def test_snapshot_issue_none_only_means_schema_and_currency_predicates_passed(monkeypatch, failure):
+    expected, report, facts = _staged_report(monkeypatch)
+    if failure == "balance":
+        facts["net_assets"] = PRIVATE
+    elif failure == "account":
+        facts["account_ids"] = ["U00000099"]
+    elif failure == "observation":
+        facts["observed_at"] = PRIVATE
+    elif failure == "positions":
+        facts["broker_reported_positions_scope"] = publisher.POSITIONS_SCOPE
+        facts["broker_reported_positions"] = []
+    result = _diagnose(report, expected)
+    stages = _assert_fixed_stages(result)
+    assert result["snapshot_issue"] == "none"
+    assert stages["snapshot_schema"] == "verified"
+    assert result["reason"] == "runtime_target_mismatch"
+    assert "approved" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("failure", ["scope", "envelope", "receipt", "expected", "report_revision", "provenance"])
+def test_snapshot_issue_stays_unknown_without_original_stage_prerequisites(monkeypatch, failure):
+    expected, report, _ = _staged_report(monkeypatch)
+    report.pop("summary")
+    uri = expected["expected_report_prefix"] + "/r.json"
+    if failure == "scope":
+        report["service_name"] = PRIVATE + "-other"
+    elif failure == "envelope":
+        report["schema_version"] = PRIVATE
+    elif failure == "receipt":
+        report["runtime_release_receipt"]["runtime_revision"] = PRIVATE + "-other"
+    elif failure == "expected":
+        expected["expected_runtime_revision"] = ""
+    elif failure == "report_revision":
+        report["diagnostics"].pop("runtime_revision")
+    else:
+        uri = "gs://other-private-marker/r.json"
+    result = diagnostic.diagnose_identity(report, expected=expected, source_report_uri=uri, now=NOW, source_sha=SHA)
+    stages = _assert_fixed_stages(result)
+    assert stages["snapshot_schema"] == "unknown"
+    assert result["snapshot_issue"] == "unknown"
+
+
+def test_snapshot_issue_optional_mapping_error_is_redacted_and_cannot_replace_guard(monkeypatch):
+    class BrokenSnapshot(dict):
+        def __getitem__(self, key):
+            raise RuntimeError(PRIVATE)
+
+    expected, report, facts = _staged_report(monkeypatch)
+    facts["schema_version"] = PRIVATE
+    report["summary"]["account_facts"] = BrokenSnapshot(facts)
+    result = _diagnose(report, expected)
+    stages = _assert_fixed_stages(result)
+    assert stages["snapshot_schema"] == "invalid"
+    assert result["snapshot_issue"] == "unknown"
+    assert result["reason"] == "runtime_target_mismatch"
+
+
+def test_snapshot_issue_preflight_and_failed_report_read_are_unknown(monkeypatch, capsys):
+    _environment(monkeypatch)
+    assert diagnostic.main(["--preflight"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["snapshot_issue"] == "unknown"
+    monkeypatch.setattr(publisher, "_latest_report_uri", lambda **kwargs: (_ for _ in ()).throw(publisher._ProjectionError("report_unavailable")))
+    assert diagnostic.main([], now=NOW) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["snapshot_issue"] == "unknown"
+
+
+@pytest.mark.parametrize("snapshot_invalid", [True, False])
+def test_snapshot_issue_preserves_original_cli_failure_or_success_and_cloud_read_count(monkeypatch, capsys, snapshot_invalid):
+    _environment(monkeypatch)
+    expected = diagnostic.resolve_expected()
+    report = _report(expected)
+    if snapshot_invalid:
+        report["summary"].pop("account_facts")
+    reads = []
+
+    def report_read(*args, **kwargs):
+        reads.append("report")
+        return report
+
+    def cloud_read(*args, **kwargs):
+        reads.append("cloud")
+        return _metadata(expected)
+
+    monkeypatch.setattr(publisher, "_latest_report_uri", lambda **kwargs: expected["expected_report_prefix"] + "/r.json")
+    monkeypatch.setattr(publisher, "_load_gcs_report", report_read)
+    monkeypatch.setattr(diagnostic, "_read_cloud_run_metadata", cloud_read)
+    assert diagnostic.main([], now=NOW) == (1 if snapshot_invalid else 0)
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    assert result["snapshot_issue"] == ("account_facts_absent" if snapshot_invalid else "none")
+    assert result["reason"] == ("account_facts_invalid" if snapshot_invalid else "identity_verified")
+    assert result["projection_passed"] is not snapshot_invalid
+    assert reads == ["report", "cloud"]
+    assert PRIVATE not in captured.out + captured.err
+    assert not any(field in result for field in ("report_status", "skip_reason", "failure_category"))

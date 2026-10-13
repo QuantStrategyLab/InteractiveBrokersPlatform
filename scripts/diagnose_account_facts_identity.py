@@ -90,6 +90,7 @@ def _result(*, source_sha: object = None, reason: str, status: str = "unavailabl
         "revision_equalities": dict.fromkeys(_EQUALITY_FIELDS),
         "serving_traffic": _traffic_result(),
         "account_facts_stages": dict.fromkeys(_ACCOUNT_FACTS_STAGES, "unknown"),
+        "snapshot_issue": "unknown",
     }
 
 
@@ -240,6 +241,40 @@ def _diagnose_account_facts_stages(
     return stages
 
 
+def _snapshot_issue(report: object, stages: Mapping[str, str]) -> str:
+    """Classify only the existing snapshot predicate, after scope proof."""
+    try:
+        if stages.get("scope_identity") != "verified":
+            return "unknown"
+        if stages.get("snapshot_schema") == "verified":
+            return "none"
+        if stages.get("snapshot_schema") != "invalid" or not isinstance(report, Mapping):
+            return "unknown"
+        if "summary" not in report:
+            return "summary_absent"
+        summary = report["summary"]
+        if not isinstance(summary, Mapping):
+            return "summary_not_object"
+        if "account_facts" not in summary:
+            return "account_facts_absent"
+        facts = summary["account_facts"]
+        if not isinstance(facts, Mapping):
+            return "account_facts_not_object"
+        if "schema_version" not in facts:
+            return "snapshot_schema_missing"
+        if facts["schema_version"] != publisher.SNAPSHOT_SCHEMA:
+            return "snapshot_schema_invalid"
+        if "currency" not in facts:
+            return "currency_missing"
+        if facts["currency"] != "USD":
+            return "currency_invalid"
+    except Exception:
+        # Optional classification must not change the original guard or expose
+        # a value/exception from malformed input.
+        pass
+    return "unknown"
+
+
 def diagnose_identity(
     report: Mapping[str, Any], *, expected: Mapping[str, Any], source_report_uri: str,
     now: datetime, cloud_run_metadata: object = None, source_sha: object = None,
@@ -294,6 +329,7 @@ def diagnose_identity(
     result["account_facts_stages"] = _diagnose_account_facts_stages(
         report, expected=expected, source_report_uri=source_report_uri,
     )
+    result["snapshot_issue"] = _snapshot_issue(report, result["account_facts_stages"])
     return result
 
 
