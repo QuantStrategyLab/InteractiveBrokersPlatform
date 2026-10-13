@@ -129,6 +129,8 @@ publisher 遇到既有身份失配时保留首行 `skipped:runtime_target_mismat
 
 Cloud Run 查询 region 明确沿用现有平台 `us-central1`，不从报告或公开 synthetic manifest 推断；独立调用时缺少/非法 `CLOUD_RUN_REGION` 则不查询服务、metadata unavailable。即使报告与当前服务相等，也不能据此更新期望 revision 或批准身份。该诊断不公开配置原值、账户/目标/service、URI、revision 值、金额、异常内容或 gcloud stderr；最新报告不是所有历史报告的覆盖证明，镜像/安装/config/risk 指纹未取得时继续 UNKNOWN。
 
+`serving_traffic` 另行只读投影同一次 metadata 的 `status.traffic`：`status=single/split/absent/invalid`，附 `report_has_positive_traffic`、`configured_has_positive_traffic`、`report_is_only_serving_revision` 三项 nullable 布尔。只有完整 `revisionName`、明确的整数 percent（0–100）及总和 100 的分布可比较；同一 revision 的分量汇总，零流量 tag 不计 serving。缺失/空列表为 absent，畸形或非完整总和为 invalid，缺比较身份保留 null；不根据 latestReady、tag URL 或缺 percent 推断流量。该新增诊断不改变原 projection guard、status/reason 或 exit 门：exit 0 仍不证明报告是唯一 serving revision，也不批准轮换受保护身份；ready 相等、流量事实和独立批准分开验收。
+
 ## 如何注入 QRS（人工，不自动改生产 Environment）
 
 中央文档：QuantRuntimeSettings `docs/digest-candidates-wiring.zh-CN.md`（PR #586）。

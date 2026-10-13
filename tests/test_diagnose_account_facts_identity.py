@@ -410,3 +410,147 @@ print("inert import passed")
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "inert import passed"
+
+
+@pytest.mark.parametrize("scenario,status,report_positive,configured_positive,report_only", [
+    ("report_single", "single", True, True, True),
+    ("configured_single_report_ready_only", "single", False, True, False),
+    ("report_single_configured_old", "single", True, False, True),
+    ("split_both", "split", True, True, False),
+    ("split_neither", "split", False, False, False),
+    ("same_revision_components", "single", True, True, True),
+    ("zero_tag", "single", False, True, False),
+])
+def test_serving_traffic_uses_effective_positive_distribution_without_ready_fallback(
+    monkeypatch, scenario, status, report_positive, configured_positive, report_only,
+):
+    _environment(monkeypatch)
+    expected = diagnostic.resolve_expected()
+    configured = expected["expected_runtime_revision"]
+    report = _report(expected)
+    cloud = _metadata(expected)
+    report_revision = configured
+    if scenario in {"configured_single_report_ready_only", "split_both", "zero_tag"}:
+        report_revision = PRIVATE + "-new-report"
+    if scenario == "report_single_configured_old":
+        report_revision = PRIVATE + "-new-report"
+    report["diagnostics"]["runtime_revision"] = report_revision
+    report["runtime_release_receipt"]["runtime_revision"] = report_revision
+    cloud["status"]["latestReadyRevisionName"] = report_revision
+    cloud["status"]["latestCreatedRevisionName"] = report_revision
+    traffic = {
+        "report_single": [{"revisionName": report_revision, "percent": 100}],
+        "configured_single_report_ready_only": [{"revisionName": configured, "percent": 100}],
+        "report_single_configured_old": [{"revisionName": report_revision, "percent": 100}],
+        "split_both": [{"revisionName": configured, "percent": 25}, {"revisionName": report_revision, "percent": 75}],
+        "split_neither": [{"revisionName": PRIVATE + "-other-1", "percent": 20}, {"revisionName": PRIVATE + "-other-2", "percent": 80}],
+        "same_revision_components": [{"revisionName": configured, "percent": 40}, {"revisionName": configured, "percent": 60}],
+        "zero_tag": [{"revisionName": configured, "percent": 100}, {"revisionName": report_revision, "percent": 0, "tag": PRIVATE, "url": "https://" + PRIVATE}],
+    }[scenario]
+    cloud["status"]["traffic"] = traffic
+    result = _diagnose(report, expected, cloud_run_metadata=cloud)
+    assert result["revision_equalities"]["report_equals_ready"] is True
+    assert result["serving_traffic"] == {
+        "status": status,
+        "report_has_positive_traffic": report_positive,
+        "configured_has_positive_traffic": configured_positive,
+        "report_is_only_serving_revision": report_only,
+    }
+    assert PRIVATE not in json.dumps(result)
+
+
+@pytest.mark.parametrize("traffic", [None, []])
+def test_missing_traffic_keeps_all_serving_comparisons_unknown(monkeypatch, traffic):
+    _environment(monkeypatch)
+    expected = diagnostic.resolve_expected()
+    cloud = _metadata(expected)
+    if traffic is not None:
+        cloud["status"]["traffic"] = traffic
+    result = _diagnose(_report(expected), expected, cloud_run_metadata=cloud)
+    assert result["serving_traffic"] == {
+        "status": "absent", "report_has_positive_traffic": None,
+        "configured_has_positive_traffic": None, "report_is_only_serving_revision": None,
+    }
+
+
+@pytest.mark.parametrize("traffic", [
+    PRIVATE,
+    {"revisionName": PRIVATE, "percent": 100},
+    [PRIVATE],
+    [{"percent": 100}],
+    [{"revisionName": PRIVATE, "percent": None}],
+    [{"revisionName": PRIVATE}],
+    [{"revisionName": PRIVATE, "percent": True}],
+    [{"revisionName": PRIVATE, "percent": "100"}],
+    [{"revisionName": PRIVATE, "percent": 100.0}],
+    [{"revisionName": PRIVATE, "percent": -1}],
+    [{"revisionName": PRIVATE, "percent": 101}],
+    [{"revisionName": PRIVATE, "percent": 99}],
+    [{"revisionName": PRIVATE, "percent": 0, "tag": PRIVATE}],
+    [{"revisionName": PRIVATE, "percent": 75}, {"revisionName": PRIVATE + "-other", "percent": 75}],
+    [{"revisionName": {"nested": PRIVATE}, "percent": 100}],
+    [{"revisionName": "", "percent": 100}],
+    [{"revisionName": PRIVATE + "\nrevision", "percent": 100}],
+])
+def test_invalid_traffic_never_guesses_serving_or_emits_private_values(monkeypatch, traffic):
+    _environment(monkeypatch)
+    expected = diagnostic.resolve_expected()
+    cloud = _metadata(expected)
+    cloud["status"]["traffic"] = traffic
+    result = _diagnose(_report(expected), expected, cloud_run_metadata=cloud)
+    assert result["serving_traffic"] == {
+        "status": "invalid", "report_has_positive_traffic": None,
+        "configured_has_positive_traffic": None, "report_is_only_serving_revision": None,
+    }
+    assert PRIVATE not in json.dumps(result)
+
+
+def test_private_extra_traffic_fields_do_not_change_fixed_projection(monkeypatch):
+    _environment(monkeypatch)
+    expected = diagnostic.resolve_expected()
+    cloud = _metadata(expected)
+    cloud["status"]["traffic"] = [{
+        "revisionName": expected["expected_runtime_revision"], "percent": 100,
+        "private_account": {"nested": PRIVATE}, "url": PRIVATE, "tag": PRIVATE,
+    }]
+    result = _diagnose(_report(expected), expected, cloud_run_metadata=cloud)
+    assert result["serving_traffic"]["status"] == "single"
+    assert result["serving_traffic"]["report_is_only_serving_revision"] is True
+    assert PRIVATE not in json.dumps(result)
+
+
+def test_traffic_with_wrong_service_metadata_cannot_prove_serving(monkeypatch):
+    _environment(monkeypatch)
+    expected = diagnostic.resolve_expected()
+    cloud = _metadata(expected)
+    cloud["metadata"]["name"] = PRIVATE + "-other-service"
+    cloud["status"]["traffic"] = [{"revisionName": expected["expected_runtime_revision"], "percent": 100}]
+    result = _diagnose(_report(expected), expected, cloud_run_metadata=cloud)
+    assert result["cloud_run_metadata_status"] == "invalid"
+    assert result["serving_traffic"] == {
+        "status": "invalid", "report_has_positive_traffic": None,
+        "configured_has_positive_traffic": None, "report_is_only_serving_revision": None,
+    }
+
+
+def test_preflight_includes_unknown_serving_diagnostic_without_cloud_calls(monkeypatch, capsys):
+    _environment(monkeypatch)
+    assert diagnostic.main(["--preflight"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["serving_traffic"]["status"] == "absent"
+    assert result["serving_traffic"]["report_has_positive_traffic"] is None
+
+
+def test_serving_diagnostic_does_not_change_original_cli_exit_gate(monkeypatch, capsys):
+    _environment(monkeypatch)
+    expected = diagnostic.resolve_expected()
+    cloud = _metadata(expected)
+    cloud["status"]["traffic"] = [{"revisionName": PRIVATE + "-other", "percent": 100}]
+    monkeypatch.setattr(publisher, "_latest_report_uri", lambda **kwargs: expected["expected_report_prefix"] + "/r.json")
+    monkeypatch.setattr(publisher, "_load_gcs_report", lambda *args, **kwargs: _report(expected))
+    monkeypatch.setattr(diagnostic, "_read_cloud_run_metadata", lambda *args: cloud)
+    assert diagnostic.main([], now=NOW) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["projection_passed"] is True
+    assert result["serving_traffic"]["report_has_positive_traffic"] is False
+    assert result["serving_traffic"]["report_is_only_serving_revision"] is False

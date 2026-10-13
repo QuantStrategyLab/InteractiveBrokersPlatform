@@ -33,6 +33,46 @@ _EQUALITY_FIELDS = (
 )
 
 
+def _traffic_result(status: str = "absent") -> dict[str, Any]:
+    return {
+        "status": status,
+        "report_has_positive_traffic": None,
+        "configured_has_positive_traffic": None,
+        "report_is_only_serving_revision": None,
+    }
+
+
+def _serving_traffic(rows: object, *, report_revision: object, configured_revision: object) -> dict[str, Any]:
+    """Project effective traffic only; latestReady and tagged URLs are not fallbacks."""
+    if rows is None or isinstance(rows, list) and not rows:
+        return _traffic_result()
+    if not isinstance(rows, list):
+        return _traffic_result("invalid")
+    total = 0
+    positive: set[str] = set()
+    for row in rows:
+        if not isinstance(row, Mapping):
+            return _traffic_result("invalid")
+        revision = publisher._single_line_text(row.get("revisionName"))
+        percent = row.get("percent")
+        if not revision or type(percent) is not int or not 0 <= percent <= 100:
+            return _traffic_result("invalid")
+        total += percent
+        if percent > 0:
+            positive.add(revision)
+    if total != 100:
+        return _traffic_result("invalid")
+    result = _traffic_result("single" if len(positive) == 1 else "split")
+    report = publisher._single_line_text(report_revision)
+    configured = publisher._single_line_text(configured_revision)
+    if report:
+        result["report_has_positive_traffic"] = report in positive
+        result["report_is_only_serving_revision"] = positive == {report}
+    if configured:
+        result["configured_has_positive_traffic"] = configured in positive
+    return result
+
+
 def _result(*, source_sha: object = None, reason: str, status: str = "unavailable") -> dict[str, Any]:
     return {
         "schema_version": SCHEMA,
@@ -44,6 +84,7 @@ def _result(*, source_sha: object = None, reason: str, status: str = "unavailabl
         "freshness_status": "unknown",
         "cloud_run_metadata_status": "unavailable",
         "revision_equalities": dict.fromkeys(_EQUALITY_FIELDS),
+        "serving_traffic": _traffic_result(),
     }
 
 
@@ -136,12 +177,15 @@ def diagnose_identity(
             or _equal(metadata.get("name"), expected["expected_service_name"]) is not True
         ):
             result["cloud_run_metadata_status"] = "invalid"
+            result["serving_traffic"] = _traffic_result("invalid")
         else:
             result["cloud_run_metadata_status"] = "read"
             ready = status.get("latestReadyRevisionName")
             equalities["configured_equals_ready"] = _equal(expected["expected_runtime_revision"], ready)
             equalities["report_equals_ready"] = _equal(revision, ready)
             equalities["ready_equals_latest_created"] = _equal(ready, status.get("latestCreatedRevisionName"))
+            result["serving_traffic"] = _serving_traffic(status.get("traffic"),
+                report_revision=revision, configured_revision=expected["expected_runtime_revision"])
     return result
 
 
