@@ -51,6 +51,7 @@ from scripts.project_digest_candidates import (
     load_json_object,
     project_digest_candidates,
 )
+from scripts.publish_account_facts_from_report import _ProjectionError
 
 
 def _safe_identity(environ: Mapping[str, str]) -> tuple[str, str]:
@@ -479,23 +480,17 @@ def _apply_additional_account_facts_target(environ: dict[str, str]) -> None:
     report prefix / selector / target_id match the selected slot (not primary).
     """
     target = environ.get("IBKR_ACCOUNT_FACTS_TARGET", "")
+    if target in ("", "primary-live"):
+        return
     if not isinstance(target, str) or target not in {
         "additional-1",
         "additional-2",
         "additional-3",
     }:
-        return
-    try:
-        from scripts.publish_account_facts_from_report import (
-            _ProjectionError,
-            additional_target_environment,
-        )
-    except Exception:
-        return
-    try:
-        environ.update(additional_target_environment(target))
-    except _ProjectionError:
-        return
+        raise _ProjectionError("target_disabled")
+    from scripts.publish_account_facts_from_report import additional_target_environment
+
+    environ.update(additional_target_environment(target))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -508,6 +503,9 @@ def main(argv: list[str] | None = None) -> int:
         env = os.environ
         _apply_additional_account_facts_target(env)  # type: ignore[arg-type]
         result = emit_digest_candidates(env)
+    except _ProjectionError as exc:
+        print(json.dumps({"status": "skipped", "reason": exc.reason}))
+        return 2
     except Exception:
         print(json.dumps({"status": "skipped", "reason": "operation_failed"}))
         return 2
