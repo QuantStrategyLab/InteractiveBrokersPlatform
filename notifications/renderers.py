@@ -713,6 +713,22 @@ def render_trade_notification(
         )
     )
     if trade_logs or has_order_events:
+        has_broker_order_events = any(
+            isinstance(order, Mapping)
+            and str(order.get("status") or "").strip().lower() != "dry_run"
+            for field_name in (
+                "orders_submitted",
+                "orders_pending",
+                "orders_filled",
+                "orders_partially_filled",
+                "option_orders_submitted",
+                "option_orders_pending",
+                "option_orders_filled",
+                "option_orders_partially_filled",
+            )
+            for order in execution_summary.get(field_name) or ()
+        )
+        title = translator("rebalance_title" if has_broker_order_events else "execution_result_title")
         notification_trade_lines = _build_notification_trade_lines(
             trade_logs,
             execution_summary=execution_summary,
@@ -723,14 +739,14 @@ def render_trade_notification(
             translator=translator,
         )
         detailed_text = (
-            f"{translator('rebalance_title')}\n"
+            f"{title}\n"
             f"{chr(10).join(extra_lines) + chr(10) if extra_lines else ''}"
             f"{dashboard}\n"
             f"{separator}\n"
             f"{chr(10).join(detailed_trade_lines)}"
         )
         compact_text = _build_compact_message(
-            title=translator("rebalance_title"),
+            title=title,
             strategy_display_name=strategy_display_name,
             signal_desc=signal_desc,
             status_desc=status_desc,
