@@ -208,3 +208,29 @@ XML 元素/属性名与 `StmtFunds` 活动码（`DEP`/`WITH`/`MFEE`/`OFEE`/`FRTA
 `tests/test_ibkr_flex_source.py` 复现原 1019 普通错误并覆盖 pending 原句柄、安全异常、显式
 同 reference 领取、永久错误零重发、账户范围拒绝；`tests/test_ibkr_flex_period_workflow.py`
 验证云端入口的默认关闭、main/首 attempt 边界和私有配置来源。
+
+## 只检查配置形状的手动入口
+
+`PYTHONPATH=. python -m scripts.publish_ibkr_flex_period_return --preflight`
+只读取同一个进程的八项既有发布配置，复用现有 `_config` 验证，不生成、领取 Flex 报表，
+不创建 HTTP session，不调用同步发布器，也不读取 Cloud Run、Secret Manager 或账户门户。
+即使发布开关已经是 `true`，显式 preflight 也会在发布路径之前返回。原来无参数的发布行为、
+默认关闭开关、身份校验、1019 停车和一次 POST 合同保持不变。
+
+stdout 为固定 `ibkr.flex_configuration_preflight.v1`，只含 `schema_version`、合法的
+workflow `source_sha`（缺失或不合格时为 null）、总 `status` 与按八个固定配置名列出的
+`fields`。每项状态仅为 `configuration_shape_valid`、`missing` 或 `invalid`；没有配置值、
+账户标识、令牌、收益、数量或异常正文。所有既有配置谓词通过时退出 0；缺项、坏形状或
+原验证器未能完成时退出 2。未识别参数也退出 2，不打印参数内容或进入发布路径。
+
+形状合格不表示 Flex 凭据有效、Query 真正覆盖目标、两端同步令牌相同、受保护绑定已经
+独立批准、运行实例已经加载该配置或看板有真实期间收益。preflight 不接触券商，无法验证
+这些事实，也不授权开启发布变量、采集或写入看板。固定字段状态只解释当前进程可检查的
+配置形状；意外的原验证器失败仍保持总 `invalid`，不把已通过的字段形状当作整体通过。
+
+`.github/workflows/check-ibkr-flex-configuration.yml` 提供仅本仓 main 的手动入口，只有
+`contents: read`，复用原来的 uv action 和 frozen runtime lock；只向 preflight 步骤注入
+与既有发布 workflow 相同的八个 Secrets，以及实际 workflow source SHA。不注入开关、
+新的令牌别名、GCP/WIF/Gateway 或 Cloudflare 凭据，不创建调度、不发通知，不上传私有
+配置 artifact。Secret 名称元数据读取失败时可以由这个已授权入口检查现有注入配置的
+形状，但它不调用 Secret 管理 API 取值、不增加 GitHub 权限，也不证明实际凭据有效。

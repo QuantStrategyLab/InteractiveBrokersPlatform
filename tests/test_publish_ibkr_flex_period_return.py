@@ -237,3 +237,152 @@ def test_unchanged_ack_is_success_without_second_post(monkeypatch, capsys):
     assert cli.main() == 0
     assert capsys.readouterr().out == '{"status": "unchanged"}\n'
     assert len(opener.calls) == 1
+
+
+_PREFLIGHT_FIELDS = (
+    "IBKR_PERIOD_RETURN_TARGET_ID", "IBKR_PERIOD_RETURN_SOURCE_BINDING_ID",
+    "IBKR_PERIOD_RETURN_ACCOUNT_SCOPE", "IBKR_PERIOD_RETURN_ACCOUNT_KEY",
+    "IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", "IBKR_FLEX_TOKEN", "IBKR_FLEX_QUERY_ID",
+    "IBKR_ACCOUNT_FACTS_SYNC_TOKEN",
+)
+_PREFLIGHT_SOURCE_SHA = "e2ec696a9ba3ec64156804a701a556ad69d5b64b"
+
+
+def _forbid_preflight_io(monkeypatch):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("configuration-only preflight used an external capability")
+    for name in ("import_activity_flex_ledger", "publish_period_return", "build_opener", "Request"):
+        monkeypatch.setattr(cli, name, forbidden)
+    monkeypatch.setattr(cli.requests, "Session", forbidden)
+
+
+@pytest.mark.parametrize("enabled", [None, "false", "true"])
+def test_preflight_reuses_original_config_without_flex_or_publish_even_when_enabled(monkeypatch, capsys, enabled):
+    values = configure(monkeypatch)
+    if enabled is None:
+        monkeypatch.delenv("IBKR_PERIOD_RETURN_PUBLISH_ENABLED")
+    else:
+        monkeypatch.setenv("IBKR_PERIOD_RETURN_PUBLISH_ENABLED", enabled)
+    monkeypatch.setenv("GITHUB_SHA", _PREFLIGHT_SOURCE_SHA)
+    _forbid_preflight_io(monkeypatch)
+    original, calls = cli._config, []
+    def checked(env):
+        calls.append(True)
+        return original(env)
+    monkeypatch.setattr(cli, "_config", checked)
+    assert cli.main(("--preflight",)) == 0
+    output = capsys.readouterr()
+    result = json.loads(output.out)
+    assert result == {
+        "schema_version": "ibkr.flex_configuration_preflight.v1",
+        "source_sha": _PREFLIGHT_SOURCE_SHA, "status": "configuration_shape_valid",
+        "fields": dict.fromkeys(_PREFLIGHT_FIELDS, "configuration_shape_valid"),
+    }
+    assert calls == [True] and output.err == ""
+    assert not any(value in output.out for key, value in values.items()
+                   if key != "IBKR_PERIOD_RETURN_PUBLISH_ENABLED")
+
+
+@pytest.mark.parametrize("field", _PREFLIGHT_FIELDS)
+@pytest.mark.parametrize("missing", [None, ""])
+def test_preflight_identifies_each_missing_field_without_values_or_io(monkeypatch, capsys, field, missing):
+    configure(monkeypatch)
+    if missing is None:
+        monkeypatch.delenv(field)
+    else:
+        monkeypatch.setenv(field, missing)
+    _forbid_preflight_io(monkeypatch)
+    assert cli.main(("--preflight",)) == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "missing"
+    assert result["fields"][field] == "missing"
+    assert set(result["fields"]) == set(_PREFLIGHT_FIELDS)
+    assert all(status == "configuration_shape_valid" for key, status in result["fields"].items() if key != field)
+
+
+@pytest.mark.parametrize("field,bad", [
+    ("IBKR_PERIOD_RETURN_TARGET_ID", "BAD_private_target"),
+    ("IBKR_PERIOD_RETURN_SOURCE_BINDING_ID", "private-binding"),
+    ("IBKR_PERIOD_RETURN_ACCOUNT_SCOPE", "private scope"),
+    ("IBKR_PERIOD_RETURN_ACCOUNT_KEY", "private/key"),
+    ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", "private-not-json"),
+    ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", "[]"),
+    ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", '["DU1234567","DU7654321"]'),
+    ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", '["not-account"]'),
+    ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", '[1234567]'),
+    ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", '"DU1234567"'),
+    ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", "[" * 1100 + "]" * 1100),
+    ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", "[" + "1" * 5000 + "]"),
+    ("IBKR_FLEX_TOKEN", " private-token"),
+    ("IBKR_FLEX_TOKEN", "private\ntoken"),
+    ("IBKR_FLEX_QUERY_ID", "private-query"),
+    ("IBKR_FLEX_QUERY_ID", "١٢٣"),
+    ("IBKR_ACCOUNT_FACTS_SYNC_TOKEN", "private token"),
+    ("IBKR_ACCOUNT_FACTS_SYNC_TOKEN", "private\u00a0token"),
+])
+def test_preflight_identifies_exact_invalid_shape_without_echo(monkeypatch, capsys, field, bad):
+    configure(monkeypatch)
+    monkeypatch.setenv(field, bad)
+    _forbid_preflight_io(monkeypatch)
+    assert cli.main(("--preflight",)) == 2
+    output = capsys.readouterr()
+    result = json.loads(output.out)
+    assert result["status"] == "invalid"
+    assert result["fields"][field] == "invalid"
+    assert all(status == "configuration_shape_valid" for key, status in result["fields"].items() if key != field)
+    assert bad not in output.out and output.err == ""
+
+
+@pytest.mark.parametrize("alias", ("IBKR_FLEX_TOKEN", *cli._TOKEN_ALIASES))
+def test_preflight_preserves_existing_sync_token_separation(monkeypatch, capsys, alias):
+    values = configure(monkeypatch)
+    monkeypatch.setenv(alias, values["IBKR_ACCOUNT_FACTS_SYNC_TOKEN"])
+    _forbid_preflight_io(monkeypatch)
+    assert cli.main(("--preflight",)) == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "invalid"
+    assert result["fields"]["IBKR_ACCOUNT_FACTS_SYNC_TOKEN"] == "invalid"
+    assert all(status == "configuration_shape_valid" for key, status in result["fields"].items()
+               if key != "IBKR_ACCOUNT_FACTS_SYNC_TOKEN")
+
+
+def test_preflight_redacts_invalid_source_sha_and_unknown_cli_arguments(monkeypatch, capsys):
+    configure(monkeypatch)
+    monkeypatch.setenv("GITHUB_SHA", "private-revision-value")
+    _forbid_preflight_io(monkeypatch)
+    assert cli.main(("--preflight",)) == 0
+    output = capsys.readouterr().out
+    assert json.loads(output)["source_sha"] is None and "private-revision-value" not in output
+    assert cli.main(("--preflight", "private-cli-value")) == 2
+    output = capsys.readouterr().out
+    assert json.loads(output)["status"] == "invalid" and "private-cli-value" not in output
+
+
+def test_preflight_original_validator_failure_is_fixed_and_never_echoes_exception(monkeypatch, capsys):
+    configure(monkeypatch)
+    _forbid_preflight_io(monkeypatch)
+    def failed(_env):
+        raise RuntimeError("private-validator-error-body")
+    monkeypatch.setattr(cli, "_config", failed)
+    assert cli.main(("--preflight",)) == 2
+    output = capsys.readouterr()
+    assert json.loads(output.out)["status"] == "invalid"
+    assert "private-validator-error-body" not in output.out and output.err == ""
+
+
+def test_preflight_workflow_is_manual_main_configuration_only_with_exact_original_secrets():
+    from pathlib import Path
+    import re
+
+    workflow = Path(".github/workflows/check-ibkr-flex-configuration.yml").read_text()
+    assert "workflow_dispatch:" in workflow and "github.ref == 'refs/heads/main'" in workflow
+    assert "github.repository == 'QuantStrategyLab/InteractiveBrokersPlatform'" in workflow
+    assert "contents: read" in workflow and "persist-credentials: false" in workflow
+    assert "uv sync --frozen --no-dev" in workflow
+    assert "astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78" in workflow
+    assert workflow.count("python -m scripts.publish_ibkr_flex_period_return --preflight") == 1
+    assert set(re.findall(r"secrets\.([A-Z0-9_]+)", workflow)) == set(_PREFLIGHT_FIELDS)
+    assert "GITHUB_SHA: ${{ github.sha }}" in workflow
+    for unsafe in ("schedule:", "workflow_run:", "id-token:", "google-github-actions/auth", "gcloud",
+                   "upload-artifact", "TELEGRAM", "CLOUDFLARE", "publish_once", "PUBLISH_ENABLED", "vars."):
+        assert unsafe not in workflow
