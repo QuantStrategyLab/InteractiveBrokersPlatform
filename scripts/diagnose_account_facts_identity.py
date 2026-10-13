@@ -31,6 +31,10 @@ _EQUALITY_FIELDS = (
     "report_equals_configured", "configured_equals_ready", "report_equals_ready",
     "ready_equals_latest_created", "receipt_equals_report",
 )
+_ACCOUNT_FACTS_STAGES = (
+    "report_envelope", "source_report_provenance", "scope_identity", "snapshot_schema",
+    "account_identity", "observation_interval", "balance_cash", "positions",
+)
 
 
 def _traffic_result(status: str = "absent") -> dict[str, Any]:
@@ -85,6 +89,7 @@ def _result(*, source_sha: object = None, reason: str, status: str = "unavailabl
         "cloud_run_metadata_status": "unavailable",
         "revision_equalities": dict.fromkeys(_EQUALITY_FIELDS),
         "serving_traffic": _traffic_result(),
+        "account_facts_stages": dict.fromkeys(_ACCOUNT_FACTS_STAGES, "unknown"),
     }
 
 
@@ -133,6 +138,106 @@ def resolve_expected() -> dict[str, Any]:
 def _equal(left: object, right: object) -> bool | None:
     first, second = publisher._exact_text(left), publisher._exact_text(right)
     return first == second if first and second else None
+
+
+def _diagnose_account_facts_stages(
+    report: Mapping[str, Any], *, expected: Mapping[str, Any], source_report_uri: str,
+) -> dict[str, str]:
+    """Inspect existing projection predicates without changing a revision expectation.
+
+    These states describe structure and scope comparisons only.  They neither
+    produce a history record nor establish release approval or economic truth.
+    """
+    stages = dict.fromkeys(_ACCOUNT_FACTS_STAGES, "unknown")
+    try:
+        if not isinstance(report, Mapping):
+            stages["report_envelope"] = "invalid"
+            return stages
+        target, diagnostics, receipt = (
+            report.get("runtime_target"), report.get("diagnostics"), report.get("runtime_release_receipt")
+        )
+        envelope_valid = (
+            report.get("schema_version") == publisher.RUNTIME_REPORT_SCHEMA
+            and report.get("platform") == "interactive_brokers"
+            and report.get("deploy_target") == "cloud_run"
+            and isinstance(target, Mapping) and isinstance(diagnostics, Mapping)
+            and (receipt is None or isinstance(receipt, Mapping))
+        )
+        stages["report_envelope"] = "verified" if envelope_valid else "invalid"
+        try:
+            publisher._source_report_uri(
+                publisher._text(source_report_uri), publisher._text(expected["expected_report_prefix"])
+            )
+        except publisher._ProjectionError:
+            stages["source_report_provenance"] = "invalid"
+            return stages
+        stages["source_report_provenance"] = "verified"
+        if not envelope_valid:
+            return stages
+        expected_fields = {
+            field: publisher._text(expected[f"expected_{field}"])
+            for field in ("project_id", "service_name", "runtime_revision", "account_scope", "deployment_selector")
+        }
+        selector = publisher._selector(expected["expected_account_selector"])
+        target_id = publisher._text(expected["target_id"])
+        if (
+            not target_id or publisher._TARGET_ID.fullmatch(target_id) is None
+            or any(not value for value in expected_fields.values())
+            or len(selector) != 1 or selector[0].lower() == "default"
+        ):
+            return stages
+        report_revision = publisher._exact_text(diagnostics.get("runtime_revision"))
+        if not report_revision:
+            return stages
+        # Exact original scope predicates, excluding only the rejected revision.
+        # The protected expected revision is never replaced with a report value.
+        scope_matches = (
+            all(publisher._exact_text(report.get(field)) == expected_fields[field]
+                for field in ("project_id", "service_name", "account_scope"))
+            and publisher._exact_text(target.get("deployment_selector")) == expected_fields["deployment_selector"]
+            and publisher._selector(target.get("account_selector")) == selector
+        )
+        receipt_revision = publisher._text(receipt.get("runtime_revision")) if isinstance(receipt, Mapping) else ""
+        receipt_consistent = not receipt_revision or receipt_revision == report_revision
+        if not scope_matches or not receipt_consistent:
+            stages["scope_identity"] = "invalid"
+            return stages
+        stages["scope_identity"] = "verified"
+        summary = report.get("summary")
+        facts = summary.get("account_facts") if isinstance(summary, Mapping) else None
+        if not isinstance(facts, Mapping) or facts.get("schema_version") != publisher.SNAPSHOT_SCHEMA or facts.get("currency") != "USD":
+            stages["snapshot_schema"] = "invalid"
+            return stages
+        stages["snapshot_schema"] = "verified"
+        account_ids = publisher._selector(facts.get("account_ids"))
+        if len(account_ids) != 1 or account_ids != selector or publisher._ACCOUNT_ID.fullmatch(account_ids[0]) is None:
+            stages["account_identity"] = "invalid"
+            return stages
+        stages["account_identity"] = "verified"
+        try:
+            started = publisher._observed_timestamp(report.get("started_at"))
+            finished = publisher._observed_timestamp(report.get("finished_at"))
+            observed = publisher._observed_timestamp(facts.get("observed_at"))
+            if finished < started or observed < started or observed > finished:
+                raise publisher._ProjectionError("observation_invalid")
+        except publisher._ProjectionError:
+            stages["observation_interval"] = "invalid"
+            return stages
+        stages["observation_interval"] = "verified"
+        try:
+            publisher._decimal_text(facts.get("net_assets"), nullable=True)
+            publisher._project_cash(facts.get("cash"))
+        except publisher._ProjectionError:
+            stages["balance_cash"] = "invalid"
+        else:
+            stages["balance_cash"] = "verified"
+        if facts.get("broker_reported_positions_scope") == publisher.POSITIONS_SCOPE:
+            stages["positions"] = "verified" if publisher._project_positions(facts) is not None else "invalid"
+    except Exception:
+        # Optional diagnostics cannot change the original guard or expose an
+        # unexpected exception. Unexecuted/undetermined stages stay unknown.
+        pass
+    return stages
 
 
 def diagnose_identity(
@@ -186,6 +291,9 @@ def diagnose_identity(
             equalities["ready_equals_latest_created"] = _equal(ready, status.get("latestCreatedRevisionName"))
             result["serving_traffic"] = _serving_traffic(status.get("traffic"),
                 report_revision=revision, configured_revision=expected["expected_runtime_revision"])
+    result["account_facts_stages"] = _diagnose_account_facts_stages(
+        report, expected=expected, source_report_uri=source_report_uri,
+    )
     return result
 
 

@@ -554,3 +554,280 @@ def test_serving_diagnostic_does_not_change_original_cli_exit_gate(monkeypatch, 
     assert result["projection_passed"] is True
     assert result["serving_traffic"]["report_has_positive_traffic"] is False
     assert result["serving_traffic"]["report_is_only_serving_revision"] is False
+
+
+def test_revision_rejection_does_not_hide_valid_snapshot_structure(monkeypatch):
+    _environment(monkeypatch)
+    expected = diagnostic.resolve_expected()
+    report = _report(expected)
+    report["diagnostics"]["runtime_revision"] = PRIVATE + "-serving"
+    report["runtime_release_receipt"]["runtime_revision"] = PRIVATE + "-serving"
+    result = _diagnose(report, expected)
+    assert result["reason"] == "runtime_target_mismatch"
+    assert result["mismatched_fields"] == ["runtime_revision"]
+    assert result["projection_passed"] is False
+    assert result["account_facts_stages"] == {
+        "report_envelope": "verified",
+        "source_report_provenance": "verified",
+        "scope_identity": "verified",
+        "snapshot_schema": "verified",
+        "account_identity": "verified",
+        "observation_interval": "verified",
+        "balance_cash": "verified",
+        "positions": "unknown",
+    }
+
+
+_STAGES = (
+    "report_envelope", "source_report_provenance", "scope_identity", "snapshot_schema",
+    "account_identity", "observation_interval", "balance_cash", "positions",
+)
+
+
+def _staged_report(monkeypatch):
+    _environment(monkeypatch)
+    expected = diagnostic.resolve_expected()
+    report = _report(expected)
+    report["diagnostics"]["runtime_revision"] = PRIVATE + "-serving"
+    report["runtime_release_receipt"]["runtime_revision"] = PRIVATE + "-serving"
+    return expected, report, report["summary"]["account_facts"]
+
+
+def _assert_fixed_stages(result):
+    stages = result["account_facts_stages"]
+    assert tuple(stages) == _STAGES
+    assert set(stages.values()) <= {"verified", "invalid", "unknown"}
+    encoded = json.dumps(result)
+    assert all(marker not in encoded for marker in (
+        PRIVATE, "U000000", "12345.6700", "100.00", "2026-10-13", "XYZ", "gs://", "scope-secret",
+    ))
+    assert result["projection_passed"] is False
+    return stages
+
+
+@pytest.mark.parametrize("field", ["project_id", "service_name", "account_scope", "deployment_selector", "account_selector", "receipt_revision"])
+def test_other_identity_failures_leave_dependent_fact_stages_unknown(monkeypatch, field):
+    expected, report, _ = _staged_report(monkeypatch)
+    if field in {"project_id", "service_name", "account_scope"}:
+        report[field] = PRIVATE + "-scope-secret"
+    elif field in {"deployment_selector", "account_selector"}:
+        report["runtime_target"][field] = ["U00000099"] if field == "account_selector" else PRIVATE + "-scope-secret"
+    else:
+        report["runtime_release_receipt"]["runtime_revision"] = PRIVATE + "-different"
+    stages = _assert_fixed_stages(_diagnose(report, expected))
+    assert stages["scope_identity"] == "invalid"
+    assert all(stages[name] == "unknown" for name in _STAGES[3:])
+
+
+@pytest.mark.parametrize("field,value", [
+    ("schema_version", PRIVATE), ("platform", PRIVATE), ("deploy_target", PRIVATE),
+    ("runtime_target", []), ("diagnostics", []), ("runtime_release_receipt", []),
+])
+def test_invalid_envelope_does_not_attribute_an_independent_snapshot(monkeypatch, field, value):
+    expected, report, _ = _staged_report(monkeypatch)
+    report[field] = value
+    stages = _assert_fixed_stages(_diagnose(report, expected))
+    assert stages["report_envelope"] == "invalid"
+    assert all(stages[name] == "unknown" for name in _STAGES[2:])
+
+
+@pytest.mark.parametrize("uri", ["gs://other-private-marker/reports/r.json", "gs://private-marker-never-public/wrong/r.json", "https://private-marker-never-public/reports/r.json"])
+def test_provenance_failure_does_not_validate_foreign_account_facts(monkeypatch, uri):
+    expected, report, _ = _staged_report(monkeypatch)
+    result = diagnostic.diagnose_identity(report, expected=expected, source_report_uri=uri, now=NOW, source_sha=SHA)
+    stages = _assert_fixed_stages(result)
+    assert stages["source_report_provenance"] == "invalid"
+    assert all(stages[name] == "unknown" for name in _STAGES[2:])
+
+
+@pytest.mark.parametrize("failure", ["schema", "currency", "summary", "facts"])
+def test_invalid_snapshot_after_revision_rejection_is_observed_without_accepting_identity(monkeypatch, failure):
+    expected, report, facts = _staged_report(monkeypatch)
+    if failure == "schema":
+        facts["schema_version"] = PRIVATE
+    elif failure == "currency":
+        facts["currency"] = "EUR"
+    elif failure == "summary":
+        report["summary"] = []
+    else:
+        report["summary"]["account_facts"] = None
+    result = _diagnose(report, expected)
+    stages = _assert_fixed_stages(result)
+    assert result["mismatched_fields"] == ["runtime_revision"]
+    assert stages["snapshot_schema"] == "invalid"
+    assert all(stages[name] == "unknown" for name in _STAGES[4:])
+
+
+@pytest.mark.parametrize("ids", [None, [], ["U00000099"], ["U00000001", "U00000099"], [" U00000001"], ["default"]])
+def test_cross_or_unattributed_account_facts_cannot_verify_amount_or_position_structure(monkeypatch, ids):
+    expected, report, facts = _staged_report(monkeypatch)
+    facts["account_ids"] = ids
+    stages = _assert_fixed_stages(_diagnose(report, expected))
+    assert stages["account_identity"] == "invalid"
+    assert all(stages[name] == "unknown" for name in _STAGES[5:])
+
+
+@pytest.mark.parametrize("failure", ["naive", "missing", "reversed", "before", "after"])
+def test_invalid_observation_interval_stays_distinct_from_freshness_and_identity(monkeypatch, failure):
+    expected, report, facts = _staged_report(monkeypatch)
+    if failure == "naive":
+        facts["observed_at"] = "2026-10-13T12:00:00"
+    elif failure == "missing":
+        report.pop("started_at")
+    elif failure == "reversed":
+        report["finished_at"] = (NOW - timedelta(seconds=3)).isoformat()
+    elif failure == "before":
+        facts["observed_at"] = (NOW - timedelta(seconds=3)).isoformat()
+    else:
+        facts["observed_at"] = (NOW + timedelta(seconds=1)).isoformat()
+    stages = _assert_fixed_stages(_diagnose(report, expected))
+    assert stages["observation_interval"] == "invalid"
+    assert stages["balance_cash"] == stages["positions"] == "unknown"
+
+
+@pytest.mark.parametrize("failure", ["number", "nan", "scale", "magnitude", "empty_cash", "duplicate_currency", "cash_tag", "cash_currency", "cash_number"])
+def test_original_decimal_and_native_cash_predicates_reveal_hidden_malformed_facts(monkeypatch, failure):
+    expected, report, facts = _staged_report(monkeypatch)
+    if failure in {"number", "nan", "scale", "magnitude"}:
+        facts["net_assets"] = {"number": 12.3, "nan": "NaN", "scale": "0.000000001", "magnitude": "1234567890123456"}[failure]
+    elif failure == "empty_cash":
+        facts["cash"] = []
+    elif failure == "duplicate_currency":
+        facts["cash"] = facts["cash"] * 2
+    elif failure == "cash_tag":
+        facts["cash"][0]["source_tag"] = PRIVATE
+    elif failure == "cash_currency":
+        facts["cash"][0]["currency"] = "US"
+    else:
+        facts["cash"][0]["cash_balance"] = True
+    stages = _assert_fixed_stages(_diagnose(report, expected))
+    assert stages["balance_cash"] == "invalid"
+
+
+@pytest.mark.parametrize("net_assets,cash", [(None, "0"), ("-1.20", "-0.01"), ("0.00000001", "0.00000001")])
+def test_structural_validation_retains_nullable_negative_zero_and_small_native_amounts(monkeypatch, net_assets, cash):
+    expected, report, facts = _staged_report(monkeypatch)
+    facts["net_assets"], facts["cash"][0]["cash_balance"] = net_assets, cash
+    stages = _assert_fixed_stages(_diagnose(report, expected))
+    assert stages["balance_cash"] == "verified"
+
+
+@pytest.mark.parametrize("failure", ["missing", "unsupported_scope", "empty", "unknown_field", "decimal", "duplicate", "valid"])
+def test_positions_only_verify_explicit_projectable_stock_facts(monkeypatch, failure):
+    expected, report, facts = _staged_report(monkeypatch)
+    if failure != "missing":
+        facts["broker_reported_positions_scope"] = publisher.POSITIONS_SCOPE
+        facts["broker_reported_positions"] = [{"symbol": "XYZ", "quantity": "-1", "market_value": "0", "currency": "USD", "avg_cost": "1.01"}]
+    if failure == "unsupported_scope":
+        facts["broker_reported_positions_scope"] = PRIVATE
+    elif failure == "empty":
+        facts["broker_reported_positions"] = []
+    elif failure == "unknown_field":
+        facts["broker_reported_positions"][0][PRIVATE] = PRIVATE
+    elif failure == "decimal":
+        facts["broker_reported_positions"][0]["quantity"] = 1.0
+    elif failure == "duplicate":
+        facts["broker_reported_positions"] *= 2
+    stages = _assert_fixed_stages(_diagnose(report, expected))
+    assert stages["positions"] == ("unknown" if failure in {"missing", "unsupported_scope"} else "verified" if failure == "valid" else "invalid")
+
+
+def test_stage_comparisons_do_not_mutate_report_or_expected_and_original_projection_runs_once(monkeypatch):
+    from copy import deepcopy
+
+    expected, report, _ = _staged_report(monkeypatch)
+    original_expected, original_report = deepcopy(expected), deepcopy(report)
+    project = publisher.project_ibkr_account_facts_history
+    calls = []
+
+    def tracked(*args, **kwargs):
+        calls.append(kwargs["expected_runtime_revision"])
+        return project(*args, **kwargs)
+
+    monkeypatch.setattr(publisher, "project_ibkr_account_facts_history", tracked)
+    _assert_fixed_stages(_diagnose(report, expected))
+    assert expected == original_expected and report == original_report
+    assert calls == [original_expected["expected_runtime_revision"]]
+
+
+def test_unexpected_optional_probe_exception_leaves_original_rejection_and_redacted_unknown(monkeypatch):
+    expected, report, _ = _staged_report(monkeypatch)
+
+    def broken(*args, **kwargs):
+        raise RuntimeError(PRIVATE)
+
+    monkeypatch.setattr(publisher, "_project_cash", broken)
+    result = _diagnose(report, expected)
+    stages = _assert_fixed_stages(result)
+    assert result["reason"] == "runtime_target_mismatch"
+    assert stages["balance_cash"] == stages["positions"] == "unknown"
+
+
+@pytest.mark.parametrize("field", ["expected_runtime_revision", "expected_service_name", "target_id", "expected_account_selector"])
+def test_incomplete_protected_expectation_cannot_create_scope_stage_proof(monkeypatch, field):
+    expected, report, _ = _staged_report(monkeypatch)
+    expected[field] = [] if field == "expected_account_selector" else ""
+    stages = _assert_fixed_stages(_diagnose(report, expected))
+    assert stages["scope_identity"] == "unknown"
+    assert all(stages[name] == "unknown" for name in _STAGES[3:])
+
+
+def test_missing_report_revision_cannot_prove_account_fact_scope(monkeypatch):
+    expected, report, _ = _staged_report(monkeypatch)
+    report["diagnostics"].pop("runtime_revision")
+    report["runtime_release_receipt"].pop("runtime_revision")
+    stages = _assert_fixed_stages(_diagnose(report, expected))
+    assert stages["scope_identity"] == "unknown"
+    assert all(stages[name] == "unknown" for name in _STAGES[3:])
+
+
+@pytest.mark.parametrize("receipt", [None, {"attestation_state": "legacy_unattested"}])
+def test_legacy_optional_receipt_does_not_fabricate_release_approval_or_hide_structural_facts(monkeypatch, receipt):
+    expected, report, _ = _staged_report(monkeypatch)
+    report["runtime_release_receipt"] = receipt
+    result = _diagnose(report, expected)
+    stages = _assert_fixed_stages(result)
+    assert stages["balance_cash"] == "verified"
+    assert result["revision_equalities"]["receipt_equals_report"] is None
+    assert "release_approved" not in result and "full_guard_pass" not in result
+
+
+@pytest.mark.parametrize("revision_mismatch", [True, False])
+def test_stages_do_not_change_original_cli_gate_or_add_cloud_reads(monkeypatch, capsys, revision_mismatch):
+    expected, report, facts = _staged_report(monkeypatch)
+    if not revision_mismatch:
+        report["diagnostics"]["runtime_revision"] = expected["expected_runtime_revision"]
+        report["runtime_release_receipt"]["runtime_revision"] = expected["expected_runtime_revision"]
+    facts["broker_reported_positions_scope"] = publisher.POSITIONS_SCOPE
+    facts["broker_reported_positions"] = []  # Optional positions remain omitted by the original publisher.
+    calls = []
+
+    def read_report(*args, **kwargs):
+        calls.append("report")
+        return report
+
+    def read_cloud(*args, **kwargs):
+        calls.append("cloud")
+        return _metadata(expected)
+
+    monkeypatch.setattr(publisher, "_latest_report_uri", lambda **kwargs: expected["expected_report_prefix"] + "/r.json")
+    monkeypatch.setattr(publisher, "_load_gcs_report", read_report)
+    monkeypatch.setattr(diagnostic, "_read_cloud_run_metadata", read_cloud)
+    assert diagnostic.main([], now=NOW) == (1 if revision_mismatch else 0)
+    captured = capsys.readouterr()
+    assert PRIVATE not in captured.out + captured.err
+    result = json.loads(captured.out)
+    assert result["projection_passed"] is not revision_mismatch
+    assert result["account_facts_stages"]["positions"] == "invalid"
+    assert calls == ["report", "cloud"]
+
+
+def test_preflight_and_failed_reads_keep_all_account_fact_stages_unknown(monkeypatch, capsys):
+    _environment(monkeypatch)
+    assert diagnostic.main(["--preflight"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["account_facts_stages"] == dict.fromkeys(_STAGES, "unknown")
+    monkeypatch.setattr(publisher, "_latest_report_uri", lambda **kwargs: (_ for _ in ()).throw(publisher._ProjectionError("report_unavailable")))
+    assert diagnostic.main([], now=NOW) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["account_facts_stages"] == dict.fromkeys(_STAGES, "unknown")
