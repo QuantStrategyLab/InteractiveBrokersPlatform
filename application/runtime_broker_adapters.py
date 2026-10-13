@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from application.account_facts import build_ibkr_account_facts
 from application.cycle_result import StrategyCycleResult
 from quant_platform_kit.common.models import OrderIntent, PortfolioSnapshot, Position
 
@@ -16,6 +17,10 @@ class IBKRGatewayUnavailableError(ConnectionError):
 
 class IBKRTradingPermissionError(RuntimeError):
     """Raised when a live Gateway connection cannot verify order-write access."""
+
+
+class _ProjectedAccountFacts(dict[str, Any]):
+    """Private dictionary marker for this adapter's native-snapshot projection."""
 
 
 @dataclass(frozen=True)
@@ -280,6 +285,13 @@ class IBKRRuntimeBrokerAdapters:
             "equity": snapshot.total_equity,
             "buying_power": snapshot.buying_power or 0.0,
         }
+        try:
+            account_facts = build_ibkr_account_facts(snapshot)
+        except Exception:
+            # Optional reporting must not change the existing portfolio view.
+            account_facts = {}
+        if account_facts:
+            account_values["account_facts"] = _ProjectedAccountFacts(account_facts)
         return positions, account_values
 
     def build_portfolio_snapshot(self, ib, *, get_current_portfolio_fallback=None):
@@ -383,6 +395,12 @@ class IBKRRuntimeBrokerAdapters:
                 self.printer("paper_liquidation_positions_empty_retry", flush=True)
                 self.sleep_fn(2.0)
                 positions, _account_values = get_current_portfolio_fn(ib)
+            account_facts = _account_values.get("account_facts") if isinstance(_account_values, dict) else None
+            account_facts = (
+                dict(account_facts)
+                if isinstance(account_facts, _ProjectedAccountFacts)
+                else {}
+            )
             summary = self.execute_paper_liquidation_fn(
                 ib,
                 positions,
@@ -403,6 +421,7 @@ class IBKRRuntimeBrokerAdapters:
             return StrategyCycleResult(
                 result="OK",
                 execution_summary=dict(summary or {}),
+                account_facts=account_facts,
             )
         finally:
             if ib is not None and hasattr(ib, "disconnect"):
