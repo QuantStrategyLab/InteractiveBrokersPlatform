@@ -1184,10 +1184,10 @@ def test_source_metadata_only_workflow_wire_preserves_default_report_mode():
     assert "serving_source_metadata_only:\n" in workflow
     assert "        type: boolean\n        required: true\n        default: false" in workflow
     assert "actions: read" in workflow and "actions: write" not in workflow
-    old_step = "      - name: Read report and service revision equality\n        if: ${{ !inputs.serving_source_metadata_only && !inputs.registry_source_metadata_only }}\n        run: python3 scripts/diagnose_account_facts_identity.py\n"
+    old_step = "      - name: Read report and service revision equality\n        if: ${{ !inputs.serving_source_metadata_only && !inputs.registry_source_metadata_only && !inputs.static_source_only }}\n        run: python3 scripts/diagnose_account_facts_identity.py\n"
     assert old_step in workflow
     new_step = workflow.split("      - name: Read serving source metadata without reports or image execution\n", 1)[1].split("\n      - name: Read registry provenance shape without reports or image execution\n", 1)[0]
-    assert new_step == ("        if: ${{ inputs.serving_source_metadata_only && !inputs.registry_source_metadata_only }}\n"
+    assert new_step == ("        if: ${{ inputs.serving_source_metadata_only && !inputs.registry_source_metadata_only && !inputs.static_source_only }}\n"
                         "        env:\n          GH_TOKEN: ${{ github.token }}\n"
                         "        run: python3 scripts/diagnose_account_facts_identity.py --serving-source-metadata-only\n")
     assert "GH_TOKEN" not in workflow.split(old_step)[0]
@@ -1373,8 +1373,8 @@ def test_registry_metadata_modes_are_mutually_exclusive(monkeypatch, capsys):
 def test_registry_metadata_workflow_only_explicit_main_mode_no_token():
     workflow = Path(".github/workflows/account-facts-identity-diagnose.yml").read_text()
     assert "registry_source_metadata_only:\n" in workflow
-    assert "if: ${{ github.ref == 'refs/heads/main' && !(inputs.serving_source_metadata_only && inputs.registry_source_metadata_only) }}" in workflow
-    step = workflow.split("      - name: Read registry provenance shape without reports or image execution\n", 1)[1]
-    assert step == ("        if: ${{ inputs.registry_source_metadata_only && !inputs.serving_source_metadata_only }}\n"
+    assert "if: ${{ github.ref == 'refs/heads/main' && !(inputs.serving_source_metadata_only && inputs.registry_source_metadata_only) && !(inputs.static_source_only && (inputs.serving_source_metadata_only || inputs.registry_source_metadata_only)) }}" in workflow
+    step = workflow.split("      - name: Read registry provenance shape without reports or image execution\n", 1)[1].split("\n      - name: Compare fixed public source files in the exact serving image\n", 1)[0]
+    assert step == ("        if: ${{ inputs.registry_source_metadata_only && !inputs.serving_source_metadata_only && !inputs.static_source_only }}\n"
         "        run: python3 scripts/diagnose_account_facts_identity.py --registry-source-metadata-only\n")
     assert "default: true" not in workflow and "schedule:" not in workflow

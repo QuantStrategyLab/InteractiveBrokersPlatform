@@ -13,6 +13,11 @@ on:
         type: boolean
         required: true
         default: false
+      static_source_only:
+        description: Compare eight public files with an exact source candidate in the serving digest; static OCI reads only, no image execution; exclusive with metadata modes
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
@@ -26,7 +31,7 @@ concurrency:
 jobs:
   diagnose:
     name: Read identity for ${{ matrix.target }}
-    if: ${{ github.ref == 'refs/heads/main' && !(inputs.serving_source_metadata_only && inputs.registry_source_metadata_only) }}
+    if: ${{ github.ref == 'refs/heads/main' && !(inputs.serving_source_metadata_only && inputs.registry_source_metadata_only) && !(inputs.static_source_only && (inputs.serving_source_metadata_only || inputs.registry_source_metadata_only)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -63,15 +68,21 @@ jobs:
         uses: google-github-actions/setup-gcloud@v3
 
       - name: Read report and service revision equality
-        if: ${{ !inputs.serving_source_metadata_only && !inputs.registry_source_metadata_only }}
+        if: ${{ !inputs.serving_source_metadata_only && !inputs.registry_source_metadata_only && !inputs.static_source_only }}
         run: python3 scripts/diagnose_account_facts_identity.py
 
       - name: Read serving source metadata without reports or image execution
-        if: ${{ inputs.serving_source_metadata_only && !inputs.registry_source_metadata_only }}
+        if: ${{ inputs.serving_source_metadata_only && !inputs.registry_source_metadata_only && !inputs.static_source_only }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/diagnose_account_facts_identity.py --serving-source-metadata-only
 
       - name: Read registry provenance shape without reports or image execution
-        if: ${{ inputs.registry_source_metadata_only && !inputs.serving_source_metadata_only }}
+        if: ${{ inputs.registry_source_metadata_only && !inputs.serving_source_metadata_only && !inputs.static_source_only }}
         run: python3 scripts/diagnose_account_facts_identity.py --registry-source-metadata-only
+
+      - name: Compare fixed public source files in the exact serving image
+        if: ${{ inputs.static_source_only && !inputs.serving_source_metadata_only && !inputs.registry_source_metadata_only }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/diagnose_image_static_source.py --static-source-only
