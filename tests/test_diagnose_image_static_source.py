@@ -319,6 +319,9 @@ def test_static_full_diagnostic_only_matches_selected_candidate(monkeypatch, cap
     assert out["matched_candidate_sha"] == SHA and out["source_sha"] == "d" * 40
     assert out["selected_source_sha"] is None
     assert out["loaded_source_status"] == out["independent_release_approval"] == "unknown"
+    assert out["redirect_metadata"]["location_shape"] is None
+    assert out["redirect_metadata"]["same_origin"] is out["redirect_metadata"]["accurate_descriptor_path"] is None
+    assert out["redirect_metadata"]["redirect_followed"] is out["redirect_metadata"]["authorization_forwarded"] is False
     assert out["selected_files_match_candidate"] is True and out["serving_stable"] is True
     assert PRIVATE not in json.dumps(out) and "sha256:" not in json.dumps(out)
     assert len(case["calls"]) == 13  # service + revision + exact commit + eight files + token + reread
@@ -444,9 +447,9 @@ def test_redirect_metadata_names_exact_stage_and_never_follows(stage, code):
     assert error.value.redirect_metadata == {
         "request_stage": stage, "http_status": code, "location_present": True,
         "location_single_value": True, "location_over_limit": False, "location_validation_reason": "accepted_shape",
-        "location_https_default_443": True, "location_has_query": True,
-        "destination_class": "exact_google_storage_hostname", "redirect_followed": False,
-        "authorization_forwarded": False,
+        "location_shape": "absolute", "location_https_default_443": True, "location_has_query": True,
+        "destination_class": "exact_google_storage_hostname", "same_origin": False, "accurate_descriptor_path": False,
+        "redirect_followed": False, "authorization_forwarded": False,
     }
     assert len(calls) == {"manifest": 1, "config": 2, "layer": 3}[stage]
     assert PRIVATE not in json.dumps(error.value.redirect_metadata)
@@ -597,3 +600,117 @@ def test_location_length_limit_is_inclusive_and_does_not_publish_length():
     assert out["location_validation_reason"] == "accepted_shape" and out["location_over_limit"] is False
     assert out["destination_class"] == "exact_google_storage_hostname"
     assert not any("length" in key or "count" in key for key in out)
+
+
+_DESCRIPTOR = "sha256:" + "ab" * 32
+_REQUEST = "https://us-central1-docker.pkg.dev/v2/synthetic/repo/blobs/" + _DESCRIPTOR
+_PATH = "/v2/synthetic/repo/blobs/" + _DESCRIPTOR
+
+
+def _location(value):
+    headers = Message()
+    headers["Location"] = value
+    return headers
+
+
+@pytest.mark.parametrize("location,shape,reason,same_origin,descriptor_path", [
+    (_PATH, "path_absolute", "missing_scheme_or_host", True, True),
+    ("/v2/other", "path_absolute", "missing_scheme_or_host", True, False),
+    ("/v2/synthetic/repo/blobs/./" + _DESCRIPTOR, "path_absolute", "missing_scheme_or_host", True, True),
+    ("/v2/synthetic/repo/blobs/../blobs/" + _DESCRIPTOR, "path_absolute", "missing_scheme_or_host", True, True),
+    ("./" + _DESCRIPTOR, "path_relative", "missing_scheme_or_host", True, True),
+    ("blobs/" + _DESCRIPTOR, "path_relative", "missing_scheme_or_host", True, False),
+    ("//us-central1-docker.pkg.dev" + _PATH, "network_path", "missing_scheme_or_host", True, True),
+    ("//us-central1-docker.pkg.dev:443" + _PATH, "network_path", "missing_scheme_or_host", True, True),
+    ("//us-central1-docker.pkg.dev:444" + _PATH, "network_path", "missing_scheme_or_host", False, True),
+    ("//storage.googleapis.com" + _PATH, "network_path", "missing_scheme_or_host", False, True),
+    ("https://" + _PATH, "scheme_without_host", "missing_scheme_or_host", False, True),
+    ("", "empty", "missing_scheme_or_host", True, True),
+    ("?alt=media", "query_relative", "missing_scheme_or_host", True, True),
+    ("#fragment", "fragment_relative", "missing_scheme_or_host", True, True),
+    (_REQUEST, "absolute", "accepted_shape", True, True),
+    ("https://us-central1-docker.pkg.dev:443" + _PATH, "absolute", "accepted_shape", True, True),
+    ("https://storage.googleapis.com" + _PATH, "absolute", "accepted_shape", False, True),
+    ("http://us-central1-docker.pkg.dev" + _PATH, "absolute", "accepted_shape", False, True),
+    ("https://us-central1-docker.pkg.dev:444" + _PATH, "absolute", "accepted_shape", False, True),
+    ("ftp://us-central1-docker.pkg.dev" + _PATH, "absolute", "unsupported_scheme", False, True),
+    ("https://invalid_host" + _PATH, "absolute", "hostname_invalid", False, True),
+    ("https://user:secret@us-central1-docker.pkg.dev" + _PATH, "absolute", "userinfo", True, True),
+    ("https://us-central1-docker.pkg.dev" + _PATH + "#" + PRIVATE, "absolute", "fragment", True, True),
+    ("https://us-central1-docker.pkg.dev" + "/v2/synthetic/repo/blobs/../blobs/" + _DESCRIPTOR,
+     "absolute", "accepted_shape", True, False),
+], ids=["path_absolute", "other_path", "dot_segment", "dotdot_segment", "path_relative", "wrong_relative",
+        "network", "network_443", "network_port", "network_storage", "scheme_without_host", "empty",
+        "query", "fragment_relative", "absolute", "explicit_443", "storage_path", "http", "port_444",
+        "ftp", "bad_host", "userinfo", "fragment", "absolute_dotdot"])
+def test_location_shape_and_request_normalization_are_not_solely_missing_scheme(
+        location, shape, reason, same_origin, descriptor_path):
+    out = static._redirect_metadata("layer", 302, _location(location), _REQUEST)
+    assert out["location_validation_reason"] == reason
+    assert out["location_shape"] == shape
+    assert out["same_origin"] is same_origin
+    assert out["accurate_descriptor_path"] is descriptor_path
+    assert out["redirect_followed"] is out["authorization_forwarded"] is False
+    if reason != "accepted_shape":
+        assert out["location_https_default_443"] is out["location_has_query"] is None
+        assert out["destination_class"] == "other_or_invalid"
+    assert set(out) == set(static._redirect_result())
+    dumped = json.dumps(out)
+    assert PRIVATE not in dumped and "secret" not in dumped and "storage.googleapis.com" not in dumped
+    assert _DESCRIPTOR not in dumped and _PATH not in dumped and "us-central1-docker.pkg.dev" not in dumped
+
+
+def test_scheme_without_host_does_not_inherit_request_origin():
+    out = static._redirect_metadata("layer", 302, _location("https://" + _PATH), _REQUEST)
+    assert out["location_shape"] == "scheme_without_host"
+    assert out["location_validation_reason"] == "missing_scheme_or_host"
+    assert out["same_origin"] is False and out["accurate_descriptor_path"] is True
+    assert out["destination_class"] == "other_or_invalid"
+    assert out["redirect_followed"] is out["authorization_forwarded"] is False
+
+
+def test_booleans_stay_null_when_request_uri_is_not_an_accurate_descriptor():
+    for request in ("https://us-central1-docker.pkg.dev", "http://us-central1-docker.pkg.dev" + _PATH,
+                    "https://user:secret@us-central1-docker.pkg.dev" + _PATH, ""):
+        out = static._redirect_metadata("layer", 302, _location(_PATH), request)
+        assert out["location_shape"] == "path_absolute"
+        assert out["same_origin"] is out["accurate_descriptor_path"] is None
+        assert out["redirect_followed"] is False
+
+
+def test_unparsed_locations_do_not_invent_shape_or_descriptor_booleans():
+    headers = Message();headers["Location"] = "https://storage.googleapis.com/" + "x" * 8192
+    out = static._redirect_metadata("layer", 302, headers, _REQUEST)
+    assert out["location_validation_reason"] == "over_limit"
+    assert out["location_shape"] is out["same_origin"] is out["accurate_descriptor_path"] is None
+    headers = Message();headers["Location"] = "https://[broken/" + PRIVATE
+    out = static._redirect_metadata("layer", 302, headers, _REQUEST)
+    assert out["location_validation_reason"] == "url_parse_failed"
+    assert out["location_shape"] is out["same_origin"] is out["accurate_descriptor_path"] is None
+    assert PRIVATE not in json.dumps(out)
+
+
+def test_same_descriptor_relative_redirect_is_classified_and_not_followed():
+    registry, budget, opener, _ = _registry([_tar([])])
+    path = "/v2/synthetic/repo/manifests/" + registry.digest
+    calls = []
+    def redirect(request, timeout):
+        calls.append(request.full_url)
+        assert request.full_url == "https://us-central1-docker.pkg.dev" + path
+        assert request.get_header("Authorization")
+        headers = Message();headers["Location"] = path
+        class Body(io.BytesIO):
+            def read(self, *_args): pytest.fail("relative redirect body must not be read")
+        raise urllib.error.HTTPError("https://" + PRIVATE, 302, PRIVATE, headers, Body())
+    opener.open = redirect
+    with pytest.raises(static.StaticError) as error:
+        static.read_image(registry, budget)
+    meta = error.value.redirect_metadata
+    assert str(error.value) == "registry_redirect_blocked"
+    assert meta["location_shape"] == "path_absolute"
+    assert meta["location_validation_reason"] == "missing_scheme_or_host"
+    assert meta["same_origin"] is True and meta["accurate_descriptor_path"] is True
+    assert meta["destination_class"] == "other_or_invalid"
+    assert meta["redirect_followed"] is meta["authorization_forwarded"] is False
+    assert calls == ["https://us-central1-docker.pkg.dev" + path]
+    assert PRIVATE not in json.dumps(meta) and registry.digest not in json.dumps(meta)

@@ -102,11 +102,73 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 def _redirect_result():
     return {"request_stage": None, "http_status": None, "location_present": None,
             "location_single_value": None, "location_over_limit": None, "location_validation_reason": None,
-            "location_https_default_443": None, "location_has_query": None,
-            "destination_class": None, "redirect_followed": False, "authorization_forwarded": False}
+            "location_shape": None, "location_https_default_443": None, "location_has_query": None,
+            "destination_class": None, "same_origin": None, "accurate_descriptor_path": None,
+            "redirect_followed": False, "authorization_forwarded": False}
 
 
-def _redirect_metadata(stage, code, headers, origin):
+def _location_shape(location, parsed, hostname):
+    """Closed syntactic class. This does not decide whether the reference may be fetched."""
+    if location == "":
+        return "empty"
+    if parsed.scheme:
+        return "absolute" if hostname else "scheme_without_host"
+    if parsed.netloc:
+        return "network_path"
+    if parsed.path.startswith("/"):
+        return "path_absolute"
+    if parsed.path:
+        return "path_relative"
+    if parsed.query:
+        return "query_relative"
+    if parsed.fragment:
+        return "fragment_relative"
+    return "empty"
+
+
+def _request_reference(request_uri):
+    """Accept only the accurate https descriptor URL already used for this request."""
+    if (not isinstance(request_uri, str) or not request_uri.isascii() or len(request_uri) > 8192
+        or re.search(r"[\x00-\x20\x7f]", request_uri)):
+        return None
+    try:
+        base = urllib.parse.urlsplit(request_uri)
+        hostname = base.hostname
+        port = base.port
+    except Exception:
+        return None
+    if (base.scheme != "https" or not hostname or not re.fullmatch(r"[a-z0-9.-]+", hostname)
+        or base.username is not None or base.password is not None or port not in {None, 443}
+        or base.query or base.fragment or not base.path.startswith("/") or base.path.startswith("//")):
+        return None
+    return base
+
+
+def _descriptor_booleans(request_uri, location):
+    """Normalize Location against the same request URI. True does not grant a hop or auth forwarding."""
+    base = _request_reference(request_uri)
+    if base is None:
+        return None, None
+    try:
+        ref = urllib.parse.urlsplit(location)
+        # Scheme-bearing references keep their own authority. urljoin would copy the
+        # request host into https:///path and report a false same-origin result.
+        resolved = ref if ref.scheme else urllib.parse.urlsplit(urllib.parse.urljoin(request_uri, location))
+        path_match = resolved.path == base.path
+    except Exception:
+        return None, None
+    try:
+        hostname = resolved.hostname
+        port = resolved.port
+    except Exception:
+        return None, path_match
+    if (resolved.scheme != "https" or not hostname or port not in {None, 443}
+        or not re.fullmatch(r"[a-z0-9.-]+", hostname)):
+        return False, path_match
+    return hostname == base.hostname, path_match
+
+
+def _redirect_metadata(stage, code, headers, request_uri):
     """Classify one bounded Location in memory; this never grants hop permission."""
     result = _redirect_result()
     result["request_stage"] = stage if isinstance(stage, str) and stage in {"manifest", "config", "layer"} else None
@@ -157,6 +219,8 @@ def _redirect_metadata(stage, code, headers, origin):
     except Exception:
         result["location_validation_reason"] = "url_parse_failed"
         return result
+    result["location_shape"] = _location_shape(location, parsed, hostname)
+    result["same_origin"], result["accurate_descriptor_path"] = _descriptor_booleans(request_uri, location)
     if not parsed.scheme or not hostname:
         reason = "missing_scheme_or_host"
     elif parsed.scheme not in {"http", "https"}:
@@ -181,7 +245,7 @@ def _redirect_metadata(stage, code, headers, origin):
     result["location_https_default_443"] = parsed.scheme == "https" and port in {None, 443}
     result["location_has_query"] = "?" in location
     try:
-        expected = urllib.parse.urlsplit(origin)
+        expected = urllib.parse.urlsplit(request_uri)
         if (result["location_https_default_443"] and parsed.hostname == expected.hostname
             and expected.scheme == "https" and expected.port in {None, 443}):
             result["destination_class"] = "same_registry_origin"
@@ -225,7 +289,8 @@ class Registry:
             raise StaticError("static_metadata_invalid")
         self.budget.check()
         target = io.BytesIO() if memory else tempfile.TemporaryFile()
-        request = urllib.request.Request(self.base + "/" + kind + "/" + digest, headers={
+        request_uri = self.base + "/" + kind + "/" + digest
+        request = urllib.request.Request(request_uri, headers={
             "Authorization": self.authorization, "Accept-Encoding": "identity",
             "Accept": ", ".join(sorted(_MANIFEST | _INDEX))})
         sha, received = hashlib.sha256(), 0
@@ -250,7 +315,7 @@ class Registry:
             target.close()
             # Only one bounded Location is classified; no body/URL/error text or
             # other headers are read, and NoRedirect still prevents a second hop.
-            metadata = _redirect_metadata(stage, exc.code, exc.headers, self.base) if 300 <= exc.code < 400 else None
+            metadata = _redirect_metadata(stage, exc.code, exc.headers, request_uri) if 300 <= exc.code < 400 else None
             exc.close()
             raise StaticError("registry_redirect_blocked" if 300 <= exc.code < 400 else "registry_read_failed",
                               redirect_metadata=metadata) from None
