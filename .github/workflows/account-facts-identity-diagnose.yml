@@ -2,9 +2,16 @@ name: Diagnose Account Facts Identity (read only)
 
 on:
   workflow_dispatch:
+    inputs:
+      serving_source_metadata_only:
+        description: Read serving revision and deploy provenance only; no reports, image pull or business request
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
+  actions: read
   id-token: write
 
 concurrency:
@@ -51,4 +58,11 @@ jobs:
         uses: google-github-actions/setup-gcloud@v3
 
       - name: Read report and service revision equality
+        if: ${{ !inputs.serving_source_metadata_only }}
         run: python3 scripts/diagnose_account_facts_identity.py
+
+      - name: Read serving source metadata without reports or image execution
+        if: ${{ inputs.serving_source_metadata_only }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/diagnose_account_facts_identity.py --serving-source-metadata-only

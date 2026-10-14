@@ -20,3 +20,21 @@ gh workflow run serving-image-identity-diagnose.yml \
 ```
 
 metadata 完整可读取时 exit0 只说明本次 image 证据已取得。读取不可用、身份/来源不完整或漂移保留 unknown/partial 与 exit1；没有 POST、GCS 写入、业务请求、通知、部署、IAM/生产变量变更。
+
+## 精确 serving metadata 与部署来源
+
+`account-facts-identity-diagnose.yml` 新增默认关闭的 `serving_source_metadata_only`。显式为 true 时，使用同一固定四 slot、原保护映射 preflight、main 与既有 WIF，仅读取准确 service 的唯一 100% serving revision，再读取该 revision metadata。原 report 诊断 step 不运行；不列出/读取 GCS 报告、不拉镜像、不运行 Docker、Secret Manager、券商、策略、通知或生产写入。默认 false 仍走原调用与原输出。
+
+该模式复用 `immutable_image` 的 pinned/resolved digest 校验，要求 deployed literal `RUNTIME_TARGET_JSON` 的 service、scope、deployment selector 与原单账户 selector 全部匹配。revision 的合法 `commit-sha` 与数值 `github-run-id` 只用于定位同仓准确的 `sync-cloud-run-env.yml` main 手动成功运行及唯一部署 job；不接受任意 URL、别仓、其他分支/工作流或 skipped step。新 step 仅注入 `github.token`，增加最小 `actions: read`。
+
+精确 job log 只在批准云 runner 内存消费，限既有 helper 的 2 MiB 输出上限，不打印或持久化。必须唯一匹配原 selected-source 校验 group、build/deploy group 和 no-traffic readback group；两处 `SOURCE_COMMIT` 与 revision source label 相等，原 checkout/校验/build/读回步骤均成功，原计划准确目标/物理字段匹配，readback 的实际 `EXPECTED_IMAGE_DIGEST` 与当前 immutable digest 相等。`head_sha` 不替代所选源码；缺失、masked、重复/含糊日志或前驱运行材料不可读均拒绝。最后重读同 service 确认 serving 未变；这是只读稳定性检查，不是生产 CAS 或运行锁。
+
+输出仍使用现有 `ibkr.account_facts_identity_diagnostic.v1` 的显式 `status=metadata_only` 分支，仅含固定 reason、四项 nullable scope equality、image/provenance状态、serving稳定性及已证明的公开 `selected_source_sha`。revision/digest/run ID/私有配置/账户/日志与 token 不输出。`deploy_provenance_verified` / exit0只表示部署来源链被核对；`loaded_source_status` 和 `independent_release_approval` 始终 unknown，不代替正在运行的加载证明、source批准或 producer/receiver绑定修复。
+
+```bash
+gh workflow run account-facts-identity-diagnose.yml \
+  --repo QuantStrategyLab/InteractiveBrokersPlatform --ref main \
+  -f serving_source_metadata_only=true
+```
+
+该新读取补齐不同的 metadata 证据，不重跑旧失败的 image/plugin 安装探针。任何 target、流量、digest、来源或读取失败保持非零退出，停止受影响目标，不借最新 ready、tag、run head或旧记录代填。

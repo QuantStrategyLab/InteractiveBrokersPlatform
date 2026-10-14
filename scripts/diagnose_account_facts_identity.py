@@ -35,6 +35,20 @@ _ACCOUNT_FACTS_STAGES = (
     "report_envelope", "source_report_provenance", "scope_identity", "snapshot_schema",
     "account_identity", "observation_interval", "balance_cash", "positions",
 )
+_SOURCE_REPOSITORY = "QuantStrategyLab/InteractiveBrokersPlatform"
+_SOURCE_REASONS = _REASONS | frozenset({
+    "source_metadata_context_invalid", "source_metadata_unavailable", "deployed_target_mismatch",
+    "serving_traffic_unresolved", "revision_identity_invalid", "revision_metadata_invalid",
+    "revision_metadata_unavailable", "immutable_image_unavailable", "immutable_image_mismatch",
+    "source_labels_unavailable", "deployment_run_read_failed", "deployment_run_unverified",
+    "deployment_job_unverified", "deployment_log_read_failed", "deployment_source_unverified",
+    "deployment_target_unverified", "deployment_image_mismatch", "serving_changed_during_read",
+    "deploy_provenance_verified",
+})
+_SOURCE_STEPS = (
+    "Checkout selected image source", "Verify selected image source",
+    "Build, push, and deploy Cloud Run image", "Verify no-traffic deployment readback",
+)
 
 
 def _traffic_result(status: str = "absent") -> dict[str, Any]:
@@ -391,9 +405,186 @@ def _read_cloud_run_metadata(expected: Mapping[str, Any]) -> object:
         return None
 
 
+def _source_scope(target: object, expected: Mapping[str, Any]) -> dict[str, bool | None]:
+    target = target if isinstance(target, Mapping) else {}
+    return {
+        "service_name": _equal(target.get("service_name"), expected["expected_service_name"]),
+        "account_scope": _equal(target.get("account_scope"), expected["expected_account_scope"]),
+        "deployment_selector": _equal(target.get("deployment_selector"), expected["expected_deployment_selector"]),
+        "account_selector": publisher._selector(target.get("account_selector")) == expected["expected_account_selector"],
+    }
+
+
+def _source_step_env(logs: str, markers: Sequence[str]) -> dict[str, str]:
+    """Read one precisely identified step's environment; never echo job logs."""
+    groups = []
+    current = None
+    for raw in logs.splitlines():
+        line = re.sub(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d+Z ", "", raw)
+        if line.startswith("##[group]"):
+            current = []
+        elif line == "##[endgroup]" and current is not None:
+            group = "\n".join(current)
+            if all(marker in group for marker in markers):
+                groups.append(current)
+            current = None
+        elif current is not None:
+            current.append(line)
+    env_indices = [i for i, line in enumerate(groups[0]) if line.strip() == "env:"] if len(groups) == 1 else []
+    if len(groups) != 1 or len(env_indices) != 1:
+        raise publisher._ProjectionError("deployment_source_unverified")
+    values = {}
+    for line in groups[0][env_indices[0] + 1:]:
+        match = re.fullmatch(r"\s+([A-Z][A-Z0-9_]*): (.*)", line)
+        if match:
+            if match[1] in values:
+                raise publisher._ProjectionError("deployment_source_unverified")
+            values[match[1]] = match[2]
+    return values
+
+
+def _source_deploy_receipt(image, *, run_id: str, selected_source: str, digest: str,
+                           expected: Mapping[str, Any], region: str) -> None:
+    root = f"repos/{_SOURCE_REPOSITORY}/actions"
+    def api(path, reason):
+        return image._json_command(("gh", "api", "--hostname", "github.com", path), reason)
+    run = api(f"{root}/runs/{run_id}", "deployment_run_read_failed")
+    if (not isinstance(run, Mapping) or type(run.get("id")) is not int or str(run["id"]) != run_id
+        or not isinstance(run.get("repository"), Mapping)
+        or run["repository"].get("full_name") != _SOURCE_REPOSITORY
+        or run.get("path") != ".github/workflows/sync-cloud-run-env.yml"
+        or run.get("head_branch") != "main" or run.get("event") != "workflow_dispatch"
+        or run.get("status") != "completed" or run.get("conclusion") != "success"):
+        raise publisher._ProjectionError("deployment_run_unverified")
+    listing = api(f"{root}/runs/{run_id}/jobs?per_page=100", "deployment_run_read_failed")
+    if (not isinstance(listing, Mapping) or type(listing.get("total_count")) is not int
+        or not isinstance(listing.get("jobs"), list) or listing["total_count"] != len(listing["jobs"])):
+        raise publisher._ProjectionError("deployment_job_unverified")
+    jobs = [j for j in listing["jobs"] if isinstance(j, Mapping) and j.get("name") == "Deploy / Sync Cloud Run"]
+    if len(jobs) != 1:
+        raise publisher._ProjectionError("deployment_job_unverified")
+    job = jobs[0]
+    if (type(job.get("id")) is not int or job["id"] <= 0 or str(job.get("run_id")) != run_id
+        or job.get("status") != "completed" or job.get("conclusion") != "success"
+        or not isinstance(job.get("steps"), list)):
+        raise publisher._ProjectionError("deployment_job_unverified")
+    for name in _SOURCE_STEPS:
+        steps = [s for s in job["steps"] if isinstance(s, Mapping) and s.get("name") == name]
+        if len(steps) != 1 or steps[0].get("status") != "completed" or steps[0].get("conclusion") != "success":
+            raise publisher._ProjectionError("deployment_job_unverified")
+    logs = image._command(("gh", "api", "--hostname", "github.com", f"{root}/jobs/{job['id']}/logs"),
+                          "deployment_log_read_failed")
+    verify = _source_step_env(logs, ("Selected source must be a full commit SHA.",
+        'checked_out_sha="$(git -C source rev-parse HEAD)"', "Checked-out image source does not match source_commit."))
+    build = _source_step_env(logs, ('docker build --pull -t "${image}" source', 'gcloud run deploy "${cloud_run_service}"'))
+    readback = _source_step_env(logs, ("scripts/verify_cloud_run_no_traffic_deploy.py verify",
+                                     '--expected-image-digest="${EXPECTED_IMAGE_DIGEST}"'))
+    del logs
+    # The run head may differ from the explicitly selected image source. It is
+    # never used as a substitute for this successful checkout/verification.
+    if verify.get("SOURCE_COMMIT") != selected_source or build.get("SOURCE_COMMIT") != selected_source:
+        raise publisher._ProjectionError("deployment_source_unverified")
+    if readback.get("EXPECTED_IMAGE_DIGEST") != digest:
+        raise publisher._ProjectionError("deployment_image_mismatch")
+    if build.get("GCP_PROJECT_ID") != expected["expected_project_id"] or build.get("CLOUD_RUN_REGION") != region:
+        raise publisher._ProjectionError("deployment_target_unverified")
+    try:
+        plan = json.loads(build.get("SYNC_PLAN_JSON", ""))
+    except (ValueError, TypeError):
+        raise publisher._ProjectionError("deployment_target_unverified") from None
+    targets = plan.get("targets") if isinstance(plan, Mapping) else None
+    if not isinstance(targets, list):
+        raise publisher._ProjectionError("deployment_target_unverified")
+    matches = [t for t in targets if isinstance(t, Mapping) and t.get("service_name") == expected["expected_service_name"]]
+    if len(matches) != 1 or not isinstance(matches[0].get("env"), Mapping):
+        raise publisher._ProjectionError("deployment_target_unverified")
+    try:
+        target = json.loads(matches[0]["env"].get("RUNTIME_TARGET_JSON", ""))
+    except (ValueError, TypeError):
+        raise publisher._ProjectionError("deployment_target_unverified") from None
+    if any(value is not True for value in _source_scope(target, expected).values()):
+        raise publisher._ProjectionError("deployment_target_unverified")
+
+
+def _source_result(source_sha: object, reason: str = "source_metadata_unavailable") -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA, "source_sha": source_sha if isinstance(source_sha, str) and re.fullmatch(r"[0-9a-fA-F]{40}", source_sha) else None,
+        "status": "metadata_only", "reason": reason if reason in _SOURCE_REASONS else "diagnostic_error",
+        "scope_equalities": dict.fromkeys(("service_name", "account_scope", "deployment_selector", "account_selector")),
+        "immutable_image_status": "unknown", "deployment_provenance_status": "unknown",
+        "selected_source_sha": None, "serving_stable": None,
+        "loaded_source_status": "unknown", "independent_release_approval": "unknown",
+    }
+
+
+def diagnose_serving_source_metadata(expected: Mapping[str, Any], *, source_sha: object = None) -> dict[str, Any]:
+    result = _source_result(source_sha)
+    try:
+        if (os.environ.get("GITHUB_REF") != "refs/heads/main" or os.environ.get("GITHUB_REPOSITORY") != _SOURCE_REPOSITORY
+            or not os.environ.get("GH_TOKEN")):
+            raise publisher._ProjectionError("source_metadata_context_invalid")
+        try:
+            from scripts import diagnose_serving_image_identity as image
+        except ModuleNotFoundError:
+            import diagnose_serving_image_identity as image
+        region = os.environ.get("CLOUD_RUN_REGION", "")
+        service = _read_cloud_run_metadata(expected)
+        if (not isinstance(service, Mapping) or not isinstance(service.get("metadata"), Mapping)
+            or service["metadata"].get("name") != expected["expected_service_name"]):
+            raise publisher._ProjectionError("source_metadata_unavailable")
+        serving, _ = image._serving(service, expected)
+        revision = image._json_command(("gcloud", "run", "revisions", "describe", serving,
+            "--project", expected["expected_project_id"], "--region", region, "--format=json"), "revision_metadata_unavailable")
+        metadata = revision.get("metadata") if isinstance(revision, Mapping) else None
+        if not isinstance(metadata, Mapping) or metadata.get("name") != serving:
+            raise publisher._ProjectionError("revision_identity_invalid")
+        immutable, container = image.immutable_image(revision)
+        result["immutable_image_status"] = "verified"
+        env = container.get("env")
+        rows = [r for r in env if isinstance(r, Mapping) and r.get("name") == "RUNTIME_TARGET_JSON"] if isinstance(env, list) else []
+        if len(rows) != 1 or not isinstance(rows[0].get("value"), str):
+            raise publisher._ProjectionError("deployed_target_mismatch")
+        try:
+            target = json.loads(rows[0]["value"])
+        except (ValueError, TypeError):
+            raise publisher._ProjectionError("deployed_target_mismatch") from None
+        result["scope_equalities"] = _source_scope(target, expected)
+        if any(v is not True for v in result["scope_equalities"].values()):
+            raise publisher._ProjectionError("deployed_target_mismatch")
+        labels = metadata.get("labels")
+        selected = image._sha(labels.get("commit-sha")) if isinstance(labels, Mapping) else None
+        run_id = labels.get("github-run-id") if isinstance(labels, Mapping) else None
+        if not selected or not isinstance(run_id, str) or re.fullmatch(r"[1-9][0-9]{0,19}", run_id) is None:
+            raise publisher._ProjectionError("source_labels_unavailable")
+        _source_deploy_receipt(image, run_id=run_id, selected_source=selected,
+                              digest=immutable.rsplit("@", 1)[1], expected=expected, region=region)
+        after = _read_cloud_run_metadata(expected)
+        if (not isinstance(after, Mapping) or not isinstance(after.get("metadata"), Mapping)
+            or after["metadata"].get("name") != expected["expected_service_name"]
+            or image._serving(after, expected)[0] != serving):
+            result["serving_stable"] = False
+            raise publisher._ProjectionError("serving_changed_during_read")
+        result.update(reason="deploy_provenance_verified", deployment_provenance_status="verified",
+                      selected_source_sha=selected, serving_stable=True)
+    except ValueError as exc:
+        result["reason"] = str(exc) if str(exc) in _SOURCE_REASONS else "diagnostic_error"
+    except Exception:
+        result["reason"] = "diagnostic_error"
+    return result
+
+
 def main(argv: Sequence[str] | None = None, *, now: datetime | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     source_sha = os.environ.get("GITHUB_SHA")
+    if args == ["--serving-source-metadata-only"]:
+        try:
+            result = diagnose_serving_source_metadata(resolve_expected(), source_sha=source_sha)
+        except publisher._ProjectionError as exc:
+            result = _source_result(source_sha, exc.reason)
+        except Exception:
+            result = _source_result(source_sha, "diagnostic_error")
+        print(json.dumps(result, sort_keys=True))
+        return 0 if result["reason"] == "deploy_provenance_verified" else 1
     if args not in ([], ["--preflight"]):
         print(json.dumps(_result(source_sha=source_sha, reason="arguments_invalid"), sort_keys=True))
         return 1
