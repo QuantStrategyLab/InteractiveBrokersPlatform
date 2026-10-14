@@ -60,7 +60,9 @@ _REASONS = image._REASONS | identity._SOURCE_REASONS | frozenset({
 
 
 class StaticError(ValueError):
-    pass
+    def __init__(self, reason, *, redirect_metadata=None):
+        super().__init__(reason)
+        self.redirect_metadata = redirect_metadata
 
 
 @dataclass
@@ -97,6 +99,59 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def _redirect_result():
+    return {"request_stage": None, "http_status": None, "location_present": None,
+            "location_https_default_443": None, "location_has_query": None,
+            "destination_class": None, "redirect_followed": False, "authorization_forwarded": False}
+
+
+def _redirect_metadata(stage, code, headers, origin):
+    """Classify one bounded Location in memory; this never grants hop permission."""
+    result = _redirect_result()
+    result["request_stage"] = stage if isinstance(stage, str) and stage in {"manifest", "config", "layer"} else None
+    if type(code) is not int or code not in {301, 302, 303, 307, 308}:
+        return result
+    result["http_status"] = code
+    try:
+        if headers is None:
+            values = []
+        elif hasattr(headers, "get_all"):
+            values = headers.get_all("Location")
+            values = [] if values is None else values
+        else:
+            value = headers.get("Location")
+            values = [] if value is None else [value]
+        if not isinstance(values, list):
+            return result
+        result["location_present"] = bool(values)
+        if not values:
+            return result
+        result["destination_class"] = "other_or_invalid"
+        if len(values) != 1 or not isinstance(values[0], str):
+            return result
+        location = values[0]
+        if len(location) > 8192 or not location.isascii() or re.search(r"[\x00-\x20\x7f]", location):
+            return result
+        parsed = urllib.parse.urlsplit(location)
+        if (parsed.scheme not in {"http", "https"} or not parsed.hostname
+            or not re.fullmatch(r"[a-z0-9.-]+", parsed.hostname) or parsed.username is not None
+            or parsed.password is not None or parsed.fragment):
+            return result
+        port = parsed.port  # malformed ports are rejected without exposing text
+        result["location_https_default_443"] = parsed.scheme == "https" and port in {None, 443}
+        result["location_has_query"] = "?" in location
+        expected = urllib.parse.urlsplit(origin)
+        if (result["location_https_default_443"] and parsed.hostname == expected.hostname
+            and expected.scheme == "https" and expected.port in {None, 443}):
+            result["destination_class"] = "same_registry_origin"
+        elif result["location_https_default_443"] and parsed.hostname == "storage.googleapis.com":
+            result["destination_class"] = "exact_google_storage_hostname"
+    except Exception:
+        # Unknown header or URL shape remains nullable; no raw value is retained.
+        pass
+    return result
+
+
 def _json(raw):
     def pairs(rows):
         result = {}
@@ -123,7 +178,7 @@ class Registry:
         self.authorization = "Basic " + base64.b64encode(("oauth2accesstoken:" + token).encode()).decode()
         self.opener = opener if opener is not None else urllib.request.build_opener(NoRedirect())
 
-    def fetch(self, kind, digest, size, limit, *, memory=False):
+    def fetch(self, kind, digest, size, limit, *, memory=False, stage=None):
         if (kind not in {"manifests", "blobs"} or not isinstance(digest, str) or not _SHA256.fullmatch(digest)
             or size is not None and (type(size) is not int or not 0 < size <= limit)):
             raise StaticError("static_metadata_invalid")
@@ -152,9 +207,12 @@ class Registry:
             return target
         except urllib.error.HTTPError as exc:
             target.close()
-            # No body, URL, error text, private headers or redirect target read.
+            # Only one bounded Location is classified; no body/URL/error text or
+            # other headers are read, and NoRedirect still prevents a second hop.
+            metadata = _redirect_metadata(stage, exc.code, exc.headers, self.base) if 300 <= exc.code < 400 else None
             exc.close()
-            raise StaticError("registry_redirect_blocked" if 300 <= exc.code < 400 else "registry_read_failed") from None
+            raise StaticError("registry_redirect_blocked" if 300 <= exc.code < 400 else "registry_read_failed",
+                              redirect_metadata=metadata) from None
         except StaticError:
             target.close()
             raise
@@ -162,8 +220,8 @@ class Registry:
             target.close()
             raise StaticError("registry_read_failed") from None
 
-    def json(self, kind, digest, size=None):
-        with self.fetch(kind, digest, size, 4 * 1024**2, memory=True) as handle:
+    def json(self, kind, digest, size=None, *, stage=None):
+        with self.fetch(kind, digest, size, 4 * 1024**2, memory=True, stage=stage) as handle:
             return _json(handle.read())
 
 
@@ -315,7 +373,7 @@ class _Overlay:
 
 
 def read_image(registry, budget):
-    manifest = registry.json("manifests", registry.digest)
+    manifest = registry.json("manifests", registry.digest, stage="manifest")
     if not isinstance(manifest, Mapping) or type(manifest.get("schemaVersion")) is not int or manifest["schemaVersion"] != 2:
         raise StaticError("static_metadata_invalid")
     if manifest.get("mediaType") in _INDEX:
@@ -325,12 +383,12 @@ def read_image(registry, budget):
         if len(candidates) != 1:
             raise StaticError("static_platform_invalid")
         child = _descriptor(candidates[0], _MANIFEST, 4 * 1024**2)
-        manifest = registry.json("manifests", child["digest"], child["size"])
+        manifest = registry.json("manifests", child["digest"], child["size"], stage="manifest")
     if (not isinstance(manifest, Mapping) or type(manifest.get("schemaVersion")) is not int or manifest["schemaVersion"] != 2
         or manifest.get("mediaType") not in _MANIFEST):
         raise StaticError("static_metadata_invalid")
     descriptor = _descriptor(manifest.get("config"), _CONFIG, 4 * 1024**2)
-    config = registry.json("blobs", descriptor["digest"], descriptor["size"])
+    config = registry.json("blobs", descriptor["digest"], descriptor["size"], stage="config")
     layers = manifest.get("layers")
     root = config.get("rootfs") if isinstance(config, Mapping) else None
     diffs = root.get("diff_ids") if isinstance(root, Mapping) else None
@@ -348,7 +406,7 @@ def read_image(registry, budget):
         raise StaticError("static_budget_exceeded")
     overlay = _Overlay()
     for layer, diff_id in zip(layers, diffs):
-        with registry.fetch("blobs", layer["digest"], layer["size"], 256 * 1024**2) as handle:
+        with registry.fetch("blobs", layer["digest"], layer["size"], 256 * 1024**2, stage="layer") as handle:
             overlay.layer(handle, _LAYERS[layer["mediaType"]], diff_id, budget)
     return overlay.final()
 
@@ -437,6 +495,7 @@ def _result():
         "immutable_image_status": "unknown", "image_content_status": "unknown", "serving_stable": None,
         "selected_files": dict.fromkeys(SOURCE_FILES), "selected_files_match_candidate": None,
         "matched_candidate_sha": None, "selected_source_sha": None,
+        "redirect_metadata": _redirect_result(),
         "dependencies": {alias: {"status": "unknown", "equals_candidate_lock": None} for alias in PACKAGES},
         "loaded_source_status": "unknown", "independent_release_approval": "unknown"}
 
@@ -500,6 +559,8 @@ def diagnose(expected):
         result["reason"] = "static_files_match"
     except ValueError as exc:
         result["reason"] = str(exc) if str(exc) in _REASONS else "diagnostic_error"
+        if isinstance(exc, StaticError) and exc.redirect_metadata is not None:
+            result["redirect_metadata"] = exc.redirect_metadata
     except Exception:
         result["reason"] = "diagnostic_error"
     return result

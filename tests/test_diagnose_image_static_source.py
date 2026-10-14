@@ -10,6 +10,7 @@ import re
 import subprocess
 import tarfile
 import urllib.error
+from email.message import Message
 from pathlib import Path
 
 import pytest
@@ -418,3 +419,99 @@ def test_static_and_existing_modes_workflow_truth_table():
             assert sum(steps) == int(job)
             if job:
                 assert steps.index(True) == (0 if not any(flags_tuple) else flags_tuple.index(True) + 1)
+
+
+@pytest.mark.parametrize("stage", ["manifest", "config", "layer"])
+@pytest.mark.parametrize("code", [301, 302, 303, 307, 308])
+def test_redirect_metadata_names_exact_stage_and_never_follows(stage, code):
+    registry, budget, opener, manifest = _registry([_tar([])])
+    original = opener.open
+    calls = []
+    def redirect(request, timeout):
+        route = request.full_url.split("/v2/synthetic/repo/", 1)[1]
+        calls.append(route)
+        selected = (route.startswith("manifests/") if stage == "manifest" else
+                    route == "blobs/" + manifest["config"]["digest"] if stage == "config" else
+                    route == "blobs/" + manifest["layers"][0]["digest"])
+        if not selected: return original(request, timeout)
+        headers = Message();headers["Location"] = "https://storage.googleapis.com/" + PRIVATE + "?credential=" + PRIVATE
+        headers["Private-Header"] = PRIVATE
+        class Body(io.BytesIO):
+            def read(self, *_args): pytest.fail("redirect body must not be read")
+        raise urllib.error.HTTPError("https://" + PRIVATE, code, PRIVATE, headers, Body())
+    opener.open = redirect
+    with pytest.raises(static.StaticError) as error: static.read_image(registry, budget)
+    assert error.value.redirect_metadata == {
+        "request_stage": stage, "http_status": code, "location_present": True,
+        "location_https_default_443": True, "location_has_query": True,
+        "destination_class": "exact_google_storage_hostname", "redirect_followed": False,
+        "authorization_forwarded": False,
+    }
+    assert len(calls) == {"manifest": 1, "config": 2, "layer": 3}[stage]
+    assert PRIVATE not in json.dumps(error.value.redirect_metadata)
+
+
+@pytest.mark.parametrize("location,https,query,classification", [
+    ("https://us-central1-docker.pkg.dev/" + PRIVATE, True, False, "same_registry_origin"),
+    ("https://storage.googleapis.com:443/" + PRIVATE, True, False, "exact_google_storage_hostname"),
+    ("https://evil.storage.googleapis.com/" + PRIVATE, True, False, "other_or_invalid"),
+    ("https://storage.googleapis.com.evil/" + PRIVATE, True, False, "other_or_invalid"),
+    ("http://storage.googleapis.com/" + PRIVATE, False, False, "other_or_invalid"),
+    ("https://storage.googleapis.com:444/" + PRIVATE, False, False, "other_or_invalid"),
+    ("https://user:secret@storage.googleapis.com/" + PRIVATE, None, None, "other_or_invalid"),
+    ("https://storage.googleapis.com:bad/" + PRIVATE, None, None, "other_or_invalid"),
+    ("https://[broken/" + PRIVATE, None, None, "other_or_invalid"),
+    ("https://storage.googleapis.com/\r\n" + PRIVATE, None, None, "other_or_invalid"),
+    ("https://storage.googleapis.com/" + PRIVATE * 500, None, None, "other_or_invalid"),
+], ids=["same_origin", "exact_storage", "subdomain", "suffix", "http", "port", "userinfo", "bad_port", "bad_bracket", "control", "oversized"])
+def test_redirect_shape_classification_never_grants_permission(location, https, query, classification):
+    headers = Message();headers["Location"] = location
+    out = static._redirect_metadata("layer", 302, headers, "https://us-central1-docker.pkg.dev")
+    assert out["location_https_default_443"] is https and out["location_has_query"] is query
+    assert out["destination_class"] == classification
+    assert out["redirect_followed"] is out["authorization_forwarded"] is False
+    assert PRIVATE not in json.dumps(out) and "storage.googleapis.com" not in json.dumps(out)
+
+
+def test_redirect_missing_duplicate_and_unreadable_location_remain_bounded():
+    out = static._redirect_metadata("unknown", 302, Message(), "https://us-central1-docker.pkg.dev")
+    assert out["request_stage"] is None and out["location_present"] is False
+    assert out["location_https_default_443"] is out["location_has_query"] is None
+    assert out["destination_class"] is None
+    headers = Message();headers["Location"] = "https://storage.googleapis.com/" + PRIVATE
+    headers["Location"] = "https://us-central1-docker.pkg.dev/" + PRIVATE
+    out = static._redirect_metadata("layer", 302, headers, "https://us-central1-docker.pkg.dev")
+    assert out["location_present"] is True and out["destination_class"] == "other_or_invalid"
+    assert out["location_https_default_443"] is None
+    class PrivateHeaders:
+        def get_all(self, name):
+            assert name == "Location"
+            raise ValueError(PRIVATE)
+        def __iter__(self): pytest.fail("private headers must not be enumerated")
+    out = static._redirect_metadata("layer", 302, PrivateHeaders(), "https://us-central1-docker.pkg.dev")
+    assert out["location_present"] is None
+    assert PRIVATE not in json.dumps(out)
+
+
+def test_unclassified_redirect_code_does_not_read_location_or_guess_shape():
+    class Headers:
+        def get_all(self, name): pytest.fail("unclassified status must not read headers")
+    out = static._redirect_metadata(None, 304, Headers(), "https://us-central1-docker.pkg.dev")
+    assert out == static._redirect_result()
+
+
+def test_redirect_projection_keeps_source_loaded_and_approval_unknown(monkeypatch, capsys):
+    case = _diagnostic_case(monkeypatch)
+    calls = []
+    def error(request, timeout):
+        calls.append(request)
+        headers = Message();headers["Location"] = "https://storage.googleapis.com/" + PRIVATE + "?" + PRIVATE
+        raise urllib.error.HTTPError("https://" + PRIVATE, 302, PRIVATE, headers, None)
+    case["opener"].open = error
+    assert static.main(["--static-source-only"]) == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out["redirect_metadata"]["request_stage"] == "manifest" and out["redirect_metadata"]["http_status"] == 302
+    assert out["reason"] == "registry_redirect_blocked" and len(calls) == 1
+    assert out["selected_source_sha"] is out["matched_candidate_sha"] is out["selected_files_match_candidate"] is None
+    assert out["loaded_source_status"] == out["independent_release_approval"] == "unknown"
+    assert PRIVATE not in json.dumps(out)
