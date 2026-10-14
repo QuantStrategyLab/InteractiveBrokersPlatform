@@ -73,3 +73,7 @@ gh workflow run account-facts-identity-diagnose.yml \
 ```
 
 仅root在审查/CI/main发布后做单次云只读验收。此比较不旋转producer revision或receiver绑定，也不恢复业务。层语义见 [OCI layer规范](https://github.com/opencontainers/image-spec/blob/main/layer.md)，原身份认证见 [Artifact Registry官方文档](https://docs.cloud.google.com/artifact-registry/docs/docker/authentication)。
+
+redirect失败现在附带固定 `redirect_metadata`：准确请求阶段manifest/config/layer，HTTP301/302/303/307/308，Location存在、HTTPS默认443与query分隔符存在的nullable布尔，以及 `same_registry_origin` / `exact_google_storage_hostname` / `other_or_invalid`。exact Google项只分类 `storage.googleapis.com`，不接受suffix/wildcard。未观察到redirect或阶段/形状未知时保留null。
+
+HTTPError仅在内存读取单个Location、长度至多8192 ASCII字符；缺失/重复/畸形/超长或读取异常不输出原值，不读body、error text、其他private headers或URL。userinfo/control字符/非法port等保持形状未知。分类只是形状诊断，不能证明host真实性、许可、签名或允许访问；NoRedirect未放宽，`redirect_followed=false`、`authorization_forwarded=false`，不会发第二请求。原source/scope/descriptor/diff_ids/八文件/末尾serving门槛和unknownSOURCE/loaded/批准语义保持；root仅在审查/CI后做一次新的脱敏headers诊断。
