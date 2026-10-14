@@ -1184,10 +1184,10 @@ def test_source_metadata_only_workflow_wire_preserves_default_report_mode():
     assert "serving_source_metadata_only:\n" in workflow
     assert "        type: boolean\n        required: true\n        default: false" in workflow
     assert "actions: read" in workflow and "actions: write" not in workflow
-    old_step = "      - name: Read report and service revision equality\n        if: ${{ !inputs.serving_source_metadata_only }}\n        run: python3 scripts/diagnose_account_facts_identity.py\n"
+    old_step = "      - name: Read report and service revision equality\n        if: ${{ !inputs.serving_source_metadata_only && !inputs.registry_source_metadata_only }}\n        run: python3 scripts/diagnose_account_facts_identity.py\n"
     assert old_step in workflow
-    new_step = workflow.split("      - name: Read serving source metadata without reports or image execution\n", 1)[1]
-    assert new_step == ("        if: ${{ inputs.serving_source_metadata_only }}\n"
+    new_step = workflow.split("      - name: Read serving source metadata without reports or image execution\n", 1)[1].split("\n      - name: Read registry provenance shape without reports or image execution\n", 1)[0]
+    assert new_step == ("        if: ${{ inputs.serving_source_metadata_only && !inputs.registry_source_metadata_only }}\n"
                         "        env:\n          GH_TOKEN: ${{ github.token }}\n"
                         "        run: python3 scripts/diagnose_account_facts_identity.py --serving-source-metadata-only\n")
     assert "GH_TOKEN" not in workflow.split(old_step)[0]
@@ -1271,3 +1271,110 @@ def test_source_metadata_only_rejects_invalid_context_before_cloud_reads(monkeyp
     out = capsys.readouterr().out
     assert json.loads(out)["reason"] == "source_metadata_context_invalid"
     assert PRIVATE not in out
+
+
+def _registry_case(monkeypatch):
+    case = _source_metadata_case(monkeypatch)
+    # Official installed SDK's ArtifactsDescribeView / summary classes:
+    # provenance_summary.provenance and build_details_summary.build_details.
+    case["registry"] = {
+        "provenance_summary": {"provenance": [{"resourceUri": PRIVATE, "private_payload": PRIVATE}]},
+        "build_details_summary": {"build_details": [{"private_payload": PRIVATE}]},
+        PRIVATE: PRIVATE,
+    }
+    original = diagnostic.subprocess.run
+    def fake(args, **kwargs):
+        args = tuple(args)
+        if args[:5] == ("gcloud", "artifacts", "docker", "images", "describe"):
+            case["calls"].append(args)
+            if case.get("registry_exception"):
+                raise OSError(PRIVATE)
+            return subprocess.CompletedProcess(args, case.get("registry_exit", 0),
+                case.get("registry_raw", json.dumps(case["registry"])), PRIVATE)
+        assert args[0] != "gh", "registry mode must not revisit deployment logs"
+        return original(args, **kwargs)
+    monkeypatch.setattr(diagnostic.subprocess, "run", fake)
+    return case
+
+
+def test_registry_metadata_consumes_exact_digest_and_only_projects_shape(monkeypatch, capsys):
+    case = _registry_case(monkeypatch)
+    monkeypatch.delenv("GH_TOKEN")
+    assert diagnostic.main(["--registry-source-metadata-only"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "registry_metadata_only"
+    assert out["reason"] == "registry_provenance_observed"
+    assert out["registry_metadata"] == dict.fromkeys(("provenance_present", "provenance_shape_valid",
+        "build_details_present", "build_details_shape_valid"), True)
+    assert out["selected_source_sha"] is None
+    assert out["deployment_provenance_status"] == out["loaded_source_status"] == out["independent_release_approval"] == "unknown"
+    assert out["serving_stable"] is True
+    assert case["calls"][2] == ("gcloud", "artifacts", "docker", "images", "describe",
+        case["revision"]["spec"]["containers"][0]["image"], "--project", case["expected"]["expected_project_id"],
+        "--show-provenance", "--show-build-details", "--format=json")
+    assert len(case["calls"]) == 4
+    assert all(marker not in json.dumps(out) for marker in (PRIVATE, "private-image", "f" * 64, "b" * 40))
+
+
+@pytest.mark.parametrize("failure", ["absent", "empty", "null", "wrong_wrapper", "wrong_list", "invalid_record",
+    "invalid_build", "invalid_top", "invalid_json", "nonzero", "exception", "split", "digest", "scope", "retarget"])
+def test_registry_metadata_fail_closed_without_private_values(monkeypatch, capsys, failure):
+    case = _registry_case(monkeypatch)
+    if failure == "absent": case["registry"].pop("provenance_summary")
+    elif failure == "empty": case["registry"]["provenance_summary"]["provenance"] = []
+    elif failure == "null": case["registry"]["provenance_summary"] = None
+    elif failure == "wrong_wrapper": case["registry"]["provenance_summary"] = PRIVATE
+    elif failure == "wrong_list": case["registry"]["provenance_summary"]["provenance"] = PRIVATE
+    elif failure == "invalid_record": case["registry"]["provenance_summary"]["provenance"] = [PRIVATE]
+    elif failure == "invalid_build": case["registry"]["build_details_summary"] = {"build_details": PRIVATE}
+    elif failure == "invalid_top": case["registry"] = [PRIVATE]
+    elif failure == "invalid_json": case["registry_raw"] = PRIVATE
+    elif failure == "nonzero": case["registry_exit"] = 1
+    elif failure == "exception": case["registry_exception"] = True
+    elif failure == "split": case["service"]["status"]["traffic"][0]["percent"] = 99
+    elif failure == "digest": case["revision"]["spec"]["containers"][0]["image"] = "us-central1-docker.pkg.dev/private-image/repo:latest"
+    elif failure == "scope": case["revision"]["spec"]["containers"][0]["env"] = []
+    elif failure == "retarget": case["after_service"] = {"metadata": case["service"]["metadata"], "status": {"traffic": [{"revisionName": PRIVATE + "-other", "percent": 100}]}}
+    assert diagnostic.main(["--registry-source-metadata-only"]) == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out["selected_source_sha"] is None and out["deployment_provenance_status"] == "unknown"
+    assert PRIVATE not in json.dumps(out)
+    if failure in {"split", "digest", "scope"}:
+        assert not any(c[:2] == ("gcloud", "artifacts") for c in case["calls"])
+
+
+@pytest.mark.parametrize("name,value", [("GITHUB_REF", "refs/heads/private"), ("GITHUB_REPOSITORY", "private/repo"),
+    ("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", "[]")])
+def test_registry_metadata_context_and_protected_preflight_before_reads(monkeypatch, capsys, name, value):
+    case = _registry_case(monkeypatch)
+    monkeypatch.setenv(name, value)
+    assert diagnostic.main(["--registry-source-metadata-only"]) == 1
+    assert case["calls"] == []
+    assert PRIVATE not in capsys.readouterr().out
+
+
+def test_registry_metadata_missing_optional_build_details_does_not_claim_source(monkeypatch, capsys):
+    case = _registry_case(monkeypatch)
+    case["registry"].pop("build_details_summary")
+    assert diagnostic.main(["--registry-source-metadata-only"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["registry_metadata"]["build_details_present"] is False
+    assert out["registry_metadata"]["build_details_shape_valid"] is True
+    assert out["selected_source_sha"] is None
+
+
+def test_registry_metadata_modes_are_mutually_exclusive(monkeypatch, capsys):
+    case = _registry_case(monkeypatch)
+    assert diagnostic.main(["--serving-source-metadata-only", "--registry-source-metadata-only"]) == 1
+    assert case["calls"] == []
+    assert json.loads(capsys.readouterr().out)["reason"] == "arguments_invalid"
+
+
+def test_registry_metadata_workflow_only_explicit_main_mode_no_token():
+    workflow = Path(".github/workflows/account-facts-identity-diagnose.yml").read_text()
+    assert "registry_source_metadata_only:\n" in workflow
+    assert "if: ${{ github.ref == 'refs/heads/main' && !(inputs.serving_source_metadata_only && inputs.registry_source_metadata_only) }}" in workflow
+    step = workflow.split("      - name: Read registry provenance shape without reports or image execution\n", 1)[1]
+    assert step == ("        if: ${{ inputs.registry_source_metadata_only && !inputs.serving_source_metadata_only }}\n"
+        "        run: python3 scripts/diagnose_account_facts_identity.py --registry-source-metadata-only\n")
+    assert "default: true" not in workflow and "schedule:" not in workflow
