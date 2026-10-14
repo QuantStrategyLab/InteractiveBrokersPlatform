@@ -443,6 +443,7 @@ def test_redirect_metadata_names_exact_stage_and_never_follows(stage, code):
     with pytest.raises(static.StaticError) as error: static.read_image(registry, budget)
     assert error.value.redirect_metadata == {
         "request_stage": stage, "http_status": code, "location_present": True,
+        "location_single_value": True, "location_over_limit": False, "location_validation_reason": "accepted_shape",
         "location_https_default_443": True, "location_has_query": True,
         "destination_class": "exact_google_storage_hostname", "redirect_followed": False,
         "authorization_forwarded": False,
@@ -500,18 +501,99 @@ def test_unclassified_redirect_code_does_not_read_location_or_guess_shape():
     assert out == static._redirect_result()
 
 
-def test_redirect_projection_keeps_source_loaded_and_approval_unknown(monkeypatch, capsys):
+@pytest.mark.parametrize("locations,reason", [
+    (["https://storage.googleapis.com/" + PRIVATE + "?" + PRIVATE], "accepted_shape"),
+    (["/" + PRIVATE], "missing_scheme_or_host"),
+    (["https://storage.googleapis.com/" + PRIVATE] * 2, "multiple_values"),
+], ids=["accepted_shape", "relative", "duplicate"])
+def test_redirect_projection_keeps_source_loaded_and_approval_unknown(monkeypatch, capsys, locations, reason):
     case = _diagnostic_case(monkeypatch)
     calls = []
     def error(request, timeout):
         calls.append(request)
-        headers = Message();headers["Location"] = "https://storage.googleapis.com/" + PRIVATE + "?" + PRIVATE
+        headers = Message()
+        for location in locations: headers["Location"] = location
         raise urllib.error.HTTPError("https://" + PRIVATE, 302, PRIVATE, headers, None)
     case["opener"].open = error
     assert static.main(["--static-source-only"]) == 1
     out = json.loads(capsys.readouterr().out)
     assert out["redirect_metadata"]["request_stage"] == "manifest" and out["redirect_metadata"]["http_status"] == 302
     assert out["reason"] == "registry_redirect_blocked" and len(calls) == 1
+    assert out["redirect_metadata"]["location_validation_reason"] == reason
+    assert out["redirect_metadata"]["redirect_followed"] is out["redirect_metadata"]["authorization_forwarded"] is False
     assert out["selected_source_sha"] is out["matched_candidate_sha"] is out["selected_files_match_candidate"] is None
     assert out["loaded_source_status"] == out["independent_release_approval"] == "unknown"
     assert PRIVATE not in json.dumps(out)
+
+
+@pytest.mark.parametrize("location,reason,over_limit", [
+    ("https://storage.googleapis.com/" + PRIVATE, "accepted_shape", False),
+    ("https://storage.googleapis.com/" + "x" * 8192, "over_limit", True),
+    ("https://storage.googleapis.com/非" + PRIVATE, "non_ascii", False),
+    ("https://storage.googleapis.com/ " + PRIVATE, "whitespace_or_control", False),
+    ("https://storage.googleapis.com/\x7f" + PRIVATE, "whitespace_or_control", False),
+    ("/" + PRIVATE, "missing_scheme_or_host", False),
+    ("//storage.googleapis.com/" + PRIVATE, "missing_scheme_or_host", False),
+    ("https:///" + PRIVATE, "missing_scheme_or_host", False),
+    ("", "missing_scheme_or_host", False),
+    ("ftp://storage.googleapis.com/" + PRIVATE, "unsupported_scheme", False),
+    ("https://invalid_host/" + PRIVATE, "hostname_invalid", False),
+    ("https://user:secret@storage.googleapis.com/" + PRIVATE, "userinfo", False),
+    ("https://storage.googleapis.com/#" + PRIVATE, "fragment", False),
+    ("https://[broken/" + PRIVATE, "url_parse_failed", False),
+    ("https://storage.googleapis.com:bad/" + PRIVATE, "port_parse_failed", False),
+    ("https://storage.googleapis.com:65536/" + PRIVATE, "port_parse_failed", False),
+], ids=["accepted", "over_limit", "non_ascii", "space", "del", "relative", "network_path",
+        "missing_host", "empty", "scheme", "host", "userinfo", "fragment", "url", "port", "port_range"])
+def test_location_validation_explains_nullable_shape_without_values(location, reason, over_limit):
+    headers = Message();headers["Location"] = location
+    out = static._redirect_metadata("layer", 302, headers, "https://us-central1-docker.pkg.dev")
+    assert out["location_present"] is True and out["location_single_value"] is True
+    assert out["location_over_limit"] is over_limit
+    assert out["location_validation_reason"] == reason
+    if reason != "accepted_shape":
+        assert out["location_https_default_443"] is out["location_has_query"] is None
+        assert out["destination_class"] == "other_or_invalid"
+    assert out["redirect_followed"] is out["authorization_forwarded"] is False
+    assert PRIVATE not in json.dumps(out) and "storage.googleapis.com" not in json.dumps(out)
+
+
+@pytest.mark.parametrize("values,reason,present,single", [
+    ([], "missing", False, False),
+    (["https://storage.googleapis.com/" + PRIVATE] * 2, "multiple_values", True, False),
+    ([None], "value_type_invalid", True, True),
+    ((PRIVATE,), "header_shape_invalid", None, None),
+], ids=["missing", "duplicate", "non_string", "invalid_collection"])
+def test_location_count_diagnostics_do_not_inspect_invalid_or_duplicate_values(values, reason, present, single):
+    class Headers:
+        def get_all(self, name):
+            assert name == "Location"
+            return values
+        def __iter__(self): pytest.fail("private headers must not be enumerated")
+    out = static._redirect_metadata("layer", 302, Headers(), "https://us-central1-docker.pkg.dev")
+    assert out["location_validation_reason"] == reason
+    assert out["location_present"] is present and out["location_single_value"] is single
+    assert out["location_over_limit"] is None
+    assert out["location_https_default_443"] is out["location_has_query"] is None
+    assert PRIVATE not in json.dumps(out)
+
+
+def test_location_header_read_exception_is_fixed_unknown_without_error_text():
+    class Headers:
+        def get_all(self, name):
+            assert name == "Location"
+            raise OSError(PRIVATE)
+        def __iter__(self): pytest.fail("private headers must not be enumerated")
+    out = static._redirect_metadata("layer", 302, Headers(), "https://us-central1-docker.pkg.dev")
+    assert out["location_validation_reason"] == "header_read_failed"
+    assert out["location_present"] is out["location_single_value"] is out["location_over_limit"] is None
+    assert PRIVATE not in json.dumps(out)
+
+
+def test_location_length_limit_is_inclusive_and_does_not_publish_length():
+    prefix = "https://storage.googleapis.com/"
+    headers = Message();headers["Location"] = prefix + "x" * (8192 - len(prefix))
+    out = static._redirect_metadata("layer", 302, headers, "https://us-central1-docker.pkg.dev")
+    assert out["location_validation_reason"] == "accepted_shape" and out["location_over_limit"] is False
+    assert out["destination_class"] == "exact_google_storage_hostname"
+    assert not any("length" in key or "count" in key for key in out)

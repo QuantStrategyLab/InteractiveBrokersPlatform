@@ -76,4 +76,22 @@ gh workflow run account-facts-identity-diagnose.yml \
 
 redirect失败现在附带固定 `redirect_metadata`：准确请求阶段manifest/config/layer，HTTP301/302/303/307/308，Location存在、HTTPS默认443与query分隔符存在的nullable布尔，以及 `same_registry_origin` / `exact_google_storage_hostname` / `other_or_invalid`。exact Google项只分类 `storage.googleapis.com`，不接受suffix/wildcard。未观察到redirect或阶段/形状未知时保留null。
 
-HTTPError仅在内存读取单个Location、长度至多8192 ASCII字符；缺失/重复/畸形/超长或读取异常不输出原值，不读body、error text、其他private headers或URL。userinfo/control字符/非法port等保持形状未知。分类只是形状诊断，不能证明host真实性、许可、签名或允许访问；NoRedirect未放宽，`redirect_followed=false`、`authorization_forwarded=false`，不会发第二请求。原source/scope/descriptor/diff_ids/八文件/末尾serving门槛和unknownSOURCE/loaded/批准语义保持；root仅在审查/CI后做一次新的脱敏headers诊断。
+HTTPError仅在内存读取Location；只分类单值且至多8192 ASCII字符，不读body、error text、其他private headers或输出原URL。新增 `location_single_value` 表示是否恰好一个值，缺失/重复为false，读取或集合形状未知为null；`location_over_limit` 仅在单个字符串时给出是否超过8192，其他情况为null，不公布具体长度或数量。`location_validation_reason` 只输出下表固定值；无已分类redirect时为null。多种缺陷同时存在时，仅返回最先检查失败的原因。
+
+| 固定原因 | 观察含义 |
+| --- | --- |
+| `header_read_failed` / `header_shape_invalid` | Location读取失败 / 返回集合形状无法判断 |
+| `missing` / `multiple_values` / `value_type_invalid` | 无值 / 多于一个值 / 单值不是字符串 |
+| `over_limit` / `non_ascii` / `whitespace_or_control` | 超过8192 / 非ASCII / 含空白或control字符 |
+| `url_parse_failed` / `port_parse_failed` | URL或hostname解析失败 / port解析失败 |
+| `missing_scheme_or_host` / `unsupported_scheme` / `hostname_invalid` | 缺scheme或host（含相对URL）/ 非HTTP(S) / host形状不满足原分类条件 |
+| `userinfo` / `fragment` | 含userinfo / 非空fragment |
+| `accepted_shape` | 通过原形状分类条件；不代表允许访问 |
+
+例如Location存在、`other_or_invalid` 且HTTPS/query两个布尔为null，只证明分类在赋值前停止，不能据此判断具体host、相对URL、长度或query签名。上述原因区分这些分支，保留原nullable语义。
+
+分类不能证明host真实性、对象许可、签名或允许访问。NoRedirect保持，`redirect_followed=false`、`authorization_forwarded=false`，不会发第二请求。原source/scope/descriptor/diff_ids/八文件/末尾serving门槛和unknownSOURCE/loaded/批准语义不变；root仅在审查/CI后做一次新的脱敏headers诊断。
+
+当前停车保护实际边界：本客户端将registry Authorization放在请求headers中；标准urllib重定向会复制该header到新请求。未经核验的跨origin跳转可能泄露凭据或读取未批准对象，事后digest校验不能撤回这些副作用。HTTPS及host形状分类本身也不足以证明对象属于本次exact digest。
+
+合法registry blob转交并非永久不可读。后续若确认仍是原批准镜像及descriptor对象、目标精确HTTPS origin/443与受限读取通道可信且权限/费用范围不变，可另行实施有界显式读取：跨origin不转发registry Authorization/cookie，签名仅云内存消费；禁止任意host、suffix/wildcard、自动链式跳转，并保留原size/digest/diff_ids、预算与末尾serving稳定检查。相对URL还需在已验证registry基址内解析并绑定准确对象，不能据same-origin访问任意路径。本批只补拒绝原因，不实现这些跳转；新身份/IAM、未确认对象或超出原预算仍须停车。
