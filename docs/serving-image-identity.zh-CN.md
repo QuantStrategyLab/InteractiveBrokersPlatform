@@ -38,3 +38,17 @@ gh workflow run account-facts-identity-diagnose.yml \
 ```
 
 该新读取补齐不同的 metadata 证据，不重跑旧失败的 image/plugin 安装探针。任何 target、流量、digest、来源或读取失败保持非零退出，停止受影响目标，不借最新 ready、tag、run head或旧记录代填。
+
+## 精确 registry provenance 结构观察
+
+同 workflow 提供默认关闭的 `registry_source_metadata_only`，与 `serving_source_metadata_only` 互斥；两个同时为 true 时整个 job 不运行。默认调用和原 report 输出保持，新模式仍使用原四 slot、受保护配置预检、main 与既有 WIF。通过唯一100% serving、exact revision、immutable_image 和四物理身份等式后，只对同次精确 digest 执行一次 `gcloud artifacts docker images describe --show-provenance --show-build-details --format=json`，最后确认 serving 未变。没有旧 job-log、image/build/service list、层下载、Docker、业务或生产写入；新 step 不注入 GitHub token，不增加权限。
+
+公开结构按实际安装 Google Cloud SDK 的 `containeranalysis_util.py` 中 `ArtifactsDescribeView`、`ProvenanceSummary` 与 `BuildSummary` 核对：`provenance_summary.provenance` 和 `build_details_summary.build_details` 均为记录列表。新输出仅这两个列表的存在/结构四个布尔（读取未完成为 null），不会打印记录值、动态字段名、账户、digest、路径或异常。缺 provenance、畸形结构或读取失败非零；build details 可缺失。`registry_provenance_observed`/exit0 仅证明非空记录列表结构可读及 serving 稳定；未验证 subject/source/builder/签名/独立批准。`selected_source_sha=null`，deployment provenance、loaded source 和 independent release approval 始终 unknown。官方命令说明见 [Google Cloud SDK](https://docs.cloud.google.com/sdk/gcloud/reference/artifacts/docker/images/describe)。
+
+```bash
+gh workflow run account-facts-identity-diagnose.yml \
+  --repo QuantStrategyLab/InteractiveBrokersPlatform --ref main \
+  -f registry_source_metadata_only=true -f serving_source_metadata_only=false
+```
+
+该模式不重试原 HTTP410 日志入口、不轮换 producer revision 或 receiver binding；权限失败不新增 IAM，也不降级为标签/run head 证明。

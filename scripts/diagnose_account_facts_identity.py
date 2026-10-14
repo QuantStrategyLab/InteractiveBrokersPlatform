@@ -44,6 +44,8 @@ _SOURCE_REASONS = _REASONS | frozenset({
     "deployment_job_unverified", "deployment_log_read_failed", "deployment_source_unverified",
     "deployment_target_unverified", "deployment_image_mismatch", "serving_changed_during_read",
     "deploy_provenance_verified",
+    "registry_metadata_read_failed", "registry_metadata_invalid", "registry_provenance_missing",
+    "registry_provenance_observed",
 })
 _SOURCE_STEPS = (
     "Checkout selected image source", "Verify selected image source",
@@ -573,9 +575,95 @@ def diagnose_serving_source_metadata(expected: Mapping[str, Any], *, source_sha:
     return result
 
 
+def _registry_result(source_sha: object, reason: str = "source_metadata_unavailable") -> dict[str, Any]:
+    result = _source_result(source_sha, reason)
+    result["status"] = "registry_metadata_only"
+    result["registry_metadata"] = dict.fromkeys(("provenance_present", "provenance_shape_valid",
+        "build_details_present", "build_details_shape_valid"))
+    return result
+
+
+def diagnose_registry_source_metadata(expected: Mapping[str, Any], *, source_sha: object = None) -> dict[str, Any]:
+    """Observe known SDK summary shapes, without attesting source or executing images."""
+    result = _registry_result(source_sha)
+    try:
+        if (os.environ.get("GITHUB_REF") != "refs/heads/main"
+            or os.environ.get("GITHUB_REPOSITORY") != _SOURCE_REPOSITORY):
+            raise publisher._ProjectionError("source_metadata_context_invalid")
+        try:
+            from scripts import diagnose_serving_image_identity as image
+        except ModuleNotFoundError:
+            import diagnose_serving_image_identity as image
+        region = os.environ.get("CLOUD_RUN_REGION", "")
+        service = _read_cloud_run_metadata(expected)
+        if (not isinstance(service, Mapping) or not isinstance(service.get("metadata"), Mapping)
+            or service["metadata"].get("name") != expected["expected_service_name"]):
+            raise publisher._ProjectionError("source_metadata_unavailable")
+        serving, _ = image._serving(service, expected)
+        revision = image._json_command(("gcloud", "run", "revisions", "describe", serving,
+            "--project", expected["expected_project_id"], "--region", region, "--format=json"), "revision_metadata_unavailable")
+        metadata = revision.get("metadata") if isinstance(revision, Mapping) else None
+        if not isinstance(metadata, Mapping) or metadata.get("name") != serving:
+            raise publisher._ProjectionError("revision_identity_invalid")
+        immutable, container = image.immutable_image(revision)
+        result["immutable_image_status"] = "verified"
+        env = container.get("env")
+        rows = [r for r in env if isinstance(r, Mapping) and r.get("name") == "RUNTIME_TARGET_JSON"] if isinstance(env, list) else []
+        if len(rows) != 1 or not isinstance(rows[0].get("value"), str):
+            raise publisher._ProjectionError("deployed_target_mismatch")
+        try:
+            target = json.loads(rows[0]["value"])
+        except (ValueError, TypeError):
+            raise publisher._ProjectionError("deployed_target_mismatch") from None
+        result["scope_equalities"] = _source_scope(target, expected)
+        if any(v is not True for v in result["scope_equalities"].values()):
+            raise publisher._ProjectionError("deployed_target_mismatch")
+        payload = image._json_command(("gcloud", "artifacts", "docker", "images", "describe", immutable,
+            "--project", expected["expected_project_id"], "--show-provenance", "--show-build-details", "--format=json"),
+            "registry_metadata_read_failed")
+        if not isinstance(payload, Mapping):
+            raise publisher._ProjectionError("registry_metadata_invalid")
+        # SDK ArtifactsDescribeView emits these wrappers only when records exist.
+        # No record values, dynamic keys, source labels or SHA are projected.
+        projection = result["registry_metadata"]
+        for alias, wrapper, field in (("provenance", "provenance_summary", "provenance"),
+                                      ("build_details", "build_details_summary", "build_details")):
+            present = wrapper in payload
+            summary = payload.get(wrapper)
+            records = summary.get(field) if isinstance(summary, Mapping) else None
+            valid = not present or isinstance(records, list) and all(isinstance(r, Mapping) and r for r in records)
+            projection[alias + "_present"] = present and isinstance(records, list) and bool(records)
+            projection[alias + "_shape_valid"] = bool(valid)
+        if any(projection[key] is not True for key in ("provenance_shape_valid", "build_details_shape_valid")):
+            raise publisher._ProjectionError("registry_metadata_invalid")
+        if projection["provenance_present"] is not True:
+            raise publisher._ProjectionError("registry_provenance_missing")
+        after = _read_cloud_run_metadata(expected)
+        if (not isinstance(after, Mapping) or not isinstance(after.get("metadata"), Mapping)
+            or after["metadata"].get("name") != expected["expected_service_name"]
+            or image._serving(after, expected)[0] != serving):
+            result["serving_stable"] = False
+            raise publisher._ProjectionError("serving_changed_during_read")
+        result.update(reason="registry_provenance_observed", serving_stable=True)
+    except ValueError as exc:
+        result["reason"] = str(exc) if str(exc) in _SOURCE_REASONS else "diagnostic_error"
+    except Exception:
+        result["reason"] = "diagnostic_error"
+    return result
+
+
 def main(argv: Sequence[str] | None = None, *, now: datetime | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     source_sha = os.environ.get("GITHUB_SHA")
+    if args == ["--registry-source-metadata-only"]:
+        try:
+            result = diagnose_registry_source_metadata(resolve_expected(), source_sha=source_sha)
+        except publisher._ProjectionError as exc:
+            result = _registry_result(source_sha, exc.reason)
+        except Exception:
+            result = _registry_result(source_sha, "diagnostic_error")
+        print(json.dumps(result, sort_keys=True))
+        return 0 if result["reason"] == "registry_provenance_observed" else 1
     if args == ["--serving-source-metadata-only"]:
         try:
             result = diagnose_serving_source_metadata(resolve_expected(), source_sha=source_sha)
