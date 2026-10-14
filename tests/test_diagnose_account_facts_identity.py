@@ -1084,3 +1084,190 @@ def test_report_stop_reason_preflight_preserves_zero_cloud_calls(monkeypatch, ca
     assert diagnostic.main(["--preflight"]) == 0
     result = json.loads(capsys.readouterr().out)
     assert result["report_stop_reason"] == "unknown"
+
+
+def _source_metadata_case(monkeypatch):
+    _environment(monkeypatch)
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "QuantStrategyLab/InteractiveBrokersPlatform")
+    monkeypatch.setenv("GH_TOKEN", PRIVATE)
+    expected = diagnostic.resolve_expected()
+    selected_source = "b" * 40
+    serving = expected["expected_service_name"] + "-00010-abc"
+    target = {
+        "service_name": expected["expected_service_name"],
+        "account_scope": expected["expected_account_scope"],
+        "account_selector": expected["expected_account_selector"],
+        "deployment_selector": expected["expected_deployment_selector"],
+    }
+    service = {"metadata": {"name": expected["expected_service_name"]},
+               "status": {"traffic": [{"revisionName": serving, "percent": 100}]}}
+    revision = {"metadata": {"name": serving, "labels": {"commit-sha": selected_source, "github-run-id": "2468"}},
+                "spec": {"containers": [{"image": "us-central1-docker.pkg.dev/private-image/repo@sha256:" + "f" * 64,
+                                          "env": [{"name": "RUNTIME_TARGET_JSON", "value": json.dumps(target)}]}]}}
+    run = {"id": 2468, "path": ".github/workflows/sync-cloud-run-env.yml",
+           "repository": {"full_name": "QuantStrategyLab/InteractiveBrokersPlatform"},
+           "head_branch": "main", "event": "workflow_dispatch", "status": "completed", "conclusion": "success",
+           "head_sha": "c" * 40}  # deliberately different from selected image source
+    step_names = ("Checkout selected image source", "Verify selected image source",
+                  "Build, push, and deploy Cloud Run image", "Verify no-traffic deployment readback")
+    jobs = {"total_count": 1, "jobs": [{"id": 2469, "run_id": 2468, "name": "Deploy / Sync Cloud Run",
+            "status": "completed", "conclusion": "success",
+            "steps": [{"name": n, "status": "completed", "conclusion": "success"} for n in step_names]}]}
+    plan = {"targets": [{"service_name": expected["expected_service_name"],
+                         "env": {"RUNTIME_TARGET_JSON": json.dumps(target)}}]}
+    verify_group = ('##[group]Run set -euo pipefail\n'
+                    '  echo "Selected source must be a full commit SHA."\n'
+                    'checked_out_sha="$(git -C source rev-parse HEAD)"\n'
+                    '  echo "Checked-out image source does not match source_commit."\n'
+                    'env:\n    SOURCE_COMMIT: ' + selected_source + '\n##[endgroup]\n')
+    build_group = ('##[group]Run set -euo pipefail\n'
+                   'docker build --pull -t "${image}" source\n'
+                   'gcloud run deploy "${cloud_run_service}" \\\n'
+                   'env:\n    SOURCE_COMMIT: ' + selected_source + '\n'
+                   '    GCP_PROJECT_ID: ' + expected["expected_project_id"] + '\n'
+                   '    CLOUD_RUN_REGION: us-central1\n'
+                   '    SYNC_PLAN_JSON: ' + json.dumps(plan) + '\n##[endgroup]\n')
+    readback_group = ('##[group]Run set -euo pipefail\n'
+                      'python3 scripts/verify_cloud_run_no_traffic_deploy.py verify \\\n'
+                      '  --expected-image-digest="${EXPECTED_IMAGE_DIGEST}"\n'
+                      'env:\n    EXPECTED_IMAGE_DIGEST: sha256:' + "f" * 64 + '\n##[endgroup]\n')
+    case = {"service": service, "revision": revision, "run": run, "jobs": jobs,
+            "logs": verify_group + build_group + readback_group + PRIVATE, "calls": [], "expected": expected}
+
+    def fake(args, **_kwargs):
+        args = tuple(args)
+        case["calls"].append(args)
+        if args[:4] == ("gcloud", "run", "services", "describe"):
+            value = case.get("after_service", service) if sum(c[:4] == args[:4] for c in case["calls"]) > 1 else service
+        elif args[:4] == ("gcloud", "run", "revisions", "describe"):
+            value = revision
+        elif args[:4] == ("gh", "api", "--hostname", "github.com"):
+            route = args[4]
+            if route.endswith("/actions/runs/2468"):
+                value = run
+            elif route.endswith("/actions/runs/2468/jobs?per_page=100"):
+                value = jobs
+            elif route.endswith("/actions/jobs/2469/logs"):
+                return subprocess.CompletedProcess(args, 0, case["logs"], "")
+            else:
+                pytest.fail("unexpected GitHub locator")
+        else:
+            pytest.fail("metadata-only mode attempted forbidden command")
+        if case.get("read_failure"):
+            return subprocess.CompletedProcess(args, 1, PRIVATE, PRIVATE)
+        return subprocess.CompletedProcess(args, 0, json.dumps(value), "")
+
+    monkeypatch.setattr(diagnostic.subprocess, "run", fake)
+    # Any accidental financial report read fails immediately.
+    monkeypatch.setattr(publisher, "_latest_report_uri", lambda **_kw: pytest.fail("report listing forbidden"))
+    monkeypatch.setattr(publisher, "_load_gcs_report", lambda *_a, **_kw: pytest.fail("report read forbidden"))
+    return case
+
+
+def test_source_metadata_only_uses_selected_source_target_and_stable_serving(monkeypatch, capsys):
+    case = _source_metadata_case(monkeypatch)
+    case["logs"] = "    SOURCE_COMMIT: " + case["run"]["head_sha"] + "\n" + case["logs"]
+    assert diagnostic.main(["--serving-source-metadata-only"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["reason"] == "deploy_provenance_verified"
+    assert out["selected_source_sha"] == "b" * 40 and out["selected_source_sha"] != case["run"]["head_sha"]
+    assert all(v is True for v in out["scope_equalities"].values())
+    assert out["immutable_image_status"] == "verified" and out["serving_stable"] is True
+    assert out["loaded_source_status"] == out["independent_release_approval"] == "unknown"
+    assert PRIVATE not in json.dumps(out) and "private-image" not in json.dumps(out)
+    assert len(case["calls"]) == 6
+
+
+def test_source_metadata_only_workflow_wire_preserves_default_report_mode():
+    workflow = Path(".github/workflows/account-facts-identity-diagnose.yml").read_text()
+    assert "serving_source_metadata_only:\n" in workflow
+    assert "        type: boolean\n        required: true\n        default: false" in workflow
+    assert "actions: read" in workflow and "actions: write" not in workflow
+    old_step = "      - name: Read report and service revision equality\n        if: ${{ !inputs.serving_source_metadata_only }}\n        run: python3 scripts/diagnose_account_facts_identity.py\n"
+    assert old_step in workflow
+    new_step = workflow.split("      - name: Read serving source metadata without reports or image execution\n", 1)[1]
+    assert new_step == ("        if: ${{ inputs.serving_source_metadata_only }}\n"
+                        "        env:\n          GH_TOKEN: ${{ github.token }}\n"
+                        "        run: python3 scripts/diagnose_account_facts_identity.py --serving-source-metadata-only\n")
+    assert "GH_TOKEN" not in workflow.split(old_step)[0]
+
+
+def test_source_metadata_only_invalid_protected_config_stops_before_cloud(monkeypatch, capsys):
+    case = _source_metadata_case(monkeypatch)
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", "[]")
+    assert diagnostic.main(["--serving-source-metadata-only"]) == 1
+    assert case["calls"] == []
+    out = json.loads(capsys.readouterr().out)
+    assert out["reason"] == "target_config_invalid" and out["selected_source_sha"] is None
+
+
+@pytest.mark.parametrize("failure", ["split", "traffic_total", "target", "missing_target", "revision", "digest",
+                                      "label", "run_locator", "run_repo", "run_branch", "run_path", "run_event",
+                                      "step", "job", "source", "duplicate_source_group", "plan_target",
+                                      "masked_plan", "readback_digest", "retarget", "read_failure"])
+def test_source_metadata_only_stops_on_unproven_provenance(monkeypatch, capsys, failure):
+    case = _source_metadata_case(monkeypatch)
+    if failure == "split":
+        case["service"]["status"]["traffic"] = [{"revisionName": PRIVATE + "-r1", "percent": 50},
+                                               {"revisionName": PRIVATE + "-r2", "percent": 50}]
+    elif failure == "traffic_total":
+        case["service"]["status"]["traffic"][0]["percent"] = 99
+    elif failure in {"target", "missing_target"}:
+        target = json.loads(case["revision"]["spec"]["containers"][0]["env"][0]["value"])
+        if failure == "target":
+            target["account_selector"] = ["U00000002"]
+        else:
+            target.pop("account_scope")
+        case["revision"]["spec"]["containers"][0]["env"][0]["value"] = json.dumps(target)
+    elif failure == "revision":
+        case["revision"]["metadata"]["name"] = PRIVATE + "-wrong"
+    elif failure == "digest":
+        case["revision"]["spec"]["containers"][0]["image"] = "us-central1-docker.pkg.dev/private-image/repo:latest"
+    elif failure in {"label", "run_locator"}:
+        if failure == "label":
+            case["revision"]["metadata"]["labels"].pop("commit-sha")
+        else:
+            case["revision"]["metadata"]["labels"]["github-run-id"] = "2468/../../private"
+    elif failure.startswith("run_"):
+        field = {"run_repo": "repository", "run_branch": "head_branch", "run_path": "path", "run_event": "event"}[failure]
+        case["run"][field] = {"full_name": PRIVATE} if field == "repository" else PRIVATE
+    elif failure == "step":
+        case["jobs"]["jobs"][0]["steps"][1]["conclusion"] = "skipped"
+    elif failure == "job":
+        case["jobs"]["jobs"][0]["name"] = PRIVATE
+    elif failure == "source":
+        case["logs"] = case["logs"].replace("b" * 40, case["run"]["head_sha"])
+    elif failure == "duplicate_source_group":
+        case["logs"] += "\n" + case["logs"].split("##[endgroup]", 1)[0] + "##[endgroup]\n"
+    elif failure == "plan_target":
+        case["logs"] = case["logs"].replace('"service_name": "' + case["expected"]["expected_service_name"] + '"',
+                                              '"service_name": "' + PRIVATE + '-other"')
+    elif failure == "masked_plan":
+        case["logs"] = "\n".join("    SYNC_PLAN_JSON: ***" if "SYNC_PLAN_JSON:" in line else line
+                                  for line in case["logs"].splitlines())
+    elif failure == "readback_digest":
+        case["logs"] = case["logs"].replace("EXPECTED_IMAGE_DIGEST: sha256:" + "f" * 64,
+                                              "EXPECTED_IMAGE_DIGEST: sha256:" + "e" * 64)
+    elif failure == "retarget":
+        case["after_service"] = {"metadata": case["service"]["metadata"],
+                                  "status": {"traffic": [{"revisionName": PRIVATE + "-other", "percent": 100}]}}
+    else:
+        case["read_failure"] = True
+    assert diagnostic.main(["--serving-source-metadata-only"]) == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out["selected_source_sha"] is None
+    assert out["deployment_provenance_status"] != "verified"
+    assert PRIVATE not in json.dumps(out)
+
+
+@pytest.mark.parametrize("name,value", [("GITHUB_REF", "refs/heads/private"), ("GITHUB_REPOSITORY", "private/repo"),
+                                       ("GH_TOKEN", "")])
+def test_source_metadata_only_rejects_invalid_context_before_cloud_reads(monkeypatch, capsys, name, value):
+    case = _source_metadata_case(monkeypatch)
+    monkeypatch.setenv(name, value)
+    assert diagnostic.main(["--serving-source-metadata-only"]) == 1
+    assert case["calls"] == []
+    out = capsys.readouterr().out
+    assert json.loads(out)["reason"] == "source_metadata_context_invalid"
+    assert PRIVATE not in out
