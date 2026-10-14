@@ -101,6 +101,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def _redirect_result():
     return {"request_stage": None, "http_status": None, "location_present": None,
+            "location_single_value": None, "location_over_limit": None, "location_validation_reason": None,
             "location_https_default_443": None, "location_has_query": None,
             "destination_class": None, "redirect_followed": False, "authorization_forwarded": False}
 
@@ -121,25 +122,65 @@ def _redirect_metadata(stage, code, headers, origin):
         else:
             value = headers.get("Location")
             values = [] if value is None else [value]
-        if not isinstance(values, list):
-            return result
-        result["location_present"] = bool(values)
-        if not values:
-            return result
-        result["destination_class"] = "other_or_invalid"
-        if len(values) != 1 or not isinstance(values[0], str):
-            return result
-        location = values[0]
-        if len(location) > 8192 or not location.isascii() or re.search(r"[\x00-\x20\x7f]", location):
-            return result
+    except Exception:
+        result["location_validation_reason"] = "header_read_failed"
+        return result
+    if not isinstance(values, list):
+        result["location_validation_reason"] = "header_shape_invalid"
+        return result
+    result["location_present"] = bool(values)
+    result["location_single_value"] = len(values) == 1
+    if not values:
+        result["location_validation_reason"] = "missing"
+        return result
+    result["destination_class"] = "other_or_invalid"
+    if len(values) != 1:
+        result["location_validation_reason"] = "multiple_values"
+        return result
+    if not isinstance(values[0], str):
+        result["location_validation_reason"] = "value_type_invalid"
+        return result
+    location = values[0]
+    result["location_over_limit"] = len(location) > 8192
+    if result["location_over_limit"]:
+        result["location_validation_reason"] = "over_limit"
+        return result
+    if not location.isascii():
+        result["location_validation_reason"] = "non_ascii"
+        return result
+    if re.search(r"[\x00-\x20\x7f]", location):
+        result["location_validation_reason"] = "whitespace_or_control"
+        return result
+    try:
         parsed = urllib.parse.urlsplit(location)
-        if (parsed.scheme not in {"http", "https"} or not parsed.hostname
-            or not re.fullmatch(r"[a-z0-9.-]+", parsed.hostname) or parsed.username is not None
-            or parsed.password is not None or parsed.fragment):
-            return result
+        hostname = parsed.hostname
+    except Exception:
+        result["location_validation_reason"] = "url_parse_failed"
+        return result
+    if not parsed.scheme or not hostname:
+        reason = "missing_scheme_or_host"
+    elif parsed.scheme not in {"http", "https"}:
+        reason = "unsupported_scheme"
+    elif not re.fullmatch(r"[a-z0-9.-]+", hostname):
+        reason = "hostname_invalid"
+    elif parsed.username is not None or parsed.password is not None:
+        reason = "userinfo"
+    elif parsed.fragment:
+        reason = "fragment"
+    else:
+        reason = None
+    if reason:
+        result["location_validation_reason"] = reason
+        return result
+    try:
         port = parsed.port  # malformed ports are rejected without exposing text
-        result["location_https_default_443"] = parsed.scheme == "https" and port in {None, 443}
-        result["location_has_query"] = "?" in location
+    except Exception:
+        result["location_validation_reason"] = "port_parse_failed"
+        return result
+    result["location_validation_reason"] = "accepted_shape"
+    result["location_https_default_443"] = parsed.scheme == "https" and port in {None, 443}
+    result["location_has_query"] = "?" in location
+    try:
         expected = urllib.parse.urlsplit(origin)
         if (result["location_https_default_443"] and parsed.hostname == expected.hostname
             and expected.scheme == "https" and expected.port in {None, 443}):
