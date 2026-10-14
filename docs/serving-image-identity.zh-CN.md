@@ -52,3 +52,24 @@ gh workflow run account-facts-identity-diagnose.yml \
 ```
 
 该模式不重试原 HTTP410 日志入口、不轮换 producer revision 或 receiver binding；权限失败不新增 IAM，也不降级为标签/run head 证明。
+
+## 所选源码文件的静态镜像比对
+
+默认关闭的 `static_source_only` 与两个 metadata inputs 互斥；默认 report 和两个 metadata 调用/输出保持。它复用原受保护映射、main/preflight/WIF，通过唯一100% serving、exact revision、immutable_image 及四物理身份等式。revision 的合法 `commit-sha` 仅作为候选；固定同repo GitHub API核该commit存在，再读取该准确ref的八个公开文件：main.py、runtime_strategy_adapters/runtime_composer/runtime_dependencies/runtime_broker_adapters/runtime_reporting_adapters、pyproject.toml、uv.lock。不读取main/tag作为替代。
+
+原gcloud身份的access token只在云内存消费；静态registry GET只访问同次镜像exactdigest及其descriptor声明的config/child/layers。客户端禁止重定向；redirect/权限/读取失败即停止，不跟Location、换身份或扩IAM。无Docker、镜像/entrypoint/策略执行、broker、Secret Manager、报告、通知或生产写。manifest/config仅内存；压缩层仅runner私有临时文件，逐个处理并删除，无artifact上传或Mac下载。
+
+按顺序核manifest/child/config/压缩层digest+size以及每层解压diff_id；支持唯一linux/amd64 index及tar/gzip层。只保留所选公开文件、原venv内UES/QPK的METADATA/direct_url，其他tar内容跳过。whiteout/opaque只遮挡lower layer，祖先目录被file/symlink/hardlink覆盖时旧child失效，链接不跟随，不调用extractall。未知/重复路径、unsupported层/type或缺文件保留unknown。UES/QPK仅把安装metadata的VCS声明与候选lock对比，不证明整个依赖包字节或内存加载；plugin不纳入此范围。
+
+固定预算：64层，manifest/config各4MiB，压缩层256MiB，总下载1.5GiB，单层解压1GiB/总4GiB，entries每层100k/总250k，path1024bytes，源码单文件2MiB，METADATA256KiB/direct_url64KiB，所选内容累计32MiB，请求45秒/整体8分钟，临时剩余空间1GiB。超限不自动扩大，不安装zstd或新增依赖。实际registry需要redirect时固定失败，另行确认受限通道。
+
+公开新schema `ibkr.static_source_diagnostic.v1` 仅固定alias的nullable文件等式、scope等式、依赖status/nullable等式、固定reason和稳定性。八文件字节全匹配并末尾serving稳定时输出 `matched_candidate_sha`；它只表示所选文件匹配该候选，不是历史actual SOURCE_COMMIT/full tree证明。`selected_source_sha=null`、loaded source/独立release批准恒unknown。任一文件缺失/不同、依赖未核对或末尾漂移非零。合法workflow source_sha仍只是此诊断版本。
+
+```bash
+gh workflow run account-facts-identity-diagnose.yml \
+  --repo QuantStrategyLab/InteractiveBrokersPlatform --ref main \
+  -f static_source_only=true -f serving_source_metadata_only=false \
+  -f registry_source_metadata_only=false
+```
+
+仅root在审查/CI/main发布后做单次云只读验收。此比较不旋转producer revision或receiver绑定，也不恢复业务。层语义见 [OCI layer规范](https://github.com/opencontainers/image-spec/blob/main/layer.md)，原身份认证见 [Artifact Registry官方文档](https://docs.cloud.google.com/artifact-registry/docs/docker/authentication)。
