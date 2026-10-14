@@ -84,13 +84,19 @@ HTTPError仅在内存读取Location；只分类单值且至多8192 ASCII字符�
 | `missing` / `multiple_values` / `value_type_invalid` | 无值 / 多于一个值 / 单值不是字符串 |
 | `over_limit` / `non_ascii` / `whitespace_or_control` | 超过8192 / 非ASCII / 含空白或control字符 |
 | `url_parse_failed` / `port_parse_failed` | URL或hostname解析失败 / port解析失败 |
-| `missing_scheme_or_host` / `unsupported_scheme` / `hostname_invalid` | 缺scheme或host（含相对URL）/ 非HTTP(S) / host形状不满足原分类条件 |
+| `missing_scheme_or_host` / `unsupported_scheme` / `hostname_invalid` | Location 自身缺 scheme 或 host / 非 HTTP(S) / host 形状不满足原分类条件。`missing_scheme_or_host` 不是非法或 relative 的单一证明 |
 | `userinfo` / `fragment` | 含userinfo / 非空fragment |
 | `accepted_shape` | 通过原形状分类条件；不代表允许访问 |
 
-例如Location存在、`other_or_invalid` 且HTTPS/query两个布尔为null，只证明分类在赋值前停止，不能据此判断具体host、相对URL、长度或query签名。上述原因区分这些分支，保留原nullable语义。
+例如 Location 存在、`other_or_invalid` 且 HTTPS/query 两个布尔为 null，只说明绝对形状分类在赋值前停止。若同时给出 `location_shape` 与两个布尔，才能区分该引用是哪一种缺 scheme/host 的形状，以及它在内存中是否落在同一次请求上。原因表仍保留原 nullable 语义，不输出 URL、长度或 query。
 
-分类不能证明host真实性、对象许可、签名或允许访问。NoRedirect保持，`redirect_followed=false`、`authorization_forwarded=false`，不会发第二请求。原source/scope/descriptor/diff_ids/八文件/末尾serving门槛和unknownSOURCE/loaded/批准语义不变；root仅在审查/CI后做一次新的脱敏headers诊断。
+解析成功的单值 Location 额外给出闭集 `location_shape`：`absolute`、`scheme_without_host`、`network_path`、`path_absolute`、`path_relative`、`query_relative`、`fragment_relative`、`empty`。超限、非 ASCII、空白/control、解析失败、重复值或非字符串时形状为 null，不猜测。`missing_scheme_or_host` 覆盖除 `absolute` 以外的这些形状，所以必须和 `location_shape` 一起读。
+
+`same_origin` 与 `accurate_descriptor_path` 只对同一次准确请求 URI 做内存规范化。请求 URI 必须是 https、默认 443、host 符合既有字符类、无 userinfo、无 query/fragment，且 path 非空；否则两个布尔为 null。无 scheme 的引用用标准库 `urljoin` 解析到该请求 URI，并去掉 `.` / `..`。已有 scheme 的引用保留自己的 authority 和 path，不用 `urljoin`，避免 `https:///path` 被补上请求 host。`same_origin` 只比较 https、host 和默认 443；`accurate_descriptor_path` 只表示解析后的 path 与本次请求 path 相等。userinfo 不进入 origin 比较，但 `userinfo` 原因仍拒绝该形状。
+
+两个布尔即使都为 true，也不授予跟跳：`redirect_followed` 与 `authorization_forwarded` 仍为 false，`NoRedirect` 不产生下一请求。相对引用解析后同源时，`destination_class` 仍是 `other_or_invalid`；该字段只描述已通过绝对形状检查的 Location 自身 host。digest、size、预算、不转发认证和末尾 serving 稳定检查不变。分类不证明 host 真实性、对象许可、签名或允许访问。
+
+本分类不能填上仍需授权取证的字段：redirect 停止时不读 layer 字节，`image_content_status` 仍为 unknown；`loaded_source_status` 与 `independent_release_approval` 仍为 unknown；`selected_source_sha` 仍为 null；predecessor 未知。已经记录的诊断只有 `missing_scheme_or_host`，这里不重放那次 registry 响应，也不把新布尔回填成当时的 image、source 或前驱身份。
 
 当前停车保护实际边界：本客户端将registry Authorization放在请求headers中；标准urllib重定向会复制该header到新请求。未经核验的跨origin跳转可能泄露凭据或读取未批准对象，事后digest校验不能撤回这些副作用。HTTPS及host形状分类本身也不足以证明对象属于本次exact digest。
 
