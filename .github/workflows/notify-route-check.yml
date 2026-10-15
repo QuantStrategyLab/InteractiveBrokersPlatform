@@ -14,9 +14,9 @@ jobs:
       id-token: write
     uses: ./.github/workflows/notify-route-check-protected.yml
     secrets:
-      GCP_PROJECT_ID: ${{ 'interactivebrokersquant' }}
+      GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ 'projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main' }}
-      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ 'ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com' }}
+      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       RUNTIME_GUARD_CLOUD_RUN_SERVICES: ${{ vars.RUNTIME_GUARD_CLOUD_RUN_SERVICES }}
       CLOUD_RUN_SERVICE: ${{ secrets.CLOUD_RUN_SERVICE }}
       CLOUD_RUN_SERVICES: ${{ secrets.CLOUD_RUN_SERVICES }}

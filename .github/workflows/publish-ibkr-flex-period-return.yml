@@ -16,6 +16,9 @@ concurrency:
   group: ibkr-flex-period-return
   cancel-in-progress: false
 
+env:
+  QSL_CONSOLE_BASE_URL: ${{ vars.QSL_CONSOLE_BASE_URL }}
+
 jobs:
   publish:
     # A rerun would generate a new reference. Pending/unknown outcomes require
@@ -24,6 +27,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Require infrastructure variables
+        env:
+          QSL_CONSOLE_BASE_URL: ${{ vars.QSL_CONSOLE_BASE_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in QSL_CONSOLE_BASE_URL; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is required" >&2
+              exit 2
+            fi
+          done
+
       - name: Checkout approved main source
         uses: actions/checkout@v6
         with:

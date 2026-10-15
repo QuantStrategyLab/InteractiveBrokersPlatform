@@ -46,6 +46,19 @@ jobs:
       TELEGRAM_TOKEN_SECRET_NAME: ${{ secrets.TELEGRAM_TOKEN_SECRET_NAME }}
       SOURCE_SHA: ${{ github.sha }}
     steps:
+      - name: Require infrastructure variables
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${GCP_PROJECT_ID:-}" ]]; then
+            echo "::error::IBKR_GCP_PROJECT_ID is required" >&2
+            exit 2
+          fi
+          if [[ -z "${GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT:-}" ]]; then
+            echo "::error::IBKR_DEPLOY_SERVICE_ACCOUNT is required" >&2
+            exit 2
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@v6
         with:

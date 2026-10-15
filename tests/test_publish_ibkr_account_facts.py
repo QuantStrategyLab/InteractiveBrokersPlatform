@@ -910,6 +910,7 @@ def _publisher_job_environment(target: str = "primary-live") -> dict[str, str]:
         ("secrets", "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON"): '["U00000001"]',
         ("secrets", "IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR"): "live-example",
         ("vars", "IBKR_ACCOUNT_FACTS_SYNC_URL"): publisher.IBKR_ACCOUNT_FACTS_SYNC_URL,
+        ("vars", "IBKR_DEPLOY_SERVICE_ACCOUNT"): "deploy@example-project.iam.gserviceaccount.com",
         ("vars", "IBKR_ACCOUNT_FACTS_ADDITIONAL_DAILY_ENABLED"): "false",
         ("secrets", "IBKR_ACCOUNT_FACTS_SYNC_TOKEN"): "synthetic-sync-token",
         ("inputs", "account_facts_report_name"): "",
