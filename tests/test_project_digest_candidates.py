@@ -204,12 +204,12 @@ def test_account_hint_and_scope_from_kwargs():
         runtime_reports=_report(),
         opaque_account_uid="acct_opaque_synthetic",
         target_id="ibkr/synthetic-target",
-        account_hint="u15998061",
-        account_scope="live-u15998061",
+        account_hint="u00000004",
+        account_scope="live-u00000004",
     )
     row = payload["runs"][0]
-    assert row["account_hint"] == "U15998061"
-    assert row["account_scope"] == "live-u15998061"
+    assert row["account_hint"] == "U00000004"
+    assert row["account_scope"] == "live-u00000004"
 
 
 def test_account_labels_from_runtime_report_selector():

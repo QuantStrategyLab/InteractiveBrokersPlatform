@@ -215,8 +215,8 @@ def test_mixed_currency_flows_are_not_silently_merged():
 
 def test_rejects_account_scope_mismatch():
     report = _wrap(_statement(
-        '<AccountInformation accountId="DU9999999" currency="USD"/>',
-        account="DU9999999",
+        '<AccountInformation accountId="DU0000004" currency="USD"/>',
+        account="DU0000004",
     ))
     with pytest.raises(FlexSourceError):
         build_flex_ledger(report, expected_account_ids=(ACCOUNT,))
@@ -226,10 +226,10 @@ def test_rejects_multiple_statement_accounts():
     inner = '<AccountInformation accountId="{id}" currency="USD"/>'
     report = _wrap(
         _statement(inner.format(id="DU0000000"), account="DU0000000"),
-        _statement(inner.format(id="DU1111111"), account="DU1111111"),
+        _statement(inner.format(id="DU0000001"), account="DU0000001"),
     )
     with pytest.raises(FlexSourceError):
-        build_flex_ledger(report, expected_account_ids=("DU0000000", "DU1111111"))
+        build_flex_ledger(report, expected_account_ids=("DU0000000", "DU0000001"))
 
 
 def test_rejects_non_activity_report():
