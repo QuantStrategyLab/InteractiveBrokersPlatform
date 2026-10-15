@@ -89,6 +89,10 @@ jobs:
       RUNTIME_HEARTBEAT_REQUIRED_SERVICES: ${{ secrets.RUNTIME_HEARTBEAT_REQUIRED_SERVICES }}
       RUNTIME_TARGET_JSON: ${{ vars.RUNTIME_TARGET_JSON || secrets.RUNTIME_TARGET_JSON }}
       TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      DIGEST_OPAQUE_ACCOUNT_UID: ${{ secrets.DIGEST_OPAQUE_ACCOUNT_UID }}
+      DIGEST_TARGET_ID: ${{ secrets.DIGEST_TARGET_ID }}
+      DIGEST_TARGET_BINDINGS_JSON: ${{ secrets.DIGEST_TARGET_BINDINGS_JSON }}
+      DIGEST_CANDIDATES_GCS_URI: ${{ secrets.DIGEST_CANDIDATES_GCS_URI }}
 
   account-facts-publisher:
     name: Publish latest fresh IBKR account-facts report
@@ -229,6 +233,8 @@ jobs:
           IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}
           IBKR_PAUSED_FACTS_STATE_PREFIX: ${{ inputs.account_facts_target == 'paused-refresh-state-backup' && secrets.IBKR_PAUSED_FACTS_STATE_PREFIX || '' }}
         run: uv run --no-sync python scripts/inspect_paused_account_facts_state.py
+
+
 
   emit-digest-candidates:
     name: Emit DIGEST_CANDIDATES (ephemeral, no artifact)
