@@ -185,6 +185,62 @@ def _unknown_counts(*, reason_code: str) -> dict[str, Any]:
     }
 
 
+def _counts_from_report(report: Mapping[str, Any]) -> dict[str, Any]:
+    """Project explicit counts; a no-submission receipt can prove zero fills.
+
+    Summary fill_count is optional (default unknown), never substituted with
+    submitted/filled-order counts. A receipt alone or a no-action label is not
+    enough: the summary must explicitly confirm zero submitted orders.
+    """
+    summary = _as_mapping(report.get("summary")) or {}
+    receipt = _as_mapping(report.get("execution_receipt")) or {}
+    counts = _unknown_counts(reason_code="ibkr_fills_not_projected")
+    orders = summary.get("orders_submitted_count")
+    fills = summary.get("fill_count")
+    if type(orders) is int and orders >= 0:
+        counts["order_count"] = orders
+        counts["field_status"]["order_count"] = "known"
+    if type(fills) is int and fills >= 0:
+        counts["fill_count"] = fills
+        counts["field_status"]["fill_count"] = "known"
+    # Conflicting activity, uncertainty and malformed counters must not turn a
+    # quiet-looking run into a verified empty execution.
+    order_arrays = (
+        "orders_submitted", "orders_pending", "orders_filled", "orders_partially_filled",
+        "option_orders_submitted", "option_orders_pending", "option_orders_filled",
+        "option_orders_partially_filled",
+    )
+    order_counters = (
+        "orders_submitted_count", "orders_pending_count", "orders_filled_count",
+        "orders_partially_filled_count", "orders_previewed_count",
+    )
+    no_activity = all(
+        key not in summary or isinstance(summary[key], list) and summary[key] == []
+        for key in order_arrays
+    ) and all(
+        key not in summary or type(summary[key]) is int and summary[key] == 0
+        for key in order_counters
+    )
+    if (
+        "fill_count" not in summary
+        and _parse_timestamp(_as_str(report.get("started_at"))) is not None
+        and counts["order_count"] == 0
+        and no_activity
+        and summary.get("execution_status") in {"no_op", "no_action", "no_signal", "no_rebalance"}
+        and summary.get("broker_submission_done") is not True
+        and summary.get("action_done") is not True
+        and report.get("errors") == []
+        and report.get("status") in {"ok", "success", "completed", "no_action"}
+        and receipt.get("outcome") in {"no_action", "no_signal", "no_rebalance", "not_due"}
+        and receipt.get("broker_confirmation") == "not_applicable"
+    ):
+        counts["fill_count"] = 0
+        counts["field_status"]["fill_count"] = "known"
+    if counts["fill_count"] is not None:
+        counts["reason_code"] = "ibkr_execution_counts_projected"
+    return counts
+
+
 def _pick_signal_and_rebalance(
     activities: Sequence[str],
 ) -> tuple[str, str, str]:
@@ -624,6 +680,7 @@ def project_digest_candidates(
                 "day": day or business_day or "",
                 "activities": [],
                 "statuses": [],
+                "counts": [],
                 "strategy_defaulted": False,
                 "account_hint": "",
                 "account_scope": "",
@@ -631,6 +688,7 @@ def project_digest_candidates(
             buckets[key] = bucket
         bucket["activities"].append(activity)
         bucket["statuses"].append(_as_str(report.get("status")).lower())
+        bucket["counts"].append(_counts_from_report(report))
         if not explicit_strategy:
             bucket["strategy_defaulted"] = True
         rep_hint, rep_scope = _labels_from_report(report)
@@ -643,6 +701,13 @@ def project_digest_candidates(
     for bucket in buckets.values():
         activities: list[str] = bucket["activities"]
         counts = _unknown_counts(reason_code="ibkr_fills_not_projected")
+        for field in ("fill_count", "order_count"):
+            values = [item[field] for item in bucket["counts"]]
+            if all(value is not None for value in values):
+                counts[field] = sum(values)
+                counts["field_status"][field] = "known"
+        if counts["fill_count"] is not None:
+            counts["reason_code"] = "ibkr_execution_counts_projected"
         signal, rebalance_kind, rebalance_conclusion = _pick_signal_and_rebalance(
             activities
         )
@@ -667,8 +732,8 @@ def project_digest_candidates(
             "opaque_account_uid": uid,
             "target_id": tid,
             "actually_ran": True,
-            "fill_count": None,
-            "order_count": None,
+            "fill_count": counts["fill_count"],
+            "order_count": counts["order_count"],
             "cycle_count": len(activities),
             "field_status": field_status,
             "evidence_provenance": EVIDENCE_PROVENANCE,

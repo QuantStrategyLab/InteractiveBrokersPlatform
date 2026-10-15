@@ -86,7 +86,7 @@ def test_unknown_fills_stay_null_not_zero():
     assert row["strategy_profile"] == "global_etf_rotation"
 
 
-def test_summary_order_counts_are_not_promoted_to_known_zero():
+def test_summary_order_counts_alone_do_not_establish_zero_fills():
     report = _report(activity_outcome="no_action")
     report["summary"] = {
         "orders_submitted_count": 0,
@@ -99,7 +99,7 @@ def test_summary_order_counts_are_not_promoted_to_known_zero():
     )
     row = payload["runs"][0]
     assert row["fill_count"] is None
-    assert row["order_count"] is None
+    assert row["order_count"] == 0
     assert row["field_status"]["fill_count"] == "counts_unknown"
 
 
