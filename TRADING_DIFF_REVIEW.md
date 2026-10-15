@@ -15,4 +15,3 @@
 另有已有检查失败：`bash tests/test_sync_cloud_run_env_workflow.sh` 仍期待硬编码 deploy service account，而 main 在 #637 已改为 GitHub variable。本次在未修改的 `origin/main` 临时快照上重跑，停在相同断言；未将此独立问题纳入修改。
 
 本次没有部署、切流、Scheduler 调用、Secret/IAM 变更、券商请求或真实订单核对。上述验证证明本地发布保护逻辑，不能代替云上候选 revision 的实际启动验收。当前 incident 的归因和完整时间线见本任务交付的 REPORT.md。
-
