@@ -12,8 +12,8 @@ fi
 grep -Fq "if: github.event_name == 'workflow_dispatch'" "$caller_file"
 
 grep -Fq 'GCP_WORKLOAD_IDENTITY_PROVIDER: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main' "$workflow_file"
-grep -Fq 'GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com' "$workflow_file"
-grep -Fq 'GCP_SCHEDULER_SERVICE_ACCOUNT: ibkr-platform-scheduler@interactivebrokersquant.iam.gserviceaccount.com' "$workflow_file"
+grep -Fq 'GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}' "$workflow_file"
+grep -Fq 'GCP_SCHEDULER_SERVICE_ACCOUNT: ${{ vars.IBKR_SCHEDULER_SERVICE_ACCOUNT }}' "$workflow_file"
 grep -Fq 'permissions:' "$workflow_file"
 grep -Fq 'id-token: write' "$workflow_file"
 grep -Fq 'workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}' "$workflow_file"
@@ -29,7 +29,7 @@ grep -Fq 'echo "IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PATH=${recovery_state_
 
 grep -Fq 'ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION: ${{ vars.ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION }}' "$workflow_file"
 grep -Fq 'target:' "$caller_file"
-grep -Fq 'default: hk-verify' "$caller_file"
+grep -Fq 'default: configured' "$caller_file"
 grep -Fq 'INPUT_DEPLOY_IMAGE: ${{ inputs.deploy_image }}' "$workflow_file"
 grep -Fq '[ "${INPUT_DEPLOY_IMAGE:-true}" = "true" ]; }; then' "$workflow_file"
 grep -Fq '[ "${INPUT_SYNC_ENV:-true}" = "true" ]; }; then' "$workflow_file"
