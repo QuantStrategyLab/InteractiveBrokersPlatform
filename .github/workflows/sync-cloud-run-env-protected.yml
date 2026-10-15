@@ -445,6 +445,7 @@ jobs:
         if: steps.config.outputs.enabled == 'true'
         env:
           QSL_ROUTINE_NOTIFICATION_MODE: ${{ vars.QSL_ROUTINE_NOTIFICATION_MODE }}
+          QSL_DIGEST_ROUTINE_ORDERS: ${{ vars.QSL_DIGEST_ROUTINE_ORDERS }}
         run: |
           set -euo pipefail
           sync_plan_json="$(uv run --no-sync python scripts/build_cloud_run_env_sync_plan.py --json)"
@@ -472,6 +473,13 @@ jobs:
                   handle.write(f"CLOUD_RUN_SERVICE_TARGETS_JSON={inventory}\n")
                   handle.write(f"CLOUD_RUN_SERVICE={selected}\nCLOUD_RUN_SERVICES={selected}\n")
           # Apply only to the admitted, selected target. Unset keeps the plan intact.
+          routine_orders = os.environ.get("QSL_DIGEST_ROUTINE_ORDERS", "").strip()
+          if routine_orders and routine_orders not in {"true", "false"}:
+              raise SystemExit("QSL_DIGEST_ROUTINE_ORDERS must be true or false")
+          if routine_orders:
+              for target in plan.get("targets", []):
+                  target["env"]["QSL_DIGEST_ROUTINE_ORDERS"] = routine_orders
+                  target["remove_env_vars"] = [key for key in target.get("remove_env_vars", []) if key != "QSL_DIGEST_ROUTINE_ORDERS"]
           mode = os.environ.get("QSL_ROUTINE_NOTIFICATION_MODE", "").strip()
           if mode:
               if mode not in {"immediate", "daily_digest"}:
