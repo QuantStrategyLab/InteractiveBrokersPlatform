@@ -827,12 +827,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--account-hint",
         default="",
-        help="Human broker account label (e.g. U15998061) for digest [ibkr U…] tags.",
+        help="Human broker account label (e.g. U00000004) for digest [ibkr U…] tags.",
     )
     parser.add_argument(
         "--account-scope",
         default="",
-        help="Runtime account_scope (e.g. live-u15998061).",
+        help="Runtime account_scope (e.g. live-u00000004).",
     )
     parser.add_argument(
         "--output",

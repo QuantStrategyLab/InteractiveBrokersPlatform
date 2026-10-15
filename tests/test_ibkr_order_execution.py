@@ -87,13 +87,13 @@ def test_probe_order_write_access_uses_explicit_what_if_order():
     probe_order_write_access(
         ib,
         symbol="AAPL",
-        account_id="U1234567",
+        account_id="U00000003",
         stock_factory=fake_stock,
         market_order_factory=FakeMarketOrder,
     )
 
     assert ib.probed_contract.symbol == "AAPL"
-    assert ib.probed_order.account == "U1234567"
+    assert ib.probed_order.account == "U00000003"
     assert ib.probed_order.whatIf is True
     assert ib.probed_order.transmit is True
 
@@ -133,14 +133,14 @@ def test_submit_order_intent_preserves_account_id():
 
     report = submit_order_intent(
         ib,
-        OrderIntent(symbol="AAPL", side="buy", quantity=3, account_id="U1234567"),
+        OrderIntent(symbol="AAPL", side="buy", quantity=3, account_id="U00000003"),
         wait_seconds=0,
         stock_factory=fake_stock,
         market_order_factory=FakeMarketOrder,
     )
 
-    assert ib.placed_order.account == "U1234567"
-    assert report.raw_payload["account_id"] == "U1234567"
+    assert ib.placed_order.account == "U00000003"
+    assert report.raw_payload["account_id"] == "U00000003"
 
 
 def test_submit_order_intent_can_target_hk_stock_exchange_and_currency():

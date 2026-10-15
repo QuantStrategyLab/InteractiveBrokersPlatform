@@ -113,7 +113,7 @@ def test_full_synthetic_flex_fetch_import_projection_one_post_ack(monkeypatch, c
 
 @pytest.mark.parametrize("bad_name,bad_value", [
     ("IBKR_PERIOD_RETURN_PUBLISH_ENABLED", "false"), ("IBKR_FLEX_TOKEN", ""),
-    ("IBKR_FLEX_QUERY_ID", "invalid"), ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", '["DU0000000","DU9999999"]'),
+    ("IBKR_FLEX_QUERY_ID", "invalid"), ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", '["DU0000000","DU0000004"]'),
     ("IBKR_PERIOD_RETURN_SOURCE_BINDING_ID", "bad"), ("IBKR_PERIOD_RETURN_ACCOUNT_KEY", ""),
     ("IBKR_ACCOUNT_FACTS_SYNC_TOKEN", "bad\n"), ("EXECUTION_EVIDENCE_SYNC_TOKEN", "synthetic-sync-token"),
     ("IBKR_ACCOUNT_FACTS_SYNC_TOKEN", "synthetic-flex-token"),
@@ -186,7 +186,7 @@ def test_explicit_same_reference_collection_to_projection_and_single_ack(monkeyp
     assert capsys.readouterr().out == ""
 
 
-@pytest.mark.parametrize("report", [xml(twr=None), xml(account="DU9999999"), xml(currency="")])
+@pytest.mark.parametrize("report", [xml(twr=None), xml(account="DU0000004"), xml(currency="")])
 def test_no_native_or_wrong_scope_or_currency_has_zero_post(monkeypatch, capsys, report):
     configure(monkeypatch)
     monkeypatch.setattr(cli.requests, "Session", lambda: FlexSession(report))
@@ -307,10 +307,10 @@ def test_preflight_identifies_each_missing_field_without_values_or_io(monkeypatc
     ("IBKR_PERIOD_RETURN_ACCOUNT_KEY", "private/key"),
     ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", "private-not-json"),
     ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", "[]"),
-    ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", '["DU1234567","DU7654321"]'),
+    ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", '["DU00000003","DU00000009"]'),
     ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", '["not-account"]'),
     ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", '[1234567]'),
-    ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", '"DU1234567"'),
+    ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", '"DU00000003"'),
     ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", "[" * 1100 + "]" * 1100),
     ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", "[" + "1" * 5000 + "]"),
     ("IBKR_FLEX_TOKEN", " private-token"),

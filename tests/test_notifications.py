@@ -223,7 +223,7 @@ def test_build_translator_supports_chinese():
     assert "降低杠杆" in translate("strategy_plugin_guidance_crisis_response_shadow_true_crisis_defend")
     assert "策略侧已批准" in translate("strategy_plugin_guidance_market_regime_control_risk_reduced_delever")
     assert "小仓位" in translate("strategy_plugin_guidance_taco_rebound_shadow_taco_rebound_notify_manual_review")
-    assert translate("account_ids_detail", account_ids="U1234567") == "🆔 账户: U1234567"
+    assert translate("account_ids_detail", account_ids="U00000003") == "🆔 账户: U00000003"
     assert (
         translate(
             "small_account_warning_note",

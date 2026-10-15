@@ -366,7 +366,7 @@ def test_attention_notify_on_new_risk_prohibit_dedupes(monkeypatch):
     import sys
     from pathlib import Path
 
-    qpk = Path("/Users/lisiyi/Projects/.worktrees/qpk-attention-wire-20260918/src")
+    qpk = Path(__file__).resolve().parents[2] / "QuantPlatformKit" / "src"
     if qpk.exists() and str(qpk) not in sys.path:
         sys.path.insert(0, str(qpk))
 
@@ -374,7 +374,7 @@ def test_attention_notify_on_new_risk_prohibit_dedupes(monkeypatch):
     portfolio = {
         "total_equity": 50_000.0,
         "strategy_profile": "soxl_soxx_trend_income",
-        "account_id": "U1599999",
+        "account_id": "U00000005",
         "account_new_risk_snapshot": {"production_drift_status": "critical"},
     }
     admission = evaluate_portfolio_new_risk_admission(portfolio)

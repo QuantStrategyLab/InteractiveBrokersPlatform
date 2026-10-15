@@ -11,7 +11,7 @@ from application.runtime_broker_adapters import (
 
 def _build_adapters(
     *,
-    account_ids=("U1234567",),
+    account_ids=("U00000003",),
     execution_mode="paper",
     trading_permission_probe_fn=None,
 ):
@@ -24,7 +24,7 @@ def _build_adapters(
         connect_retry_delay_seconds=0,
         client_id_retry_offset=100,
         ensure_event_loop_fn=lambda: None,
-        connect_ib_fn=lambda *_args, **_kwargs: SimpleNamespace(managedAccounts=lambda: ["U1234567"]),
+        connect_ib_fn=lambda *_args, **_kwargs: SimpleNamespace(managedAccounts=lambda: ["U00000003"]),
         fetch_portfolio_snapshot_fn=lambda *_args, **_kwargs: None,
         fetch_quote_snapshots_fn=lambda *_args, **_kwargs: None,
         submit_order_intent_fn=lambda *_args, **_kwargs: None,
@@ -60,11 +60,11 @@ def _build_adapters(
 
 
 def test_connect_ib_accepts_configured_managed_account():
-    adapters = _build_adapters(account_ids=("U1234567",))
+    adapters = _build_adapters(account_ids=("U00000003",))
 
     ib = adapters.connect_ib()
 
-    assert ib.managedAccounts() == ["U1234567"]
+    assert ib.managedAccounts() == ["U00000003"]
 
 
 def test_connect_ib_resolves_gateway_host_again_for_each_retry():
@@ -83,7 +83,7 @@ def test_connect_ib_resolves_gateway_host_again_for_each_retry():
         observed["hosts"].append(host)
         if len(observed["hosts"]) == 1:
             raise ConnectionRefusedError("gateway restarting")
-        return SimpleNamespace(managedAccounts=lambda: ["U1234567"])
+        return SimpleNamespace(managedAccounts=lambda: ["U00000003"])
 
     adapters = _build_adapters()
     adapters = adapters.__class__(
@@ -153,12 +153,12 @@ def test_connect_ib_rejects_configured_account_not_visible_to_gateway_username()
 
     class FakeIB:
         def managedAccounts(self):
-            return ["U7654321"]
+            return ["U00000009"]
 
         def disconnect(self):
             observed["disconnects"] += 1
 
-    adapters = _build_adapters(account_ids=("U1234567",))
+    adapters = _build_adapters(account_ids=("U00000003",))
     adapters = adapters.__class__(
         **{
             **adapters.__dict__,
@@ -177,7 +177,7 @@ def test_connect_ib_rejects_live_mode_without_configured_account_ids():
 
     class FakeIB:
         def managedAccounts(self):
-            return ["U1234567"]
+            return ["U00000003"]
 
         def disconnect(self):
             observed["disconnects"] += 1
@@ -223,7 +223,7 @@ def test_connect_ib_rejects_live_gateway_read_only_mode_without_retry():
             self.errorEvent = FakeEvent()
 
         def managedAccounts(self):
-            return ["U1234567"]
+            return ["U00000003"]
 
         def whatIfOrder(self, _contract, _order):
             observed["permission_probe_requests"] += 1
@@ -233,7 +233,7 @@ def test_connect_ib_rejects_live_gateway_read_only_mode_without_retry():
         def disconnect(self):
             observed["disconnects"] += 1
 
-    adapters = _build_adapters(account_ids=("U1234567",), execution_mode="live")
+    adapters = _build_adapters(account_ids=("U00000003",), execution_mode="live")
     adapters = adapters.__class__(
         **{
             **adapters.__dict__,
@@ -267,7 +267,7 @@ def test_connect_ib_accepts_margin_rejection_as_write_access_proof():
             self.errorEvent = FakeEvent()
 
         def managedAccounts(self):
-            return ["U1234567"]
+            return ["U00000003"]
 
         def whatIfOrder(self, _contract, _order):
             raise RuntimeError(
@@ -276,7 +276,7 @@ def test_connect_ib_accepts_margin_rejection_as_write_access_proof():
                 "[390.06 USD] MUST EXCEED THE INITIAL MARGIN [434.70 USD]"
             )
 
-    adapters = _build_adapters(account_ids=("U1234567",), execution_mode="live")
+    adapters = _build_adapters(account_ids=("U00000003",), execution_mode="live")
     adapters = adapters.__class__(
         **{
             **adapters.__dict__,
@@ -284,7 +284,7 @@ def test_connect_ib_accepts_margin_rejection_as_write_access_proof():
         }
     )
 
-    assert adapters.connect_ib().managedAccounts() == ["U1234567"]
+    assert adapters.connect_ib().managedAccounts() == ["U00000003"]
 
 
 def test_connect_ib_retries_when_trading_permission_probe_loses_connection():
@@ -316,7 +316,7 @@ def test_connect_ib_retries_when_trading_permission_probe_loses_connection():
             self.errorEvent = FakeEvent()
 
         def managedAccounts(self):
-            return ["U1234567"]
+            return ["U00000003"]
 
         def whatIfOrder(self, _contract, _order):
             observed["permission_probe_requests"] += 1
@@ -335,7 +335,7 @@ def test_connect_ib_retries_when_trading_permission_probe_loses_connection():
         observed["refreshes"] += 1
         return "127.0.0.1"
 
-    adapters = _build_adapters(account_ids=("U1234567",), execution_mode="live")
+    adapters = _build_adapters(account_ids=("U00000003",), execution_mode="live")
     adapters = adapters.__class__(
         **{
             **adapters.__dict__,
@@ -345,7 +345,7 @@ def test_connect_ib_retries_when_trading_permission_probe_loses_connection():
         }
     )
 
-    assert adapters.connect_ib().managedAccounts() == ["U1234567"]
+    assert adapters.connect_ib().managedAccounts() == ["U00000003"]
     assert observed == {
         "connects": 2,
         "disconnects": 1,
@@ -379,13 +379,13 @@ def test_connect_ib_does_not_misclassify_unrelated_321_as_read_only():
             self.errorEvent = FakeEvent()
 
         def managedAccounts(self):
-            return ["U1234567"]
+            return ["U00000003"]
 
         def whatIfOrder(self, _contract, _order):
             self.errorEvent.emit(-1, 321, "Generic validation error", None)
             return SimpleNamespace(warningText="")
 
-    adapters = _build_adapters(account_ids=("U1234567",), execution_mode="live")
+    adapters = _build_adapters(account_ids=("U00000003",), execution_mode="live")
     adapters = adapters.__class__(
         **{
             **adapters.__dict__,
@@ -393,19 +393,19 @@ def test_connect_ib_does_not_misclassify_unrelated_321_as_read_only():
         }
     )
 
-    assert adapters.connect_ib().managedAccounts() == ["U1234567"]
+    assert adapters.connect_ib().managedAccounts() == ["U00000003"]
 
 
 def test_connect_ib_rejects_empty_what_if_response():
     disconnected = []
     ib = SimpleNamespace(
-        managedAccounts=lambda: ["U1234567"],
+        managedAccounts=lambda: ["U00000003"],
         whatIfOrder=lambda *_args: None,
         disconnect=lambda: disconnected.append(True),
         RaiseRequestErrors=False,
         RequestTimeout=0,
     )
-    adapters = _build_adapters(account_ids=("U1234567",), execution_mode="live")
+    adapters = _build_adapters(account_ids=("U00000003",), execution_mode="live")
     adapters = adapters.__class__(
         **{**adapters.__dict__, "connect_ib_fn": lambda *_args, **_kwargs: ib}
     )
@@ -418,12 +418,12 @@ def test_connect_ib_rejects_empty_what_if_response():
 def test_connect_ib_skips_trading_permission_probe_for_dry_run():
     class FakeIB:
         def managedAccounts(self):
-            return ["U1234567"]
+            return ["U00000003"]
 
         def whatIfOrder(self, _contract, _order):
             pytest.fail("dry-run connection must not probe trading permissions")
 
-    adapters = _build_adapters(account_ids=("U1234567",), execution_mode="live")
+    adapters = _build_adapters(account_ids=("U00000003",), execution_mode="live")
     adapters = adapters.__class__(
         **{
             **adapters.__dict__,
@@ -432,18 +432,18 @@ def test_connect_ib_skips_trading_permission_probe_for_dry_run():
         }
     )
 
-    assert adapters.connect_ib().managedAccounts() == ["U1234567"]
+    assert adapters.connect_ib().managedAccounts() == ["U00000003"]
 
 
 def test_connect_ib_skips_trading_permission_probe_for_explicit_read_only_connection():
     class FakeIB:
         def managedAccounts(self):
-            return ["U1234567"]
+            return ["U00000003"]
 
         def whatIfOrder(self, _contract, _order):
             pytest.fail("read-only connection must not probe trading permissions")
 
-    adapters = _build_adapters(account_ids=("U1234567",), execution_mode="live")
+    adapters = _build_adapters(account_ids=("U00000003",), execution_mode="live")
     adapters = adapters.__class__(
         **{
             **adapters.__dict__,
@@ -451,7 +451,7 @@ def test_connect_ib_skips_trading_permission_probe_for_explicit_read_only_connec
         }
     )
 
-    assert adapters.connect_ib(validate_trading_permissions=False).managedAccounts() == ["U1234567"]
+    assert adapters.connect_ib(validate_trading_permissions=False).managedAccounts() == ["U00000003"]
 
 
 def test_connect_ib_redacts_read_only_connection_diagnostics():

@@ -92,5 +92,5 @@ def test_collect_rejects_unscoped_report_without_generating():
     session = Session(SEND, XML)
     request = source.request_activity_flex_report(token=TOKEN, query_id="12345", session=session)
     with pytest.raises(source.FlexSourceError, match="account scope"):
-        source.import_activity_flex_ledger_from_request(request, expected_account_ids=("DU9999999",), session=session)
+        source.import_activity_flex_ledger_from_request(request, expected_account_ids=("DU0000004",), session=session)
     assert [name for name, _ in session.calls] == ["SendRequest", "GetStatement"]
