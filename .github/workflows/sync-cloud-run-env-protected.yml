@@ -425,6 +425,8 @@ jobs:
       - name: Resolve admissible Cloud Run targets
         id: strategy_requirements
         if: steps.config.outputs.enabled == 'true'
+        env:
+          QSL_ROUTINE_NOTIFICATION_MODE: ${{ vars.QSL_ROUTINE_NOTIFICATION_MODE }}
         run: |
           set -euo pipefail
           sync_plan_json="$(uv run --no-sync python scripts/build_cloud_run_env_sync_plan.py --json)"
@@ -451,6 +453,14 @@ jobs:
               with Path(os.environ["GITHUB_ENV"]).open("a") as handle:
                   handle.write(f"CLOUD_RUN_SERVICE_TARGETS_JSON={inventory}\n")
                   handle.write(f"CLOUD_RUN_SERVICE={selected}\nCLOUD_RUN_SERVICES={selected}\n")
+          # Apply only to the admitted, selected target. Unset keeps the plan intact.
+          mode = os.environ.get("QSL_ROUTINE_NOTIFICATION_MODE", "").strip()
+          if mode:
+              if mode not in {"immediate", "daily_digest"}:
+                  raise SystemExit("QSL_ROUTINE_NOTIFICATION_MODE must be immediate or daily_digest")
+              for target in plan["targets"]:
+                  target["env"]["QSL_ROUTINE_NOTIFICATION_MODE"] = mode
+                  target["remove_env_vars"] = [key for key in target.get("remove_env_vars", []) if key != "QSL_ROUTINE_NOTIFICATION_MODE"]
           with Path(os.environ["GITHUB_OUTPUT"]).open("a") as handle:
               handle.write("sync_plan_json<<__SYNC_PLAN_JSON__\n")
               handle.write(json.dumps(plan) + "\n__SYNC_PLAN_JSON__\n")
