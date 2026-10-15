@@ -105,6 +105,12 @@ def verify_service(*, service: str, service_json: Mapping[str, Any]) -> dict[str
 
     env = _container_env(service_json)
     target = _runtime_target(env, service=service)
+    from scripts.runtime_target_continuity import verify_target_continuity
+
+    try:
+        verify_target_continuity(target)
+    except ValueError as exc:
+        raise AdmissionError(f"{service}: runtime target continuity validation failed") from exc
     target_service = str(target.get("service_name") or "").strip()
     if target_service and target_service != service:
         raise AdmissionError(

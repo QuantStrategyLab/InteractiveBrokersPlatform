@@ -266,6 +266,15 @@ def ensure_latest_traffic(
             expected_commit=expected_commit,
             dry_run=dry_run,
         )
+        if not dry_run:
+            from scripts.runtime_target_continuity import verify_traffic_revision
+
+            candidate = _run([
+                "gcloud", "run", "revisions", "describe", target_revision,
+                f"--project={project}", f"--region={target_region}", "--format=json",
+            ], json_output=True, dry_run=False)
+            verify_traffic_revision(candidate, expected_revision=target_revision, expected_commit=expected_commit)
+
         if not _traffic_on_revision(service if isinstance(service, Mapping) else {}, target_revision):
             print(
                 f"Updating {target.service_name} traffic to commit revision "

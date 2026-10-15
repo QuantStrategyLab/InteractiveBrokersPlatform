@@ -1363,9 +1363,17 @@ def test_build_cloud_run_env_sync_plan_generates_live_gateway_deadlines() -> Non
 
 
 def test_build_cloud_run_env_sync_plan_pauses_reconcile_only_execution_schedule() -> None:
+    from quant_platform_kit.common.live_continuity import runtime_target_fingerprint
+
     payload = _four_gateway_warmup_payload("43 9,15 * * 1-5")
     protected = payload["targets"][0]
-    protected["runtime_target"]["live_continuity"] = {"state": "RECONCILE_ONLY"}
+    protected["runtime_target"]["live_continuity"] = {
+        "state": "RECONCILE_ONLY",
+        "baseline_kind": "legacy_authorized",
+        "baseline_id": "synthetic-reconcile-baseline",
+        "baseline_target_sha256": runtime_target_fingerprint(protected["runtime_target"]),
+        "captured_at": "2026-10-01",
+    }
 
     result = subprocess.run(
         [sys.executable, str(SYNC_PLAN_SCRIPT_PATH), "--json"],
