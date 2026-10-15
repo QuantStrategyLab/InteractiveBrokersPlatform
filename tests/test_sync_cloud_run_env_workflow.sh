@@ -11,7 +11,8 @@ if grep -Fq 'workflow_run:' "$caller_file"; then
 fi
 grep -Fq "if: github.event_name == 'workflow_dispatch'" "$caller_file"
 
-grep -Fq 'GCP_WORKLOAD_IDENTITY_PROVIDER: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main' "$workflow_file"
+# Validate binding shapes without coupling the contract to one environment.
+grep -Eq '^[[:space:]]*GCP_WORKLOAD_IDENTITY_PROVIDER: (projects/[0-9]+/locations/global/workloadIdentityPools/[^/[:space:]]+/providers/[^/[:space:]]+|\$\{\{ vars\.[A-Z0-9_]+ \}\})$' "$workflow_file"
 grep -Fq 'GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}' "$workflow_file"
 grep -Fq 'GCP_SCHEDULER_SERVICE_ACCOUNT: ${{ vars.IBKR_SCHEDULER_SERVICE_ACCOUNT }}' "$workflow_file"
 grep -Fq 'permissions:' "$workflow_file"
@@ -23,7 +24,7 @@ grep -Fq 'uses: actions/setup-python@v6' "$workflow_file"
 grep -Fq 'uv sync --frozen --no-dev' "$workflow_file"
 grep -Fq 'IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_URI: ${{ vars.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_URI }}' "$workflow_file"
 grep -Fq 'Fetch opt-in immutable recovery state ledger' "$workflow_file"
-grep -Fq 'gs://qsl-reconciliation-recovery-private-ibkr/reconciliation-recovery/ibkr/state/*.json' "$workflow_file"
+grep -Eq 'gs://[^/[:space:]]+/reconciliation-recovery/ibkr/state/\*\.json' "$workflow_file"
 grep -Fq 'gcloud storage cp --quiet "${RECOVERY_STATE_LEDGER_URI}" "${recovery_state_ledger_path}" >/dev/null' "$workflow_file"
 grep -Fq 'echo "IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PATH=${recovery_state_ledger_path}" >> "$GITHUB_ENV"' "$workflow_file"
 
