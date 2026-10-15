@@ -116,6 +116,7 @@ def _should_suppress_noop_notification(
     no-trade cycle when no-trade notifications are enabled.
     """
     metadata = signal_metadata if isinstance(signal_metadata, Mapping) else {}
+    from quant_platform_kit.notifications.digest_routing import defer_routine_cycle_to_digest
     if has_error or any(metadata.get(key) for key in (
         "error", "errors", "fail_reason", "execution_blocked_reason", "plugin_error",
         "persistence_error", "report_persistence_error", "notification_error",
@@ -127,6 +128,8 @@ def _should_suppress_noop_notification(
         return False
     if _execution_summary_has_order_activity(metadata):
         return False
+    if defer_routine_cycle_to_digest(metadata, submitted_order_count=order_count):
+        return True
     if order_count == 0 and not notify_no_trade_cycles:
         return True
     no_op_reason = str(metadata.get("no_op_reason") or "").strip()
@@ -195,6 +198,8 @@ def _has_notification_attention(signal_metadata, execution_summary=None, *, reas
 
 
 def _should_publish_execution_notification(*, config, signal_metadata, execution_summary, trade_logs) -> bool:
+    from quant_platform_kit.notifications.digest_routing import defer_routine_cycle_to_digest
+
     if _has_notification_attention(
         signal_metadata, execution_summary,
         reason_codes=getattr(config, "notification_attention_reason_codes", ()),
@@ -202,7 +207,11 @@ def _should_publish_execution_notification(*, config, signal_metadata, execution
         return True
     if bool(getattr(config, "dry_run_only", False)):
         return False
-    return _has_order_activity(trade_logs=trade_logs, execution_summary=execution_summary) or bool(
+    has_orders = _has_order_activity(trade_logs=trade_logs, execution_summary=execution_summary)
+    evidence = {**(signal_metadata or {}), **(execution_summary or {})}
+    if defer_routine_cycle_to_digest(evidence, submitted_order_count=1 if has_orders else 0):
+        return False
+    return has_orders or bool(
         getattr(config, "notify_no_trade_cycles", False)
     )
 
