@@ -341,3 +341,17 @@ gcloud run services logs read interactive-brokers-quant-service \
 - 按 `ACCOUNT_GROUP` 拆多个 Cloud Run service
 - 为每个账号组单独定义更细的 service name / 命名规范
 - 把更多平台共性提取到后续平台级部署体系里
+
+## Configuration
+
+Set these non-secret repository variables before running the affected workflows. For standalone Python commands, export the same names as environment variables. Workflows reject missing values before cloud access.
+
+| Variable | Purpose | Required | Default |
+|---|---|---|---|
+| `IBKR_GCP_PROJECT_ID` | Project for platform cloud commands | Workflows using the project | none |
+| `IBKR_DEPLOY_SERVICE_ACCOUNT` | Existing deploy or read identity | Workflows using this identity | none |
+| `IBKR_RUNTIME_SERVICE_ACCOUNT` | Runtime identity | Environment synchronization and drift checks | none |
+| `IBKR_SCHEDULER_SERVICE_ACCOUNT` | Scheduler identity | Workflows using Scheduler | none |
+| `QSL_CONSOLE_BASE_URL` | HTTPS console origin without an API path | Publisher workflows | `https://example.invalid` for Python scripts |
+| `QSL_DIGEST_BUCKET` | Digest and parity evidence bucket | Store and parity workflows | none |
+| `STRATEGY_PLUGIN_ALLOWED_SIGNAL_PREFIXES` | Comma-separated permitted GCS signal prefixes | Plugin mount verification | none |

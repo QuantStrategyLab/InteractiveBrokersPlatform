@@ -26,7 +26,10 @@ SNAPSHOT_SCHEMA = "ibkr_account_snapshot.v1"
 RUNTIME_REPORT_SCHEMA = "runtime_report.v1"
 SOURCE_BINDING_KIND = "deployment_runtime_account"
 IBKR_ACCOUNT_FACTS_SYNC_TOKEN_ENV = "IBKR_ACCOUNT_FACTS_SYNC_TOKEN"
-IBKR_ACCOUNT_FACTS_SYNC_URL = "https://qsl-strategy-switch-console.pigbibi.workers.dev/api/account-facts/sync"
+from scripts.console_config import console_base_url
+
+
+IBKR_ACCOUNT_FACTS_SYNC_URL = console_base_url() + "/api/account-facts/sync"
 IBKR_ACCOUNT_FACTS_USER_AGENT = "QSL-IBKR-AccountFacts/1.0"
 IBKR_ACCOUNT_FACTS_MAX_AGE = timedelta(hours=36)
 IBKR_ACCOUNT_FACTS_INGRESS_DIAGNOSTIC_TARGET = "ingress-diagnostic"
@@ -552,7 +555,7 @@ def publish_ibkr_account_facts_history(
         if (
             _text(sync_url) != IBKR_ACCOUNT_FACTS_SYNC_URL
             or endpoint.scheme != "https"
-            or endpoint.netloc != "qsl-strategy-switch-console.pigbibi.workers.dev"
+            or endpoint.netloc != urlsplit(IBKR_ACCOUNT_FACTS_SYNC_URL).netloc
             or endpoint.path != "/api/account-facts/sync"
             or endpoint.username is not None
             or endpoint.password is not None

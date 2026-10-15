@@ -79,7 +79,7 @@ def test_dispatch_config_requires_main_and_keeps_deploy_only_gates(tmp_path: Pat
         ENABLE_GITHUB_CLOUD_RUN_DEPLOY="true",
         ENABLE_GITHUB_ENV_SYNC="true",
         ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION="false",
-        INPUT_CONFIGURED_SERVICE="interactive-brokers-quant-live-u16608560-service",
+        INPUT_CONFIGURED_SERVICE="interactive-brokers-quant-live-u00000006-service",
         INPUT_SOURCE_COMMIT="a" * 40,
         INPUT_DEPLOY_IMAGE="true",
         INPUT_SYNC_ENV="false",

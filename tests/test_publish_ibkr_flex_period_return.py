@@ -382,7 +382,8 @@ def test_preflight_workflow_is_manual_main_configuration_only_with_exact_origina
     assert "astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78" in workflow
     assert workflow.count("python -m scripts.publish_ibkr_flex_period_return --preflight") == 1
     assert set(re.findall(r"secrets\.([A-Z0-9_]+)", workflow)) == set(_PREFLIGHT_FIELDS)
+    assert set(re.findall(r"vars\.([A-Z0-9_]+)", workflow)) == {"QSL_CONSOLE_BASE_URL"}
     assert "GITHUB_SHA: ${{ github.sha }}" in workflow
     for unsafe in ("schedule:", "workflow_run:", "id-token:", "google-github-actions/auth", "gcloud",
-                   "upload-artifact", "TELEGRAM", "CLOUDFLARE", "publish_once", "PUBLISH_ENABLED", "vars."):
+                   "upload-artifact", "TELEGRAM", "CLOUDFLARE", "publish_once", "PUBLISH_ENABLED"):
         assert unsafe not in workflow

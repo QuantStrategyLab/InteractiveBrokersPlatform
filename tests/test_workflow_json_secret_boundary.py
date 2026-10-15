@@ -16,12 +16,12 @@ WORKFLOWS = (
 # secrets so runner headers mask them; it does not create repository secrets.
 # This explicit contract is limited to this caller's six new fields.
 NOTIFY_ROUTE_ADDITIONAL_SECRET_CONTRACTS = {
-    "GCP_PROJECT_ID": (True, "'interactivebrokersquant'"),
+    "GCP_PROJECT_ID": (True, "vars.IBKR_GCP_PROJECT_ID"),
     "GCP_WORKLOAD_IDENTITY_PROVIDER": (
         True, "'projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main'",
     ),
     "GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT": (
-        True, "'ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com'",
+        True, "vars.IBKR_DEPLOY_SERVICE_ACCOUNT",
     ),
     "RUNTIME_GUARD_CLOUD_RUN_SERVICES": (False, "vars.RUNTIME_GUARD_CLOUD_RUN_SERVICES"),
     "CLOUD_RUN_REGION": (False, "vars.CLOUD_RUN_REGION"),

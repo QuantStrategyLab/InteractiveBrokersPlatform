@@ -52,6 +52,19 @@ jobs:
       # Existing platform region; not inferred from a report or a public example.
       CLOUD_RUN_REGION: us-central1
     steps:
+      - name: Require infrastructure variables
+        env:
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in IBKR_DEPLOY_SERVICE_ACCOUNT; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is required" >&2
+              exit 2
+            fi
+          done
+
       - name: Checkout
         uses: actions/checkout@v6
 
@@ -62,7 +75,7 @@ jobs:
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
-          service_account: ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com
+          service_account: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Set up read-only cloud commands
         uses: google-github-actions/setup-gcloud@v3
