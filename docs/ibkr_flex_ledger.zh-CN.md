@@ -114,7 +114,7 @@ attempt，必须同时由维护者设置 `IBKR_PERIOD_RETURN_PUBLISH_ENABLED=tru
 reference Secret 或自动调度；若需要跨进程续领，必须先核实已有私有位置及原请求状态。
 
 同步地址固定为
-`https://qsl-strategy-switch-console.pigbibi.workers.dev/api/account-facts/period-return/sync`。
+`<console-url>/api/account-facts/period-return/sync`。
 发布器只发一次 POST，禁用重定向与环境代理；响应正文最多 8192 字节。只有 HTTP 200 且
 ACK 恰好包含 `ok/stored/unchanged/account_key/period/currency/method`，布尔类型正确，
 `ok/stored=true`，并且独立预期 key、期间、币种、方法全部精确匹配时才报告成功。
