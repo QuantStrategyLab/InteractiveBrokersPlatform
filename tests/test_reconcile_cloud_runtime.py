@@ -7,6 +7,20 @@ from unittest import mock
 from scripts import reconcile_cloud_runtime as rcr
 
 
+def _http_candidate(name, commit):
+    return {
+        "metadata": {"name": name, "labels": {"commit-sha": commit}},
+        "spec": {"containers": [{
+            "startupProbe": {"httpGet": {"path": "/health", "port": 8080}},
+            "env": [{"name": "RUNTIME_TARGET_JSON", "value": "{}"}],
+        }]},
+        "status": {"conditions": [
+            {"type": "Ready", "status": "True"},
+            {"type": "ContainerHealthy", "status": "True"},
+        ]},
+    }
+
+
 class ReconcileCloudRuntimeTests(unittest.TestCase):
     def test_load_targets_reads_all_supported_env_shapes(self) -> None:
         env = {
@@ -99,6 +113,8 @@ class ReconcileCloudRuntimeTests(unittest.TestCase):
                         "status": {"conditions": [{"type": "Ready", "status": "True"}]},
                     }
                 ]
+            if args[:4] == ["gcloud", "run", "revisions", "describe"]:
+                return _http_candidate(rev_name, "abc123")
             if args[:4] == ["gcloud", "run", "services", "update-traffic"]:
                 return ""
             self.fail(f"unexpected command: {args}")
@@ -173,6 +189,8 @@ class ReconcileCloudRuntimeTests(unittest.TestCase):
                         "status": {"conditions": [{"type": "Ready", "status": "True"}]},
                     },
                 ]
+            if args[:4] == ["gcloud", "run", "revisions", "describe"]:
+                return _http_candidate(fresh, "abc123")
             if args[:4] == ["gcloud", "run", "services", "update-traffic"]:
                 return ""
             self.fail(f"unexpected command: {args}")
