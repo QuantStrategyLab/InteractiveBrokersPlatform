@@ -31,7 +31,7 @@ def test_verified_no_submission_projects_explicit_zero_counts():
 def test_explicit_counts_preserve_distinct_fills_and_orders():
     value = report()
     value["execution_receipt"] = {"outcome": "filled", "broker_confirmation": "filled"}
-    value["summary"] = {"execution_status": "completed", "orders_submitted_count": 2, "fill_count": 3}
+    value["summary"] = {"execution_status": "completed", "order_count": 2, "fill_count": 3}
     row = project(value)
     assert (row["fill_count"], row["order_count"]) == (3, 2)
 
@@ -69,3 +69,12 @@ def test_stale_reports_are_not_relabelled_as_current_zero():
     value["started_at"] = "2026-10-13T20:01:00Z"
     payload = project_digest_candidates(runtime_reports=value, business_day="2026-10-14")
     assert payload["runs"] == []
+
+
+def test_stock_submission_count_alone_is_not_total_option_order_coverage():
+    value = report()
+    value["execution_receipt"] = {"outcome": "submitted", "broker_confirmation": "submitted"}
+    value["summary"] = {"execution_status": "submitted", "orders_submitted_count": 0}
+    row = project(value)
+    assert row["order_count"] is None
+    assert row["fill_count"] is None

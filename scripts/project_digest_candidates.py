@@ -188,14 +188,14 @@ def _unknown_counts(*, reason_code: str) -> dict[str, Any]:
 def _counts_from_report(report: Mapping[str, Any]) -> dict[str, Any]:
     """Project explicit counts; a no-submission receipt can prove zero fills.
 
-    Summary fill_count is optional (default unknown), never substituted with
-    submitted/filled-order counts. A receipt alone or a no-action label is not
-    enough: the summary must explicitly confirm zero submitted orders.
+    Summary order_count/fill_count are optional totals (default unknown).
+    orders_submitted_count covers stock submissions, not all option orders or
+    fills. It proves zero only alongside a consistent no-submission receipt.
     """
     summary = _as_mapping(report.get("summary")) or {}
     receipt = _as_mapping(report.get("execution_receipt")) or {}
     counts = _unknown_counts(reason_code="ibkr_fills_not_projected")
-    orders = summary.get("orders_submitted_count")
+    orders = summary.get("order_count")
     fills = summary.get("fill_count")
     if type(orders) is int and orders >= 0:
         counts["order_count"] = orders
@@ -224,7 +224,10 @@ def _counts_from_report(report: Mapping[str, Any]) -> dict[str, Any]:
     if (
         "fill_count" not in summary
         and _parse_timestamp(_as_str(report.get("started_at"))) is not None
-        and counts["order_count"] == 0
+        and type(summary.get("orders_submitted_count")) is int
+        and summary["orders_submitted_count"] == 0
+        and counts["order_count"] in {None, 0}
+        and ("order_count" not in summary or counts["order_count"] == 0)
         and no_activity
         and summary.get("execution_status") in {"no_op", "no_action", "no_signal", "no_rebalance"}
         and summary.get("broker_submission_done") is not True
@@ -235,7 +238,9 @@ def _counts_from_report(report: Mapping[str, Any]) -> dict[str, Any]:
         and receipt.get("broker_confirmation") == "not_applicable"
     ):
         counts["fill_count"] = 0
+        counts["order_count"] = 0
         counts["field_status"]["fill_count"] = "known"
+        counts["field_status"]["order_count"] = "known"
     if counts["fill_count"] is not None:
         counts["reason_code"] = "ibkr_execution_counts_projected"
     return counts
