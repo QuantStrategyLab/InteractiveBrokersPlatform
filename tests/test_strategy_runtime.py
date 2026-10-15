@@ -1974,3 +1974,38 @@ def test_cash_only_runtime_overrides_force_option_overlays_off():
     assert overrides["option_growth_overlay_enabled"] is False
     assert overrides["option_income_overlay_enabled"] is False
     assert overrides["cash_reserve_ratio"] == 0.03
+
+
+@pytest.mark.parametrize("file_value,env_value,expected", [
+    ({}, None, "split_adjusted"),
+    ({"price_basis": "split_dividend_adjusted"}, None, "split_dividend_adjusted"),
+    ({"price_basis": "split_dividend_adjusted"}, "split_adjusted", "split_adjusted"),
+])
+def test_price_basis_config_merge_reaches_historical_adapters(monkeypatch, file_value, env_value, expected):
+    from application.runtime_strategy_adapters import build_runtime_strategy_adapters
+    entrypoint = SimpleNamespace(manifest=SimpleNamespace(
+        profile="synthetic", required_inputs=frozenset({"feature_snapshot"}), default_config={}))
+    monkeypatch.setattr(strategy_runtime_module, "load_strategy_definition", lambda _raw: SimpleNamespace(profile="synthetic"))
+    monkeypatch.setattr(strategy_runtime_module, "load_strategy_entrypoint_for_profile", lambda _raw: entrypoint)
+    monkeypatch.setattr(strategy_runtime_module, "load_strategy_runtime_adapter_for_profile", lambda _raw:
+                        StrategyRuntimeAdapter(runtime_parameter_loader=lambda **_kw: file_value))
+    runtime = strategy_runtime_module.load_strategy_runtime(
+        "synthetic", runtime_settings=replace(_build_runtime_settings(), price_basis=env_value),
+        logger=lambda _message: None)
+    adapter = build_runtime_strategy_adapters(
+        strategy_runtime=runtime, strategy_profile="synthetic", translator=None, pacing_sec=0,
+        resolve_run_as_of_date_fn=None, fetch_historical_price_series_fn=None,
+        fetch_historical_price_candles_fn=None, map_strategy_decision_fn=None)
+    assert runtime.merged_runtime_config["price_basis"] == adapter.price_basis == expected
+
+
+def test_price_basis_invalid_file_config_fails_at_runtime_validation(monkeypatch):
+    entrypoint = SimpleNamespace(manifest=SimpleNamespace(
+        profile="synthetic", required_inputs=frozenset({"feature_snapshot"}), default_config={}))
+    monkeypatch.setattr(strategy_runtime_module, "load_strategy_definition", lambda _raw: SimpleNamespace(profile="synthetic"))
+    monkeypatch.setattr(strategy_runtime_module, "load_strategy_entrypoint_for_profile", lambda _raw: entrypoint)
+    monkeypatch.setattr(strategy_runtime_module, "load_strategy_runtime_adapter_for_profile", lambda _raw:
+                        StrategyRuntimeAdapter(runtime_parameter_loader=lambda **_kw: {"price_basis": "adjusted"}))
+    with pytest.raises(ValueError, match="price_basis must be one of"):
+        strategy_runtime_module.load_strategy_runtime(
+            "synthetic", runtime_settings=_build_runtime_settings(), logger=lambda _message: None)

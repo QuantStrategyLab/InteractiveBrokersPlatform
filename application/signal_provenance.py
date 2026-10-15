@@ -13,11 +13,11 @@ from collections.abc import Iterable
 from datetime import date, datetime, timezone
 from typing import Any
 
-SCHEMA_VERSION = "qsl.signal_data_provenance.v1"
-SPLIT_ONLY = "split_only"
-DIVIDEND_ADJUSTED = "dividend_adjusted"
-UNKNOWN = "unknown"
-PRICE_BASIS_LABELS = frozenset({SPLIT_ONLY, DIVIDEND_ADJUSTED, UNKNOWN})
+from application.price_basis import PriceBasis
+
+SCHEMA_VERSION = "qsl.signal_data_provenance.v2"
+UNKNOWN = "unknown_legacy"  # Inventory only, never accepted by history loaders.
+PRICE_BASIS_LABELS = frozenset({*PriceBasis, UNKNOWN})
 
 _LOCK = threading.Lock()
 _RECORDS: dict[str, dict[str, Any]] = {}
@@ -47,7 +47,8 @@ def _iso_date(value: Any) -> str | None:
         return None
 
 
-def record(symbol: Any, *, source: str, price_basis: str, dates: Iterable[Any], note: str | None = None) -> None:
+def record(symbol: Any, *, source: str, price_basis: str, dates: Iterable[Any], note: str | None = None,
+           basis_details: dict | None = None) -> None:
     """Record one history fetch. Best-effort: swallows every error."""
     try:
         normalized = str(symbol or "").strip().upper()
@@ -63,6 +64,8 @@ def record(symbol: Any, *, source: str, price_basis: str, dates: Iterable[Any], 
         }
         if note:
             entry["note"] = str(note)
+        if basis_details is not None:
+            entry["basis_details"] = dict(basis_details)
         with _LOCK:
             previous = _RECORDS.get(normalized)
             entry["fetch_count"] = int(previous.get("fetch_count", 0)) + 1 if previous else 1

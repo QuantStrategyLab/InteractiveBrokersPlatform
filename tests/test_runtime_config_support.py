@@ -168,6 +168,7 @@ def test_load_platform_runtime_settings_uses_minimal_group_config(monkeypatch):
     settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
     assert settings.project_id == "project-1"
+    assert settings.price_basis is None  # Effective runtime default is split_adjusted.
     assert settings.execution_backend == EXECUTION_BACKEND_GATEWAY
     assert settings.ib_gateway_instance_name == "ib-gateway"
     assert settings.ib_gateway_project_id is None
@@ -2154,3 +2155,22 @@ def test_load_trusted_runtime_risk_policy_from_runtime_target_json(monkeypatch):
 def test_load_trusted_runtime_risk_policy_absent_when_missing(monkeypatch):
     monkeypatch.setenv("RUNTIME_TARGET_JSON", json.dumps({"platform_id": "ibkr"}))
     assert runtime_config_support_module._load_trusted_runtime_risk_policy() is None
+
+
+@pytest.mark.parametrize("basis", ["raw_unadjusted", "split_adjusted", "split_dividend_adjusted", "total_return_index"])
+def test_price_basis_environment_accepts_only_the_shared_enum(monkeypatch, basis):
+    monkeypatch.setenv("PRICE_BASIS", basis)
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json(SAMPLE_STRATEGY_PROFILE))
+    monkeypatch.setenv("ACCOUNT_GROUP", "paper")
+    monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_GROUP_JSON)
+    settings = load_platform_runtime_settings(project_id_resolver=lambda: None)
+    assert settings.price_basis == basis
+
+
+@pytest.mark.parametrize("basis", ["", "adjusted", "unknown_legacy", "split_only"])
+def test_price_basis_invalid_environment_fails_before_any_clients(monkeypatch, basis):
+    monkeypatch.setenv("PRICE_BASIS", basis)
+    def forbidden():
+        pytest.fail("client resolution must not occur before price_basis validation")
+    with pytest.raises(ValueError, match="price_basis must be one of"):
+        load_platform_runtime_settings(project_id_resolver=forbidden, secret_client_factory=forbidden)

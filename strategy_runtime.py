@@ -47,6 +47,7 @@ from quant_platform_kit.common.runtime_inputs import (
 )
 from quant_platform_kit.risk.contracts import RuntimeRiskLimits, SmallAccountRiskHoldPolicy
 from runtime_config_support import PlatformRuntimeSettings
+from application.price_basis import DEFAULT_PRICE_BASIS, PriceBasisError, validate_price_basis
 from us_equity_strategies.signals import resolve_external_market_signal_inputs
 from strategy_loader import (
     load_strategy_definition,
@@ -848,6 +849,8 @@ class LoadedStrategyRuntime:
                     "historical_price_fallback_failed | "
                     f"profile={self.profile} symbol={symbol} error_type={type(exc).__name__} error={exc}"
                 )
+                if isinstance(exc, PriceBasisError):
+                    raise
                 continue
             latest_close = self._extract_latest_positive_close(price_history)
             if latest_close is not None:
@@ -1768,6 +1771,9 @@ def load_strategy_runtime(
 
     merged_runtime_config = dict(entrypoint.manifest.default_config)
     merged_runtime_config.update(runtime_config)
+    merged_runtime_config["price_basis"] = validate_price_basis(
+        merged_runtime_config.get("price_basis", DEFAULT_PRICE_BASIS)
+    )
     strategy_cash_reserve_ratio = float(
         merged_runtime_config.get(
             "execution_cash_reserve_ratio",
@@ -1805,6 +1811,8 @@ def load_strategy_runtime(
 
 def _build_runtime_overrides(runtime_settings: PlatformRuntimeSettings) -> dict[str, Any]:
     overrides: dict[str, Any] = {}
+    if getattr(runtime_settings, "price_basis", None) is not None:
+        overrides["price_basis"] = validate_price_basis(runtime_settings.price_basis)
     reserved_cash_floor_usd = getattr(runtime_settings, "reserved_cash_floor_usd", 0.0)
     reserved_cash_ratio = getattr(runtime_settings, "reserved_cash_ratio", None)
     if float(reserved_cash_floor_usd or 0.0) > 0.0:
