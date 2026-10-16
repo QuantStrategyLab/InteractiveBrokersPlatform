@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .display_names import display_name
+from quant_platform_kit.common.notification_localization import translator_uses_zh
+
 from quant_platform_kit.common.operational_notification_localization import resolve_operational_notification_locale
 
 import re
@@ -243,20 +246,6 @@ I18N = {
         "signal_state_idle": "等待信号",
         "small_account_warning_note": "小账户提示：净值 {portfolio_equity} 低于建议 {min_recommended_equity}；{reason}",
         "small_account_warning_reason_integer_shares_min_position_value_may_prevent_backtest_replication": "整数股和最小仓位限制可能导致实盘无法完全复现回测",
-        "strategy_name_global_etf_rotation": "全球 ETF 轮动",
-        "strategy_name_global_etf_confidence_vol_gate": "全球 ETF 置信波动门控",
-        "strategy_name_tech_communication_pullback_enhancement": "科技通信回调增强",
-        "strategy_name_qqq_tech_enhancement": "科技通信回调增强",
-        "strategy_name_russell_top50_leader_rotation": "罗素 Top50 领涨轮动",
-        "strategy_name_nasdaq_sp500_smart_dca": "纳指100 / 标普500 智能定投",
-        "strategy_name_ibit_smart_dca": "IBIT 比特币 ETF 智能定投",
-        "strategy_name_us_equity_combo": "美股核心组合",
-        "strategy_name_us_equity_combo_leveraged": "美股Alpha组合",
-        "strategy_name_hk_global_etf_tactical_rotation": "港股全球 ETF 战术轮动",
-        "strategy_name_hk_low_vol_dividend_quality_snapshot": "港股低波股息质量快照",
-        "strategy_name_tqqq_growth_income": "TQQQ 增长收益",
-        "strategy_name_soxl_soxx_trend_income": "SOXL/SOXX 半导体趋势收益",
-        "strategy_name_tecl_xlk_trend_income": "TECL/XLK 科技趋势收益",
     },
     "en": {
         "runtime_failure_title": "⚠️ IBKR strategy run failed",
@@ -474,20 +463,6 @@ I18N = {
         "signal_state_idle": "Idle",
         "small_account_warning_note": "small account warning: portfolio equity {portfolio_equity} is below recommended {min_recommended_equity}; {reason}",
         "small_account_warning_reason_integer_shares_min_position_value_may_prevent_backtest_replication": "integer-share minimum position sizing may prevent backtest replication",
-        "strategy_name_global_etf_rotation": "Global ETF Rotation",
-        "strategy_name_global_etf_confidence_vol_gate": "Global ETF Confidence Vol Gate",
-        "strategy_name_tech_communication_pullback_enhancement": "Tech/Communication Pullback Enhancement",
-        "strategy_name_qqq_tech_enhancement": "Tech/Communication Pullback Enhancement",
-        "strategy_name_russell_top50_leader_rotation": "Russell Top50 Leader Rotation",
-        "strategy_name_nasdaq_sp500_smart_dca": "Nasdaq 100 / S&P 500 Smart DCA",
-        "strategy_name_ibit_smart_dca": "IBIT Smart DCA",
-        "strategy_name_us_equity_combo": "US Equity Combo",
-        "strategy_name_us_equity_combo_leveraged": "US Equity Combo Leveraged",
-        "strategy_name_hk_global_etf_tactical_rotation": "HK Global ETF Tactical Rotation",
-        "strategy_name_hk_low_vol_dividend_quality_snapshot": "HK Low-Vol Dividend Quality Snapshot",
-        "strategy_name_tqqq_growth_income": "TQQQ Growth Income",
-        "strategy_name_soxl_soxx_trend_income": "SOXL/SOXX Semiconductor Trend Income",
-        "strategy_name_tecl_xlk_trend_income": "TECL/XLK Technology Trend Income",
     },
 }
 
@@ -504,9 +479,13 @@ if _merge_strategy_plugin_i18n is not None:
 def build_translator(lang):
     active_lang = resolve_operational_notification_locale(lang)
     def translate(key, **kwargs):
+        if key.startswith("strategy_name_"):
+            profile = key.removeprefix("strategy_name_")
+            return display_name("strategies", profile, active_lang, fallback=key)
         template = I18N[active_lang].get(key, key)
         return template.format(**kwargs) if kwargs else template
 
+    translate.notification_locale = active_lang
     return translate
 
 
@@ -517,6 +496,9 @@ def build_strategy_display_name(translate_fn, locale: str = "en"):
         fallback_name: str | None = None,
         metadata=None,
     ) -> str:
+        configured = display_name("strategies", profile, getattr(translate_fn, "notification_locale", locale))
+        if configured != profile:
+            return configured
         if metadata is not None:
             from quant_platform_kit.common.notification_localization import (
                 resolve_strategy_display_name,
