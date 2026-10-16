@@ -113,7 +113,7 @@ def test_full_synthetic_flex_fetch_import_projection_one_post_ack(monkeypatch, c
 
 @pytest.mark.parametrize("bad_name,bad_value", [
     ("IBKR_PERIOD_RETURN_PUBLISH_ENABLED", "false"), ("IBKR_FLEX_TOKEN", ""),
-    ("IBKR_FLEX_QUERY_ID", "invalid"), ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", '["DU0000000","DU9999999"]'),
+    ("IBKR_FLEX_QUERY_ID", "invalid"), ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", '["DU0000000","DU0000004"]'),
     ("IBKR_PERIOD_RETURN_SOURCE_BINDING_ID", "bad"), ("IBKR_PERIOD_RETURN_ACCOUNT_KEY", ""),
     ("IBKR_ACCOUNT_FACTS_SYNC_TOKEN", "bad\n"), ("EXECUTION_EVIDENCE_SYNC_TOKEN", "synthetic-sync-token"),
     ("IBKR_ACCOUNT_FACTS_SYNC_TOKEN", "synthetic-flex-token"),
@@ -186,7 +186,7 @@ def test_explicit_same_reference_collection_to_projection_and_single_ack(monkeyp
     assert capsys.readouterr().out == ""
 
 
-@pytest.mark.parametrize("report", [xml(twr=None), xml(account="DU9999999"), xml(currency="")])
+@pytest.mark.parametrize("report", [xml(twr=None), xml(account="DU0000004"), xml(currency="")])
 def test_no_native_or_wrong_scope_or_currency_has_zero_post(monkeypatch, capsys, report):
     configure(monkeypatch)
     monkeypatch.setattr(cli.requests, "Session", lambda: FlexSession(report))
@@ -307,10 +307,10 @@ def test_preflight_identifies_each_missing_field_without_values_or_io(monkeypatc
     ("IBKR_PERIOD_RETURN_ACCOUNT_KEY", "private/key"),
     ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", "private-not-json"),
     ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", "[]"),
-    ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", '["DU1234567","DU7654321"]'),
+    ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", '["DU00000003","DU00000009"]'),
     ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", '["not-account"]'),
     ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", '[1234567]'),
-    ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", '"DU1234567"'),
+    ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", '"DU00000003"'),
     ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", "[" * 1100 + "]" * 1100),
     ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", "[" + "1" * 5000 + "]"),
     ("IBKR_FLEX_TOKEN", " private-token"),
@@ -382,7 +382,8 @@ def test_preflight_workflow_is_manual_main_configuration_only_with_exact_origina
     assert "astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78" in workflow
     assert workflow.count("python -m scripts.publish_ibkr_flex_period_return --preflight") == 1
     assert set(re.findall(r"secrets\.([A-Z0-9_]+)", workflow)) == set(_PREFLIGHT_FIELDS)
+    assert set(re.findall(r"vars\.([A-Z0-9_]+)", workflow)) == {"QSL_CONSOLE_BASE_URL"}
     assert "GITHUB_SHA: ${{ github.sha }}" in workflow
     for unsafe in ("schedule:", "workflow_run:", "id-token:", "google-github-actions/auth", "gcloud",
-                   "upload-artifact", "TELEGRAM", "CLOUDFLARE", "publish_once", "PUBLISH_ENABLED", "vars."):
+                   "upload-artifact", "TELEGRAM", "CLOUDFLARE", "publish_once", "PUBLISH_ENABLED"):
         assert unsafe not in workflow

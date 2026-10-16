@@ -655,7 +655,7 @@ def test_trade_notification_keeps_detailed_logs_out_of_compact_message():
         separator="---",
         strategy_display_name="TQQQ Growth Income",
         extra_notification_lines=(
-            "🆔 Account: U1234567",
+            "🆔 Account: U00000003",
             "🧩 Plugin: Crisis Watch Notice | enabled: yes | status: no crisis detected | notice: no action",
         ),
     )
@@ -666,7 +666,7 @@ def test_trade_notification_keeps_detailed_logs_out_of_compact_message():
     assert "📌 Strategy portfolio" not in notification.compact_text
     assert "⏱ Timing:" not in notification.compact_text
     assert "no_order_plan_reason reason=min_notional:QQQ,TQQQ" in notification.compact_text
-    assert "🆔 Account: U1234567" not in notification.compact_text
+    assert "🆔 Account: U00000003" not in notification.compact_text
     assert "🧩 Plugin:" not in notification.compact_text
 
 
@@ -912,7 +912,7 @@ def claim_cycle(tmp_path, monkeypatch, strategy_module):
     config = IBKRRebalanceConfig(
         translator=_build_test_translator(), separator="---",
         strategy_profile="global_etf_rotation", execution_state_account_scope="PAPER",
-        account_ids=("DU1234567",),
+        account_ids=("DU00000003",),
         reconciliation_output_path=tmp_path / "reconciliation.json",
         notify_no_trade_cycles=False,
     )

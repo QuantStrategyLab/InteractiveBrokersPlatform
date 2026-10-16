@@ -24,6 +24,9 @@ jobs:
             exit 1
           fi
 
+      - name: Check protected deployment workflow contract offline
+        run: bash tests/test_sync_cloud_run_env_workflow.sh
+
       - name: Setup Python
         uses: actions/setup-python@v6
         with:

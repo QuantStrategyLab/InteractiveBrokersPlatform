@@ -111,7 +111,7 @@ def install_stub_modules():
         market_exchange="SMART",
         market_timezone="America/New_York",
         account_group="default",
-        account_ids=("U1234567",),
+        account_ids=("U00000003",),
         service_name="interactive-brokers-platform",
         ib_gateway_instance_name="127.0.0.1",
         ib_gateway_zone=None,

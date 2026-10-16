@@ -38,7 +38,7 @@ def test_projects_only_native_interval_preserving_non_usd_base_currency():
 
 
 @pytest.mark.parametrize(("section", "key", "value"), [
-    (None, "account_ids", ["DU9999999"]), (None, "account_ids", ["DU0000000", "DU9999999"]),
+    (None, "account_ids", ["DU0000004"]), (None, "account_ids", ["DU0000000", "DU0000004"]),
     (None, "account_base_currency", None), (None, "account_base_currency", "USD "),
     ("native_returns", "unit", "ratio"), ("native_returns", "source", "NAV.change"),
     ("native_returns", "from", "2025-12-01"), ("native_returns", "to", "2026-02-01"),

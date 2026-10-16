@@ -67,3 +67,5 @@ uv run --no-sync python scripts/check_qpk_pin_consistency.py
 ## License
 
 See [LICENSE](LICENSE).
+
+Display/notification naming configuration: [display names](docs/display-names.md).

@@ -1,7 +1,7 @@
 name: Digest Store Permission Check
 
 # NOTIFY-04 B2 (read-only): probe whether this repo's GitHub identity can write /
-# read the shared digest-candidate prefix in gs://qsl-runtime-logs-shared, and
+# read the shared digest-candidate prefix in gs://<bucket>, and
 # whether the bucket is private. Uses testIamPermissions / metadata reads only;
 # never creates, overwrites or deletes objects. Prints booleans and HTTP codes.
 on:
@@ -16,12 +16,27 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      GCP_PROJECT_ID: interactivebrokersquant
+      GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
       GCP_WORKLOAD_IDENTITY_PROVIDER: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
-      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com
-      DIGEST_STORE_BUCKET: qsl-runtime-logs-shared
+      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+      DIGEST_STORE_BUCKET: ${{ vars.QSL_DIGEST_BUCKET }}
       DIGEST_STORE_PREFIX: digest-candidates/
     steps:
+      - name: Require infrastructure variables
+        env:
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          IBKR_GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
+          QSL_DIGEST_BUCKET: ${{ vars.QSL_DIGEST_BUCKET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in IBKR_DEPLOY_SERVICE_ACCOUNT IBKR_GCP_PROJECT_ID QSL_DIGEST_BUCKET; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is required" >&2
+              exit 2
+            fi
+          done
+
       - name: Checkout repository
         uses: actions/checkout@v6
 

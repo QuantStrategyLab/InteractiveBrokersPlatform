@@ -14,8 +14,8 @@ This branch is for a paper-account rehearsal only. Do not use it for live IBKR.
 STRATEGY_PROFILE=russell_top50_leader_rotation
 ACCOUNT_GROUP=default
 IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME=ibkr-account-groups
-IBKR_FEATURE_SNAPSHOT_PATH=gs://qsl-runtime-logs-shared/strategy-artifacts/us_equity/russell_top50_leader_rotation_staging/russell_top50_leader_rotation_feature_snapshot_latest.csv
-IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH=gs://qsl-runtime-logs-shared/strategy-artifacts/us_equity/russell_top50_leader_rotation_staging/russell_top50_leader_rotation_feature_snapshot_latest.csv.manifest.json
+IBKR_FEATURE_SNAPSHOT_PATH=gs://<shared-bucket>/strategy-artifacts/us_equity/russell_top50_leader_rotation_staging/russell_top50_leader_rotation_feature_snapshot_latest.csv
+IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH=gs://<shared-bucket>/strategy-artifacts/us_equity/russell_top50_leader_rotation_staging/russell_top50_leader_rotation_feature_snapshot_latest.csv.manifest.json
 NOTIFY_LANG=zh
 ```
 

@@ -88,34 +88,34 @@ def test_emit_resolves_labels_from_cloud_run_targets(tmp_path):
     out = tmp_path / "candidates.json"
     # Report without selector — force CLOUD_RUN match via service name.
     body = _report()
-    body["service_name"] = "interactive-brokers-quant-live-u15998061-service"
+    body["service_name"] = "interactive-brokers-quant-live-u00000004-service"
     body.pop("account_scope", None)
     body["runtime_target"] = {
         "strategy_profile": "soxl_soxx_trend_income",
-        "service_name": "interactive-brokers-quant-live-u15998061-service",
-        "deployment_selector": "live-u15998061",
+        "service_name": "interactive-brokers-quant-live-u00000004-service",
+        "deployment_selector": "live-u00000004",
     }
     report_path.write_text(json.dumps(body), encoding="utf-8")
     targets = {
         "targets": [
             {
-                "service_name": "interactive-brokers-quant-live-u15998061-service",
+                "service_name": "interactive-brokers-quant-live-u00000004-service",
                 "runtime_target": {
-                    "account_scope": "live-u15998061",
-                    "account_selector": ["U15998061"],
-                    "deployment_selector": "live-u15998061",
-                    "service_name": "interactive-brokers-quant-live-u15998061-service",
+                    "account_scope": "live-u00000004",
+                    "account_selector": ["U00000004"],
+                    "deployment_selector": "live-u00000004",
+                    "service_name": "interactive-brokers-quant-live-u00000004-service",
                     "strategy_profile": "soxl_soxx_trend_income",
                     "execution_mode": "live",
                 },
             },
             {
-                "service_name": "interactive-brokers-quant-live-u16608560-service",
+                "service_name": "interactive-brokers-quant-live-u00000006-service",
                 "runtime_target": {
-                    "account_scope": "live-u16608560",
-                    "account_selector": ["U16608560"],
-                    "deployment_selector": "live-u16608560",
-                    "service_name": "interactive-brokers-quant-live-u16608560-service",
+                    "account_scope": "live-u00000006",
+                    "account_selector": ["U00000006"],
+                    "deployment_selector": "live-u00000006",
+                    "service_name": "interactive-brokers-quant-live-u00000006-service",
                     "strategy_profile": "tqqq_growth_income",
                     "execution_mode": "live",
                 },
@@ -135,11 +135,11 @@ def test_emit_resolves_labels_from_cloud_run_targets(tmp_path):
     assert result["account_scope_present"] is True
     # Safe summary must not echo the U####### value.
     dumped = json.dumps(result)
-    assert "U15998061" not in dumped
+    assert "U00000004" not in dumped
     data = json.loads(out.read_text(encoding="utf-8"))
     row = data["runs"][0]
-    assert row["account_hint"] == "U15998061"
-    assert row["account_scope"] == "live-u15998061"
+    assert row["account_hint"] == "U00000004"
+    assert row["account_scope"] == "live-u00000004"
 
 
 def test_emit_explicit_digest_hint_overrides(tmp_path):
@@ -148,8 +148,8 @@ def test_emit_explicit_digest_hint_overrides(tmp_path):
         "IBKR_DIGEST_CANDIDATES_OUTPUT_PATH": str(out),
         "IBKR_DIGEST_OPAQUE_ACCOUNT_UID": "acct_opaque_synthetic",
         "IBKR_DIGEST_TARGET_ID": "ibkr/synthetic-target",
-        "IBKR_DIGEST_ACCOUNT_HINT": "U18308207",
-        "IBKR_DIGEST_ACCOUNT_SCOPE": "live-u18308207",
+        "IBKR_DIGEST_ACCOUNT_HINT": "U00000007",
+        "IBKR_DIGEST_ACCOUNT_SCOPE": "live-u00000007",
     }
     result = emit.emit_digest_candidates(
         environ,
@@ -158,8 +158,8 @@ def test_emit_explicit_digest_hint_overrides(tmp_path):
     assert result["account_hint_present"] is True
     row = json.loads(out.read_text(encoding="utf-8"))["runs"][0]
     # Explicit override wins over report fixture U00000001.
-    assert row["account_hint"] == "U18308207"
-    assert row["account_scope"] == "live-u18308207"
+    assert row["account_hint"] == "U00000007"
+    assert row["account_scope"] == "live-u00000007"
 
 def test_emit_projects_equity_from_report_when_target_matches(tmp_path, monkeypatch):
     """Read-only report projection supplies equity; safe summary stays amount-free."""
@@ -171,8 +171,8 @@ def test_emit_projects_equity_from_report_when_target_matches(tmp_path, monkeypa
         "platform": "interactive_brokers",
         "deploy_target": "cloud_run",
         "project_id": "interactivebrokersquant",
-        "service_name": "interactive-brokers-quant-live-u15998061-service",
-        "account_scope": "live-u15998061",
+        "service_name": "interactive-brokers-quant-live-u00000004-service",
+        "account_scope": "live-u00000004",
         "strategy_profile": "soxl_soxx_trend_income",
         "status": "ok",
         "started_at": "2026-10-08T20:01:00Z",
@@ -180,14 +180,14 @@ def test_emit_projects_equity_from_report_when_target_matches(tmp_path, monkeypa
         "execution_receipt": {"outcome": "no_signal"},
         "diagnostics": {"runtime_revision": "rev-digest-test"},
         "runtime_target": {
-            "account_selector": ["U15998061"],
-            "deployment_selector": "live-u15998061",
+            "account_selector": ["U00000004"],
+            "deployment_selector": "live-u00000004",
             "strategy_profile": "soxl_soxx_trend_income",
         },
         "summary": {
             "account_facts": {
                 "schema_version": "ibkr_account_snapshot.v1",
-                "account_ids": ["U15998061"],
+                "account_ids": ["U00000004"],
                 "currency": "USD",
                 "net_assets": "569.1600",
                 "observed_at": "2026-10-08T20:03:00Z",
@@ -205,14 +205,14 @@ def test_emit_projects_equity_from_report_when_target_matches(tmp_path, monkeypa
         "IBKR_DIGEST_RUNTIME_REPORT_PATH": str(report_path),
         "IBKR_DIGEST_SOURCE_REPORT_URI": f"{prefix}/2026/10/08/report.json",
         "IBKR_DIGEST_OPAQUE_ACCOUNT_UID": "acct_opaque_synthetic",
-        "IBKR_DIGEST_TARGET_ID": "ibkr-primary-u15998061",
+        "IBKR_DIGEST_TARGET_ID": "ibkr-primary-u00000004",
         "IBKR_ACCOUNT_FACTS_REPORT_PREFIX": prefix,
         "IBKR_ACCOUNT_FACTS_PROJECT_ID": "interactivebrokersquant",
-        "IBKR_ACCOUNT_FACTS_SERVICE_NAME": "interactive-brokers-quant-live-u15998061-service",
+        "IBKR_ACCOUNT_FACTS_SERVICE_NAME": "interactive-brokers-quant-live-u00000004-service",
         "IBKR_ACCOUNT_FACTS_RUNTIME_REVISION": "rev-digest-test",
-        "IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE": "live-u15998061",
-        "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON": '["U15998061"]',
-        "IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR": "live-u15998061",
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE": "live-u00000004",
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON": '["U00000004"]',
+        "IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR": "live-u00000004",
     }
     result = emit.emit_digest_candidates(environ)
     assert result["status"] == "candidates_written"
@@ -222,7 +222,7 @@ def test_emit_projects_equity_from_report_when_target_matches(tmp_path, monkeypa
     assert "569.16" not in json.dumps(result)
     row = json.loads(out.read_text(encoding="utf-8"))["runs"][0]
     assert row["equity"] == 569.16
-    assert row["account_hint"] == "U15998061"
+    assert row["account_hint"] == "U00000004"
     facts = json.loads(facts_out.read_text(encoding="utf-8"))
     assert facts["broker_reported_balances"][0]["net_assets"] == "569.1600"
 
@@ -241,9 +241,9 @@ def test_emit_skips_equity_when_report_projection_mismatches(tmp_path):
         "IBKR_ACCOUNT_FACTS_PROJECT_ID": "interactivebrokersquant",
         "IBKR_ACCOUNT_FACTS_SERVICE_NAME": "missing-service",
         "IBKR_ACCOUNT_FACTS_RUNTIME_REVISION": "rev-x",
-        "IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE": "live-u15998061",
-        "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON": '["U15998061"]',
-        "IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR": "live-u15998061",
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE": "live-u00000004",
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON": '["U00000004"]',
+        "IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR": "live-u00000004",
     }
     result = emit.emit_digest_candidates(environ)
     assert result["status"] == "candidates_written"
@@ -261,11 +261,11 @@ def test_apply_additional_account_facts_target_loads_slot(monkeypatch):
     primary = {
         "IBKR_ACCOUNT_FACTS_TARGET_ID": "ibkr-primary",
         "IBKR_ACCOUNT_FACTS_REPORT_PREFIX": "gs://primary-bucket/reports",
-        "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON": json.dumps(["U16608560"]),
-        "IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE": "live-u16608560",
-        "IBKR_ACCOUNT_FACTS_SERVICE_NAME": "interactive-brokers-quant-live-u16608560-service",
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON": json.dumps(["U00000006"]),
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE": "live-u00000006",
+        "IBKR_ACCOUNT_FACTS_SERVICE_NAME": "interactive-brokers-quant-live-u00000006-service",
         "IBKR_ACCOUNT_FACTS_RUNTIME_REVISION": "rev-primary",
-        "IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR": "live-u16608560",
+        "IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR": "live-u00000006",
         "IBKR_ACCOUNT_FACTS_PROJECT_ID": "primary-project",
         "GCP_PROJECT_ID": "primary-project",
     }
@@ -289,17 +289,17 @@ def test_apply_additional_account_facts_target_loads_slot(monkeypatch):
         publisher.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON_ENV,
         json.dumps(
             {
-                "additional-1": _slot("U15998061", bucket="extra-bucket-a"),
-                "additional-2": _slot("U18308207", bucket="extra-bucket-b"),
-                "additional-3": _slot("U18336562", bucket="extra-bucket-c"),
+                "additional-1": _slot("U00000004", bucket="extra-bucket-a"),
+                "additional-2": _slot("U00000007", bucket="extra-bucket-b"),
+                "additional-3": _slot("U00000008", bucket="extra-bucket-c"),
             }
         ),
     )
     monkeypatch.setenv("IBKR_ACCOUNT_FACTS_TARGET", "additional-1")
     emit._apply_additional_account_facts_target(os.environ)  # type: ignore[arg-type]
-    assert os.environ["IBKR_ACCOUNT_FACTS_TARGET_ID"] == "ibkr-u15998061"
-    assert os.environ["IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE"] == "live-u15998061"
-    assert "U15998061" in os.environ["IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON"]
+    assert os.environ["IBKR_ACCOUNT_FACTS_TARGET_ID"] == "ibkr-u00000004"
+    assert os.environ["IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE"] == "live-u00000004"
+    assert "U00000004" in os.environ["IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON"]
     assert os.environ["IBKR_ACCOUNT_FACTS_REPORT_PREFIX"] == "gs://extra-bucket-a/reports"
 
 

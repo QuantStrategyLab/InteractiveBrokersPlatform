@@ -7,7 +7,7 @@ name: Digest Candidates Daily
 #
 # Dry-run by default: without vars.DIGEST_CANDIDATES_GCS_URI the JSON stays in
 # runner temp and only a redacted summary is printed. Production value:
-# DIGEST_CANDIDATES_GCS_URI=gs://qsl-runtime-logs-shared/digest-candidates
+# DIGEST_CANDIDATES_GCS_URI=gs://<bucket>/digest-candidates
 # (shared bucket; deploy SA has prefix-conditioned objectUser on
 # digest-candidates/<platform>/ only). With the variable set,
 # each target is uploaded to <uri>/ibkr/<business_day>/<target>.json for the

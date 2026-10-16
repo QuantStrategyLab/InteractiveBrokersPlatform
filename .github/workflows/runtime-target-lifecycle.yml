@@ -9,9 +9,9 @@ on:
     - cron: "42 * * * *"
 
 env:
-  GCP_PROJECT_ID: interactivebrokersquant
+  GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
   GCP_WORKLOAD_IDENTITY_PROVIDER: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
-  GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com
+  GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}
@@ -59,6 +59,20 @@ jobs:
       LIFECYCLE_PERFORMANCE_BUCKET: ${{ vars.LIFECYCLE_PERFORMANCE_BUCKET }}
       PRODUCTION_DRIFT_DOMAIN: ${{ vars.PRODUCTION_DRIFT_DOMAIN }}
     steps:
+      - name: Require infrastructure variables
+        env:
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          IBKR_GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in IBKR_DEPLOY_SERVICE_ACCOUNT IBKR_GCP_PROJECT_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is required" >&2
+              exit 2
+            fi
+          done
+
       - name: Checkout repository
         uses: actions/checkout@v6
 

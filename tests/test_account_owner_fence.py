@@ -24,7 +24,7 @@ class AccountOwnerFenceTests(unittest.TestCase):
             translator=build_translator("en"),
             separator="---",
             strategy_profile="global_etf_rotation",
-            account_ids=("DU1234567",),
+            account_ids=("DU00000003",),
             execution_state_account_scope="PAPER",
         )
         base.update(overrides)
@@ -34,7 +34,7 @@ class AccountOwnerFenceTests(unittest.TestCase):
         self.assertFalse(_is_physical_ibkr_account_id("PAPER"))
         self.assertFalse(_is_physical_ibkr_account_id("LIVE"))
         self.assertFalse(_is_physical_ibkr_account_id("paper-group"))
-        self.assertTrue(_is_physical_ibkr_account_id("DU1234567"))
+        self.assertTrue(_is_physical_ibkr_account_id("DU00000003"))
 
     def test_resolve_requires_exactly_one_physical_id(self):
         with self.assertRaisesRegex(RuntimeError, "exactly one"):
@@ -54,13 +54,13 @@ class AccountOwnerFenceTests(unittest.TestCase):
             first = claim_account_owner(
                 store,
                 broker="ibkr",
-                account_id="DU1234567",
+                account_id="DU00000003",
                 owner_id="global_etf_rotation",
             )
             second = claim_account_owner(
                 store,
                 broker="ibkr",
-                account_id="DU1234567",
+                account_id="DU00000003",
                 owner_id="other_profile",
             )
             self.assertTrue(first.allowed)

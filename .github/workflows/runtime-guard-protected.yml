@@ -33,9 +33,9 @@ permissions:
   id-token: write
 
 env:
-  GCP_PROJECT_ID: interactivebrokersquant
+  GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
   GCP_WORKLOAD_IDENTITY_PROVIDER: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
-  GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com
+  GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
 
 jobs:
   guard:
@@ -65,6 +65,20 @@ jobs:
       RUNTIME_GUARD_ALERT_DEDUPE_REMINDER_HOURS: ${{ vars.RUNTIME_GUARD_ALERT_DEDUPE_REMINDER_HOURS || '6' }}
       RUNTIME_GUARD_DEDUPE_STATE_PATH: .runtime-guard-dedupe/state.json
     steps:
+      - name: Require infrastructure variables
+        env:
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          IBKR_GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in IBKR_DEPLOY_SERVICE_ACCOUNT IBKR_GCP_PROJECT_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is required" >&2
+              exit 2
+            fi
+          done
+
       - name: Checkout repository
         uses: actions/checkout@v6
 

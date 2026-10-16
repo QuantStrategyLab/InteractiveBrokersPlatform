@@ -128,10 +128,10 @@ def test_platform_notification_prefix_stays_empty_for_default_account(strategy_m
 
 def test_platform_notification_prefix_uses_ibkr_account_scope(strategy_module_factory):
     module = strategy_module_factory(
-        ACCOUNT_GROUP="live-u1234567",
+        ACCOUNT_GROUP="live-u00000003",
         IB_ACCOUNT_GROUP_CONFIG_JSON=(
-            '{"groups":{"live-u1234567":{"ib_gateway_instance_name":"127.0.0.1",'
-            '"ib_gateway_mode":"live","ib_client_id":1,"account_ids":["U1234567"]}}}'
+            '{"groups":{"live-u00000003":{"ib_gateway_instance_name":"127.0.0.1",'
+            '"ib_gateway_mode":"live","ib_client_id":1,"account_ids":["U00000003"]}}}'
         ),
         RUNTIME_TARGET_JSON=json.dumps(
             {
@@ -139,15 +139,15 @@ def test_platform_notification_prefix_uses_ibkr_account_scope(strategy_module_fa
                 "strategy_profile": "global_etf_rotation",
                 "dry_run_only": False,
                 "execution_mode": "live",
-                "account_selector": ["U1234567"],
-                "account_scope": "live-u1234567",
+                "account_selector": ["U00000003"],
+                "account_scope": "live-u00000003",
             },
             separators=(",", ":"),
         ),
     )
 
-    assert module._platform_notification_prefix() == "[U1234567]"
-    assert module._with_platform_notification_prefix("hello") == "[U1234567] hello"
+    assert module._platform_notification_prefix() == "[U00000003]"
+    assert module._with_platform_notification_prefix("hello") == "[U00000003] hello"
 
 
 def test_handle_request_get_is_method_not_allowed(strategy_module, monkeypatch):
@@ -453,7 +453,7 @@ def test_probe_market_order_write_access_uses_safe_haven_not_growth_symbol(
 
     monkeypatch.setattr(strategy_module, "probe_order_write_access", fake_probe)
     monkeypatch.setattr(strategy_module, "SAFE_HAVEN", "BIL")
-    monkeypatch.setattr(strategy_module, "ACCOUNT_IDS", ["U1234567"])
+    monkeypatch.setattr(strategy_module, "ACCOUNT_IDS", ["U00000003"])
     monkeypatch.setattr(
         strategy_module,
         "resolve_reporting_managed_symbols",
@@ -462,7 +462,7 @@ def test_probe_market_order_write_access_uses_safe_haven_not_growth_symbol(
 
     strategy_module.probe_market_order_write_access(object())
 
-    assert observed == {"symbol": "BIL", "account_id": "U1234567"}
+    assert observed == {"symbol": "BIL", "account_id": "U00000003"}
 
 
 def test_handle_dry_run_ignores_paper_liquidate_only(strategy_module, monkeypatch):
@@ -910,7 +910,7 @@ def test_handle_probe_failure_sends_notification(strategy_module, monkeypatch):
 
 def test_build_extra_notification_lines_includes_account_id(strategy_module):
     lines = strategy_module.build_extra_notification_lines(("plugin-line",))
-    assert any("U1234567" in line for line in lines)
+    assert any("U00000003" in line for line in lines)
     assert all("plugin-line" not in line for line in lines)
 
 
@@ -1577,10 +1577,10 @@ def test_handle_request_runtime_error_fallback_uses_chinese_copy(strategy_module
 
 def test_handle_request_runtime_error_fallback_prefixes_account_scope(strategy_module_factory, monkeypatch):
     strategy_module = strategy_module_factory(
-        ACCOUNT_GROUP="live-u1234567",
+        ACCOUNT_GROUP="live-u00000003",
         IB_ACCOUNT_GROUP_CONFIG_JSON=(
-            '{"groups":{"live-u1234567":{"ib_gateway_instance_name":"127.0.0.1",'
-            '"ib_gateway_mode":"live","ib_client_id":1,"account_ids":["U1234567"]}}}'
+            '{"groups":{"live-u00000003":{"ib_gateway_instance_name":"127.0.0.1",'
+            '"ib_gateway_mode":"live","ib_client_id":1,"account_ids":["U00000003"]}}}'
         ),
         RUNTIME_TARGET_JSON=json.dumps(
             {
@@ -1588,8 +1588,8 @@ def test_handle_request_runtime_error_fallback_prefixes_account_scope(strategy_m
                 "strategy_profile": "global_etf_rotation",
                 "dry_run_only": False,
                 "execution_mode": "live",
-                "account_selector": ["U1234567"],
-                "account_scope": "live-u1234567",
+                "account_selector": ["U00000003"],
+                "account_scope": "live-u00000003",
             },
             separators=(",", ":"),
         ),
@@ -1614,7 +1614,7 @@ def test_handle_request_runtime_error_fallback_prefixes_account_scope(strategy_m
 
     assert status == 500
     assert body == "Error"
-    assert sent_payloads[0][0]["text"].startswith("[U1234567] ⚠️ IBKR strategy run failed")
+    assert sent_payloads[0][0]["text"].startswith("[U00000003] ⚠️ IBKR strategy run failed")
 
 
 def test_handle_reconciliation_persists_and_logs_only_redacted_failure_fields(
@@ -1818,7 +1818,7 @@ def test_live_permission_probe_is_single_attempt_and_never_runs_strategy(strateg
         dry_run_only=False,
         ib_gateway_mode="live",
     ))
-    monkeypatch.setattr(strategy_module, "ACCOUNT_IDS", ("U1234567",))
+    monkeypatch.setattr(strategy_module, "ACCOUNT_IDS", ("U00000003",))
     monkeypatch.setattr(strategy_module, "require_gateway_execution_backend", lambda: None)
     monkeypatch.setattr(strategy_module, "build_broker_adapters", lambda: FakeAdapters())
     monkeypatch.setattr(http_routes, "_claim_permission_probe", lambda _sha: True)
@@ -1844,7 +1844,7 @@ def test_live_permission_probe_requires_disabled_target_and_scheduler_identity(s
         dry_run_only=False,
         ib_gateway_mode="live",
     ))
-    monkeypatch.setattr(strategy_module, "ACCOUNT_IDS", ("U1234567",))
+    monkeypatch.setattr(strategy_module, "ACCOUNT_IDS", ("U00000003",))
 
     client = strategy_module.app.test_client()
     assert client.post("/live-permission-probe").status_code == 400
@@ -1868,7 +1868,7 @@ def test_live_permission_probe_duplicate_claim_cannot_reopen_gateway(strategy_mo
         dry_run_only=False,
         ib_gateway_mode="live",
     ))
-    monkeypatch.setattr(strategy_module, "ACCOUNT_IDS", ("U1234567",))
+    monkeypatch.setattr(strategy_module, "ACCOUNT_IDS", ("U00000003",))
     monkeypatch.setattr(strategy_module, "require_gateway_execution_backend", lambda: None)
     monkeypatch.setattr(http_routes, "_claim_permission_probe", lambda _sha: False)
     monkeypatch.setattr(strategy_module, "build_broker_adapters", lambda: pytest.fail("must not connect"))
@@ -1900,7 +1900,7 @@ def test_live_permission_probe_disconnect_failure_cannot_report_success(strategy
         dry_run_only=False,
         ib_gateway_mode="live",
     ))
-    monkeypatch.setattr(strategy_module, "ACCOUNT_IDS", ("U1234567",))
+    monkeypatch.setattr(strategy_module, "ACCOUNT_IDS", ("U00000003",))
     monkeypatch.setattr(strategy_module, "require_gateway_execution_backend", lambda: None)
     monkeypatch.setattr(http_routes, "_claim_permission_probe", lambda _sha: True)
     monkeypatch.setattr(strategy_module, "build_broker_adapters", lambda: FakeAdapters())

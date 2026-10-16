@@ -14,7 +14,7 @@ import argparse
 import json
 import sys
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -183,6 +183,63 @@ def _unknown_counts(*, reason_code: str) -> dict[str, Any]:
         },
         "reason_code": reason_code,
     }
+
+
+def _latest_notification_block_reason(reports, validate_receipt) -> dict[str, Any]:
+    """Annotate the latest admitted run; never change daily execution counts.
+
+    Validation belongs to the caller's existing QPK installation. Without it,
+    this standalone adapter retains its previous dependency-free behavior.
+    """
+    if validate_receipt is None or not reports:
+        return {}
+    identities = [report.get("run_id") for report in reports]
+    if (any(not isinstance(value, str) or not value for value in identities)
+            or len(set(identities)) != len(identities)):
+        return {}
+    target = reports[0].get("runtime_target")
+    if not isinstance(target, Mapping) or any(report.get("runtime_target") != target for report in reports):
+        return {}
+    stamps = [_parse_timestamp(_as_str(report.get("started_at"))) for report in reports]
+    if any(stamp is None for stamp in stamps):
+        return {}
+    latest = max(stamps)
+    selected = [report for report, stamp in zip(reports, stamps) if stamp == latest]
+    if len(selected) != 1:
+        return {}
+    report = selected[0]
+    if (report.get("dry_run") is not False or report.get("status") not in {"ok", "completed", "success"}
+            or report.get("errors") != [] or (_as_mapping(report.get("error_summary")) or {}).get("errors")):
+        return {}
+    # The existing validator binds platform/profile/revision/mode and checks
+    # the receipt's content digest. Never reconstruct its schema here.
+    try:
+        receipt = validate_receipt(report)
+    except (ValueError, TypeError):
+        return {}
+    if (not isinstance(receipt, Mapping) or receipt.get("outcome") != "risk_blocked"
+            or receipt.get("broker_confirmation") != "not_applicable"):
+        return {}
+    finished = _parse_timestamp(_as_str(report.get("finished_at")))
+    observed = _parse_timestamp(_as_str(receipt.get("observed_at")))
+    if finished is None or observed is None or not latest <= observed <= finished:
+        return {}
+    summary = _as_mapping(report.get("summary")) or {}
+    # An old receipt cannot override contradictory activity in the same run.
+    arrays = ("orders_submitted", "option_orders_submitted", "orders_pending", "option_orders_pending",
+              "orders_filled", "option_orders_filled", "orders_partially_filled", "option_orders_partially_filled")
+    counters = ("orders_submitted_count", "orders_pending_count", "orders_filled_count",
+                "orders_partially_filled_count", "orders_previewed_count", "order_count", "fill_count")
+    if (any(key in summary and summary[key] not in ([], ()) for key in arrays)
+            or any(key in summary and (type(summary[key]) is not int or summary[key] != 0) for key in counters)
+            or any(key in summary and summary[key] is not False for key in ("broker_submission_done", "action_done"))):
+        return {}
+    facts = _as_mapping(summary.get("notification_digest")) or {}
+    no_submission = (facts.get("schema_version") == "qsl.notification_cycle.v1"
+                     and facts.get("dry_run") is False
+                     and all(type(facts.get(key)) is int and facts[key] == 0 for key in ("order_count", "fill_count")))
+    return {"reason_code": "strategy_risk_rejected", "observed_value": None, "limit": None,
+            "order_submitted_this_run": False if no_submission else None}
 
 
 def _counts_from_report(report: Mapping[str, Any]) -> dict[str, Any]:
@@ -615,6 +672,7 @@ def project_digest_candidates(
     business_day: str | None = None,
     account_hint: str = "",
     account_scope: str = "",
+    validate_receipt: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build ``{"schema_version", "runs": [...]}`` from IBKR runtime reports.
 
@@ -663,14 +721,12 @@ def project_digest_candidates(
 
     # Aggregate covering activities by (strategy, business_day).
     buckets: dict[tuple[str, str], dict[str, Any]] = {}
+    notification_sources: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
     for report in reports:
         if report.get("schema_version") not in {None, RUNTIME_REPORT_SCHEMA}:
             continue
         platform = report.get("platform")
         if platform not in {None, PLATFORM_ID, "interactive_brokers"}:
-            continue
-        activity = _activity_from_report(report)
-        if activity is None:
             continue
         explicit_strategy = _strategy_from_report(report)
         strategy = explicit_strategy or DEFAULT_STRATEGY
@@ -678,6 +734,12 @@ def project_digest_candidates(
         if business_day and day and day != business_day:
             continue
         key = (strategy, day or business_day or "")
+        # Incomplete later reports suppress a stale no-order annotation even
+        # when they do not qualify for the existing activity/count projection.
+        notification_sources.setdefault(key, []).append(report)
+        activity = _activity_from_report(report)
+        if activity is None:
+            continue
         bucket = buckets.get(key)
         if bucket is None:
             bucket = {
@@ -757,6 +819,12 @@ def project_digest_candidates(
             row["equity_currency"] = equity_currency
             row["currency"] = equity_currency
         _apply_holdings(row, holdings, holdings_scope)
+        sources = notification_sources.get((bucket["strategy"], bucket["day"]), [])
+        if bucket["day"]:
+            sources = sources + notification_sources.get((bucket["strategy"], ""), [])
+        block_reason = _latest_notification_block_reason(sources, validate_receipt)
+        if block_reason:
+            row["block_reason"] = block_reason
         # Explicit caller labels win; else use labels collected from reports.
         _apply_account_labels(
             row,
@@ -827,12 +895,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--account-hint",
         default="",
-        help="Human broker account label (e.g. U15998061) for digest [ibkr U…] tags.",
+        help="Human broker account label (e.g. U00000004) for digest [ibkr U…] tags.",
     )
     parser.add_argument(
         "--account-scope",
         default="",
-        help="Runtime account_scope (e.g. live-u15998061).",
+        help="Runtime account_scope (e.g. live-u00000004).",
     )
     parser.add_argument(
         "--output",

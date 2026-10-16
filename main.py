@@ -1109,6 +1109,10 @@ def _build_cycle_report_summary(cycle_result, execution_summary, reconciliation_
     quote_snapshot = execution_summary.get("quote_snapshot") or reconciliation_record.get("quote_snapshot")
     if quote_snapshot:
         summary["quote_snapshot"] = quote_snapshot
+    from notifications.digest_snapshot.digest_routing import daily_digest_enabled
+    if daily_digest_enabled():
+        from notifications.digest_snapshot.digest_candidates import summary_evidence
+        summary["notification_digest"] = summary_evidence(execution_summary, dry_run=dry_run)
     return summary
 
 
@@ -1197,8 +1201,9 @@ def _build_notification_delivery_summary(delivery_events: list[dict]) -> dict:
 
 
 def publish_strategy_plugin_alerts(signals, *, report=None):
+    from notifications.digest_snapshot.digest_routing import immediate_plugin_signals
     result = dispatch_strategy_plugin_alerts(
-        signals,
+        immediate_plugin_signals(signals),
         notification_settings=RUNTIME_SETTINGS,
         translator=t,
         strategy_label=STRATEGY_PROFILE,

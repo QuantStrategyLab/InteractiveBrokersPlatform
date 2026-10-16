@@ -25,7 +25,10 @@ from application.ibkr_period_return import (
 from scripts.publish_account_facts_from_report import _NoRedirect
 
 
-SYNC_URL = "https://qsl-strategy-switch-console.pigbibi.workers.dev/api/account-facts/period-return/sync"
+from scripts.console_config import console_base_url
+
+
+SYNC_URL = console_base_url() + "/api/account-facts/period-return/sync"
 _ACK_LIMIT = 8192
 _TOKEN_ALIASES = (
     "ACCOUNT_FACTS_SYNC_TOKEN", "SCHWAB_ACCOUNT_FACTS_SYNC_TOKEN", "FIRSTRADE_ACCOUNT_FACTS_SYNC_TOKEN",

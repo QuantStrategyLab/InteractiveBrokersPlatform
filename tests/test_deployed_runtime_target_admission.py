@@ -68,6 +68,21 @@ def test_verify_service_accepts_admitted_shadow_target():
     }
 
 
+def test_deployed_target_rejects_stale_continuity_after_version_change():
+    from quant_platform_kit.common.live_continuity import runtime_target_fingerprint
+
+    target = admitted_target()
+    target["strategy_release"] = {"strategy_revision": "a" * 40}
+    target["live_continuity"] = {
+        "state": "ACTIVE_LKG", "baseline_kind": "legacy_authorized",
+        "baseline_id": "synthetic-baseline", "captured_at": "2026-10-01",
+        "baseline_target_sha256": runtime_target_fingerprint(target),
+    }
+    target["strategy_release"]["strategy_revision"] = "b" * 40
+    with pytest.raises(admission.AdmissionError, match="continuity"):
+        admission.verify_service(service="shadow-service", service_json=service_payload(runtime_target=target, profile="tqqq_growth_income"))
+
+
 def test_verify_service_accepts_admitted_paper_broker_target():
     target = admitted_target(dry_run_only=False)
     target["execution_mode"] = "paper"

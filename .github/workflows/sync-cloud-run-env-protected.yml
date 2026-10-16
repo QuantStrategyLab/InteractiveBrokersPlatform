@@ -68,11 +68,12 @@ permissions:
   id-token: write
 
 env:
-  GCP_PROJECT_ID: interactivebrokersquant
+  STRATEGY_PLUGIN_ALLOWED_SIGNAL_PREFIXES: ${{ vars.STRATEGY_PLUGIN_ALLOWED_SIGNAL_PREFIXES }}
+  GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
   GCP_WORKLOAD_IDENTITY_PROVIDER: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
-  GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com
-  GCP_RUNTIME_SERVICE_ACCOUNT: ibkr-platform-runtime@interactivebrokersquant.iam.gserviceaccount.com
-  GCP_SCHEDULER_SERVICE_ACCOUNT: ibkr-platform-scheduler@interactivebrokersquant.iam.gserviceaccount.com
+  GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+  GCP_RUNTIME_SERVICE_ACCOUNT: ${{ vars.IBKR_RUNTIME_SERVICE_ACCOUNT }}
+  GCP_SCHEDULER_SERVICE_ACCOUNT: ${{ vars.IBKR_SCHEDULER_SERVICE_ACCOUNT }}
   GCP_ARTIFACT_REGISTRY_REPOSITORY: cloud-run-source-deploy
 
 jobs:
@@ -207,6 +208,23 @@ jobs:
       STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN: ${{ secrets.STRATEGY_PLUGIN_ALERT_PUSH_ACCESS_TOKEN }}
       STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN: ${{ secrets.TG_TOKEN }}
     steps:
+      - name: Require infrastructure variables
+        env:
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          IBKR_GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
+          IBKR_RUNTIME_SERVICE_ACCOUNT: ${{ vars.IBKR_RUNTIME_SERVICE_ACCOUNT }}
+          IBKR_SCHEDULER_SERVICE_ACCOUNT: ${{ vars.IBKR_SCHEDULER_SERVICE_ACCOUNT }}
+          STRATEGY_PLUGIN_ALLOWED_SIGNAL_PREFIXES: ${{ vars.STRATEGY_PLUGIN_ALLOWED_SIGNAL_PREFIXES }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in IBKR_DEPLOY_SERVICE_ACCOUNT IBKR_GCP_PROJECT_ID IBKR_RUNTIME_SERVICE_ACCOUNT IBKR_SCHEDULER_SERVICE_ACCOUNT STRATEGY_PLUGIN_ALLOWED_SIGNAL_PREFIXES; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is required" >&2
+              exit 2
+            fi
+          done
+
       - name: Check whether Cloud Run automation is enabled
         id: config
         run: |
@@ -427,6 +445,7 @@ jobs:
         if: steps.config.outputs.enabled == 'true'
         env:
           QSL_ROUTINE_NOTIFICATION_MODE: ${{ vars.QSL_ROUTINE_NOTIFICATION_MODE }}
+          QSL_DIGEST_ROUTINE_ORDERS: ${{ vars.QSL_DIGEST_ROUTINE_ORDERS }}
         run: |
           set -euo pipefail
           sync_plan_json="$(uv run --no-sync python scripts/build_cloud_run_env_sync_plan.py --json)"
@@ -454,6 +473,13 @@ jobs:
                   handle.write(f"CLOUD_RUN_SERVICE_TARGETS_JSON={inventory}\n")
                   handle.write(f"CLOUD_RUN_SERVICE={selected}\nCLOUD_RUN_SERVICES={selected}\n")
           # Apply only to the admitted, selected target. Unset keeps the plan intact.
+          routine_orders = os.environ.get("QSL_DIGEST_ROUTINE_ORDERS", "").strip()
+          if routine_orders and routine_orders not in {"true", "false"}:
+              raise SystemExit("QSL_DIGEST_ROUTINE_ORDERS must be true or false")
+          if routine_orders:
+              for target in plan.get("targets", []):
+                  target["env"]["QSL_DIGEST_ROUTINE_ORDERS"] = routine_orders
+                  target["remove_env_vars"] = [key for key in target.get("remove_env_vars", []) if key != "QSL_DIGEST_ROUTINE_ORDERS"]
           mode = os.environ.get("QSL_ROUTINE_NOTIFICATION_MODE", "").strip()
           if mode:
               if mode not in {"immediate", "daily_digest"}:
@@ -701,6 +727,8 @@ jobs:
               --vpc-egress=private-ranges-only \
               --labels="managed-by=github-actions,commit-sha=${SOURCE_COMMIT},github-run-id=${GITHUB_RUN_ID}" \
               --no-traffic \
+              --deploy-health-check \
+              --startup-probe="httpGet.path=/health,httpGet.port=8080,periodSeconds=10,timeoutSeconds=5,failureThreshold=24" \
               --quiet
           done
 
@@ -1155,6 +1183,8 @@ jobs:
               --concurrency 1
               --max-instances 1
               --no-traffic
+              --deploy-health-check
+              --startup-probe="httpGet.path=/health,httpGet.port=8080,periodSeconds=10,timeoutSeconds=5,failureThreshold=24"
               --remove-env-vars "$(IFS=,; echo "${remove_env_vars[*]}")"
               --update-env-vars "^|^$(join_by_delimiter "|" "${env_pairs[@]}")"
             )
@@ -1180,7 +1210,7 @@ jobs:
           SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
         run: |
           set -euo pipefail
-          python3 scripts/reconcile_cloud_runtime.py \
+          uv run --no-sync python scripts/reconcile_cloud_runtime.py \
             --platform=ibkr \
             --project="${GCP_PROJECT_ID}" \
             --region="${CLOUD_RUN_REGION}" \
