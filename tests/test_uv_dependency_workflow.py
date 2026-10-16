@@ -60,7 +60,7 @@ def test_ci_docker_and_runtime_monitoring_use_uv_lock() -> None:
     assert "uv run --no-sync python scripts/cloud_run_runtime_guard.py" in runtime_target_lifecycle
     assert "uv run --no-sync python scripts/execution_report_heartbeat.py" in runtime_target_lifecycle
     assert "uv run --no-sync python scripts/execution_report_heartbeat.py" in heartbeat_job
-    assert "uv run --no-sync python scripts/publish_account_facts_from_report.py" in publisher_job
+    assert "uv run --no-sync python -m scripts.publish_account_facts_from_report" in publisher_job
     assert publisher_job.count(setup_uv) == 1
     assert publisher_job.count("uv sync --frozen --no-dev") == 1
     assert publisher_job.count("google-github-actions/auth@v3") == 1
