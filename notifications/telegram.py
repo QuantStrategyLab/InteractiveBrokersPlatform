@@ -31,7 +31,7 @@ def _break_telegram_market_symbol_auto_links(value) -> str:
 
 I18N = {
     "zh": {
-        "runtime_failure_title": "⚠️ IBKR 策略运行失败",
+        "runtime_failure_title": "⚠️ {platform} 策略运行失败",
         "runtime_failure_context": "运行目标：{context}",
         "runtime_failure_result": "本次运行未正常结束，请查看最新执行报告。",
         "runtime_failure_action": "下一步：检查 Gateway 连接及最新执行报告。",
@@ -248,7 +248,7 @@ I18N = {
         "small_account_warning_reason_integer_shares_min_position_value_may_prevent_backtest_replication": "整数股和最小仓位限制可能导致实盘无法完全复现回测",
     },
     "en": {
-        "runtime_failure_title": "⚠️ IBKR strategy run failed",
+        "runtime_failure_title": "⚠️ {platform} strategy run failed",
         "runtime_failure_context": "Target: {context}",
         "runtime_failure_result": "The run did not finish successfully; check the latest execution report.",
         "runtime_failure_action": "Next: Check Gateway connectivity and the latest execution report.",
@@ -483,6 +483,7 @@ def build_translator(lang):
             profile = key.removeprefix("strategy_name_")
             return display_name("strategies", profile, active_lang, fallback=key)
         template = I18N[active_lang].get(key, key)
+        template = template.replace("{platform}", display_name("platforms", "ibkr", active_lang))
         return template.format(**kwargs) if kwargs else template
 
     translate.notification_locale = active_lang
