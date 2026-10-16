@@ -276,16 +276,16 @@ def test_strategy_display_name_translates_new_live_profiles():
     zh_name = build_strategy_display_name(build_translator("zh"))
     en_name = build_strategy_display_name(build_translator("en"))
 
-    assert zh_name("global_etf_confidence_vol_gate") == "全球 ETF 置信波动门控"
-    assert en_name("global_etf_confidence_vol_gate") == "Global ETF Confidence Vol Gate"
-    assert zh_name("russell_top50_leader_rotation") == "罗素 Top50 领涨轮动"
-    assert en_name("russell_top50_leader_rotation") == "Russell Top50 Leader Rotation"
-    assert zh_name("nasdaq_sp500_smart_dca") == "纳指100 / 标普500 智能定投"
-    assert en_name("nasdaq_sp500_smart_dca") == "Nasdaq 100 / S&P 500 Smart DCA"
-    assert zh_name("hk_global_etf_tactical_rotation") == "港股全球 ETF 战术轮动"
-    assert en_name("hk_global_etf_tactical_rotation") == "HK Global ETF Tactical Rotation"
-    assert zh_name("hk_low_vol_dividend_quality_snapshot") == "港股低波股息质量快照"
-    assert en_name("hk_low_vol_dividend_quality_snapshot") == "HK Low-Vol Dividend Quality Snapshot"
+    assert zh_name("global_etf_confidence_vol_gate") == "全球ETF轮动"
+    assert en_name("global_etf_confidence_vol_gate") == "Global ETF Rotation"
+    assert zh_name("russell_top50_leader_rotation") == "罗素Top50领涨"
+    assert en_name("russell_top50_leader_rotation") == "Russell Top50 Leaders"
+    assert zh_name("nasdaq_sp500_smart_dca") == "纳指标普定投"
+    assert en_name("nasdaq_sp500_smart_dca") == "NASDAQ/S&P 500 DCA"
+    assert zh_name("hk_global_etf_tactical_rotation") == "港股ETF战术轮动"
+    assert en_name("hk_global_etf_tactical_rotation") == "HK ETF Tactical Rotation"
+    assert zh_name("hk_low_vol_dividend_quality_snapshot") == "港股红利质量"
+    assert en_name("hk_low_vol_dividend_quality_snapshot") == "HK Dividend Quality"
 
 
 def test_supported_strategy_profiles_have_translated_names():
