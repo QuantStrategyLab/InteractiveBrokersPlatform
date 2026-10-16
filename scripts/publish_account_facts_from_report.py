@@ -419,10 +419,9 @@ def _bound_source_id(
 
 
 POSITIONS_SCOPE = "stocks_only"
-# Archive-projection-only keys: the console /api/account-facts/sync contract is
-# exact-key, so these are carried for offline consumers (digest emit) and are
-# stripped before any publish.
-ARCHIVE_ONLY_KEYS = ("broker_reported_positions", "broker_reported_positions_scope")
+# QRS accepts these optional fields. Upload requires an explicit opt-in;
+# archived projections remain available to existing offline consumers.
+POSITIONS_KEYS = ("broker_reported_positions", "broker_reported_positions_scope")
 _POSITION_SYMBOL = re.compile(r"[A-Z0-9][A-Z0-9./ -]{0,31}\Z", re.ASCII)
 _MAX_POSITIONS = 64
 _POSITION_KEYS = frozenset({"symbol", "quantity", "market_value", "currency", "avg_cost"})
@@ -466,8 +465,19 @@ def _project_positions(facts: Mapping[str, Any]) -> list[dict[str, str]] | None:
     return rows
 
 
-def strip_archive_only_keys(body: Mapping[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in body.items() if key not in ARCHIVE_ONLY_KEYS}
+def prepare_sync_payload(
+    body: Mapping[str, Any], *, include_positions: bool = False,
+) -> dict[str, Any]:
+    """Keep only receiver fields from an already validated archive projection."""
+    allowed = {
+        "schema_version", "snapshot_schema_version", "account_scope", "target_id",
+        "source_binding", "observed_started_at", "observed_finished_at",
+        "snapshot_atomic", "observation_date", "broker_reported_balances", "cash",
+        "account_ids",
+    }
+    if include_positions is True:
+        allowed.update(POSITIONS_KEYS)
+    return {key: value for key, value in body.items() if key in allowed}
 
 
 def _project_cash(value: object) -> list[dict[str, str]]:
@@ -538,6 +548,7 @@ def publish_ibkr_account_facts_history(
     source_report_uri: str,
     sync_url: str,
     sync_token: str,
+    include_positions: bool = False,
     **expected: Any,
 ) -> dict[str, Any]:
     """Validate one fresh stored report and POST it exactly once."""
@@ -573,7 +584,8 @@ def publish_ibkr_account_facts_history(
         if projected.get("status") == "skipped":
             return projected
         body = json.dumps(
-            strip_archive_only_keys(projected), ensure_ascii=True, separators=(",", ":")
+            prepare_sync_payload(projected, include_positions=include_positions),
+            ensure_ascii=True, separators=(",", ":")
         ).encode("utf-8")
         request = Request(
             _text(sync_url),
@@ -951,6 +963,7 @@ def main() -> int:
             source_report_uri=uri,
             sync_url=os.environ.get("IBKR_ACCOUNT_FACTS_SYNC_URL", ""),
             sync_token=os.environ.get(IBKR_ACCOUNT_FACTS_SYNC_TOKEN_ENV, ""),
+            include_positions=os.environ.get("IBKR_ACCOUNT_FACTS_INCLUDE_POSITIONS", "").strip().lower() == "true",
             **expected,
         )
         _print_cli_result(result)
