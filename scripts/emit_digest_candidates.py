@@ -432,6 +432,17 @@ def emit_digest_candidates(
     if isinstance(account_facts, Mapping) and account_facts.get("status") == "skipped":
         facts_for_project = account_facts
 
+    # Optional notification annotation only; the no-QPK local path still works.
+    # TRADING-DIFF REVIEW REQUIRED BEFORE ANY TRADING-PATH MERGE.
+    validate_receipt = None
+    try:
+        from quant_platform_kit.common.execution_receipts import attach_execution_receipt
+    except ImportError:
+        pass
+    else:
+        def validate_receipt(source):
+            return attach_execution_receipt(dict(source), source.get("execution_receipt"))["execution_receipt"]
+
     payload = project_digest_candidates(
         runtime_reports=report,
         opaque_account_uid=uid,
@@ -440,6 +451,7 @@ def emit_digest_candidates(
         business_day=business_day,
         account_hint=account_hint,
         account_scope=account_scope,
+        validate_receipt=validate_receipt,
     )
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
