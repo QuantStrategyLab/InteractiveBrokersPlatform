@@ -24,6 +24,8 @@ on:
         type: string
         required: false
     secrets:
+      IBKR_NOTIFICATION_MARKER_GCS_URI:
+        required: false
       DIGEST_OPAQUE_ACCOUNT_UID:
         required: false
       DIGEST_TARGET_ID:
@@ -63,6 +65,13 @@ jobs:
       contents: read
       id-token: write
     env:
+      IBKR_UNIFIED_NOTIFICATION_ENABLED: ${{ vars.IBKR_UNIFIED_NOTIFICATION_ENABLED || 'false' }}
+      IBKR_NOTIFICATION_MARKER_GCS_URI: ${{ secrets.IBKR_NOTIFICATION_MARKER_GCS_URI }}
+      DIGEST_CANDIDATES_GCS_URI: ${{ vars.DIGEST_CANDIDATES_GCS_URI || secrets.DIGEST_CANDIDATES_GCS_URI }}
+      DIGEST_STORE_TARGET: ${{ vars.DIGEST_STORE_TARGET }}
+      DIGEST_OPAQUE_ACCOUNT_UID: ${{ secrets.DIGEST_OPAQUE_ACCOUNT_UID }}
+      DIGEST_TARGET_ID: ${{ secrets.DIGEST_TARGET_ID }}
+      DIGEST_TARGET_BINDINGS_JSON: ${{ secrets.DIGEST_TARGET_BINDINGS_JSON }}
       GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
       GCP_WORKLOAD_IDENTITY_PROVIDER: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
       GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
@@ -157,8 +166,9 @@ jobs:
         run: uv run --no-sync python scripts/daily_dry_run_digest.py
 
       - name: Publish existing reports as unified digest candidates
-        if: ${{ success() && vars.QSL_ROUTINE_NOTIFICATION_MODE == 'daily_digest' }}
+        if: ${{ !cancelled() && (vars.IBKR_UNIFIED_NOTIFICATION_ENABLED != '' || (success() && vars.QSL_ROUTINE_NOTIFICATION_MODE == 'daily_digest')) }}
         env:
+          LEGACY_PRODUCER_ALLOWED: ${{ success() && 'true' || 'false' }}
           QSL_ROUTINE_NOTIFICATION_MODE: ${{ vars.QSL_ROUTINE_NOTIFICATION_MODE || 'immediate' }}
           RUNTIME_TARGET_ENABLED: ${{ vars.RUNTIME_TARGET_ENABLED }}
           RUNTIME_TARGET_JSON: ${{ secrets.RUNTIME_TARGET_JSON }}
@@ -169,4 +179,7 @@ jobs:
           DIGEST_TARGET_ID: ${{ secrets.DIGEST_TARGET_ID }}
           DIGEST_TARGET_BINDINGS_JSON: ${{ secrets.DIGEST_TARGET_BINDINGS_JSON }}
           DIGEST_NOTIFICATION_SCHEDULE_JSON: ${{ vars.DIGEST_NOTIFICATION_SCHEDULE_JSON }}
-        run: uv run --no-sync python scripts/emit_unified_digest_candidates.py
+        run: |
+          if uv run --no-sync python -c 'import os, sys; from notifications.unified_adapter import enabled; sys.exit(0 if enabled() or os.environ.get("LEGACY_PRODUCER_ALLOWED") == "true" else 1)'; then
+            uv run --no-sync python scripts/emit_unified_digest_candidates.py
+          fi

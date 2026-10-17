@@ -25,7 +25,8 @@ def _read(args):
 
 
 def emit(env, *, now=None, read=_read, upload=None):
-    if env.get("QSL_ROUTINE_NOTIFICATION_MODE", "immediate") != "daily_digest":
+    from notifications.unified_adapter import effective_mode, enabled as unified_enabled, persist_archived_reports
+    if effective_mode(env) != "daily_digest":
         return {"status": "disabled", "uploaded": False}
     bindings = env.get("DIGEST_TARGET_BINDINGS_JSON", "").strip()
     if bindings:
@@ -61,9 +62,12 @@ def emit(env, *, now=None, read=_read, upload=None):
     end = datetime(day.year, day.month, day.day, 6, tzinfo=ZoneInfo("Asia/Singapore")) + timedelta(days=1)
     start = end - timedelta(days=1)
     months = {start.astimezone(timezone.utc).strftime("%Y-%m"), end.astimezone(timezone.utc).strftime("%Y-%m")}
+    source_platform = env.get("RUNTIME_HEARTBEAT_REPORT_PLATFORM") or platform if unified_enabled(env) else platform
+    if not _SAFE.fullmatch(source_platform):
+        raise ValueError("candidate_report_platform_invalid")
     entries = []
     for month in sorted(months):
-        entries.extend(read(["ls", "--json", f"{prefix}/{platform}/**/{month}/*.json"]))
+        entries.extend(read(["ls", "--json", f"{prefix}/{source_platform}/**/{month}/*.json"]))
     if len(entries) > 10000:
         raise ValueError("candidate_archive_budget_exceeded")
     reports, uris = [], set()
@@ -71,7 +75,7 @@ def emit(env, *, now=None, read=_read, upload=None):
         uri = str(entry.get("url", "")).split("#", 1)[0]
         if uri in uris:
             continue
-        if not uri.startswith(f"{prefix}/{platform}/"):
+        if not uri.startswith(f"{prefix}/{source_platform}/"):
             raise ValueError("candidate_source_locator_mismatch")
         uris.add(uri)
         raw_stamp = (entry.get("metadata") or {}).get("updated") or (entry.get("metadata") or {}).get("timeCreated")
@@ -107,6 +111,16 @@ def emit(env, *, now=None, read=_read, upload=None):
             "evidence_provenance": "candidates",
         }]}
     else:
+        if unified_enabled(env):
+            unique = {}
+            for report in reports:
+                run_id = report.get("run_id")
+                if run_id in unique and unique[run_id] != report:
+                    raise ValueError("candidate_source_run_conflict")
+                unique[run_id] = report
+            reports = list(unique.values())
+        if unified_enabled(env):
+            return persist_archived_reports(reports, env, now=current)
         payload = project_reports(reports, expected_target=target, opaque_account_uid=uid, target_id=tid, now=current)
     if upload is None:
         from google.cloud import storage

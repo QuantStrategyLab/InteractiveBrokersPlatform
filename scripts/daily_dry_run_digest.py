@@ -10,6 +10,13 @@ import re
 import subprocess
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo
+from pathlib import Path
+import sys
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from notifications.unified_adapter import enabled as unified_enabled, monitor_message, publish_monitor
 
 try:
     from scripts.execution_report_heartbeat import _is_quiet_report, _send_telegram
@@ -251,6 +258,13 @@ def _target_status(target: DrillTarget, now: dt.datetime) -> tuple[dt.date, str,
                 if execution_status and execution_status not in {"no_op", "no_action", "completed", "dry_run_completed", "executed"}:
                     quiet = False
         if quiet:
+            if unified_enabled() and os.environ.get("DRILL_DIGEST_PREVIEW") != "true":
+                from notifications.unified_adapter import receipt_notification_kind
+                kind = receipt_notification_kind(report, quiet_eligible=True)
+                publish_monitor(kind=kind, report=report, now=now, family="drill",
+                                target={"service_name": target.service, "strategy_profile": target.profile,
+                                        "account_scope": target.scope},
+                                send=lambda: _send_telegram(monitor_message(kind)))
             if status == "skipped":
                 return day, "🗓️ 休市，演练按规则跳过；未下单", True
             return day, "✅ 今日模拟周期完成；实际下单 0 笔", True
@@ -273,6 +287,11 @@ def main(now: dt.datetime | None = None) -> int:
         print(f"Daily drill record: {line}; notification_suppressed={quiet}")
         if not quiet:
             lines.append(line)
+            if unified_enabled() and os.environ.get("DRILL_DIGEST_PREVIEW") != "true":
+                publish_monitor(kind="receipt_unacceptable", now=now, family="drill",
+                                target={"service_name": target.service, "strategy_profile": target.profile,
+                                        "account_scope": target.scope},
+                                send=lambda: _send_telegram(monitor_message("drill_error"), retry_429_once=False))
     message = "\n".join(lines)
     alerts = sum(not quiet for quiet in statuses)
     if os.environ.get("DRILL_DIGEST_PREVIEW") == "true":
@@ -281,6 +300,9 @@ def main(now: dt.datetime | None = None) -> int:
     if alerts == 0:
         print(f"Daily drill digest suppressed; targets={len(targets)}; alerts=0")
         return 0
+    if unified_enabled():
+        # Alerts were reserved/sent per target above; preserve the original failure code.
+        return 1
     sent = _send_telegram(message, retry_429_once=True)
     print(f"Daily drill digest sent={sent}; targets={len(targets)}; alerts={alerts}")
     return 0 if sent and alerts == 0 else 1

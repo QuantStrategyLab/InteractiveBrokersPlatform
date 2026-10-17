@@ -1,0 +1,17 @@
+{
+  "repository": "QuantStrategyLab/QuantPlatformKit",
+  "commit": "8c0d28a3030ae86f415c720301c54c7e5c5fb2e8",
+  "branch": "notif-consolidate-1230/qpk-contract",
+  "modules": {
+    "unified_contract.py": {
+      "source_path": "src/quant_platform_kit/notifications/unified_contract.py",
+      "sha256": "b8c4102c7614630ec0aa9a09310284032fd67c0afbab6c41b842e6af9550097f"
+    },
+    "digest_routing.py": {
+      "source_path": "src/quant_platform_kit/notifications/digest_routing.py",
+      "sha256": "60c3f258c4d1a03bc49c7d03b392c02c316541726dfacb0b1d4fae6dbd2e5017"
+    }
+  },
+  "adoption": "notification-only source snapshot; trading dependency pins unchanged",
+  "merge_requirement": "must be re-pinned to merged/released QPK before merge"
+}
