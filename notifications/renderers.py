@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import datetime
 import math
+import re
 
 from notifications.compact_adapter import adapt_compact_sections
 from notifications.events import RenderedNotification
@@ -73,6 +74,25 @@ def _localize_notification_text(text: str, *, translator) -> str:
         translator=translator,
         extra_replacements=_EXTRA_ZH_REASON_REPLACEMENTS,
     )
+
+
+def _no_order_reason(reason, *, translator) -> str:
+    value = str(reason or "").strip()
+    while value.startswith(("reason=", "原因=")):
+        value = value.split("=", 1)[1].strip()
+    code, _, symbol = value.partition(":")
+    key = {
+        "min_notional": "no_order_below_minimum",
+        "quantity_zero": "no_order_quantity_zero",
+        "target_diff_below_threshold": "no_order_below_threshold",
+        "rebalance_diff_below_threshold": "no_order_below_threshold",
+        "no_signal": "no_order_no_signal",
+        "no_rebalance": "no_order_no_rebalance",
+    }.get(code, "no_order_reason_unverified")
+    text = translator(key)
+    if symbol and re.fullmatch(r"[A-Z0-9.\-]{1,20}(?:,[A-Z0-9.\-]{1,20})*", symbol):
+        text += f"（{symbol}）" if _translator_uses_zh(translator) else f" ({symbol})"
+    return text
 
 
 def _format_prefixed_text(prefix: str, text: str) -> list[str]:
@@ -319,13 +339,15 @@ def _build_notification_trade_lines(
         lines.append(
             translator(
                 "no_order_plan_reason",
-                reason=_localize_notification_text(f"reason={no_op_reason}", translator=translator),
+                reason=_no_order_reason(no_op_reason, translator=translator),
             )
         )
 
     lines.extend(_build_order_batch_lines(execution_summary, translator=translator))
 
     for raw_line in trade_logs or ():
+        if no_op_reason and not has_order_activity and any(token in str(raw_line) for token in ("reason=", "原因=", no_op_reason)):
+            continue
         text = _localize_notification_text(str(raw_line).strip(), translator=translator)
         if not text:
             continue
@@ -347,10 +369,15 @@ def _build_notification_trade_lines(
     return lines
 
 
-def _build_detailed_trade_lines(trade_logs, *, translator) -> list[str]:
+def _build_detailed_trade_lines(trade_logs, *, translator, no_order_reason="") -> list[str]:
     lines: list[str] = []
+    if no_order_reason:
+        lines.append(translator("no_order_plan_reason", reason=_no_order_reason(no_order_reason, translator=translator)))
     for raw_line in trade_logs or ():
-        text = _localize_notification_text(str(raw_line).strip(), translator=translator)
+        raw = str(raw_line).strip()
+        if no_order_reason and ("reason=" in raw or "原因=" in raw):
+            continue
+        text = _localize_notification_text(raw, translator=translator)
         if not text:
             continue
         lines.extend(_split_labeled_text(text))
@@ -712,7 +739,7 @@ def render_trade_notification(
             "option_orders_skipped",
         )
     )
-    if trade_logs or has_order_events:
+    if trade_logs or has_order_events or execution_summary.get("no_op_reason"):
         has_broker_order_events = any(
             isinstance(order, Mapping)
             and str(order.get("status") or "").strip().lower() != "dry_run"
@@ -737,6 +764,7 @@ def render_trade_notification(
         detailed_trade_lines = _build_detailed_trade_lines(
             trade_logs,
             translator=translator,
+            no_order_reason=execution_summary.get("no_op_reason") if not has_broker_order_events else "",
         )
         detailed_text = (
             f"{title}\n"

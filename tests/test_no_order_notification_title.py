@@ -62,7 +62,7 @@ def test_unsubmitted_notification_uses_neutral_result_title(locale, summary, tra
     assert summary == original
     if summary.get("no_op_reason") == "quantity_zero:TQQQ":
         assert "TQQQ" in rendered.compact_text
-        assert "整数股数量为0" in rendered.compact_text if locale == "zh" else "quantity_zero" in rendered.compact_text
+        assert "整数股数量为0" in rendered.compact_text if locale == "zh" else "whole-share quantity is zero" in rendered.compact_text
 
 
 @pytest.mark.parametrize("locale", ["zh", "en"])
@@ -85,4 +85,27 @@ def test_broker_order_evidence_with_skips_keeps_trade_title(locale, field):
     assert rendered.compact_text.splitlines()[0] == expected
     assert rendered.detailed_text.splitlines()[0] == expected
     assert "QQQM" in rendered.compact_text
+    assert summary == original
+
+
+@pytest.mark.parametrize("locale,expected", [
+    ("zh", "未下单：低于最小订单金额（TQQQ）"),
+    ("en", "No order: below minimum order amount (TQQQ)"),
+])
+@pytest.mark.parametrize("flag", [None, "true"])
+@pytest.mark.parametrize("logs", [(), ("reason=min_notional:TQQQ",)])
+def test_a1_minimum_amount_reason_has_no_nested_label(monkeypatch, locale, expected, flag, logs):
+    if flag is None:
+        monkeypatch.delenv("IBKR_UNIFIED_NOTIFICATION_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("IBKR_UNIFIED_NOTIFICATION_ENABLED", flag)
+    summary = {"execution_status": "no_op", "no_op_reason": "min_notional:TQQQ"}
+    original = copy.deepcopy(summary)
+    rendered = _render(summary, locale=locale, trade_logs=logs)
+    for text in (rendered.compact_text, rendered.detailed_text):
+        assert expected in text
+        assert "min_notional" not in text
+        assert "reason=" not in text
+        assert "原因=" not in text
+        assert not text.startswith(build_translator(locale)("rebalance_title"))
     assert summary == original
