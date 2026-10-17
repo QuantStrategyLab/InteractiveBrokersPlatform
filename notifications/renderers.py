@@ -95,6 +95,16 @@ def _no_order_reason(reason, *, translator) -> str:
     return text
 
 
+def _is_duplicate_no_order_reason(line, reason) -> bool:
+    """Only a complete reason-only line duplicates the no-order summary."""
+    def unwrap(value):
+        text = str(value or "").strip()
+        while text.startswith(("reason=", "原因=")):
+            text = text.split("=", 1)[1].strip()
+        return text
+    return bool(reason) and unwrap(line) == unwrap(reason)
+
+
 def _format_prefixed_text(prefix: str, text: str) -> list[str]:
     parts = _split_labeled_text(text)
     if not parts:
@@ -346,7 +356,7 @@ def _build_notification_trade_lines(
     lines.extend(_build_order_batch_lines(execution_summary, translator=translator))
 
     for raw_line in trade_logs or ():
-        if no_op_reason and not has_order_activity and any(token in str(raw_line) for token in ("reason=", "原因=", no_op_reason)):
+        if no_op_reason and not has_order_activity and _is_duplicate_no_order_reason(raw_line, no_op_reason):
             continue
         text = _localize_notification_text(str(raw_line).strip(), translator=translator)
         if not text:
@@ -375,7 +385,7 @@ def _build_detailed_trade_lines(trade_logs, *, translator, no_order_reason="") -
         lines.append(translator("no_order_plan_reason", reason=_no_order_reason(no_order_reason, translator=translator)))
     for raw_line in trade_logs or ():
         raw = str(raw_line).strip()
-        if no_order_reason and ("reason=" in raw or "原因=" in raw):
+        if no_order_reason and _is_duplicate_no_order_reason(raw, no_order_reason):
             continue
         text = _localize_notification_text(raw, translator=translator)
         if not text:

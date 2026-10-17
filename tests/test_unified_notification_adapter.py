@@ -87,15 +87,19 @@ def test_unset_empty_invalid_flags_delegate_without_writes(monkeypatch, flag):
     assert adapter.effective_mode({**env, "QSL_ROUTINE_NOTIFICATION_MODE": "daily_digest"}) == "daily_digest"
 
 
-def test_routine_persists_before_deferral_and_aggregates_unique_runs(routing):
+def test_routine_persists_before_deferral_and_exports_unique_runs(routing):
     state, candidates = routing
     summary = {"execution_status": "completed", "orders_submitted": [], "orders_filled": []}
     assert cycle(summary)[1] == []
     assert cycle(summary)[1] == []
     assert cycle(summary, source=report("second-run"))[1] == []
-    row = next(iter(candidates.rows.values()))[1]["runs"][0]
-    assert (row["cycle_count"], row["order_count"], row["fill_count"]) == (2, 0, 0)
-    assert row["actually_ran"] is True
+    rows = next(iter(candidates.rows.values()))[1]["runs"]
+    assert {row["source_run_id"] for row in rows} == {"source-run", "second-run"}
+    assert len(rows) == 2
+    for row in rows:
+        assert (row["cycle_count"], row["order_count"], row["fill_count"]) == (1, 0, 0)
+        assert row["actually_ran"] is True
+        assert {event["source_run_id"] for event in row["notification_events"]} == {row["source_run_id"]}
     assert len([v for _, v in state.backing.values() if "events" in v][0]["events"]) == 2
 
 
@@ -428,6 +432,9 @@ def test_missing_report_is_immediate_recovery_then_new_failure_sends_again(routi
     heartbeat, next_sends = setup_heartbeat(monkeypatch, None)
     assert heartbeat.main(now=NOW + timedelta(minutes=4)) == 1
     assert len(next_sends) == 1
+    rows = next(iter(routing[1].rows.values()))[1]["runs"]
+    assert {row["source_run_id"] for row in rows} == {"source-run"}
+    assert all(row["actually_ran"] is True for row in rows)
 
 
 def test_daily_drill_alert_main_is_deduped_and_preserves_exit_one(routing, monkeypatch):
@@ -495,7 +502,7 @@ def test_qpk_snapshot_is_byte_identical_to_the_pinned_contract_metadata():
     from pathlib import Path
     base = Path(__file__).parents[1] / "notifications/digest_snapshot"
     provenance = json.loads((base / "provenance.json").read_text())
-    assert provenance["commit"] == "8c0d28a3030ae86f415c720301c54c7e5c5fb2e8"
+    assert provenance["commit"] == "07e24c0c804a9b47316b6ec3c75bb63820d8f421"
     for name, source in provenance["modules"].items():
         assert hashlib.sha256((base / name).read_bytes()).hexdigest() == source["sha256"]
 
@@ -563,3 +570,69 @@ def test_cycle_preserves_signal_attention_when_config_codes_are_empty(routing, m
     assert len([call for call in observed["calls"] if call[0] == "send"]) == 1
     row = next(iter(routing[1].rows.values()))[1]["runs"][0]
     assert row["status"] == "alert"
+
+
+@pytest.mark.parametrize("history", [{}, None, {"schema_version": "qsl.notification_incident.v1", "active": False}])
+def test_versioned_incomplete_marker_history_refuses_to_send(history):
+    class IncompleteStore:
+        def read(self, key):
+            return 7, deepcopy(history)
+        def compare_and_set(self, *args):
+            pytest.fail("incomplete marker history must never be overwritten")
+    sends = []
+    with pytest.raises(RuntimeError, match="notification_marker_history_incomplete"):
+        adapter.immediate_incident(event("real_error"), lambda: sends.append("send"), store=IncompleteStore())
+    assert sends == []
+
+
+@pytest.mark.parametrize("outcome,status,receipt", [
+    (True, "uncertain", None),
+    ({"acknowledged": True}, "uncertain", None),
+    ({"acknowledged": True, "receipt_id": "telegram:synthetic-message-42"}, "delivered", "telegram:synthetic-message-42"),
+])
+def test_delivery_requires_sender_receipt_and_uncertain_is_not_resent(outcome, status, receipt):
+    store, sends = StateStore(), []
+    source = event("real_error")
+    def send():
+        sends.append("send")
+        return outcome
+    assert adapter.immediate_incident(source, send, store=store)
+    marker = next(value for _, value in store.backing.values())
+    assert marker["delivery_status"] == status and marker["receipt_id"] == receipt
+    assert adapter.immediate_incident(source, send, store=store)
+    assert sends == ["send"]
+
+
+def test_per_run_projection_never_copies_window_totals_or_monitor_events(routing):
+    facts = [event(run="zero", order_count=0, fill_count=0),
+             event("order_submitted", run="orders", order_count=2, fill_count=3,
+                   order_execution_digest="a" * 64),
+             event("healthy_heartbeat", run="zero", order_count=0, fill_count=0)]
+    for fact in (*facts, facts[0]):
+        assert adapter.persist_candidate(fact.to_candidate())
+    rows = {row["source_run_id"]: row for row in next(iter(routing[1].rows.values()))[1]["runs"]}
+    assert set(rows) == {"zero", "orders"}
+    assert (rows["zero"]["order_count"], rows["zero"]["fill_count"]) == (0, 0)
+    assert (rows["orders"]["order_count"], rows["orders"]["fill_count"]) == (2, 3)
+    assert len(rows["zero"]["notification_events"]) == 2
+    assert len(rows["orders"]["notification_events"]) == 1
+    for run, row in rows.items():
+        assert row["cycle_count"] == 1
+        assert all(fact["source_run_id"] == run for fact in row["notification_events"])
+
+
+def test_nonrunning_observation_is_rejected_outside_the_business_run_channel(routing):
+    with pytest.raises(CandidatePersistenceError, match="business_run_required"):
+        adapter.persist_candidate(event("receipt_missing", run="monitor-only").to_candidate(), actually_ran=False)
+    assert routing[1].rows == {}
+
+
+@pytest.mark.parametrize("field", ["order_count", "fill_count"])
+def test_conflicting_same_event_counts_remain_unknown_after_later_duplicates(routing, field):
+    first = event(**{field: 1}).to_candidate()
+    conflicting = {**first, field: 2}
+    for fact in (first, conflicting, first):
+        assert adapter.persist_candidate(fact)
+    row = next(iter(routing[1].rows.values()))[1]["runs"][0]
+    assert row[field] is None and row["field_status"][field] == "unknown"
+    assert row["status"] == "alert" and row["cycle_count"] == 1

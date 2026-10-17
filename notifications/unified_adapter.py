@@ -107,9 +107,11 @@ def _state_store(env=None):
     return GCSMarkerStore(values.get("IBKR_NOTIFICATION_MARKER_GCS_URI", ""))
 
 
-def persist_candidate(fact, *, actually_ran=True, dry_run=False, state_store=None, candidate_store=None, env=None):
+def persist_candidate(fact, *, actually_ran=True, dry_run=False, state_store=None, candidate_store=None, env=None, block_reason=None):
     """Persist event/run identity and bridge the existing candidate producer."""
     from scripts.project_digest_candidates import project_notification_events
+    if actually_ran is not True:
+        raise CandidatePersistenceError("notification_candidate_business_run_required")
     if fact.get("coverage_status") != "known" or not fact.get("dedupe_key"):
         raise CandidatePersistenceError("notification_candidate_identity_unknown")
     values = os.environ if env is None else env
@@ -121,6 +123,8 @@ def persist_candidate(fact, *, actually_ran=True, dry_run=False, state_store=Non
     parts = [fact[k] for k in ("platform_id", "opaque_account_uid", "target_id", "strategy_profile", "business_day")]
     key = "candidate-state/" + hashlib.sha256(json.dumps(parts).encode()).hexdigest()
     record = {"event": fact, "actually_ran": actually_ran, "dry_run": dry_run}
+    if block_reason:
+        record["block_reason"] = block_reason
     for _ in range(8):
         version, old = state_store.read(key)
         old = old or {"revision": 0, "events": {}}
@@ -129,12 +133,22 @@ def persist_candidate(fact, *, actually_ran=True, dry_run=False, state_store=Non
         if prior is not None:
             # Observation time may change across monitors; never replace facts
             # from the same run or lose an earlier abnormal observation.
+            count_fields = ("order_count", "fill_count")
             def comparable(v):
-                return {k: x for k, x in v["event"].items() if k != "occurred_at"}
+                return {k: x for k, x in v["event"].items() if k not in ("occurred_at", *count_fields)}
             if comparable(prior) != comparable(record) or prior.get("dry_run") != dry_run:
                 record = {**prior, "conflict": True}
             else:
-                record = prior
+                merged = dict(prior["event"])
+                conflict = prior.get("conflict") is True
+                for field in count_fields:
+                    before, after = merged.get(field), fact.get(field)
+                    conflict |= before is not None and after is not None and before != after
+                    if before is None:
+                        merged[field] = after
+                record = {**prior, "event": merged,
+                          **({"conflict": True} if conflict else {}),
+                          **({"block_reason": block_reason} if block_reason else {})}
         events[fact["dedupe_key"]] = record
         changed = events != old["events"]
         value = {"revision": old["revision"] + int(changed), "events": events}
@@ -399,7 +413,7 @@ def publish_monitor(*, kind, send, report=None, target=None, now=None, family="r
     """Called only after the existing monitor has classified its original evidence."""
     if not enabled():
         return send()
-    source = report or {"run_id": os.environ.get("GITHUB_RUN_ID")}
+    source = report or {}
     target = target or source.get("runtime_target")
     facts = (source.get("summary") or {}).get("notification_digest") or {}
     valid_facts = facts.get("schema_version") == "qsl.notification_cycle.v1" and facts.get("dry_run") is False
@@ -414,6 +428,10 @@ def publish_monitor(*, kind, send, report=None, target=None, now=None, family="r
     state = _state_store(values)
     def immediate():
         return send_incident(observed, send, family=family, store=state)
+    if report is None:
+        # QRS has no non-counting monitor channel. No receipt means no business
+        # run to attach a candidate to; keep only the durable immediate alert.
+        return immediate()
     result = route_notification_event(
         event, env=os.environ, flag_key=FLAG,
         persist_candidate=lambda fact: _checked_candidate(fact, actually_ran=report is not None,
@@ -514,6 +532,12 @@ def persist_archived_reports(reports, env, *, now=None):
             ids = [next((str(order[k]) for k in ("permId", "orderId", "order_id", "execution_id") if order.get(k) is not None), "") for order in orders]
             if ids and all(ids):
                 event = replace(event, order_execution_digest=order_identity_digest(json.dumps(sorted(ids))))
-        if not _checked_candidate(event.to_candidate(), env=env, actually_ran=True, dry_run=report["dry_run"]):
+        from scripts.project_digest_candidates import _latest_notification_block_reason
+        from quant_platform_kit.common.execution_receipts import attach_execution_receipt
+        def validate_receipt(source):
+            return attach_execution_receipt(dict(source), source.get("execution_receipt"))["execution_receipt"]
+        block_reason = _latest_notification_block_reason([report], validate_receipt)
+        if not _checked_candidate(event.to_candidate(), env=env, actually_ran=True,
+                                  dry_run=report["dry_run"], block_reason=block_reason):
             raise CandidatePersistenceError("notification_candidate_write_unconfirmed")
     return {"status": "projected", "uploaded": True, "runs": len(reports)}

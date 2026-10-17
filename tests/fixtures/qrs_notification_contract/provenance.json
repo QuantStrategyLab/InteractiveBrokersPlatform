@@ -1,0 +1,53 @@
+{
+  "repository": "QuantStrategyLab/QuantRuntimeSettings",
+  "commit": "160933eaa376bd4297616e8affc946430be69771",
+  "purpose": "test-only producer intake merge aggregate and render; no runtime dependency",
+  "modules": {
+    "merge_digest_candidates.py": {
+      "source_path": "python/scripts/merge_digest_candidates.py",
+      "source_sha256": "8feb0fb58ee31d49f3e4e8b0bc602333ae62e9e0262f102aa9c7f7f839a2b812",
+      "sha256": "8feb0fb58ee31d49f3e4e8b0bc602333ae62e9e0262f102aa9c7f7f839a2b812"
+    },
+    "notification_candidate_adapter.py": {
+      "source_path": "python/scripts/notification_candidate_adapter.py",
+      "source_sha256": "8f0806165f7d99ffd9db7ef41879d9eb7d37e6551678fd0463d29dd7e7bbc19e",
+      "sha256": "8f0806165f7d99ffd9db7ef41879d9eb7d37e6551678fd0463d29dd7e7bbc19e"
+    },
+    "notification_mode.py": {
+      "source_path": "python/scripts/notification_mode.py",
+      "source_sha256": "4f3a77af9b677095589c69f976ea0ecf633322b2b41c8eb18457afdaec87d2df",
+      "sha256": "4f3a77af9b677095589c69f976ea0ecf633322b2b41c8eb18457afdaec87d2df"
+    },
+    "daily_digest_notify.py": {
+      "source_path": "python/scripts/daily_digest_notify.py",
+      "source_sha256": "189c3c5d86bf9a153141779ddaba9a28be2615fe80b6646368e407fb91a300cc",
+      "sha256": "94f24070cffa71903d5a59da2c9a9d201044bf0b5b59e2cb610a7391ef46b6cd",
+      "transform": "module docstring removed; executable source unchanged"
+    },
+    "unified_daily_digest.py": {
+      "source_path": "python/scripts/unified_daily_digest.py",
+      "source_sha256": "71ba99a8ee21448822bf1d464060e84d6287e8ce7f2595f33b813ce852a45ca5",
+      "sha256": "71ba99a8ee21448822bf1d464060e84d6287e8ce7f2595f33b813ce852a45ca5"
+    },
+    "display_names.py": {
+      "source_path": "python/scripts/display_names.py",
+      "source_sha256": "20e26298cf48c77431257a4d73d2c9ef5ce0eda2a88323a23852d0119bdacf8f",
+      "sha256": "20e26298cf48c77431257a4d73d2c9ef5ce0eda2a88323a23852d0119bdacf8f"
+    },
+    "notification_snapshot/__init__.py": {
+      "source_path": "python/scripts/notification_snapshot/__init__.py",
+      "source_sha256": "67dfde39f061966cdde08f51663d0e7e413a88abab8a82a9b29825cb6f7dfa10",
+      "sha256": "67dfde39f061966cdde08f51663d0e7e413a88abab8a82a9b29825cb6f7dfa10"
+    },
+    "notification_snapshot/unified_contract.py": {
+      "source_path": "python/scripts/notification_snapshot/unified_contract.py",
+      "source_sha256": "7ba48d1d7c74e66be8cd3ff983c2117002776e82cda6675a084cfe0dc51aecc0",
+      "sha256": "7ba48d1d7c74e66be8cd3ff983c2117002776e82cda6675a084cfe0dc51aecc0"
+    },
+    "notification_snapshot/digest_routing.py": {
+      "source_path": "python/scripts/notification_snapshot/digest_routing.py",
+      "source_sha256": "60c3f258c4d1a03bc49c7d03b392c02c316541726dfacb0b1d4fae6dbd2e5017",
+      "sha256": "60c3f258c4d1a03bc49c7d03b392c02c316541726dfacb0b1d4fae6dbd2e5017"
+    }
+  }
+}

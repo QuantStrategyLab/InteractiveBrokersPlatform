@@ -216,6 +216,22 @@ class IncidentTracker:
     def __init__(self, store: IncidentMarkerStore):
         self.store = store
 
+    def _read_marker(self, key: str) -> tuple[object, dict[str, object] | None]:
+        version, value = self.store.read(key)
+        if version is None and value is None:
+            return version, None
+        required = {"schema_version", "active", "state", "severity", "generation",
+                    "transition_key", "delivery_status", "receipt_id"}
+        if (version is None or not isinstance(value, Mapping) or not required.issubset(value)
+                or value["schema_version"] != "qsl.notification_incident.v1"
+                or type(value["active"]) is not bool
+                or not _identity_present(value["state"])
+                or any(type(value[k]) is not int or value[k] < 0 for k in ("severity", "generation"))
+                or value["delivery_status"] not in {"not_attempted", "pending", "uncertain", "delivered"}
+                or (value["generation"] > 0 and not _identity_present(value["transition_key"]))):
+            raise RuntimeError("notification_marker_history_incomplete")
+        return version, dict(value)
+
     def observe(self, event: NotificationEvent, *, state: str, severity: int = 1,
                 recovered: bool = False) -> IncidentDecision:
         parts = [event.platform_id, event.target_id, event.opaque_account_uid,
@@ -226,8 +242,12 @@ class IncidentTracker:
             raise ValueError("notification_incident_state_invalid")
         key = _digest(["qsl.notification_incident.v1", *parts])
         for _ in range(8):
-            version, previous = self.store.read(key)
-            previous = dict(previous or {})
+            version, previous = self._read_marker(key)
+            previous = previous or {
+                "schema_version": "qsl.notification_incident.v1", "active": False,
+                "state": None, "severity": 0, "generation": 0,
+                "transition_key": None, "delivery_status": "not_attempted", "receipt_id": None,
+            }
             active = previous.get("active") is True
             generation = int(previous.get("generation", 0))
             transition = previous.get("transition_key")
@@ -242,7 +262,8 @@ class IncidentTracker:
             else:
                 generation += 1
                 transition = _digest([key, generation, previous.get("state"), state, severity])
-                value = {"active": True, "state": state, "severity": severity,
+                value = {"schema_version": "qsl.notification_incident.v1",
+                         "active": True, "state": state, "severity": severity,
                          "generation": generation, "transition_key": transition,
                          "delivery_status": "pending", "receipt_id": None}
                 action = "send"
@@ -254,7 +275,7 @@ class IncidentTracker:
         """Only an explicit receipt is delivered; absent receipt stays uncertain."""
         if decision.action != "send" or not decision.incident_key:
             raise ValueError("notification_delivery_without_reservation")
-        version, previous = self.store.read(decision.incident_key)
+        version, previous = self._read_marker(decision.incident_key)
         if not previous or previous.get("transition_key") != decision.transition_key:
             raise RuntimeError("notification_marker_transition_changed")
         value = {**previous, "delivery_status": "delivered" if _identity_present(receipt_id) else "uncertain",

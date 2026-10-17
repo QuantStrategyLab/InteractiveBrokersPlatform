@@ -2,7 +2,7 @@ import copy
 
 import pytest
 
-from notifications.renderers import render_trade_notification
+from notifications.renderers import render_trade_notification, _localize_notification_text
 from notifications.telegram import build_translator
 
 
@@ -109,3 +109,27 @@ def test_a1_minimum_amount_reason_has_no_nested_label(monkeypatch, locale, expec
         assert "原因=" not in text
         assert not text.startswith(build_translator(locale)("rebalance_title"))
     assert summary == original
+
+
+@pytest.mark.parametrize("locale", ["zh", "en"])
+@pytest.mark.parametrize("flag", [None, "false", "true"])
+@pytest.mark.parametrize("reason", ["min_notional:AAA", "quantity_zero:AAA"])
+def test_a1_preserves_independent_diagnostics_with_different_reasons(monkeypatch, locale, flag, reason):
+    if flag is None:
+        monkeypatch.delenv("IBKR_UNIFIED_NOTIFICATION_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("IBKR_UNIFIED_NOTIFICATION_ENABLED", flag)
+    diagnostics = (["安全警告：原因=auth_failure", "连接警告：原因=receipt_missing", "独立警告：原因=" + reason]
+                   if locale == "zh" else
+                   ["Safety warning: reason=auth_failure", "Connection warning: reason=receipt_missing", "Independent warning: reason=" + reason])
+    duplicate = ("原因=" if locale == "zh" else "reason=") + reason
+    # A matching reason embedded in a warning is still an independent diagnostic.
+    rendered = _render({"execution_status": "no_op", "no_op_reason": reason}, locale=locale,
+                       trade_logs=[duplicate, *diagnostics, duplicate + "_different"])
+    for text in (rendered.compact_text, rendered.detailed_text):
+        translator = build_translator(locale)
+        for diagnostic in diagnostics:
+            assert _localize_notification_text(diagnostic, translator=translator) in text
+        assert _localize_notification_text(duplicate + "_different", translator=translator) in text
+        assert text.count("未下单：" if locale == "zh" else "No order:") == 1
+    assert duplicate not in rendered.detailed_text.splitlines()

@@ -970,10 +970,10 @@ if __name__ == "__main__":
 
 
 def project_notification_events(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """Bridge durable QPK event facts into the existing private candidate schema.
+    """Export one row per source run, with only that run's counts and events.
 
-    One row covers one protected target/window. Counts describe unique real
-    source runs; monitoring observations and duplicate evidence add no runs.
+    Monitor observations share the observed report's source_run_id. Incidents
+    without a business receipt stay on the immediate path outside this export.
     """
     if not records:
         raise ValueError("notification_events_missing")
@@ -984,40 +984,46 @@ def project_notification_events(records: Sequence[Mapping[str, Any]]) -> dict[st
     if any(any(item["event"].get(k) != first[k] for k in identity) for item in records):
         raise ValueError("notification_candidate_identity_conflict")
     runs: dict[str, list[Mapping[str, Any]]] = {}
-    alert = False
     for item in records:
         event = item["event"]
-        if event.get("coverage_status") != "known":
+        if event.get("coverage_status") != "known" or not event.get("source_run_id"):
             raise ValueError("notification_candidate_identity_unknown")
-        alert |= event["event_kind"] not in {"routine_cycle", "healthy_heartbeat", "order_submitted", "fill"}
-        alert |= item.get("conflict") is True
-        if item.get("actually_ran") is True:
-            runs.setdefault(event["source_run_id"], []).append(item)
-    row = {k: first[k] for k in identity}
-    row.update(actually_ran=bool(runs), cycle_count=len(runs), status="alert" if alert else "ok",
-               evidence_provenance="candidates", persistence_status="persisted", delivery_status="pending_central",
-               as_of=max((item["event"]["occurred_at"] for item in records), key=_parse_timestamp))
-    field_status = {"cycle_count": "known"}
-    count_conflict = False
-    for field in ("order_count", "fill_count"):
-        values = []
-        for items in runs.values():
-            real = [item for item in items if item.get("dry_run") is False]
+        if item.get("actually_ran") is not True:
+            raise ValueError("notification_candidate_business_run_required")
+        runs.setdefault(event["source_run_id"], []).append(item)
+    rows = []
+    for run_id, items in sorted(runs.items()):
+        business = [item for item in items if item.get("actually_ran") is True]
+        alert = any(item.get("conflict") is True or item["event"]["event_kind"] not in {
+            "routine_cycle", "healthy_heartbeat", "order_submitted", "fill"} for item in items)
+        row = {k: first[k] for k in identity}
+        row.update(source_run_id=run_id, actually_ran=bool(business), cycle_count=int(bool(business)),
+                   status="alert" if alert else "ok", evidence_provenance="candidates",
+                   persistence_status="persisted", delivery_status="pending_central",
+                   as_of=max((item["event"]["occurred_at"] for item in items), key=_parse_timestamp),
+                   notification_events=list({item["event"]["dedupe_key"]: dict(item["event"]) for item in items}.values()))
+        field_status = {"cycle_count": "known"}
+        real = [item for item in business if item.get("dry_run") is False]
+        count_conflict = False
+        for field in ("order_count", "fill_count"):
             known = {item["event"][field] for item in real if type(item["event"].get(field)) is int}
-            # Different known facts for one run are a conflict, never last-write-wins.
-            count_conflict |= len(known) > 1
-            values.append(next(iter(known)) if len(known) == 1 and not any(item.get("conflict") for item in real) else None)
-        value = sum(values) if values and all(v is not None for v in values) else None
-        row[field] = value
-        field_status[field] = "known" if value is not None else "counts_unknown"
-    row["field_status"] = field_status
-    if count_conflict:
-        alert = True
-        row["status"] = "alert"
-    if alert:
-        row.update(reason_code="notification_incident_observed", execution_status="execution_alert")
-    else:
-        row["execution_status"] = "executed" if row["order_count"] else "no_action"
-    if runs and all(item.get("dry_run") is True for items in runs.values() for item in items):
-        row["execution_mode"] = "dry_run"
-    return {"schema_version": SCHEMA_VERSION, "producer_status": "projected", "runs": [row]}
+            conflict = len(known) > 1 or any(item.get("conflict") for item in real)
+            value = next(iter(known)) if len(known) == 1 and not conflict else None
+            row[field] = value
+            field_status[field] = "known" if value is not None else "unknown"
+            if conflict:
+                count_conflict = True
+                alert = True
+                row["status"] = "alert"
+        row["field_status"] = field_status
+        annotations = [item["block_reason"] for item in items if item.get("block_reason")]
+        if annotations and not count_conflict and all(value == annotations[0] for value in annotations):
+            row["block_reason"] = dict(annotations[0])
+        if alert:
+            row.update(reason_code="notification_incident_observed", execution_status="execution_alert")
+        else:
+            row["execution_status"] = "executed" if row["order_count"] else "no_action"
+        if business and all(item.get("dry_run") is True for item in business):
+            row["execution_mode"] = "dry_run"
+        rows.append(row)
+    return {"schema_version": SCHEMA_VERSION, "producer_status": "projected", "runs": rows}
