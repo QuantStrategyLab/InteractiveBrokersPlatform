@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import ceil
+from math import ceil, isfinite
+import json
+import logging
 import re
 from typing import Any
 
 import pandas as pd
 
 from application import signal_provenance
+from application.price_basis import (
+    DEFAULT_PRICE_BASIS, HistoricalCandles, PriceBasis, PriceBasisError,
+    basis_diagnostic, require_supported_ohlc_basis, validate_candles, validate_price_basis,
+)
 from quant_platform_kit.common.strategy_plugins import (
     build_strategy_plugin_alert_messages,
     build_strategy_plugin_error_notification_lines,
@@ -75,26 +81,62 @@ def _frame_column(frame: pd.DataFrame, name: str) -> pd.Series | None:
 
 
 _YFINANCE_PRICE_BASIS: dict[str, str] = {}
-_IBKR_HISTORY_NOTE = "IBKR TRADES bars (split-adjusted); ADJUSTED_LAST suppressed for signals"
 
 
-class SplitOnlyHistoricalIB:
-    """Proxy around an ``ib`` client for signal-history requests only (RS-08 fix 3).
+class BasisHistoricalIB:
+    """Constrain the pinned QPK loader to exactly one IBKR price basis.
 
-    QPK requests ``ADJUSTED_LAST`` (dividend-adjusted) first and falls back to
-    ``TRADES`` when that returns nothing. Answering ``ADJUSTED_LAST`` with no bars
-    makes QPK use split-adjusted ``TRADES`` bars, matching the yfinance ``Close``
-    basis. Every other attribute is delegated unchanged; only historical-data
-    calls made through this proxy are affected.
+    For split-only requests, skip QPK's first ADJUSTED_LAST probe. For adjusted
+    requests, forbid its TRADES retry even if QPK catches the initial error.
+    This is endpoint selection, never a price-basis fallback.
     """
 
-    def __init__(self, ib: Any) -> None:
+    def __init__(self, ib: Any, price_basis=DEFAULT_PRICE_BASIS, *, ohlc=False) -> None:
         self._ib = ib
+        self.price_basis = require_supported_ohlc_basis(price_basis, provider="ibkr")
+        self.endpoint = "TRADES" if self.price_basis == PriceBasis.SPLIT_ADJUSTED else "ADJUSTED_LAST"
+        self.failure = None
+        self.resolved = False
+        self.ohlc = ohlc
 
     def reqHistoricalData(self, *args: Any, **kwargs: Any) -> Any:  # noqa: N802 - ib_insync API name
-        if str(kwargs.get("whatToShow") or "").upper() == "ADJUSTED_LAST":
-            return []
-        return self._ib.reqHistoricalData(*args, **kwargs)
+        endpoint = str(kwargs.get("whatToShow") or "").upper()
+        if self.failure is not None:
+            raise self.failure
+        if endpoint != self.endpoint:
+            if endpoint == "ADJUSTED_LAST" and self.endpoint == "TRADES":
+                return []
+            raise PriceBasisError(self.price_basis, provider="ibkr", reason="basis_fallback_forbidden",
+                                  source_columns=(self.endpoint,))
+        try:
+            bars = self._ib.reqHistoricalData(*args, **kwargs)
+        except Exception:
+            self.failure = PriceBasisError(self.price_basis, provider="ibkr", reason="provider_request_failed",
+                                           source_columns=(self.endpoint,))
+            raise self.failure from None
+        if not bars:
+            self.failure = PriceBasisError(self.price_basis, provider="ibkr", reason=f"empty_{self.endpoint}",
+                                           source_columns=(self.endpoint,))
+            raise self.failure
+        if self.ohlc:
+            # Check native fields BEFORE QPK's legacy candle conversion, which
+            # otherwise synthesizes missing O/H/L from C and missing volume as 0.
+            try:
+                rows = [{field: getattr(bar, field) for field in ("open", "high", "low", "close", "volume")}
+                        for bar in bars]
+                validate_candles(HistoricalCandles(
+                    rows, price_basis=self.price_basis, provider="ibkr",
+                    source_columns=(self.endpoint, "open", "high", "low", "close", "volume"),
+                ), self.price_basis)
+            except AttributeError:
+                self.failure = PriceBasisError(self.price_basis, provider="ibkr", reason="missing_native_ohlcv",
+                                               source_columns=(self.endpoint,))
+                raise self.failure from None
+            except PriceBasisError as exc:
+                self.failure = exc
+                raise
+        self.resolved = True
+        return bars
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._ib, name)
@@ -105,46 +147,74 @@ def yfinance_price_basis(symbol: str) -> str:
     return _YFINANCE_PRICE_BASIS.get(str(symbol or "").strip().upper(), signal_provenance.UNKNOWN)
 
 
-def _coerce_yfinance_candles(frame: pd.DataFrame, *, symbol: str | None = None) -> list[dict[str, Any]]:
+def _coerce_yfinance_candles(frame: pd.DataFrame, *, symbol: str | None = None,
+                           price_basis: str = DEFAULT_PRICE_BASIS) -> list[dict[str, Any]]:
+    basis = require_supported_ohlc_basis(price_basis, provider="yfinance")
+    if symbol:
+        _YFINANCE_PRICE_BASIS.pop(str(symbol).strip().upper(), None)
     if frame is None or frame.empty:
-        return []
-    # RS-08 fix 3: signals use split-only prices (backtest standard §4.4, same
-    # basis as Schwab). With auto_adjust=False yfinance "Close" is split-adjusted
-    # only; "Adj Close" (dividend-adjusted) is used only if "Close" is absent.
-    close_series = _frame_column(frame, "Close")
-    basis = signal_provenance.SPLIT_ONLY
-    if close_series is None:
-        close_series = _frame_column(frame, "Adj Close")
-        basis = signal_provenance.DIVIDEND_ADJUSTED
-    if close_series is not None and symbol:
-        _YFINANCE_PRICE_BASIS[str(symbol).strip().upper()] = basis
-    if close_series is None:
-        return []
-    open_series = _frame_column(frame, "Open")
-    high_series = _frame_column(frame, "High")
-    low_series = _frame_column(frame, "Low")
-    volume_series = _frame_column(frame, "Volume")
+        raise PriceBasisError(basis, provider="yfinance", reason="empty_history")
+    columns = ["Close", "Open", "High", "Low", "Volume"]
+    if basis == PriceBasis.SPLIT_DIVIDEND_ADJUSTED:
+        columns.append("Adj Close")
+    selected = {}
+    for column in columns:
+        series = _frame_column(frame, column)
+        if series is None:
+            raise PriceBasisError(basis, provider="yfinance", reason=f"missing_column:{column}",
+                                  source_columns=tuple(selected))
+        # Multiple instruments/duplicate fields cannot be silently collapsed.
+        matches = [key for key in frame.columns if key == column or (
+            isinstance(key, tuple) and column in key
+        )]
+        if len(matches) != 1:
+            raise PriceBasisError(basis, provider="yfinance", reason="ambiguous_columns", source_columns=columns)
+        selected[column] = series
+    if not frame.index.is_unique:
+        raise PriceBasisError(basis, provider="yfinance", reason="duplicate_rows", source_columns=columns)
+    # Native yfinance auto_adjust=False OHLC is split adjusted. An explicit
+    # per-column metadata declaration must agree with that source contract.
+    declared = frame.attrs.get("field_price_basis", {})
+    expected = {name: PriceBasis.SPLIT_ADJUSTED.value for name in ("Open", "High", "Low", "Close")}
+    expected["Adj Close"] = PriceBasis.SPLIT_DIVIDEND_ADJUSTED.value
+    if any(name in declared and declared[name] != expected[name] for name in expected):
+        raise PriceBasisError(basis, provider="yfinance", reason="mixed_or_mismatched_basis", source_columns=columns)
+    close_series = selected["Close"]
     candles: list[dict[str, Any]] = []
-    for as_of, close in close_series.dropna().items():
-        close_value = float(close)
-        candles.append(
-            {
+    try:
+        for as_of, close in close_series.items():
+            # Split+dividend OHLC: apply Adj Close / Close on EACH row to O/H/L;
+            # use Adj Close itself for C. Volume is NEVER scaled by this factor.
+            close_value = float(close)
+            factor = float(selected["Adj Close"].loc[as_of]) / close_value if "Adj Close" in selected else 1.0
+            if not isfinite(close_value) or close_value <= 0 or not isfinite(factor) or factor <= 0:
+                raise ValueError("invalid factor")
+            row = {
                 "as_of": pd.Timestamp(as_of).to_pydatetime(),
-                "open": float(open_series.get(as_of, close_value)) if open_series is not None else close_value,
-                "high": float(high_series.get(as_of, close_value)) if high_series is not None else close_value,
-                "low": float(low_series.get(as_of, close_value)) if low_series is not None else close_value,
-                "close": close_value,
-                "volume": float(volume_series.get(as_of, 0.0) or 0.0) if volume_series is not None else 0.0,
+                "open": float(selected["Open"].loc[as_of]) * factor,
+                "high": float(selected["High"].loc[as_of]) * factor,
+                "low": float(selected["Low"].loc[as_of]) * factor,
+                "close": float(selected["Adj Close"].loc[as_of]) if "Adj Close" in selected else close_value,
+                "volume": float(selected["Volume"].loc[as_of]),
             }
-        )
-    return candles
+            candles.append(row)
+    except (TypeError, ValueError, ZeroDivisionError, OverflowError):
+        raise PriceBasisError(basis, provider="yfinance", reason="invalid_ohlcv_or_factor", source_columns=columns) from None
+    result = validate_candles(HistoricalCandles(candles, price_basis=basis, provider="yfinance", source_columns=columns), basis)
+    if symbol:
+        _YFINANCE_PRICE_BASIS[str(symbol).strip().upper()] = basis
+    logging.getLogger(__name__).info("price_basis_resolved %s", json.dumps(result.diagnostic, sort_keys=True))
+    return result
 
 
-def fetch_yfinance_historical_candles(symbol: str, *, duration: str = "2 Y", bar_size: str = "1 day") -> list[dict[str, Any]]:
+def fetch_yfinance_historical_candles(symbol: str, *, duration: str = "2 Y", bar_size: str = "1 day",
+                                    price_basis: str = DEFAULT_PRICE_BASIS) -> list[dict[str, Any]]:
+    basis = require_supported_ohlc_basis(price_basis, provider="yfinance")
+    _YFINANCE_PRICE_BASIS.pop(str(symbol).strip().upper(), None)
     try:
         import yfinance as yf
     except Exception:
-        return []
+        raise PriceBasisError(basis, provider="yfinance", reason="provider_unavailable") from None
 
     try:
         frame = yf.download(
@@ -156,8 +226,8 @@ def fetch_yfinance_historical_candles(symbol: str, *, duration: str = "2 Y", bar
             threads=False,
         )
     except Exception:
-        return []
-    return _coerce_yfinance_candles(frame, symbol=str(symbol).strip().upper())
+        raise PriceBasisError(basis, provider="yfinance", reason="provider_request_failed") from None
+    return _coerce_yfinance_candles(frame, symbol=str(symbol).strip().upper(), price_basis=basis)
 
 
 @dataclass(frozen=True)
@@ -174,6 +244,10 @@ class IBKRRuntimeStrategyAdapters:
     build_strategy_plugin_report_payload_fn: Any = None
     load_configured_strategy_plugin_signals_fn: Any = None
     parse_strategy_plugin_mounts_fn: Any = None
+    price_basis: str = DEFAULT_PRICE_BASIS
+
+    def __post_init__(self):
+        validate_price_basis(self.price_basis)
 
     def load_strategy_plugin_signals(self, raw_mounts):
         if not raw_mounts or self.parse_strategy_plugin_mounts_fn is None or self.load_configured_strategy_plugin_signals_fn is None:
@@ -217,86 +291,89 @@ class IBKRRuntimeStrategyAdapters:
             strategy_label=self.strategy_profile,
         )
 
-    def _get_fallback_historical_candles(self, symbol, *, duration: str, bar_size: str) -> tuple[dict[str, Any], ...]:
+    def _get_fallback_historical_candles(self, symbol, *, duration: str, bar_size: str):
+        require_supported_ohlc_basis(self.price_basis, provider="history_loader")
         if self.fallback_historical_candles_fn is None:
-            return ()
+            return None
         try:
-            return tuple(self.fallback_historical_candles_fn(symbol, duration=duration, bar_size=bar_size) or ())
+            candles = self.fallback_historical_candles_fn(
+                symbol, duration=duration, bar_size=bar_size, price_basis=self.price_basis,
+            )
+        except PriceBasisError:
+            raise
         except Exception:
-            return ()
+            raise PriceBasisError(self.price_basis, provider="history_loader", reason="provider_request_failed") from None
+        return validate_candles(candles, self.price_basis)
 
-    def _fallback_source_and_basis(self, symbol) -> tuple[str, str]:
-        if self.fallback_historical_candles_fn is fetch_yfinance_historical_candles:
-            return "yfinance", yfinance_price_basis(symbol)
-        return "fallback_provider", signal_provenance.UNKNOWN
+    def _record_history(self, symbol, dates, diagnostic):
+        signal_provenance.record(
+            symbol, source=diagnostic["provider"], price_basis=self.price_basis,
+            dates=dates, basis_details=diagnostic,
+        )
+        logging.getLogger(__name__).info("price_basis_resolved %s", json.dumps(diagnostic, sort_keys=True))
 
-    def _record_fallback(self, symbol, dates) -> None:
-        source, basis = self._fallback_source_and_basis(symbol)
-        signal_provenance.record(symbol, source=source, price_basis=basis, dates=dates)
+    def _fetch_native(self, fn, ib, symbol, *, duration, bar_size, ohlc=False):
+        proxy = BasisHistoricalIB(ib, self.price_basis, ohlc=ohlc)
+        try:
+            result = fn(proxy, symbol, duration=duration, bar_size=bar_size)
+        except PriceBasisError:
+            raise
+        except Exception:
+            raise PriceBasisError(self.price_basis, provider="ibkr", reason="provider_request_failed",
+                                  source_columns=(proxy.endpoint,)) from None
+        if proxy.failure is not None:
+            raise proxy.failure
+        if not proxy.resolved:
+            raise PriceBasisError(self.price_basis, provider="ibkr", reason="unverified_provider_response",
+                                  source_columns=(proxy.endpoint,))
+        return result, basis_diagnostic(self.price_basis, provider="ibkr", resolved=self.price_basis,
+                                        source_columns=(proxy.endpoint, "Open", "High", "Low", "Close", "Volume"))
 
     def get_historical_close(self, ib, symbol, duration="2 Y", bar_size="1 day"):
         fallback_candles = self._get_fallback_historical_candles(symbol, duration=duration, bar_size=bar_size)
         fallback_points = tuple(
             (candle["as_of"], candle["close"])
-            for candle in fallback_candles
-            if "close" in candle
+            for candle in (fallback_candles or ())
         )
         if fallback_points:
-            self._record_fallback(symbol, [as_of for as_of, _ in fallback_points])
+            self._record_history(symbol, [as_of for as_of, _ in fallback_points], fallback_candles.diagnostic)
             return pd.Series(
                 data=[close for _, close in fallback_points],
                 index=pd.to_datetime([as_of for as_of, _ in fallback_points]),
             )
 
-        series = self.fetch_historical_price_series_fn(
-            SplitOnlyHistoricalIB(ib),
-            symbol,
+        series, diagnostic = self._fetch_native(
+            self.fetch_historical_price_series_fn, ib, symbol,
             duration=duration,
             bar_size=bar_size,
         )
         points = tuple(series.points or ())
-        signal_provenance.record(
-            symbol,
-            source="ibkr_historical",
-            price_basis=signal_provenance.SPLIT_ONLY,
-            dates=[point.as_of for point in points],
-            note=_IBKR_HISTORY_NOTE,
+        if not points or any(not isfinite(float(point.close)) or float(point.close) <= 0 for point in points):
+            raise PriceBasisError(self.price_basis, provider="ibkr", reason="empty_or_invalid_close",
+                                  source_columns=diagnostic["source_columns"])
+        diagnostic["source_columns"] = [diagnostic["source_columns"][0], "Close"]
+        self._record_history(symbol, [point.as_of for point in points], diagnostic)
+        return pd.Series(
+            data=[point.close for point in points],
+            index=pd.to_datetime([point.as_of for point in points]),
         )
-        if points:
-            return pd.Series(
-                data=[point.close for point in points],
-                index=pd.to_datetime([point.as_of for point in points]),
-            )
-        return pd.Series(dtype=float)
 
     def get_historical_candles(self, ib, symbol, duration="2 Y", bar_size="1 day"):
         fallback_candles = self._get_fallback_historical_candles(symbol, duration=duration, bar_size=bar_size)
         if fallback_candles:
-            self._record_fallback(symbol, [candle.get("as_of") for candle in fallback_candles])
-            return list(fallback_candles)
+            self._record_history(symbol, [candle["as_of"] for candle in fallback_candles], fallback_candles.diagnostic)
+            return fallback_candles
 
-        candles = self.fetch_historical_price_candles_fn(
-            SplitOnlyHistoricalIB(ib),
-            symbol,
+        candles, diagnostic = self._fetch_native(
+            self.fetch_historical_price_candles_fn, ib, symbol,
             duration=duration,
             bar_size=bar_size,
+            ohlc=True,
         )
-        candle_dates: list[Any] = []
-        if isinstance(candles, (list, tuple)):  # never consume a one-shot iterator
-            try:
-                candle_dates = [
-                    candle.get("as_of") if isinstance(candle, dict) else getattr(candle, "as_of", None)
-                    for candle in candles
-                ]
-            except Exception:
-                candle_dates = []
-        signal_provenance.record(
-            symbol,
-            source="ibkr_historical",
-            price_basis=signal_provenance.SPLIT_ONLY,
-            dates=candle_dates,
-            note=_IBKR_HISTORY_NOTE,
-        )
+        candles = validate_candles(HistoricalCandles(
+            candles, price_basis=self.price_basis, provider="ibkr", source_columns=diagnostic["source_columns"],
+        ), self.price_basis)
+        self._record_history(symbol, [candle["as_of"] for candle in candles], diagnostic)
         return candles
 
     def compute_signals(self, ib, current_holdings, *, strategy_plugin_signals=()):
@@ -337,7 +414,10 @@ def build_runtime_strategy_adapters(
     build_strategy_plugin_report_payload_fn=None,
     load_configured_strategy_plugin_signals_fn=None,
     parse_strategy_plugin_mounts_fn=None,
+    price_basis=None,
 ) -> IBKRRuntimeStrategyAdapters:
+    config = getattr(strategy_runtime, "merged_runtime_config", {}) or {}
+    basis = validate_price_basis(config.get("price_basis", DEFAULT_PRICE_BASIS) if price_basis is None else price_basis)
     return IBKRRuntimeStrategyAdapters(
         strategy_runtime=strategy_runtime,
         strategy_profile=str(strategy_profile),
@@ -351,4 +431,5 @@ def build_runtime_strategy_adapters(
         build_strategy_plugin_report_payload_fn=build_strategy_plugin_report_payload_fn,
         load_configured_strategy_plugin_signals_fn=load_configured_strategy_plugin_signals_fn,
         parse_strategy_plugin_mounts_fn=parse_strategy_plugin_mounts_fn,
+        price_basis=basis,
     )

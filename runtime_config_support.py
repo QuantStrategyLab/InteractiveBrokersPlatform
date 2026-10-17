@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Callable
 
+from application.price_basis import validate_price_basis
+
 from quant_platform_kit.cloud import get_secret_store
 from quant_platform_kit.common.runtime_config import (
     first_non_empty,
@@ -172,6 +174,7 @@ class PlatformRuntimeSettings:
     strategy_config_source: str | None
     reconciliation_output_path: str | None
     dry_run_only: bool
+    price_basis: str | None = None
     ib_gateway_project_id: str | None = None
     feature_snapshot_fallback_mode: str | None = None
     feature_snapshot_fallback_cache_dir: str | None = None
@@ -302,6 +305,10 @@ def load_platform_runtime_settings(
     logger: Callable[[str], None] = print,
     secret_client_factory: Callable[[], Any] | None = None,
 ) -> PlatformRuntimeSettings:
+    # Validate before any project/config clients (including secret stores).
+    configured_price_basis = os.getenv("PRICE_BASIS")
+    if configured_price_basis is not None:
+        configured_price_basis = validate_price_basis(configured_price_basis)
     project_id = project_id_resolver()
     account_group = resolve_account_group(os.getenv("ACCOUNT_GROUP"))
     group_config = load_account_group_config(
@@ -413,6 +420,7 @@ def load_platform_runtime_settings(
         strategy_config_source=runtime_paths.strategy_config_source,
         reconciliation_output_path=runtime_paths.reconciliation_output_path,
         dry_run_only=resolve_dry_run_env(os.environ, "IBKR_DRY_RUN_ONLY"),
+        price_basis=configured_price_basis,
         feature_snapshot_fallback_mode=first_non_empty(
             os.getenv("IBKR_FEATURE_SNAPSHOT_FALLBACK_MODE"),
             os.getenv("FEATURE_SNAPSHOT_FALLBACK_MODE"),

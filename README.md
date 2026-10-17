@@ -52,6 +52,7 @@ uv run --no-sync python scripts/check_qpk_pin_consistency.py
 
 ## Useful docs
 
+- [`docs/historical_price_basis.md`](docs/historical_price_basis.md): explicit `PRICE_BASIS` / `price_basis`, coherent OHLC, and unavailable-basis failures
 - [`docs/hk_equity_runtime.md`](docs/hk_equity_runtime.md)
 - [`docs/ibkr_paper_top50_switch.md`](docs/ibkr_paper_top50_switch.md)
 - [`docs/ibkr_runtime_rollout.md`](docs/ibkr_runtime_rollout.md)
