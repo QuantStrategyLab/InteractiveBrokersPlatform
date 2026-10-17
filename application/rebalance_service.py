@@ -16,6 +16,7 @@ from application.reconciliation_service import (
 )
 from application.signal_snapshot import build_signal_snapshot
 from notifications.events import NotificationPublisher
+from notifications.unified_adapter import enabled as unified_enabled, publish_cycle
 from notifications import renderers as notification_renderers
 from notifications.renderers import _build_order_batch_lines
 from quant_platform_kit.common.execution_state import build_execution_marker_key, claim_account_owner
@@ -116,6 +117,8 @@ def _should_suppress_noop_notification(
     no-trade cycle when no-trade notifications are enabled.
     """
     metadata = signal_metadata if isinstance(signal_metadata, Mapping) else {}
+    if unified_enabled():
+        return False  # The notification adapter must persist before suppressing.
     from notifications.digest_snapshot.digest_routing import defer_routine_cycle_to_digest
     if has_error or any(metadata.get(key) for key in (
         "error", "errors", "fail_reason", "execution_blocked_reason", "plugin_error",
@@ -198,6 +201,8 @@ def _has_notification_attention(signal_metadata, execution_summary=None, *, reas
 
 
 def _should_publish_execution_notification(*, config, signal_metadata, execution_summary, trade_logs) -> bool:
+    if unified_enabled():
+        return True  # Includes quiet/dry-run coverage; delivery is adapter-owned.
     from notifications.digest_snapshot.digest_routing import defer_routine_cycle_to_digest
 
     if _has_notification_attention(
@@ -1111,8 +1116,11 @@ def run_strategy_core(
                     flush=True,
                 )
             else:
-                notification_publisher.publish(
-                    notification_renderers.render_heartbeat_notification(
+                publish_cycle(
+                    notification_publisher,
+                    execution={"execution_status": "no_action", **(signal_metadata or {}), **(blocked_summary or {})},
+                    attention=has_error,
+                    notification=notification_renderers.render_heartbeat_notification(
                         dashboard=dashboard,
                         strategy_dashboard=strategy_dashboard,
                         no_op_text=no_op_text,
@@ -1201,8 +1209,11 @@ def run_strategy_core(
                     flush=True,
                 )
             else:
-                notification_publisher.publish(
-                    notification_renderers.render_heartbeat_notification(
+                publish_cycle(
+                    notification_publisher,
+                    execution={**(signal_metadata or {}), "execution_status": "no_op", "no_op_reason": "execution_already_recorded"},
+                    attention=_has_notification_attention(signal_metadata, reason_codes=getattr(config, "notification_attention_reason_codes", ())),
+                    notification=notification_renderers.render_heartbeat_notification(
                         dashboard=dashboard,
                         strategy_dashboard=strategy_dashboard,
                         no_op_text=config.translator("no_trades"),
@@ -1343,8 +1354,12 @@ def run_strategy_core(
             config=config, signal_metadata=signal_metadata,
             execution_summary=execution_summary, trade_logs=trade_logs,
         ):
-            notification_publisher.publish(
-                notification_renderers.render_trade_notification(
+            publish_cycle(
+                notification_publisher,
+                execution={**(signal_metadata or {}), **(execution_summary or {})},
+                attention=_has_notification_attention(signal_metadata, execution_summary,
+                    reason_codes=getattr(config, "notification_attention_reason_codes", ())),
+                notification=notification_renderers.render_trade_notification(
                     dashboard=dashboard,
                     strategy_dashboard=strategy_dashboard,
                     trade_logs=trade_logs,

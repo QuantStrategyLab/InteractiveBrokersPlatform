@@ -2,7 +2,7 @@ import copy
 
 import pytest
 
-from notifications.renderers import render_trade_notification
+from notifications.renderers import render_trade_notification, _localize_notification_text
 from notifications.telegram import build_translator
 
 
@@ -62,7 +62,7 @@ def test_unsubmitted_notification_uses_neutral_result_title(locale, summary, tra
     assert summary == original
     if summary.get("no_op_reason") == "quantity_zero:TQQQ":
         assert "TQQQ" in rendered.compact_text
-        assert "整数股数量为0" in rendered.compact_text if locale == "zh" else "quantity_zero" in rendered.compact_text
+        assert "整数股数量为0" in rendered.compact_text if locale == "zh" else "whole-share quantity is zero" in rendered.compact_text
 
 
 @pytest.mark.parametrize("locale", ["zh", "en"])
@@ -86,3 +86,50 @@ def test_broker_order_evidence_with_skips_keeps_trade_title(locale, field):
     assert rendered.detailed_text.splitlines()[0] == expected
     assert "QQQM" in rendered.compact_text
     assert summary == original
+
+
+@pytest.mark.parametrize("locale,expected", [
+    ("zh", "未下单：低于最小订单金额（TQQQ）"),
+    ("en", "No order: below minimum order amount (TQQQ)"),
+])
+@pytest.mark.parametrize("flag", [None, "true"])
+@pytest.mark.parametrize("logs", [(), ("reason=min_notional:TQQQ",)])
+def test_a1_minimum_amount_reason_has_no_nested_label(monkeypatch, locale, expected, flag, logs):
+    if flag is None:
+        monkeypatch.delenv("IBKR_UNIFIED_NOTIFICATION_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("IBKR_UNIFIED_NOTIFICATION_ENABLED", flag)
+    summary = {"execution_status": "no_op", "no_op_reason": "min_notional:TQQQ"}
+    original = copy.deepcopy(summary)
+    rendered = _render(summary, locale=locale, trade_logs=logs)
+    for text in (rendered.compact_text, rendered.detailed_text):
+        assert expected in text
+        assert "min_notional" not in text
+        assert "reason=" not in text
+        assert "原因=" not in text
+        assert not text.startswith(build_translator(locale)("rebalance_title"))
+    assert summary == original
+
+
+@pytest.mark.parametrize("locale", ["zh", "en"])
+@pytest.mark.parametrize("flag", [None, "false", "true"])
+@pytest.mark.parametrize("reason", ["min_notional:AAA", "quantity_zero:AAA"])
+def test_a1_preserves_independent_diagnostics_with_different_reasons(monkeypatch, locale, flag, reason):
+    if flag is None:
+        monkeypatch.delenv("IBKR_UNIFIED_NOTIFICATION_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("IBKR_UNIFIED_NOTIFICATION_ENABLED", flag)
+    diagnostics = (["安全警告：原因=auth_failure", "连接警告：原因=receipt_missing", "独立警告：原因=" + reason]
+                   if locale == "zh" else
+                   ["Safety warning: reason=auth_failure", "Connection warning: reason=receipt_missing", "Independent warning: reason=" + reason])
+    duplicate = ("原因=" if locale == "zh" else "reason=") + reason
+    # A matching reason embedded in a warning is still an independent diagnostic.
+    rendered = _render({"execution_status": "no_op", "no_op_reason": reason}, locale=locale,
+                       trade_logs=[duplicate, *diagnostics, duplicate + "_different"])
+    for text in (rendered.compact_text, rendered.detailed_text):
+        translator = build_translator(locale)
+        for diagnostic in diagnostics:
+            assert _localize_notification_text(diagnostic, translator=translator) in text
+        assert _localize_notification_text(duplicate + "_different", translator=translator) in text
+        assert text.count("未下单：" if locale == "zh" else "No order:") == 1
+    assert duplicate not in rendered.detailed_text.splitlines()

@@ -98,6 +98,7 @@ def _build_test_translator():
         "dry_run_snapshot_prices": "dry_run_snapshot_prices count={count} symbols={symbols}",
         "price_fallback_prices": "price_fallback_prices count={count} symbols={symbols}",
         "no_order_plan_reason": "no_order_plan_reason {reason}",
+        "no_order_below_minimum": "below minimum order amount",
         "dry_run_buy_batch": "dry_run_buy_batch count={count} details={details}",
         "dry_run_sell_batch": "dry_run_sell_batch count={count} details={details}",
         "submitted_buy_batch": "submitted_buy_batch count={count} details={details}",
@@ -340,7 +341,7 @@ def test_notification_trade_lines_include_no_order_reason_for_small_account_zh()
         translator=build_translator("zh"),
     )
 
-    assert lines == ["未下单: 原因=低于最小订单金额:BOXX,QQQ,TQQQ"]
+    assert lines == ["未下单：低于最小订单金额（BOXX,QQQ,TQQQ）"]
 
 
 def test_notification_trade_lines_include_no_order_reason_for_small_account_en():
@@ -350,7 +351,7 @@ def test_notification_trade_lines_include_no_order_reason_for_small_account_en()
         translator=build_translator("en"),
     )
 
-    assert lines == ["No order submitted: reason=min_notional:BOXX,QQQ,TQQQ"]
+    assert lines == ["No order: below minimum order amount (BOXX,QQQ,TQQQ)"]
 
 
 def test_trade_notification_localizes_compact_signal_state_for_zh_and_en():
@@ -665,7 +666,7 @@ def test_trade_notification_keeps_detailed_logs_out_of_compact_message():
     assert "Total assets: $1,000.00" in notification.compact_text
     assert "📌 Strategy portfolio" not in notification.compact_text
     assert "⏱ Timing:" not in notification.compact_text
-    assert "no_order_plan_reason reason=min_notional:QQQ,TQQQ" in notification.compact_text
+    assert "no_order_plan_reason below minimum order amount (QQQ,TQQQ)" in notification.compact_text
     assert "🆔 Account: U00000003" not in notification.compact_text
     assert "🧩 Plugin:" not in notification.compact_text
 

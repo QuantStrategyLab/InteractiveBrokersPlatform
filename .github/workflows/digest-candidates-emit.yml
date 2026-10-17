@@ -68,6 +68,7 @@ jobs:
       contents: read
       id-token: write
     env:
+      IBKR_UNIFIED_NOTIFICATION_ENABLED: ${{ vars.IBKR_UNIFIED_NOTIFICATION_ENABLED || 'false' }}
       GCP_PROJECT_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID }}
       IBKR_ACCOUNT_FACTS_PROJECT_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID }}
       GCP_WORKLOAD_IDENTITY_PROVIDER: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
@@ -147,6 +148,10 @@ jobs:
           STORE_TARGET: ${{ inputs.target }}
         run: |
           set -euo pipefail
+          if uv run --no-sync python -c 'import os, sys; from notifications.unified_adapter import enabled; sys.exit(0 if enabled(os.environ) else 1)'; then
+            echo "Unified producer owns the complete window; legacy projection remains local."
+            exit 0
+          fi
           if [[ -z "${DIGEST_CANDIDATES_GCS_URI}" ]]; then
             echo "dry_run: vars.DIGEST_CANDIDATES_GCS_URI is unset; candidates stay in runner temp (not uploaded)."
             python3 scripts/digest_candidates_store.py summarize --path "$CANDIDATES_PATH"

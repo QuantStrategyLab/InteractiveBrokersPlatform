@@ -1,0 +1,1994 @@
+{
+  "cycle:heartbeat:zh": {
+    "calls": [
+      [
+        "connect"
+      ],
+      [
+        "portfolio"
+      ],
+      [
+        "signals",
+        []
+      ],
+      [
+        "persist",
+        "no_op",
+        []
+      ],
+      [
+        "send",
+        "💓 【心跳检测】\n🧭 策略: Example\n✅ 无需调仓"
+      ],
+      [
+        "telemetry"
+      ],
+      [
+        "connected"
+      ],
+      [
+        "disconnect"
+      ]
+    ],
+    "result": "OK - heartbeat"
+  },
+  "daily_digest:cycle:heartbeat:zh": {
+    "calls": [
+      [
+        "connect"
+      ],
+      [
+        "portfolio"
+      ],
+      [
+        "signals",
+        []
+      ],
+      [
+        "persist",
+        "no_op",
+        []
+      ],
+      [
+        "send",
+        "💓 【心跳检测】\n🧭 策略: Example\n✅ 无需调仓"
+      ],
+      [
+        "telemetry"
+      ],
+      [
+        "connected"
+      ],
+      [
+        "disconnect"
+      ]
+    ],
+    "result": "OK - heartbeat"
+  },
+  "cycle:heartbeat:en": {
+    "calls": [
+      [
+        "connect"
+      ],
+      [
+        "portfolio"
+      ],
+      [
+        "signals",
+        []
+      ],
+      [
+        "persist",
+        "no_op",
+        []
+      ],
+      [
+        "send",
+        "💓 【Heartbeat】\n🧭 Strategy: Example\n✅ No rebalance needed"
+      ],
+      [
+        "telemetry"
+      ],
+      [
+        "connected"
+      ],
+      [
+        "disconnect"
+      ]
+    ],
+    "result": "OK - heartbeat"
+  },
+  "daily_digest:cycle:heartbeat:en": {
+    "calls": [
+      [
+        "connect"
+      ],
+      [
+        "portfolio"
+      ],
+      [
+        "signals",
+        []
+      ],
+      [
+        "persist",
+        "no_op",
+        []
+      ],
+      [
+        "send",
+        "💓 【Heartbeat】\n🧭 Strategy: Example\n✅ No rebalance needed"
+      ],
+      [
+        "telemetry"
+      ],
+      [
+        "connected"
+      ],
+      [
+        "disconnect"
+      ]
+    ],
+    "result": "OK - heartbeat"
+  },
+  "cycle:no_order:zh": {
+    "calls": [
+      [
+        "connect"
+      ],
+      [
+        "portfolio"
+      ],
+      [
+        "signals",
+        []
+      ],
+      [
+        "execute",
+        {
+          "AAA": 0.5
+        },
+        {},
+        {
+          "equity": 500.0,
+          "buying_power": 500.0,
+          "currency": "",
+          "market_currency_cash": null,
+          "available_funds": null,
+          "cash_balances": [],
+          "heartbeat_account_snapshot": {
+            "currency": "",
+            "observed_at": "<timestamp>",
+            "available_cash": null,
+            "net_assets": null
+          }
+        },
+        {
+          "strategy_symbols": [
+            "AAA"
+          ],
+          "signal_metadata": {
+            "strategy_profile": "synthetic_strategy",
+            "status_icon": "",
+            "allocation": {
+              "target_mode": "weight",
+              "targets": {
+                "AAA": 0.5
+              },
+              "strategy_symbols": [
+                "AAA"
+              ]
+            },
+            "cash_only_execution": true,
+            "signal_snapshot": {
+              "schema_version": "signal_snapshot.v1",
+              "platform": "ibkr",
+              "strategy_profile": "synthetic_strategy",
+              "strategy_version": null,
+              "generated_at": "2026-10-16T20:00:00+00:00",
+              "signal_as_of": null,
+              "market_date": null,
+              "effective_date": null,
+              "latest_price_source": "ibkr_strategy_market_data",
+              "quote_overlay_used": null,
+              "data_freshness_warning": null,
+              "signal": null,
+              "status": null,
+              "target_mode": "weight",
+              "target_weights": {
+                "AAA": 0.5
+              },
+              "target_values": {},
+              "indicators": {}
+            }
+          }
+        }
+      ],
+      [
+        "persist",
+        "completed",
+        []
+      ],
+      [
+        "send",
+        "💓 【心跳检测】\n🧭 策略: Example\n✅ 无需调仓"
+      ],
+      [
+        "telemetry"
+      ],
+      [
+        "connected"
+      ],
+      [
+        "disconnect"
+      ]
+    ],
+    "result": "OK - executed"
+  },
+  "daily_digest:cycle:no_order:zh": {
+    "calls": [
+      [
+        "connect"
+      ],
+      [
+        "portfolio"
+      ],
+      [
+        "signals",
+        []
+      ],
+      [
+        "execute",
+        {
+          "AAA": 0.5
+        },
+        {},
+        {
+          "equity": 500.0,
+          "buying_power": 500.0,
+          "currency": "",
+          "market_currency_cash": null,
+          "available_funds": null,
+          "cash_balances": [],
+          "heartbeat_account_snapshot": {
+            "currency": "",
+            "observed_at": "<timestamp>",
+            "available_cash": null,
+            "net_assets": null
+          }
+        },
+        {
+          "strategy_symbols": [
+            "AAA"
+          ],
+          "signal_metadata": {
+            "strategy_profile": "synthetic_strategy",
+            "status_icon": "",
+            "allocation": {
+              "target_mode": "weight",
+              "targets": {
+                "AAA": 0.5
+              },
+              "strategy_symbols": [
+                "AAA"
+              ]
+            },
+            "cash_only_execution": true,
+            "signal_snapshot": {
+              "schema_version": "signal_snapshot.v1",
+              "platform": "ibkr",
+              "strategy_profile": "synthetic_strategy",
+              "strategy_version": null,
+              "generated_at": "2026-10-16T20:00:00+00:00",
+              "signal_as_of": null,
+              "market_date": null,
+              "effective_date": null,
+              "latest_price_source": "ibkr_strategy_market_data",
+              "quote_overlay_used": null,
+              "data_freshness_warning": null,
+              "signal": null,
+              "status": null,
+              "target_mode": "weight",
+              "target_weights": {
+                "AAA": 0.5
+              },
+              "target_values": {},
+              "indicators": {}
+            }
+          }
+        }
+      ],
+      [
+        "persist",
+        "completed",
+        []
+      ],
+      [
+        "telemetry"
+      ],
+      [
+        "connected"
+      ],
+      [
+        "disconnect"
+      ]
+    ],
+    "result": "OK - executed"
+  },
+  "cycle:no_order:en": {
+    "calls": [
+      [
+        "connect"
+      ],
+      [
+        "portfolio"
+      ],
+      [
+        "signals",
+        []
+      ],
+      [
+        "execute",
+        {
+          "AAA": 0.5
+        },
+        {},
+        {
+          "equity": 500.0,
+          "buying_power": 500.0,
+          "currency": "",
+          "market_currency_cash": null,
+          "available_funds": null,
+          "cash_balances": [],
+          "heartbeat_account_snapshot": {
+            "currency": "",
+            "observed_at": "<timestamp>",
+            "available_cash": null,
+            "net_assets": null
+          }
+        },
+        {
+          "strategy_symbols": [
+            "AAA"
+          ],
+          "signal_metadata": {
+            "strategy_profile": "synthetic_strategy",
+            "status_icon": "",
+            "allocation": {
+              "target_mode": "weight",
+              "targets": {
+                "AAA": 0.5
+              },
+              "strategy_symbols": [
+                "AAA"
+              ]
+            },
+            "cash_only_execution": true,
+            "signal_snapshot": {
+              "schema_version": "signal_snapshot.v1",
+              "platform": "ibkr",
+              "strategy_profile": "synthetic_strategy",
+              "strategy_version": null,
+              "generated_at": "2026-10-16T20:00:00+00:00",
+              "signal_as_of": null,
+              "market_date": null,
+              "effective_date": null,
+              "latest_price_source": "ibkr_strategy_market_data",
+              "quote_overlay_used": null,
+              "data_freshness_warning": null,
+              "signal": null,
+              "status": null,
+              "target_mode": "weight",
+              "target_weights": {
+                "AAA": 0.5
+              },
+              "target_values": {},
+              "indicators": {}
+            }
+          }
+        }
+      ],
+      [
+        "persist",
+        "completed",
+        []
+      ],
+      [
+        "send",
+        "💓 【Heartbeat】\n🧭 Strategy: Example\n✅ No rebalance needed"
+      ],
+      [
+        "telemetry"
+      ],
+      [
+        "connected"
+      ],
+      [
+        "disconnect"
+      ]
+    ],
+    "result": "OK - executed"
+  },
+  "daily_digest:cycle:no_order:en": {
+    "calls": [
+      [
+        "connect"
+      ],
+      [
+        "portfolio"
+      ],
+      [
+        "signals",
+        []
+      ],
+      [
+        "execute",
+        {
+          "AAA": 0.5
+        },
+        {},
+        {
+          "equity": 500.0,
+          "buying_power": 500.0,
+          "currency": "",
+          "market_currency_cash": null,
+          "available_funds": null,
+          "cash_balances": [],
+          "heartbeat_account_snapshot": {
+            "currency": "",
+            "observed_at": "<timestamp>",
+            "available_cash": null,
+            "net_assets": null
+          }
+        },
+        {
+          "strategy_symbols": [
+            "AAA"
+          ],
+          "signal_metadata": {
+            "strategy_profile": "synthetic_strategy",
+            "status_icon": "",
+            "allocation": {
+              "target_mode": "weight",
+              "targets": {
+                "AAA": 0.5
+              },
+              "strategy_symbols": [
+                "AAA"
+              ]
+            },
+            "cash_only_execution": true,
+            "signal_snapshot": {
+              "schema_version": "signal_snapshot.v1",
+              "platform": "ibkr",
+              "strategy_profile": "synthetic_strategy",
+              "strategy_version": null,
+              "generated_at": "2026-10-16T20:00:00+00:00",
+              "signal_as_of": null,
+              "market_date": null,
+              "effective_date": null,
+              "latest_price_source": "ibkr_strategy_market_data",
+              "quote_overlay_used": null,
+              "data_freshness_warning": null,
+              "signal": null,
+              "status": null,
+              "target_mode": "weight",
+              "target_weights": {
+                "AAA": 0.5
+              },
+              "target_values": {},
+              "indicators": {}
+            }
+          }
+        }
+      ],
+      [
+        "persist",
+        "completed",
+        []
+      ],
+      [
+        "telemetry"
+      ],
+      [
+        "connected"
+      ],
+      [
+        "disconnect"
+      ]
+    ],
+    "result": "OK - executed"
+  },
+  "cycle:filled:zh": {
+    "calls": [
+      [
+        "connect"
+      ],
+      [
+        "portfolio"
+      ],
+      [
+        "signals",
+        []
+      ],
+      [
+        "execute",
+        {
+          "AAA": 0.5
+        },
+        {},
+        {
+          "equity": 500.0,
+          "buying_power": 500.0,
+          "currency": "",
+          "market_currency_cash": null,
+          "available_funds": null,
+          "cash_balances": [],
+          "heartbeat_account_snapshot": {
+            "currency": "",
+            "observed_at": "<timestamp>",
+            "available_cash": null,
+            "net_assets": null
+          }
+        },
+        {
+          "strategy_symbols": [
+            "AAA"
+          ],
+          "signal_metadata": {
+            "strategy_profile": "synthetic_strategy",
+            "status_icon": "",
+            "allocation": {
+              "target_mode": "weight",
+              "targets": {
+                "AAA": 0.5
+              },
+              "strategy_symbols": [
+                "AAA"
+              ]
+            },
+            "cash_only_execution": true,
+            "signal_snapshot": {
+              "schema_version": "signal_snapshot.v1",
+              "platform": "ibkr",
+              "strategy_profile": "synthetic_strategy",
+              "strategy_version": null,
+              "generated_at": "2026-10-16T20:00:00+00:00",
+              "signal_as_of": null,
+              "market_date": null,
+              "effective_date": null,
+              "latest_price_source": "ibkr_strategy_market_data",
+              "quote_overlay_used": null,
+              "data_freshness_warning": null,
+              "signal": null,
+              "status": null,
+              "target_mode": "weight",
+              "target_weights": {
+                "AAA": 0.5
+              },
+              "target_values": {},
+              "indicators": {}
+            }
+          }
+        }
+      ],
+      [
+        "persist",
+        "completed",
+        [
+          {
+            "symbol": "AAA",
+            "side": "buy",
+            "quantity": 1,
+            "status": "filled"
+          }
+        ]
+      ],
+      [
+        "send",
+        "🔔 【调仓指令】\n🧭 策略: Example\n📈 已提交买单 1个标的: AAA 1\n✅ 买单成交 1个标的: AAA 1"
+      ],
+      [
+        "telemetry"
+      ],
+      [
+        "connected"
+      ],
+      [
+        "disconnect"
+      ]
+    ],
+    "result": "OK - executed"
+  },
+  "daily_digest:cycle:filled:zh": {
+    "calls": [
+      [
+        "connect"
+      ],
+      [
+        "portfolio"
+      ],
+      [
+        "signals",
+        []
+      ],
+      [
+        "execute",
+        {
+          "AAA": 0.5
+        },
+        {},
+        {
+          "equity": 500.0,
+          "buying_power": 500.0,
+          "currency": "",
+          "market_currency_cash": null,
+          "available_funds": null,
+          "cash_balances": [],
+          "heartbeat_account_snapshot": {
+            "currency": "",
+            "observed_at": "<timestamp>",
+            "available_cash": null,
+            "net_assets": null
+          }
+        },
+        {
+          "strategy_symbols": [
+            "AAA"
+          ],
+          "signal_metadata": {
+            "strategy_profile": "synthetic_strategy",
+            "status_icon": "",
+            "allocation": {
+              "target_mode": "weight",
+              "targets": {
+                "AAA": 0.5
+              },
+              "strategy_symbols": [
+                "AAA"
+              ]
+            },
+            "cash_only_execution": true,
+            "signal_snapshot": {
+              "schema_version": "signal_snapshot.v1",
+              "platform": "ibkr",
+              "strategy_profile": "synthetic_strategy",
+              "strategy_version": null,
+              "generated_at": "2026-10-16T20:00:00+00:00",
+              "signal_as_of": null,
+              "market_date": null,
+              "effective_date": null,
+              "latest_price_source": "ibkr_strategy_market_data",
+              "quote_overlay_used": null,
+              "data_freshness_warning": null,
+              "signal": null,
+              "status": null,
+              "target_mode": "weight",
+              "target_weights": {
+                "AAA": 0.5
+              },
+              "target_values": {},
+              "indicators": {}
+            }
+          }
+        }
+      ],
+      [
+        "persist",
+        "completed",
+        [
+          {
+            "symbol": "AAA",
+            "side": "buy",
+            "quantity": 1,
+            "status": "filled"
+          }
+        ]
+      ],
+      [
+        "telemetry"
+      ],
+      [
+        "connected"
+      ],
+      [
+        "disconnect"
+      ]
+    ],
+    "result": "OK - executed"
+  },
+  "cycle:filled:en": {
+    "calls": [
+      [
+        "connect"
+      ],
+      [
+        "portfolio"
+      ],
+      [
+        "signals",
+        []
+      ],
+      [
+        "execute",
+        {
+          "AAA": 0.5
+        },
+        {},
+        {
+          "equity": 500.0,
+          "buying_power": 500.0,
+          "currency": "",
+          "market_currency_cash": null,
+          "available_funds": null,
+          "cash_balances": [],
+          "heartbeat_account_snapshot": {
+            "currency": "",
+            "observed_at": "<timestamp>",
+            "available_cash": null,
+            "net_assets": null
+          }
+        },
+        {
+          "strategy_symbols": [
+            "AAA"
+          ],
+          "signal_metadata": {
+            "strategy_profile": "synthetic_strategy",
+            "status_icon": "",
+            "allocation": {
+              "target_mode": "weight",
+              "targets": {
+                "AAA": 0.5
+              },
+              "strategy_symbols": [
+                "AAA"
+              ]
+            },
+            "cash_only_execution": true,
+            "signal_snapshot": {
+              "schema_version": "signal_snapshot.v1",
+              "platform": "ibkr",
+              "strategy_profile": "synthetic_strategy",
+              "strategy_version": null,
+              "generated_at": "2026-10-16T20:00:00+00:00",
+              "signal_as_of": null,
+              "market_date": null,
+              "effective_date": null,
+              "latest_price_source": "ibkr_strategy_market_data",
+              "quote_overlay_used": null,
+              "data_freshness_warning": null,
+              "signal": null,
+              "status": null,
+              "target_mode": "weight",
+              "target_weights": {
+                "AAA": 0.5
+              },
+              "target_values": {},
+              "indicators": {}
+            }
+          }
+        }
+      ],
+      [
+        "persist",
+        "completed",
+        [
+          {
+            "symbol": "AAA",
+            "side": "buy",
+            "quantity": 1,
+            "status": "filled"
+          }
+        ]
+      ],
+      [
+        "send",
+        "🔔 【Trade Execution Report】\n🧭 Strategy: Example\n📈 Submitted buy orders for 1 symbols: AAA 1\n✅ Filled buy orders for 1 symbols: AAA 1"
+      ],
+      [
+        "telemetry"
+      ],
+      [
+        "connected"
+      ],
+      [
+        "disconnect"
+      ]
+    ],
+    "result": "OK - executed"
+  },
+  "daily_digest:cycle:filled:en": {
+    "calls": [
+      [
+        "connect"
+      ],
+      [
+        "portfolio"
+      ],
+      [
+        "signals",
+        []
+      ],
+      [
+        "execute",
+        {
+          "AAA": 0.5
+        },
+        {},
+        {
+          "equity": 500.0,
+          "buying_power": 500.0,
+          "currency": "",
+          "market_currency_cash": null,
+          "available_funds": null,
+          "cash_balances": [],
+          "heartbeat_account_snapshot": {
+            "currency": "",
+            "observed_at": "<timestamp>",
+            "available_cash": null,
+            "net_assets": null
+          }
+        },
+        {
+          "strategy_symbols": [
+            "AAA"
+          ],
+          "signal_metadata": {
+            "strategy_profile": "synthetic_strategy",
+            "status_icon": "",
+            "allocation": {
+              "target_mode": "weight",
+              "targets": {
+                "AAA": 0.5
+              },
+              "strategy_symbols": [
+                "AAA"
+              ]
+            },
+            "cash_only_execution": true,
+            "signal_snapshot": {
+              "schema_version": "signal_snapshot.v1",
+              "platform": "ibkr",
+              "strategy_profile": "synthetic_strategy",
+              "strategy_version": null,
+              "generated_at": "2026-10-16T20:00:00+00:00",
+              "signal_as_of": null,
+              "market_date": null,
+              "effective_date": null,
+              "latest_price_source": "ibkr_strategy_market_data",
+              "quote_overlay_used": null,
+              "data_freshness_warning": null,
+              "signal": null,
+              "status": null,
+              "target_mode": "weight",
+              "target_weights": {
+                "AAA": 0.5
+              },
+              "target_values": {},
+              "indicators": {}
+            }
+          }
+        }
+      ],
+      [
+        "persist",
+        "completed",
+        [
+          {
+            "symbol": "AAA",
+            "side": "buy",
+            "quantity": 1,
+            "status": "filled"
+          }
+        ]
+      ],
+      [
+        "telemetry"
+      ],
+      [
+        "connected"
+      ],
+      [
+        "disconnect"
+      ]
+    ],
+    "result": "OK - executed"
+  },
+  "cycle:pending:zh": {
+    "calls": [
+      [
+        "connect"
+      ],
+      [
+        "portfolio"
+      ],
+      [
+        "signals",
+        []
+      ],
+      [
+        "execute",
+        {
+          "AAA": 0.5
+        },
+        {},
+        {
+          "equity": 500.0,
+          "buying_power": 500.0,
+          "currency": "",
+          "market_currency_cash": null,
+          "available_funds": null,
+          "cash_balances": [],
+          "heartbeat_account_snapshot": {
+            "currency": "",
+            "observed_at": "<timestamp>",
+            "available_cash": null,
+            "net_assets": null
+          }
+        },
+        {
+          "strategy_symbols": [
+            "AAA"
+          ],
+          "signal_metadata": {
+            "strategy_profile": "synthetic_strategy",
+            "status_icon": "",
+            "allocation": {
+              "target_mode": "weight",
+              "targets": {
+                "AAA": 0.5
+              },
+              "strategy_symbols": [
+                "AAA"
+              ]
+            },
+            "cash_only_execution": true,
+            "signal_snapshot": {
+              "schema_version": "signal_snapshot.v1",
+              "platform": "ibkr",
+              "strategy_profile": "synthetic_strategy",
+              "strategy_version": null,
+              "generated_at": "2026-10-16T20:00:00+00:00",
+              "signal_as_of": null,
+              "market_date": null,
+              "effective_date": null,
+              "latest_price_source": "ibkr_strategy_market_data",
+              "quote_overlay_used": null,
+              "data_freshness_warning": null,
+              "signal": null,
+              "status": null,
+              "target_mode": "weight",
+              "target_weights": {
+                "AAA": 0.5
+              },
+              "target_values": {},
+              "indicators": {}
+            }
+          }
+        }
+      ],
+      [
+        "persist",
+        "pending_reconciliation",
+        [
+          {
+            "symbol": "AAA",
+            "side": "buy",
+            "quantity": 1,
+            "status": "pending"
+          }
+        ]
+      ],
+      [
+        "send",
+        "🔔 【调仓指令】\n🧭 策略: Example\n📈 已提交买单 1个标的: AAA 1\n⏳ 买单待券商最终确认 1个标的: AAA 1"
+      ],
+      [
+        "telemetry"
+      ],
+      [
+        "connected"
+      ],
+      [
+        "disconnect"
+      ]
+    ],
+    "result": "OK - executed"
+  },
+  "daily_digest:cycle:pending:zh": {
+    "calls": [
+      [
+        "connect"
+      ],
+      [
+        "portfolio"
+      ],
+      [
+        "signals",
+        []
+      ],
+      [
+        "execute",
+        {
+          "AAA": 0.5
+        },
+        {},
+        {
+          "equity": 500.0,
+          "buying_power": 500.0,
+          "currency": "",
+          "market_currency_cash": null,
+          "available_funds": null,
+          "cash_balances": [],
+          "heartbeat_account_snapshot": {
+            "currency": "",
+            "observed_at": "<timestamp>",
+            "available_cash": null,
+            "net_assets": null
+          }
+        },
+        {
+          "strategy_symbols": [
+            "AAA"
+          ],
+          "signal_metadata": {
+            "strategy_profile": "synthetic_strategy",
+            "status_icon": "",
+            "allocation": {
+              "target_mode": "weight",
+              "targets": {
+                "AAA": 0.5
+              },
+              "strategy_symbols": [
+                "AAA"
+              ]
+            },
+            "cash_only_execution": true,
+            "signal_snapshot": {
+              "schema_version": "signal_snapshot.v1",
+              "platform": "ibkr",
+              "strategy_profile": "synthetic_strategy",
+              "strategy_version": null,
+              "generated_at": "2026-10-16T20:00:00+00:00",
+              "signal_as_of": null,
+              "market_date": null,
+              "effective_date": null,
+              "latest_price_source": "ibkr_strategy_market_data",
+              "quote_overlay_used": null,
+              "data_freshness_warning": null,
+              "signal": null,
+              "status": null,
+              "target_mode": "weight",
+              "target_weights": {
+                "AAA": 0.5
+              },
+              "target_values": {},
+              "indicators": {}
+            }
+          }
+        }
+      ],
+      [
+        "persist",
+        "pending_reconciliation",
+        [
+          {
+            "symbol": "AAA",
+            "side": "buy",
+            "quantity": 1,
+            "status": "pending"
+          }
+        ]
+      ],
+      [
+        "send",
+        "🔔 【调仓指令】\n🧭 策略: Example\n📈 已提交买单 1个标的: AAA 1\n⏳ 买单待券商最终确认 1个标的: AAA 1"
+      ],
+      [
+        "telemetry"
+      ],
+      [
+        "connected"
+      ],
+      [
+        "disconnect"
+      ]
+    ],
+    "result": "OK - executed"
+  },
+  "cycle:pending:en": {
+    "calls": [
+      [
+        "connect"
+      ],
+      [
+        "portfolio"
+      ],
+      [
+        "signals",
+        []
+      ],
+      [
+        "execute",
+        {
+          "AAA": 0.5
+        },
+        {},
+        {
+          "equity": 500.0,
+          "buying_power": 500.0,
+          "currency": "",
+          "market_currency_cash": null,
+          "available_funds": null,
+          "cash_balances": [],
+          "heartbeat_account_snapshot": {
+            "currency": "",
+            "observed_at": "<timestamp>",
+            "available_cash": null,
+            "net_assets": null
+          }
+        },
+        {
+          "strategy_symbols": [
+            "AAA"
+          ],
+          "signal_metadata": {
+            "strategy_profile": "synthetic_strategy",
+            "status_icon": "",
+            "allocation": {
+              "target_mode": "weight",
+              "targets": {
+                "AAA": 0.5
+              },
+              "strategy_symbols": [
+                "AAA"
+              ]
+            },
+            "cash_only_execution": true,
+            "signal_snapshot": {
+              "schema_version": "signal_snapshot.v1",
+              "platform": "ibkr",
+              "strategy_profile": "synthetic_strategy",
+              "strategy_version": null,
+              "generated_at": "2026-10-16T20:00:00+00:00",
+              "signal_as_of": null,
+              "market_date": null,
+              "effective_date": null,
+              "latest_price_source": "ibkr_strategy_market_data",
+              "quote_overlay_used": null,
+              "data_freshness_warning": null,
+              "signal": null,
+              "status": null,
+              "target_mode": "weight",
+              "target_weights": {
+                "AAA": 0.5
+              },
+              "target_values": {},
+              "indicators": {}
+            }
+          }
+        }
+      ],
+      [
+        "persist",
+        "pending_reconciliation",
+        [
+          {
+            "symbol": "AAA",
+            "side": "buy",
+            "quantity": 1,
+            "status": "pending"
+          }
+        ]
+      ],
+      [
+        "send",
+        "🔔 【Trade Execution Report】\n🧭 Strategy: Example\n📈 Submitted buy orders for 1 symbols: AAA 1\n⏳ Buy orders pending broker confirmation for 1 symbols: AAA 1"
+      ],
+      [
+        "telemetry"
+      ],
+      [
+        "connected"
+      ],
+      [
+        "disconnect"
+      ]
+    ],
+    "result": "OK - executed"
+  },
+  "daily_digest:cycle:pending:en": {
+    "calls": [
+      [
+        "connect"
+      ],
+      [
+        "portfolio"
+      ],
+      [
+        "signals",
+        []
+      ],
+      [
+        "execute",
+        {
+          "AAA": 0.5
+        },
+        {},
+        {
+          "equity": 500.0,
+          "buying_power": 500.0,
+          "currency": "",
+          "market_currency_cash": null,
+          "available_funds": null,
+          "cash_balances": [],
+          "heartbeat_account_snapshot": {
+            "currency": "",
+            "observed_at": "<timestamp>",
+            "available_cash": null,
+            "net_assets": null
+          }
+        },
+        {
+          "strategy_symbols": [
+            "AAA"
+          ],
+          "signal_metadata": {
+            "strategy_profile": "synthetic_strategy",
+            "status_icon": "",
+            "allocation": {
+              "target_mode": "weight",
+              "targets": {
+                "AAA": 0.5
+              },
+              "strategy_symbols": [
+                "AAA"
+              ]
+            },
+            "cash_only_execution": true,
+            "signal_snapshot": {
+              "schema_version": "signal_snapshot.v1",
+              "platform": "ibkr",
+              "strategy_profile": "synthetic_strategy",
+              "strategy_version": null,
+              "generated_at": "2026-10-16T20:00:00+00:00",
+              "signal_as_of": null,
+              "market_date": null,
+              "effective_date": null,
+              "latest_price_source": "ibkr_strategy_market_data",
+              "quote_overlay_used": null,
+              "data_freshness_warning": null,
+              "signal": null,
+              "status": null,
+              "target_mode": "weight",
+              "target_weights": {
+                "AAA": 0.5
+              },
+              "target_values": {},
+              "indicators": {}
+            }
+          }
+        }
+      ],
+      [
+        "persist",
+        "pending_reconciliation",
+        [
+          {
+            "symbol": "AAA",
+            "side": "buy",
+            "quantity": 1,
+            "status": "pending"
+          }
+        ]
+      ],
+      [
+        "send",
+        "🔔 【Trade Execution Report】\n🧭 Strategy: Example\n📈 Submitted buy orders for 1 symbols: AAA 1\n⏳ Buy orders pending broker confirmation for 1 symbols: AAA 1"
+      ],
+      [
+        "telemetry"
+      ],
+      [
+        "connected"
+      ],
+      [
+        "disconnect"
+      ]
+    ],
+    "result": "OK - executed"
+  },
+  "cycle:error:zh": {
+    "calls": [
+      [
+        "connect"
+      ],
+      [
+        "portfolio"
+      ],
+      [
+        "signals",
+        []
+      ],
+      [
+        "execute",
+        {
+          "AAA": 0.5
+        },
+        {},
+        {
+          "equity": 500.0,
+          "buying_power": 500.0,
+          "currency": "",
+          "market_currency_cash": null,
+          "available_funds": null,
+          "cash_balances": [],
+          "heartbeat_account_snapshot": {
+            "currency": "",
+            "observed_at": "<timestamp>",
+            "available_cash": null,
+            "net_assets": null
+          }
+        },
+        {
+          "strategy_symbols": [
+            "AAA"
+          ],
+          "signal_metadata": {
+            "strategy_profile": "synthetic_strategy",
+            "status_icon": "",
+            "allocation": {
+              "target_mode": "weight",
+              "targets": {
+                "AAA": 0.5
+              },
+              "strategy_symbols": [
+                "AAA"
+              ]
+            },
+            "cash_only_execution": true,
+            "signal_snapshot": {
+              "schema_version": "signal_snapshot.v1",
+              "platform": "ibkr",
+              "strategy_profile": "synthetic_strategy",
+              "strategy_version": null,
+              "generated_at": "2026-10-16T20:00:00+00:00",
+              "signal_as_of": null,
+              "market_date": null,
+              "effective_date": null,
+              "latest_price_source": "ibkr_strategy_market_data",
+              "quote_overlay_used": null,
+              "data_freshness_warning": null,
+              "signal": null,
+              "status": null,
+              "target_mode": "weight",
+              "target_weights": {
+                "AAA": 0.5
+              },
+              "target_values": {},
+              "indicators": {}
+            }
+          }
+        }
+      ],
+      [
+        "persist",
+        "error",
+        []
+      ],
+      [
+        "send",
+        "💓 【心跳检测】\n🧭 策略: Example\n✅ 无需调仓"
+      ],
+      [
+        "telemetry"
+      ],
+      [
+        "connected"
+      ],
+      [
+        "disconnect"
+      ]
+    ],
+    "result": "Blocked - execution_blocked"
+  },
+  "daily_digest:cycle:error:zh": {
+    "calls": [
+      [
+        "connect"
+      ],
+      [
+        "portfolio"
+      ],
+      [
+        "signals",
+        []
+      ],
+      [
+        "execute",
+        {
+          "AAA": 0.5
+        },
+        {},
+        {
+          "equity": 500.0,
+          "buying_power": 500.0,
+          "currency": "",
+          "market_currency_cash": null,
+          "available_funds": null,
+          "cash_balances": [],
+          "heartbeat_account_snapshot": {
+            "currency": "",
+            "observed_at": "<timestamp>",
+            "available_cash": null,
+            "net_assets": null
+          }
+        },
+        {
+          "strategy_symbols": [
+            "AAA"
+          ],
+          "signal_metadata": {
+            "strategy_profile": "synthetic_strategy",
+            "status_icon": "",
+            "allocation": {
+              "target_mode": "weight",
+              "targets": {
+                "AAA": 0.5
+              },
+              "strategy_symbols": [
+                "AAA"
+              ]
+            },
+            "cash_only_execution": true,
+            "signal_snapshot": {
+              "schema_version": "signal_snapshot.v1",
+              "platform": "ibkr",
+              "strategy_profile": "synthetic_strategy",
+              "strategy_version": null,
+              "generated_at": "2026-10-16T20:00:00+00:00",
+              "signal_as_of": null,
+              "market_date": null,
+              "effective_date": null,
+              "latest_price_source": "ibkr_strategy_market_data",
+              "quote_overlay_used": null,
+              "data_freshness_warning": null,
+              "signal": null,
+              "status": null,
+              "target_mode": "weight",
+              "target_weights": {
+                "AAA": 0.5
+              },
+              "target_values": {},
+              "indicators": {}
+            }
+          }
+        }
+      ],
+      [
+        "persist",
+        "error",
+        []
+      ],
+      [
+        "send",
+        "💓 【心跳检测】\n🧭 策略: Example\n✅ 无需调仓"
+      ],
+      [
+        "telemetry"
+      ],
+      [
+        "connected"
+      ],
+      [
+        "disconnect"
+      ]
+    ],
+    "result": "Blocked - execution_blocked"
+  },
+  "cycle:error:en": {
+    "calls": [
+      [
+        "connect"
+      ],
+      [
+        "portfolio"
+      ],
+      [
+        "signals",
+        []
+      ],
+      [
+        "execute",
+        {
+          "AAA": 0.5
+        },
+        {},
+        {
+          "equity": 500.0,
+          "buying_power": 500.0,
+          "currency": "",
+          "market_currency_cash": null,
+          "available_funds": null,
+          "cash_balances": [],
+          "heartbeat_account_snapshot": {
+            "currency": "",
+            "observed_at": "<timestamp>",
+            "available_cash": null,
+            "net_assets": null
+          }
+        },
+        {
+          "strategy_symbols": [
+            "AAA"
+          ],
+          "signal_metadata": {
+            "strategy_profile": "synthetic_strategy",
+            "status_icon": "",
+            "allocation": {
+              "target_mode": "weight",
+              "targets": {
+                "AAA": 0.5
+              },
+              "strategy_symbols": [
+                "AAA"
+              ]
+            },
+            "cash_only_execution": true,
+            "signal_snapshot": {
+              "schema_version": "signal_snapshot.v1",
+              "platform": "ibkr",
+              "strategy_profile": "synthetic_strategy",
+              "strategy_version": null,
+              "generated_at": "2026-10-16T20:00:00+00:00",
+              "signal_as_of": null,
+              "market_date": null,
+              "effective_date": null,
+              "latest_price_source": "ibkr_strategy_market_data",
+              "quote_overlay_used": null,
+              "data_freshness_warning": null,
+              "signal": null,
+              "status": null,
+              "target_mode": "weight",
+              "target_weights": {
+                "AAA": 0.5
+              },
+              "target_values": {},
+              "indicators": {}
+            }
+          }
+        }
+      ],
+      [
+        "persist",
+        "error",
+        []
+      ],
+      [
+        "send",
+        "💓 【Heartbeat】\n🧭 Strategy: Example\n✅ No rebalance needed"
+      ],
+      [
+        "telemetry"
+      ],
+      [
+        "connected"
+      ],
+      [
+        "disconnect"
+      ]
+    ],
+    "result": "Blocked - execution_blocked"
+  },
+  "daily_digest:cycle:error:en": {
+    "calls": [
+      [
+        "connect"
+      ],
+      [
+        "portfolio"
+      ],
+      [
+        "signals",
+        []
+      ],
+      [
+        "execute",
+        {
+          "AAA": 0.5
+        },
+        {},
+        {
+          "equity": 500.0,
+          "buying_power": 500.0,
+          "currency": "",
+          "market_currency_cash": null,
+          "available_funds": null,
+          "cash_balances": [],
+          "heartbeat_account_snapshot": {
+            "currency": "",
+            "observed_at": "<timestamp>",
+            "available_cash": null,
+            "net_assets": null
+          }
+        },
+        {
+          "strategy_symbols": [
+            "AAA"
+          ],
+          "signal_metadata": {
+            "strategy_profile": "synthetic_strategy",
+            "status_icon": "",
+            "allocation": {
+              "target_mode": "weight",
+              "targets": {
+                "AAA": 0.5
+              },
+              "strategy_symbols": [
+                "AAA"
+              ]
+            },
+            "cash_only_execution": true,
+            "signal_snapshot": {
+              "schema_version": "signal_snapshot.v1",
+              "platform": "ibkr",
+              "strategy_profile": "synthetic_strategy",
+              "strategy_version": null,
+              "generated_at": "2026-10-16T20:00:00+00:00",
+              "signal_as_of": null,
+              "market_date": null,
+              "effective_date": null,
+              "latest_price_source": "ibkr_strategy_market_data",
+              "quote_overlay_used": null,
+              "data_freshness_warning": null,
+              "signal": null,
+              "status": null,
+              "target_mode": "weight",
+              "target_weights": {
+                "AAA": 0.5
+              },
+              "target_values": {},
+              "indicators": {}
+            }
+          }
+        }
+      ],
+      [
+        "persist",
+        "error",
+        []
+      ],
+      [
+        "send",
+        "💓 【Heartbeat】\n🧭 Strategy: Example\n✅ No rebalance needed"
+      ],
+      [
+        "telemetry"
+      ],
+      [
+        "connected"
+      ],
+      [
+        "disconnect"
+      ]
+    ],
+    "result": "Blocked - execution_blocked"
+  },
+  "heartbeat:healthy:zh": {
+    "sends": [
+      [
+        "[执行回执心跳] Example\n状态：正常\n已收到合格执行回执：status=ok@2026-10-16T20:00:00+00:00",
+        {}
+      ]
+    ],
+    "exit": 0
+  },
+  "daily_digest:heartbeat:healthy:zh": {
+    "sends": [
+      [
+        "[执行回执心跳] Example\n状态：正常\n已收到合格执行回执：status=ok@2026-10-16T20:00:00+00:00",
+        {}
+      ]
+    ],
+    "exit": 0
+  },
+  "heartbeat:healthy:en": {
+    "sends": [
+      [
+        "[Execution Report Heartbeat] Example\nStatus: normal\nAn acceptable execution report was received: status=ok@2026-10-16T20:00:00+00:00",
+        {}
+      ]
+    ],
+    "exit": 0
+  },
+  "daily_digest:heartbeat:healthy:en": {
+    "sends": [
+      [
+        "[Execution Report Heartbeat] Example\nStatus: normal\nAn acceptable execution report was received: status=ok@2026-10-16T20:00:00+00:00",
+        {}
+      ]
+    ],
+    "exit": 0
+  },
+  "heartbeat:missing:zh": {
+    "sends": [
+      [
+        "[执行回执心跳] Example\n检查范围：过去 36 小时\n问题：\n- 过去 36 小时内没有新的执行回执",
+        {}
+      ]
+    ],
+    "exit": 1
+  },
+  "daily_digest:heartbeat:missing:zh": {
+    "sends": [
+      [
+        "[执行回执心跳] Example\n检查范围：过去 36 小时\n问题：\n- 过去 36 小时内没有新的执行回执",
+        {}
+      ]
+    ],
+    "exit": 1
+  },
+  "heartbeat:missing:en": {
+    "sends": [
+      [
+        "[Execution Report Heartbeat] Example\nLookback: 36 hours\nIssues:\n- No new execution report in the last 36 hours",
+        {}
+      ]
+    ],
+    "exit": 1
+  },
+  "daily_digest:heartbeat:missing:en": {
+    "sends": [
+      [
+        "[Execution Report Heartbeat] Example\nLookback: 36 hours\nIssues:\n- No new execution report in the last 36 hours",
+        {}
+      ]
+    ],
+    "exit": 1
+  },
+  "drill:healthy:zh": {
+    "sends": [],
+    "exit": 0
+  },
+  "daily_digest:drill:healthy:zh": {
+    "sends": [],
+    "exit": 0
+  },
+  "drill:healthy:en": {
+    "sends": [],
+    "exit": 0
+  },
+  "daily_digest:drill:healthy:en": {
+    "sends": [],
+    "exit": 0
+  },
+  "drill:alert:zh": {
+    "sends": [
+      [
+        "🧪 IBKR 每日模拟演练\n仅检查已配置的只读目标；实盘下单任务应保持关闭。\nExample · 2026-10-16：synthetic status",
+        {
+          "retry_429_once": true
+        }
+      ]
+    ],
+    "exit": 1
+  },
+  "daily_digest:drill:alert:zh": {
+    "sends": [
+      [
+        "🧪 IBKR 每日模拟演练\n仅检查已配置的只读目标；实盘下单任务应保持关闭。\nExample · 2026-10-16：synthetic status",
+        {
+          "retry_429_once": true
+        }
+      ]
+    ],
+    "exit": 1
+  },
+  "drill:alert:en": {
+    "sends": [
+      [
+        "🧪 IBKR 每日模拟演练\n仅检查已配置的只读目标；实盘下单任务应保持关闭。\nExample · 2026-10-16：synthetic status",
+        {
+          "retry_429_once": true
+        }
+      ]
+    ],
+    "exit": 1
+  },
+  "daily_digest:drill:alert:en": {
+    "sends": [
+      [
+        "🧪 IBKR 每日模拟演练\n仅检查已配置的只读目标；实盘下单任务应保持关闭。\nExample · 2026-10-16：synthetic status",
+        {
+          "retry_429_once": true
+        }
+      ]
+    ],
+    "exit": 1
+  },
+  "attention:blocked:zh": {
+    "sends": [
+      {
+        "text": "🚨 ibkr · -account · soxl_soxx_trend_income\n结果：已禁止新增风险\n原因：operational_uncertain: 运行状态不确定 / 故障; new_risk_prohibited: 风控已拦截；调用方未提供具体原因码\n下一步：打开管理站处理恢复 / 复位（需授权）",
+        "alert_key": "attention/ibkr/-account/soxl_soxx_trend_income/halt/operational_uncertain"
+      }
+    ],
+    "outcomes": [
+      {
+        "sent": 1,
+        "skipped": 0,
+        "failed": 0
+      },
+      {
+        "sent": 0,
+        "skipped": 1,
+        "failed": 0
+      }
+    ]
+  },
+  "daily_digest:attention:blocked:zh": {
+    "sends": [
+      {
+        "text": "🚨 ibkr · -account · soxl_soxx_trend_income\n结果：已禁止新增风险\n原因：operational_uncertain: 运行状态不确定 / 故障; new_risk_prohibited: 风控已拦截；调用方未提供具体原因码\n下一步：打开管理站处理恢复 / 复位（需授权）",
+        "alert_key": "attention/ibkr/-account/soxl_soxx_trend_income/halt/operational_uncertain"
+      }
+    ],
+    "outcomes": [
+      {
+        "sent": 1,
+        "skipped": 0,
+        "failed": 0
+      },
+      {
+        "sent": 0,
+        "skipped": 1,
+        "failed": 0
+      }
+    ]
+  },
+  "attention:blocked:en": {
+    "sends": [
+      {
+        "text": "🚨 ibkr · -account · soxl_soxx_trend_income\nResult: new risk additions prohibited\nReason: operational_uncertain: operational uncertainty / fault; new_risk_prohibited: a risk guard blocked additions; the caller did not provide the specific reason code\nNext: open the management console for recovery / reset (authorization required)",
+        "alert_key": "attention/ibkr/-account/soxl_soxx_trend_income/halt/operational_uncertain"
+      }
+    ],
+    "outcomes": [
+      {
+        "sent": 1,
+        "skipped": 0,
+        "failed": 0
+      },
+      {
+        "sent": 0,
+        "skipped": 1,
+        "failed": 0
+      }
+    ]
+  },
+  "daily_digest:attention:blocked:en": {
+    "sends": [
+      {
+        "text": "🚨 ibkr · -account · soxl_soxx_trend_income\nResult: new risk additions prohibited\nReason: operational_uncertain: operational uncertainty / fault; new_risk_prohibited: a risk guard blocked additions; the caller did not provide the specific reason code\nNext: open the management console for recovery / reset (authorization required)",
+        "alert_key": "attention/ibkr/-account/soxl_soxx_trend_income/halt/operational_uncertain"
+      }
+    ],
+    "outcomes": [
+      {
+        "sent": 1,
+        "skipped": 0,
+        "failed": 0
+      },
+      {
+        "sent": 0,
+        "skipped": 1,
+        "failed": 0
+      }
+    ]
+  },
+  "attention:allowed:zh": {
+    "sends": [],
+    "outcomes": [
+      {
+        "sent": 0,
+        "skipped": 1,
+        "failed": 0
+      },
+      {
+        "sent": 0,
+        "skipped": 1,
+        "failed": 0
+      }
+    ]
+  },
+  "daily_digest:attention:allowed:zh": {
+    "sends": [],
+    "outcomes": [
+      {
+        "sent": 0,
+        "skipped": 1,
+        "failed": 0
+      },
+      {
+        "sent": 0,
+        "skipped": 1,
+        "failed": 0
+      }
+    ]
+  },
+  "attention:allowed:en": {
+    "sends": [],
+    "outcomes": [
+      {
+        "sent": 0,
+        "skipped": 1,
+        "failed": 0
+      },
+      {
+        "sent": 0,
+        "skipped": 1,
+        "failed": 0
+      }
+    ]
+  },
+  "daily_digest:attention:allowed:en": {
+    "sends": [],
+    "outcomes": [
+      {
+        "sent": 0,
+        "skipped": 1,
+        "failed": 0
+      },
+      {
+        "sent": 0,
+        "skipped": 1,
+        "failed": 0
+      }
+    ]
+  },
+  "runtime:error:zh": {
+    "sends": [
+      [
+        "⚠️ IBKR 策略运行失败\n🧭 策略: 全球ETF轮动\n运行目标：default\n本次运行未正常结束，请查看最新执行报告。\n下一步：检查 Gateway 连接及最新执行报告。",
+        "synthetic-chat",
+        true,
+        true
+      ]
+    ],
+    "result": true
+  },
+  "daily_digest:runtime:error:zh": {
+    "sends": [
+      [
+        "⚠️ IBKR 策略运行失败\n🧭 策略: 全球ETF轮动\n运行目标：default\n本次运行未正常结束，请查看最新执行报告。\n下一步：检查 Gateway 连接及最新执行报告。",
+        "synthetic-chat",
+        true,
+        true
+      ]
+    ],
+    "result": true
+  },
+  "runtime:error:en": {
+    "sends": [
+      [
+        "⚠️ IBKR strategy run failed\n🧭 Strategy: Global ETF Rotation\nTarget: default\nThe run did not finish successfully; check the latest execution report.\nNext: Check Gateway connectivity and the latest execution report.",
+        "synthetic-chat",
+        true,
+        true
+      ]
+    ],
+    "result": true
+  },
+  "daily_digest:runtime:error:en": {
+    "sends": [
+      [
+        "⚠️ IBKR strategy run failed\n🧭 Strategy: Global ETF Rotation\nTarget: default\nThe run did not finish successfully; check the latest execution report.\nNext: Check Gateway connectivity and the latest execution report.",
+        "synthetic-chat",
+        true,
+        true
+      ]
+    ],
+    "result": true
+  }
+}

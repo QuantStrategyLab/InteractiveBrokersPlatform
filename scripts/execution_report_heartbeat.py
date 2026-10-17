@@ -14,6 +14,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any
+from pathlib import Path
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from notifications.unified_adapter import enabled as unified_enabled, monitor_message, publish_monitor
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from quant_platform_kit.common.execution_receipts import validate_execution_receipt
@@ -1179,7 +1185,17 @@ def _send_telegram(message: str, *, retry_429_once: bool = False) -> bool:
     return ok
 
 
-def _notify_normal_heartbeat(name: str, detail: str, *, quiet_eligible: bool = True) -> None:
+def _notify_normal_heartbeat(name: str, detail: str, *, quiet_eligible: bool = True,
+                             reports=None, now=None) -> None:
+    if unified_enabled():
+        # No-due/closed-session observations do not invent an actual run.
+        for observation in reports or ():
+            report, report_quiet = observation if isinstance(observation, tuple) else (observation, quiet_eligible)
+            from notifications.unified_adapter import receipt_notification_kind
+            kind = receipt_notification_kind(report, quiet_eligible=report_quiet)
+            publish_monitor(kind=kind, report=report, now=now,
+                            send=lambda: _send_telegram(monitor_message(kind)))
+        return
     if quiet_eligible and not _env_bool("RUNTIME_HEARTBEAT_NOTIFY_ON_SUCCESS", False):
         return
     if quiet_eligible:
@@ -1250,7 +1266,10 @@ def main(now: dt.datetime | None = None) -> int:
             technical_details=[str(exc)],
         )
         print(message)
-        _send_telegram(message)
+        if unified_enabled():
+            publish_monitor(kind="real_error", now=now, send=lambda: _send_telegram(monitor_message("real_error")))
+        else:
+            _send_telegram(message)
         return 1 if fail_workflow else 0
     publication_grace_minutes = float(
         os.environ.get("RUNTIME_HEARTBEAT_PUBLICATION_GRACE_MINUTES") or "30"
@@ -1345,6 +1364,7 @@ def main(now: dt.datetime | None = None) -> int:
     inspected = []
     quiet_by_service = {}
     quiet_reports = []
+    accepted_payloads = []
     visible_report_details = []
     read_incomplete = False
     latest_report_seen = set()
@@ -1397,6 +1417,7 @@ def main(now: dt.datetime | None = None) -> int:
                 visible_report_details.append(
                     f"{service_name or name}: execution_status={_report_execution_status(payload) or 'unconfirmed'}; {reason}{freshness_detail}"
                 )
+            accepted_payloads.append((payload, quiet))
             execution_backend = _report_execution_backend(payload)
             if required_keys:
                 quiet_by_service.setdefault(service_name, quiet)
@@ -1431,6 +1452,7 @@ def main(now: dt.datetime | None = None) -> int:
             _notify_normal_heartbeat(
                 name, _notice("heartbeat_accepted_report", detail=details) if all(quiet_by_service[key] for key in required_keys) else details,
                 quiet_eligible=all(quiet_by_service[key] for key in required_keys),
+                **({"reports": accepted_payloads, "now": now} if unified_enabled() else {}),
             )
             return 0
     if accepted and not list_errors and not read_incomplete and not latest_report_issues:
@@ -1443,6 +1465,7 @@ def main(now: dt.datetime | None = None) -> int:
             name,
             _notice("heartbeat_accepted_report", detail=f"{reason}@{updated.isoformat()}") if all(quiet_reports) else "; ".join(visible_report_details),
             quiet_eligible=all(quiet_reports),
+            **({"reports": accepted_payloads, "now": now} if unified_enabled() else {}),
         )
         return 0
 
@@ -1488,7 +1511,16 @@ def main(now: dt.datetime | None = None) -> int:
         workflow_url=run_url,
     )
     print(message)
-    _send_telegram(message[:3900])
+    if unified_enabled():
+        kind = "receipt_missing" if not sorted_objects else "receipt_unacceptable"
+        if sorted_objects and not latest_report_issues and not list_errors and not read_incomplete:
+            kind = "receipt_stale"
+        targets = [_target_runtime_target(target) for target in required_targets] or [None]
+        for target in targets:
+            publish_monitor(kind=kind, target=target, now=now,
+                            send=lambda: _send_telegram(monitor_message(kind)))
+    else:
+        _send_telegram(message[:3900])
     return 1 if fail_workflow else 0
 
 
