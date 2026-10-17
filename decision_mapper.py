@@ -14,6 +14,7 @@ from quant_platform_kit.common.execution_translation import (
 )
 from strategy_registry import IBKR_PLATFORM, resolve_strategy_definition
 from us_equity_strategies.cash_only_equity import resolve_strategy_equity_for_targets
+from application.tqqq_budget_guard import check_tqqq_budget
 
 
 _EMERGENCY_FLAGS = frozenset({"emergency", "hard_defense"})
@@ -228,6 +229,26 @@ def map_strategy_decision(
                 risk_flags = tuple(dict.fromkeys((*risk_flags, "no_execute")))
                 diagnostics.setdefault("execution_blocked_reason", "non_positive_total_equity")
                 diagnostics.setdefault("portfolio_total_equity", total_equity)
+    if not no_execute and canonical_profile == "tqqq_growth_income":
+        budget_policy = runtime_metadata.get("tqqq_budget_policy")
+        budget_targets = None
+        if isinstance(budget_policy, Mapping) and budget_policy.get("enabled") is True:
+            try:
+                budget_targets = _approved_target_values(decision, runtime_metadata)
+            except (TypeError, ValueError, OverflowError):
+                pass  # The enabled guard rejects missing/invalid target values.
+        budget_check = check_tqqq_budget(
+            policy=budget_policy,
+            snapshot=runtime_metadata.get("tqqq_budget_snapshot"),
+            runtime_binding=runtime_metadata.get("tqqq_budget_runtime_binding"),
+            decision_at=runtime_metadata.get("tqqq_budget_decision_at"),
+            target_values=budget_targets,
+        )
+        diagnostics["tqqq_budget_status"] = budget_check.status
+        if not budget_check.allowed:
+            no_execute = True
+            risk_flags = tuple(dict.fromkeys((*risk_flags, "no_execute")))
+            diagnostics["execution_blocked_reason"] = budget_check.status
     normalized_decision = decision if no_execute else _normalize_to_weight_decision(decision, runtime_metadata)
     target_weights = None if no_execute else _derive_target_weights(normalized_decision)
     allocation_payload = None
@@ -244,6 +265,10 @@ def map_strategy_decision(
     is_emergency = bool(_EMERGENCY_FLAGS & set(risk_flags))
 
     metadata: dict[str, Any] = {**runtime_metadata, **diagnostics}
+    for private_budget_input in (
+        "tqqq_budget_policy", "tqqq_budget_snapshot", "tqqq_budget_runtime_binding", "tqqq_budget_decision_at",
+    ):
+        metadata.pop(private_budget_input, None)
     metadata["risk_gate"] = "APPROVE" if risk_gate_approved else "REJECT" if risk_gate_rejected else "UNVERIFIED"
     metadata.setdefault("strategy_profile", canonical_profile)
     metadata.setdefault("status_icon", "🐤")
