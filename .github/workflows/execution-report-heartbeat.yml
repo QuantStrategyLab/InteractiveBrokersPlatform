@@ -153,7 +153,7 @@ jobs:
         if: ${{ matrix.target == 'additional-1' || matrix.target == 'additional-2' || matrix.target == 'additional-3' }}
         env:
           IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}
-        run: python3 scripts/configure_account_facts_target.py
+        run: uv run --no-sync python -m scripts.configure_account_facts_target
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
@@ -165,7 +165,7 @@ jobs:
         uses: google-github-actions/setup-gcloud@v3
 
       - name: Publish one validated report
-        run: uv run --no-sync python scripts/publish_account_facts_from_report.py
+        run: uv run --no-sync python -m scripts.publish_account_facts_from_report
         env:
           IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ (matrix.target == 'additional-1' || matrix.target == 'additional-2' || matrix.target == 'additional-3') && secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON || '' }}
 
@@ -221,7 +221,7 @@ jobs:
       - name: Select protected additional target before cloud authentication
         env:
           IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}
-        run: python3 scripts/configure_account_facts_target.py
+        run: uv run --no-sync python -m scripts.configure_account_facts_target
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3

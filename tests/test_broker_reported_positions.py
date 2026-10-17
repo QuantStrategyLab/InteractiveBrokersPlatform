@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import copy
 import json
+
+import pytest
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -147,7 +149,8 @@ def test_facts_projection_absent_or_malformed_positions_omitted():
         assert "broker_reported_positions_scope" not in body
 
 
-def test_publish_strips_archive_only_positions_before_post(monkeypatch):
+@pytest.mark.parametrize("include_positions", [False, True])
+def test_publish_positions_are_opt_in_and_private_fields_are_omitted(monkeypatch, include_positions):
     observed = {}
 
     class Response:
@@ -168,8 +171,12 @@ def test_publish_strips_archive_only_positions_before_post(monkeypatch):
             return Response()
 
     monkeypatch.setattr(publisher, "build_opener", lambda *_args: Opener())
+    report = _report([dict(_ROW)])
+    report["summary"]["account_facts"]["private_note"] = "synthetic-private"
+    report["summary"]["account_facts"]["account_number"] = "synthetic-private"
     result = publisher.publish_ibkr_account_facts_history(
-        _report([dict(_ROW)]),
+        report,
+        include_positions=include_positions,
         now=datetime(2026, 9, 30, 1, 40, 1, tzinfo=timezone.utc),
         source_report_uri=_URI,
         sync_url=publisher.IBKR_ACCOUNT_FACTS_SYNC_URL,
@@ -178,8 +185,13 @@ def test_publish_strips_archive_only_positions_before_post(monkeypatch):
     )
     assert result == {"status": "published"}
     posted = json.loads(observed["request"].data)
-    assert "broker_reported_positions" not in posted
-    assert "broker_reported_positions_scope" not in posted
+    if include_positions:
+        assert posted["broker_reported_positions"] == [_ROW]
+        assert posted["broker_reported_positions_scope"] == "stocks_only"
+    else:
+        assert "broker_reported_positions" not in posted
+        assert "broker_reported_positions_scope" not in posted
+    assert "synthetic-private" not in json.dumps(posted)
     assert posted["account_ids"] == ["U00000001"]
 
 
@@ -236,3 +248,46 @@ def test_digest_absent_or_invalid_positions_omit_holdings():
         for row in payload["runs"]:
             assert "holdings" not in row
             assert "holdings_scope" not in row
+
+
+@pytest.mark.parametrize("include_positions", [False, True])
+def test_sync_payload_excludes_private_archive_fields(include_positions):
+    projected = _project(_report([dict(_ROW)]))
+    projected.update({
+        "source_report_uri": "synthetic-private-archive-location",
+        "account_number": "synthetic-private-identifier",
+        "orders": [{"internal_note": "synthetic-private"}],
+        "status": "ok",
+    })
+    posted = publisher.prepare_sync_payload(projected, include_positions=include_positions)
+    assert not {"source_report_uri", "account_number", "orders", "status"} & posted.keys()
+    assert "synthetic-private" not in json.dumps(posted)
+
+
+@pytest.mark.parametrize("switch", [None, "false", "1", "true"])
+def test_cli_positions_upload_requires_explicit_true(monkeypatch, switch):
+    env = {
+        "IBKR_ACCOUNT_FACTS_TARGET": publisher.IBKR_ACCOUNT_FACTS_PRIMARY_TARGET,
+        "IBKR_ACCOUNT_FACTS_REPORT_PREFIX": _EXPECTED["expected_report_prefix"],
+        "IBKR_ACCOUNT_FACTS_TARGET_ID": _EXPECTED["target_id"],
+        "IBKR_ACCOUNT_FACTS_PROJECT_ID": _EXPECTED["expected_project_id"],
+        "IBKR_ACCOUNT_FACTS_SERVICE_NAME": _EXPECTED["expected_service_name"],
+        "IBKR_ACCOUNT_FACTS_RUNTIME_REVISION": _EXPECTED["expected_runtime_revision"],
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE": _EXPECTED["expected_account_scope"],
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON": json.dumps(_EXPECTED["expected_account_selector"]),
+        "IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR": _EXPECTED["expected_deployment_selector"],
+    }
+    if switch is not None:
+        env["IBKR_ACCOUNT_FACTS_INCLUDE_POSITIONS"] = switch
+    monkeypatch.setattr(publisher.os, "environ", env)
+    monkeypatch.setattr(publisher, "_latest_report_uri", lambda **_kwargs: _URI)
+    monkeypatch.setattr(publisher, "_load_gcs_report", lambda *_args, **_kwargs: _report([dict(_ROW)]))
+    observed = {}
+
+    def publish(_report, **kwargs):
+        observed.update(kwargs)
+        return {"status": "published"}
+
+    monkeypatch.setattr(publisher, "publish_ibkr_account_facts_history", publish)
+    assert publisher.main() == 0
+    assert observed["include_positions"] is (switch == "true")
