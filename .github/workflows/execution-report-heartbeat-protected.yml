@@ -168,7 +168,7 @@ jobs:
       - name: Publish existing reports as unified digest candidates
         if: ${{ !cancelled() && (vars.IBKR_UNIFIED_NOTIFICATION_ENABLED != '' || (success() && vars.QSL_ROUTINE_NOTIFICATION_MODE == 'daily_digest')) }}
         env:
-          LEGACY_PRODUCER_ALLOWED: ${{ success() && 'true' || 'false' }}
+          LEGACY_PRODUCER_ALLOWED: ${{ job.status == 'success' && 'true' || 'false' }}
           QSL_ROUTINE_NOTIFICATION_MODE: ${{ vars.QSL_ROUTINE_NOTIFICATION_MODE || 'immediate' }}
           RUNTIME_TARGET_ENABLED: ${{ vars.RUNTIME_TARGET_ENABLED }}
           RUNTIME_TARGET_JSON: ${{ secrets.RUNTIME_TARGET_JSON }}
