@@ -443,6 +443,19 @@ def maybe_publish_attention_for_admission(
             mandate_dd_budget=resolve_mandate_dd_budget(profile),
         )
     )
+    from notifications.unified_adapter import enabled as unified_enabled, publish_risk_attention
+    if unified_enabled():
+        return publish_risk_attention(
+            decision,
+            lambda: publish_attention_telegram_transition(
+                decision=decision, platform=_ATTENTION_PLATFORM,
+                account_alias=_resolve_attention_account_alias(portfolio, execution),
+                strategy_profile=profile, previous_level=None,
+                telegram_sender=telegram_sender, log_message=log_message,
+            ),
+            profile=profile, reasons=reasons,
+            recovery_proven=admission.disposition == NewRiskDisposition.ALLOW_NEW_RISK and not operational_uncertain,
+        )
     return publish_attention_telegram_transition(
         decision=decision,
         platform=_ATTENTION_PLATFORM,

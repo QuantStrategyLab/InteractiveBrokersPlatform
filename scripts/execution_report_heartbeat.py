@@ -12,6 +12,10 @@ import sys
 import urllib.parse
 import urllib.request
 from typing import Any
+from pathlib import Path
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from notifications.unified_adapter import enabled as unified_enabled, monitor_message, publish_monitor
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from quant_platform_kit.common.operational_notification_localization import (
@@ -1025,7 +1029,17 @@ def _send_telegram(message: str) -> bool:
     return ok
 
 
-def _notify_normal_heartbeat(name: str, detail: str) -> None:
+def _notify_normal_heartbeat(name: str, detail: str, *, quiet_eligible: bool = True,
+                             reports=None, now=None) -> None:
+    if unified_enabled():
+        # No-due/closed-session observations do not invent an actual run.
+        for observation in reports or ():
+            report, report_quiet = observation if isinstance(observation, tuple) else (observation, quiet_eligible)
+            from notifications.unified_adapter import receipt_notification_kind
+            kind = receipt_notification_kind(report, quiet_eligible=report_quiet)
+            publish_monitor(kind=kind, report=report, now=now,
+                            send=lambda: _send_telegram(monitor_message(kind)))
+        return
     if not _env_bool("RUNTIME_HEARTBEAT_NOTIFY_ON_SUCCESS", False):
         return
     message = format_operational_heartbeat_status(
@@ -1091,7 +1105,10 @@ def main(now: dt.datetime | None = None) -> int:
             technical_details=[str(exc)],
         )
         print(message)
-        _send_telegram(message)
+        if unified_enabled():
+            publish_monitor(kind="real_error", now=now, send=lambda: _send_telegram(monitor_message("real_error")))
+        else:
+            _send_telegram(message)
         return 1 if fail_workflow else 0
     publication_grace_minutes = float(
         os.environ.get("RUNTIME_HEARTBEAT_PUBLICATION_GRACE_MINUTES") or "30"
@@ -1184,6 +1201,7 @@ def main(now: dt.datetime | None = None) -> int:
     accepted: list[tuple[str, dt.datetime, str, str]] = []
     accepted_by_service: dict[str, tuple[str, dt.datetime, str, str]] = {}
     inspected = []
+    accepted_payloads = []
     for uri, updated in sorted_objects[:max_reports]:
         payload = _cat_gcs_json(uri, project=project)
         if payload is None:
@@ -1207,6 +1225,8 @@ def main(now: dt.datetime | None = None) -> int:
         ok, reason = _is_accepted_report(payload)
         inspected.append(f"- {updated.isoformat()} {uri} {reason}")
         if ok:
+            if unified_enabled():
+                accepted_payloads.append((payload, _is_quiet_report(payload, now=now)))
             execution_backend = _report_execution_backend(payload)
             if required_keys:
                 accepted_by_service.setdefault(
@@ -1225,7 +1245,8 @@ def main(now: dt.datetime | None = None) -> int:
                 for key in required_keys
             )
             print(f"Execution report heartbeat OK for {name}: {details}")
-            _notify_normal_heartbeat(name, _notice("heartbeat_accepted_report", detail=details))
+            _notify_normal_heartbeat(name, _notice("heartbeat_accepted_report", detail=details),
+                **({"reports": accepted_payloads, "now": now} if unified_enabled() else {}))
             return 0
     if accepted:
         uri, updated, reason, execution_backend = accepted[0]
@@ -1236,6 +1257,7 @@ def main(now: dt.datetime | None = None) -> int:
         _notify_normal_heartbeat(
             name,
             _notice("heartbeat_accepted_report", detail=f"{reason}@{updated.isoformat()}"),
+            **({"reports": accepted_payloads, "now": now} if unified_enabled() else {}),
         )
         return 0
 
@@ -1279,8 +1301,147 @@ def main(now: dt.datetime | None = None) -> int:
         workflow_url=run_url,
     )
     print(message)
-    _send_telegram(message[:3900])
+    if unified_enabled():
+        kind = "receipt_missing" if not sorted_objects else "receipt_unacceptable"
+        targets = [_target_runtime_target(target) for target in required_targets] or [None]
+        for target in targets:
+            publish_monitor(kind=kind, target=target, now=now, send=lambda: _send_telegram(monitor_message(kind)))
+    else:
+        _send_telegram(message[:3900])
     return 1 if fail_workflow else 0
+
+
+
+def _notification_parse_timestamp(value: Any, *, require_timezone: bool = False) -> dt.datetime | None:
+    if not value:
+        return None
+    text = str(value).strip().replace("Z", "+00:00")
+    try:
+        parsed = dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        if require_timezone:
+            return None
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc)
+
+
+
+def _market_closed_by_calendar(payload: dict[str, Any]) -> bool:
+    """Recheck closure across the run; a producer's fail-closed fallback is not proof."""
+    try:
+        import pandas_market_calendars as mcal
+        timezone = ZoneInfo(str(payload.get("market_timezone") or ""))
+        started = _notification_parse_timestamp(payload.get("started_at"), require_timezone=True)
+        finished = _notification_parse_timestamp(payload.get("finished_at"), require_timezone=True)
+        if started is None or finished is None or finished < started:
+            return False
+        calendar = mcal.get_calendar(str(payload.get("market_calendar") or ""))
+        if str(calendar.tz) != str(timezone):
+            return False
+        schedule = calendar.schedule(
+            start_date=started.astimezone(timezone).date(),
+            end_date=finished.astimezone(timezone).date(),
+        )
+        if len(schedule.index) == 0:
+            return True
+        for _day, session in schedule.iterrows():
+            opened = _notification_parse_timestamp(session.get("market_open"), require_timezone=True)
+            closed = _notification_parse_timestamp(session.get("market_close"), require_timezone=True)
+            if opened is None or closed is None or closed <= opened:
+                return False
+            if started < closed and finished >= opened:
+                return False
+        return True
+    except Exception:  # noqa: BLE001 - unreadable calendar must remain visible
+        return False
+
+
+def _is_quiet_report(payload: dict[str, Any], *, now: dt.datetime | None = None) -> bool:
+    """Quiet a complete healthy receipt without duplicating the business notification."""
+    from quant_platform_kit.common.execution_receipts import validate_execution_receipt
+    if payload.get("errors") != [] or not isinstance(payload.get("errors"), list):
+        return False
+    if _report_errors(payload) or _report_notification_failure(payload):
+        return False
+    started = _notification_parse_timestamp(payload.get("started_at"), require_timezone=True)
+    finished = _notification_parse_timestamp(payload.get("finished_at"), require_timezone=True)
+    if started is None or finished is None or finished < started or (now is not None and finished > now + dt.timedelta(minutes=5)):
+        return False
+    summary = payload.get("summary")
+    diagnostics = payload.get("diagnostics")
+    if not isinstance(summary, dict) or not isinstance(diagnostics, dict):
+        return False
+    for scope in (payload, summary, diagnostics):
+        scope_status = str(scope.get("status") or "").strip().lower()
+        scope_stage = str(scope.get("stage") or "").strip().upper()
+        if scope_status and scope_status not in {"ok", "success", "completed", "no_action", "skipped"}:
+            return False
+        if scope_stage == "FUNDING_BLOCKED" or (scope_stage and scope_stage not in DEFAULT_ACCEPT_STAGES):
+            return False
+        if any(scope.get(key) for key in (
+            "pending_reconciliation", "reconciliation_required", "execution_blocked",
+            "plugin_error", "persistence_error", "report_persistence_error", "notification_error",
+        )):
+            return False
+        for key in ("orders_submitted_count", "orders_pending_count", "orders_filled_count", "orders_partially_filled_count"):
+            if key in scope and (type(scope[key]) is not int or scope[key] < 0):
+                return False
+        execution_status = str(scope.get("execution_status") or "").strip().lower()
+        if execution_status and execution_status not in {"no_op", "no_action", "completed", "dry_run_completed", "executed", "submitted", "broker_acknowledged", "partially_filled", "pending"}:
+            return False
+    if "execution_receipt" in payload:
+        try:
+            receipt = validate_execution_receipt(payload["execution_receipt"])
+        except (ValueError, TypeError):
+            return False
+        if (
+            receipt["outcome"] in {"reconciliation_required", "failed", "risk_blocked"}
+            or receipt["strategy_profile"] != payload.get("strategy_profile")
+            or receipt["platform"] != {"interactive_brokers": "ibkr", "charles_schwab": "schwab"}.get(payload.get("platform"), payload.get("platform"))
+        ):
+            return False
+    status, _stage = _report_status(payload)
+    if status.lower() == "skipped":
+        runtime_target = payload.get("runtime_target")
+        closure_payload = dict(payload)
+        for key in ("market", "market_calendar", "market_timezone"):
+            nested = runtime_target.get(key) if isinstance(runtime_target, dict) else None
+            if payload.get(key) and nested and payload[key] != nested:
+                return False
+            closure_payload[key] = payload.get(key) or nested
+        if diagnostics.get("skip_reason") != "market_closed":
+            return False
+        for scope in (payload, summary, diagnostics):
+            if any(scope.get(key) for key in (
+                "orders_submitted", "submitted_orders", "orders_pending", "orders_filled",
+                "orders_partially_filled", "option_orders_submitted", "option_orders_pending",
+                "option_orders_filled", "option_orders_partially_filled",
+            )):
+                return False
+            if any(scope.get(key, 0) != 0 for key in (
+                "orders_submitted_count", "orders_pending_count", "orders_filled_count", "orders_partially_filled_count",
+            )):
+                return False
+            if str(scope.get("execution_status") or "").lower() not in {"", "no_op", "no_action"}:
+                return False
+        if "execution_receipt" in payload and receipt["outcome"] not in {"not_due", "no_action", "no_signal", "no_rebalance"}:
+            return False
+        if not closure_payload.get("market") or not closure_payload.get("market_calendar"):
+            return False
+        try:
+            ZoneInfo(str(closure_payload.get("market_timezone") or ""))
+        except (ValueError, ZoneInfoNotFoundError):
+            return False
+        return _market_closed_by_calendar(closure_payload)
+    return (
+        status.lower() in {"ok", "success", "completed", "no_action"}
+        and str(summary.get("execution_status") or "").lower() in {"no_op", "no_action", "completed", "dry_run_completed", "executed", "submitted", "broker_acknowledged", "partially_filled", "pending"}
+        and type(summary.get("orders_submitted_count")) is int
+        and summary["orders_submitted_count"] >= 0
+    )
+
 
 
 if __name__ == "__main__":

@@ -10,6 +10,11 @@ import re
 import subprocess
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo
+from pathlib import Path
+import sys
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from notifications.unified_adapter import enabled as unified_enabled, monitor_message, publish_monitor
 
 try:
     from scripts.execution_report_heartbeat import _send_telegram
@@ -208,6 +213,17 @@ def _target_status(target: DrillTarget, now: dt.datetime) -> tuple[dt.date, str]
         if report.get("dry_run") is not True:
             return day, "⚠️ 最新报告不是 dry run，结果未验证"
         status = str(report.get("status") or "").lower()
+        if unified_enabled() and os.environ.get("DRILL_DIGEST_PREVIEW") != "true" and (
+            status == "skipped" and (report.get("diagnostics") or {}).get("skip_reason") == "market_closed"
+            or status == "ok" and (report.get("summary") or {}).get("execution_status")
+            and (report.get("summary") or {}).get("orders_submitted_count") == 0
+        ):
+            from notifications.unified_adapter import receipt_notification_kind
+            from scripts.execution_report_heartbeat import _is_quiet_report
+            kind = receipt_notification_kind(report, quiet_eligible=_is_quiet_report(report, now=now))
+            publish_monitor(kind=kind, report=report, now=now, family="drill",
+                target={"service_name": target.service, "strategy_profile": target.profile, "account_scope": target.scope},
+                send=lambda: _send_telegram(monitor_message(kind)))
         diagnostics = report.get("diagnostics") or {}
         if status == "skipped" and diagnostics.get("skip_reason") == "market_closed":
             return day, "🗓️ 休市，演练按规则跳过；未下单"
@@ -236,6 +252,14 @@ def main(now: dt.datetime | None = None) -> int:
     if os.environ.get("DRILL_DIGEST_PREVIEW") == "true":
         print(f"Daily drill preview: targets={len(targets)}, alerts={alerts}")
         return 0
+    if unified_enabled():
+        if alerts:
+            for target, status in zip(targets, statuses):
+                if not status.startswith(("✅", "🗓️")):
+                    publish_monitor(kind="receipt_unacceptable", now=now, family="drill",
+                        target={"service_name": target.service, "strategy_profile": target.profile, "account_scope": target.scope},
+                        send=lambda: _send_telegram(monitor_message("drill_error")))
+        return 0 if alerts == 0 else 1
     sent = _send_telegram(message)
     print(f"Daily drill digest sent={sent}; targets={len(targets)}; alerts={alerts}")
     return 0 if sent and alerts == 0 else 1

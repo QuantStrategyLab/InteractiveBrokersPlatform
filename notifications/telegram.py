@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from .display_names import display_name
+from quant_platform_kit.common.notification_localization import translator_uses_zh
+
 from quant_platform_kit.common.operational_notification_localization import resolve_operational_notification_locale
 
 import re
@@ -28,7 +31,7 @@ def _break_telegram_market_symbol_auto_links(value) -> str:
 
 I18N = {
     "zh": {
-        "runtime_failure_title": "⚠️ IBKR 策略运行失败",
+        "runtime_failure_title": "⚠️ {platform} 策略运行失败",
         "runtime_failure_context": "运行目标：{context}",
         "runtime_failure_result": "本次运行未正常结束，请查看最新执行报告。",
         "runtime_failure_action": "下一步：检查 Gateway 连接及最新执行报告。",
@@ -36,6 +39,7 @@ I18N = {
         "runtime_notification_delivery_failed": "异常通知发送失败（notification_delivery_failed）",
         "runtime_failure_log": "策略运行失败（runtime_setup_failed）",
         "rebalance_title": "🔔 【调仓指令】",
+        "execution_result_title": "📋 【执行结果】",
         "heartbeat_title": "💓 【心跳检测】",
         "heartbeat_available_cash": "💵 可用现金: {value}",
         "heartbeat_account_equity": "💰 账户总权益: {value}",
@@ -78,7 +82,13 @@ I18N = {
         "dry_run_snapshot_prices": "🧪 模拟运行估价: 使用快照收盘价 {count}个标的 ({symbols})",
         "price_fallback_prices": "📌 执行估价: 使用最近收盘价 {count}个标的 ({symbols})",
         "target_diff_summary": "调仓变化: {details}",
-        "no_order_plan_reason": "未下单: {reason}",
+        "no_order_plan_reason": "未下单：{reason}",
+        "no_order_below_minimum": "低于最小订单金额",
+        "no_order_quantity_zero": "整数股数量为0",
+        "no_order_below_threshold": "调仓差异低于阈值",
+        "no_order_no_signal": "本轮无交易信号",
+        "no_order_no_rebalance": "本轮无需调仓",
+        "no_order_reason_unverified": "具体原因待核实",
         "buy_deferred": "ℹ️ [买入说明] {detail}",
         "buy_deferred_small_account_cash_substitution": "{symbol} 目标金额 ${diff} 低于 1 股价格 ${price}；为避免超过目标仓位，小账户本轮保留现金，不回补 {cash_symbols}",
         "buy_deferred_small_account": "ℹ️ [买入保护] 账户净值 ${portfolio_equity} 低于策略建议 ${min_recommended_equity}；本轮禁止新增或加仓，允许策略正常减仓",
@@ -242,23 +252,9 @@ I18N = {
         "signal_state_idle": "等待信号",
         "small_account_warning_note": "小账户提示：净值 {portfolio_equity} 低于建议 {min_recommended_equity}；{reason}",
         "small_account_warning_reason_integer_shares_min_position_value_may_prevent_backtest_replication": "整数股和最小仓位限制可能导致实盘无法完全复现回测",
-        "strategy_name_global_etf_rotation": "全球 ETF 轮动",
-        "strategy_name_global_etf_confidence_vol_gate": "全球 ETF 置信波动门控",
-        "strategy_name_tech_communication_pullback_enhancement": "科技通信回调增强",
-        "strategy_name_qqq_tech_enhancement": "科技通信回调增强",
-        "strategy_name_russell_top50_leader_rotation": "罗素 Top50 领涨轮动",
-        "strategy_name_nasdaq_sp500_smart_dca": "纳指100 / 标普500 智能定投",
-        "strategy_name_ibit_smart_dca": "IBIT 比特币 ETF 智能定投",
-        "strategy_name_us_equity_combo": "美股核心组合",
-        "strategy_name_us_equity_combo_leveraged": "美股Alpha组合",
-        "strategy_name_hk_global_etf_tactical_rotation": "港股全球 ETF 战术轮动",
-        "strategy_name_hk_low_vol_dividend_quality_snapshot": "港股低波股息质量快照",
-        "strategy_name_tqqq_growth_income": "TQQQ 增长收益",
-        "strategy_name_soxl_soxx_trend_income": "SOXL/SOXX 半导体趋势收益",
-        "strategy_name_tecl_xlk_trend_income": "TECL/XLK 科技趋势收益",
     },
     "en": {
-        "runtime_failure_title": "⚠️ IBKR strategy run failed",
+        "runtime_failure_title": "⚠️ {platform} strategy run failed",
         "runtime_failure_context": "Target: {context}",
         "runtime_failure_result": "The run did not finish successfully; check the latest execution report.",
         "runtime_failure_action": "Next: Check Gateway connectivity and the latest execution report.",
@@ -266,6 +262,7 @@ I18N = {
         "runtime_notification_delivery_failed": "Runtime alert delivery failed (notification_delivery_failed)",
         "runtime_failure_log": "Strategy run failed (runtime_setup_failed)",
         "rebalance_title": "🔔 【Trade Execution Report】",
+        "execution_result_title": "📋 【Execution Result】",
         "heartbeat_title": "💓 【Heartbeat】",
         "heartbeat_available_cash": "💵 Available cash: {value}",
         "heartbeat_account_equity": "💰 Total account equity: {value}",
@@ -308,7 +305,13 @@ I18N = {
         "dry_run_snapshot_prices": "🧪 dry-run pricing: snapshot close for {count} symbols ({symbols})",
         "price_fallback_prices": "📌 execution pricing: recent close for {count} symbols ({symbols})",
         "target_diff_summary": "Target changes: {details}",
-        "no_order_plan_reason": "No order submitted: {reason}",
+        "no_order_plan_reason": "No order: {reason}",
+        "no_order_below_minimum": "below minimum order amount",
+        "no_order_quantity_zero": "whole-share quantity is zero",
+        "no_order_below_threshold": "rebalance difference below threshold",
+        "no_order_no_signal": "no trading signal this cycle",
+        "no_order_no_rebalance": "no rebalance needed this cycle",
+        "no_order_reason_unverified": "specific reason unverified",
         "buy_deferred": "ℹ️ [Buy note] {detail}",
         "buy_deferred_small_account_cash_substitution": "{symbol} target ${diff} is below the 1-share price ${price}; to avoid exceeding the target allocation, this small account keeps cash this cycle and does not rebuy {cash_symbols}",
         "buy_deferred_small_account": "ℹ️ [Buy guard] Portfolio equity ${portfolio_equity} is below the strategy recommendation ${min_recommended_equity}; new buys and top-ups are blocked while strategy-driven reductions remain allowed",
@@ -472,20 +475,6 @@ I18N = {
         "signal_state_idle": "Idle",
         "small_account_warning_note": "small account warning: portfolio equity {portfolio_equity} is below recommended {min_recommended_equity}; {reason}",
         "small_account_warning_reason_integer_shares_min_position_value_may_prevent_backtest_replication": "integer-share minimum position sizing may prevent backtest replication",
-        "strategy_name_global_etf_rotation": "Global ETF Rotation",
-        "strategy_name_global_etf_confidence_vol_gate": "Global ETF Confidence Vol Gate",
-        "strategy_name_tech_communication_pullback_enhancement": "Tech/Communication Pullback Enhancement",
-        "strategy_name_qqq_tech_enhancement": "Tech/Communication Pullback Enhancement",
-        "strategy_name_russell_top50_leader_rotation": "Russell Top50 Leader Rotation",
-        "strategy_name_nasdaq_sp500_smart_dca": "Nasdaq 100 / S&P 500 Smart DCA",
-        "strategy_name_ibit_smart_dca": "IBIT Smart DCA",
-        "strategy_name_us_equity_combo": "US Equity Combo",
-        "strategy_name_us_equity_combo_leveraged": "US Equity Combo Leveraged",
-        "strategy_name_hk_global_etf_tactical_rotation": "HK Global ETF Tactical Rotation",
-        "strategy_name_hk_low_vol_dividend_quality_snapshot": "HK Low-Vol Dividend Quality Snapshot",
-        "strategy_name_tqqq_growth_income": "TQQQ Growth Income",
-        "strategy_name_soxl_soxx_trend_income": "SOXL/SOXX Semiconductor Trend Income",
-        "strategy_name_tecl_xlk_trend_income": "TECL/XLK Technology Trend Income",
     },
 }
 
@@ -502,9 +491,14 @@ if _merge_strategy_plugin_i18n is not None:
 def build_translator(lang):
     active_lang = resolve_operational_notification_locale(lang)
     def translate(key, **kwargs):
+        if key.startswith("strategy_name_"):
+            profile = key.removeprefix("strategy_name_")
+            return display_name("strategies", profile, active_lang, fallback=key)
         template = I18N[active_lang].get(key, key)
+        template = template.replace("{platform}", display_name("platforms", "ibkr", active_lang))
         return template.format(**kwargs) if kwargs else template
 
+    translate.notification_locale = active_lang
     return translate
 
 
@@ -515,6 +509,9 @@ def build_strategy_display_name(translate_fn, locale: str = "en"):
         fallback_name: str | None = None,
         metadata=None,
     ) -> str:
+        configured = display_name("strategies", profile, getattr(translate_fn, "notification_locale", locale))
+        if configured != profile:
+            return configured
         if metadata is not None:
             from quant_platform_kit.common.notification_localization import (
                 resolve_strategy_display_name,

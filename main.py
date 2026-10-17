@@ -59,6 +59,7 @@ from runtime_execution_policy import (
     dca_execution_unsupported_reason,
 )
 from notifications.telegram import build_strategy_display_name, build_translator, send_telegram_message
+from notifications.unified_adapter import with_run as with_notification_run
 from quant_platform_kit.notifications.strategy_plugin_alerts import (
     StrategyPluginAlertStateSettings,
     build_strategy_plugin_alert_context_label as build_alert_context_label,
@@ -869,6 +870,12 @@ def _runtime_error_notification_message(exc: Exception, *, route_label: str | No
 
 
 def _notify_runtime_error(exc: Exception, *, route_label: str | None = None) -> bool:
+    from notifications.unified_adapter import publish_runtime_failure
+    return publish_runtime_failure(exc, lambda: _notify_runtime_error_legacy(exc, route_label=route_label))
+
+
+
+def _notify_runtime_error_legacy(exc: Exception, *, route_label: str | None = None) -> bool:
     targets = _runtime_error_notification_targets()
     if not targets:
         print(t("runtime_notification_missing_target"), flush=True)
@@ -886,6 +893,9 @@ def _notify_runtime_error(exc: Exception, *, route_label: str | None = None) -> 
 
 
 def _publish_runtime_failure_notification(*, detailed_text: str, compact_text: str, exc: Exception) -> bool:
+    from notifications.unified_adapter import enabled as unified_enabled, publish_runtime_failure
+    if unified_enabled():
+        return publish_runtime_failure(exc, lambda: publish_notification(detailed_text=detailed_text, compact_text=compact_text))
     try:
         if publish_notification(detailed_text=detailed_text, compact_text=compact_text):
             return True
@@ -1108,6 +1118,10 @@ def _build_cycle_report_summary(cycle_result, execution_summary, reconciliation_
         summary["account_facts"] = cycle_result.account_facts
     if quote_snapshot:
         summary["quote_snapshot"] = quote_snapshot
+    from notifications.unified_adapter import enabled as unified_enabled
+    if unified_enabled():
+        from notifications.digest_snapshot.digest_candidates import summary_evidence
+        summary["notification_digest"] = summary_evidence(execution_summary, dry_run=dry_run)
     return summary
 
 
@@ -1196,8 +1210,10 @@ def _build_notification_delivery_summary(delivery_events: list[dict]) -> dict:
 
 
 def publish_strategy_plugin_alerts(signals, *, report=None):
+    from notifications.unified_adapter import enabled as unified_enabled
+    from notifications.digest_snapshot.digest_routing import immediate_plugin_signals
     result = dispatch_strategy_plugin_alerts(
-        signals,
+        immediate_plugin_signals(signals) if unified_enabled() else signals,
         notification_settings=RUNTIME_SETTINGS,
         translator=t,
         strategy_label=STRATEGY_PROFILE,
@@ -1594,7 +1610,8 @@ def _handle_request(
             publish_strategy_plugin_alerts(strategy_plugin_signals, report=report)
         notification_delivery_events: list[dict] = []
         cycle_result = coerce_strategy_cycle_result(
-            run_strategy_core(
+            with_notification_run(
+                report, run_strategy_core,
                 strategy_plugin_signals=strategy_plugin_signals,
                 strategy_plugin_error=strategy_plugin_error,
                 dry_run_only_override=dry_run_only_override,
