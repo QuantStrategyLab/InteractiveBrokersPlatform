@@ -1,6 +1,6 @@
 {
   "repository": "QuantStrategyLab/QuantRuntimeSettings",
-  "commit": "160933eaa376bd4297616e8affc946430be69771",
+  "commit": "bd3dc79f10b2c0b8048721695885c3f9333a53c6",
   "purpose": "test-only producer intake merge aggregate and render; no runtime dependency",
   "modules": {
     "merge_digest_candidates.py": {
@@ -10,8 +10,8 @@
     },
     "notification_candidate_adapter.py": {
       "source_path": "python/scripts/notification_candidate_adapter.py",
-      "source_sha256": "8f0806165f7d99ffd9db7ef41879d9eb7d37e6551678fd0463d29dd7e7bbc19e",
-      "sha256": "8f0806165f7d99ffd9db7ef41879d9eb7d37e6551678fd0463d29dd7e7bbc19e"
+      "source_sha256": "f4c3494667b44da9365ae0d6101a42cf855cdbd76ff36d85f62f19a56e1cca8f",
+      "sha256": "f4c3494667b44da9365ae0d6101a42cf855cdbd76ff36d85f62f19a56e1cca8f"
     },
     "notification_mode.py": {
       "source_path": "python/scripts/notification_mode.py",
@@ -20,14 +20,14 @@
     },
     "daily_digest_notify.py": {
       "source_path": "python/scripts/daily_digest_notify.py",
-      "source_sha256": "189c3c5d86bf9a153141779ddaba9a28be2615fe80b6646368e407fb91a300cc",
-      "sha256": "94f24070cffa71903d5a59da2c9a9d201044bf0b5b59e2cb610a7391ef46b6cd",
+      "source_sha256": "11573cb1dabb4e001d975e55f60f8c4c8c95d95f3c1ced7d3ae11cf9341b7387",
+      "sha256": "51e8b255f7daa084f7e380c4e93c24324365d0646b5a4429d98e78624a48a20e",
       "transform": "module docstring removed; executable source unchanged"
     },
     "unified_daily_digest.py": {
       "source_path": "python/scripts/unified_daily_digest.py",
-      "source_sha256": "71ba99a8ee21448822bf1d464060e84d6287e8ce7f2595f33b813ce852a45ca5",
-      "sha256": "71ba99a8ee21448822bf1d464060e84d6287e8ce7f2595f33b813ce852a45ca5"
+      "source_sha256": "7d2a1f6301597ea75ef314282780cc9b5a6cbc8042f1a4f6e70a3682e7c72816",
+      "sha256": "7d2a1f6301597ea75ef314282780cc9b5a6cbc8042f1a4f6e70a3682e7c72816"
     },
     "display_names.py": {
       "source_path": "python/scripts/display_names.py",
@@ -51,19 +51,23 @@
     },
     "daily_digest_aggregator.py": {
       "source_path": "python/scripts/daily_digest_aggregator.py",
-      "sha256": "8b38c191d0022c227e7e4f981c57ffcd334f8fcaf21f47385a5a4f70f3df129e"
+      "sha256": "f0b4672c9a987a525d7b26c7784e108d1e899c5f52708c17f96f2109780695d4",
+      "source_sha256": "f0b4672c9a987a525d7b26c7784e108d1e899c5f52708c17f96f2109780695d4"
     },
     "daily_digest_delivery_axes.py": {
       "source_path": "python/scripts/daily_digest_delivery_axes.py",
-      "sha256": "2db144b93428f95183908d2d1e652021c5dfd1a1851c764c0e71962acd600979"
+      "sha256": "2db144b93428f95183908d2d1e652021c5dfd1a1851c764c0e71962acd600979",
+      "source_sha256": "2db144b93428f95183908d2d1e652021c5dfd1a1851c764c0e71962acd600979"
     },
     "daily_digest_resend_guard.py": {
       "source_path": "python/scripts/daily_digest_resend_guard.py",
-      "sha256": "aa7be3208523fe680293b1b4667fb7ae343611bedb9ff788c1149f745efee387"
+      "sha256": "aa7be3208523fe680293b1b4667fb7ae343611bedb9ff788c1149f745efee387",
+      "source_sha256": "aa7be3208523fe680293b1b4667fb7ae343611bedb9ff788c1149f745efee387"
     },
     "send_daily_digest_telegram.py": {
       "source_path": "python/scripts/send_daily_digest_telegram.py",
-      "sha256": "b82fb259b60399b07b738406c55fb54a7e99bc3ed9913553f8f89f7100a90bd1"
+      "sha256": "b82fb259b60399b07b738406c55fb54a7e99bc3ed9913553f8f89f7100a90bd1",
+      "source_sha256": "b82fb259b60399b07b738406c55fb54a7e99bc3ed9913553f8f89f7100a90bd1"
     },
     "strict_transport_fixture.py": {
       "source_path": "python/scripts/credential_maintenance_notify.py",
@@ -72,7 +76,13 @@
         "send_strict_telegram"
       ],
       "sha256": "92456cbd1054cf14ced918de319cc766b525e5287e3e009c3294d619c4c592bb",
-      "transformation": "only these two exact source functions plus imports; real maintenance client replaced in tests"
+      "transformation": "only these two exact source functions plus imports; real maintenance client replaced in tests",
+      "source_sha256": "dc1903171ae9b038b9cf79598769b3add294b2ccb30249c542f76b75cbc1c939"
+    },
+    "notification_approved_gates.py": {
+      "source_path": "python/scripts/notification_approved_gates.py",
+      "source_sha256": "2047e63485797079dc15d7a994344053b0076dce680d376697a56dc9add521b9",
+      "sha256": "2047e63485797079dc15d7a994344053b0076dce680d376697a56dc9add521b9"
     }
   }
 }

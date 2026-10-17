@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 from __future__ import annotations
 
 from display_names import display_name
@@ -500,6 +498,8 @@ class DigestRunEntry:
     section: str = ""
     # One atomic notification observation; never used as count evidence.
     block_reason: Mapping[str, object] | None = None
+    source_run_id: str = ""
+    approved_gate_reasons: tuple[Mapping[str, object], ...] = ()
 
     def __post_init__(self) -> None:
         if not str(self.platform_id).strip():
@@ -1542,6 +1542,7 @@ def filter_runs_for_digest(
     New stubs must omit counts or set field_status/reason_code for unknown.
     """
 
+    from notification_mode import consolidation_enabled
     out: list[DigestRunEntry] = []
     for raw in candidates:
         ran = _parse_actually_ran(raw)
@@ -1575,6 +1576,8 @@ def filter_runs_for_digest(
                 rebalance_kind=_parse_rebalance_kind(raw.get("rebalance_kind")),
                 rebalance_conclusion=str(raw.get("rebalance_conclusion") or "").strip(),
                 block_reason=_parse_block_reason(raw.get("block_reason")) if raw.get("platform_id") in {"schwab", "ibkr"} else None,
+                source_run_id=str(raw.get("source_run_id") or "") if consolidation_enabled() else "",
+                approved_gate_reasons=tuple(raw.get("_validated_approved_gate_reasons", ())) if consolidation_enabled() else (),
                 tips=_parse_tips(raw.get("tips") or raw.get("tip")),
                 account_hint=str(raw.get("account_hint") or "").strip(),
                 opaque_account_uid=str(raw.get("opaque_account_uid") or "").strip(),

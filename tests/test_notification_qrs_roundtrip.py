@@ -17,7 +17,7 @@ from tests.test_unified_notification_adapter import (
     NOW, TARGET, CandidateStore, StateStore, event, healthy_receipt_report,
 )
 
-QRS_SHA = "160933eaa376bd4297616e8affc946430be69771"
+QRS_SHA = "bd3dc79f10b2c0b8048721695885c3f9333a53c6"
 QRS_FIXTURE = Path(__file__).parent / "fixtures/qrs_notification_contract"
 
 
