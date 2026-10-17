@@ -214,6 +214,22 @@ class OrderedMarkerStore:
         return self.store.compare_and_set(key, version, {**value, "observed_at": self.observed_at})
 
 
+def _independent_sender_receipt(receipt, decision, event):
+    """Keep opaque provider IDs; local reservation/event IDs are not receipts."""
+    if not isinstance(receipt, str) or not receipt.strip():
+        return None
+    normalized = receipt.strip().casefold()
+    namespaces = normalized.replace("/", ":").split(":")
+    if any(part.strip().replace("_", "-") == "transport-ack" for part in namespaces):
+        return None
+    local_ids = (decision.incident_key, decision.transition_key,
+                 event.to_candidate()["dedupe_key"], event.order_execution_digest)
+    # Substring comparison also rejects namespaced IDs and marker object URIs.
+    if any(value and value.casefold() in normalized for value in local_ids):
+        return None
+    return receipt
+
+
 def immediate_incident(event, send, *, recovered=False, severity=1, store=None):
     tracker = IncidentTracker(OrderedMarkerStore(store or _state_store(), event.occurred_at))
     decision = tracker.observe(event, state="recovered" if recovered else event.event_kind,
@@ -238,7 +254,7 @@ def immediate_incident(event, send, *, recovered=False, severity=1, store=None):
     # A legacy boolean ACK is not a unique transport receipt. Keep it uncertain
     # rather than inventing a message ID; either state prohibits blind resend.
     receipt = outcome.get("receipt_id") if acknowledged and isinstance(outcome, Mapping) else None
-    tracker.record_delivery(decision, receipt_id=receipt)
+    tracker.record_delivery(decision, receipt_id=_independent_sender_receipt(receipt, decision, event))
     return acknowledged
 
 
