@@ -1524,9 +1524,24 @@ class LoadedStrategyRuntime:
             )
             if external_market_inputs:
                 return external_market_inputs
+            signal_history_loader = historical_close_loader
+            if self.profile == "soxl_soxx_trend_income":
+                # Restrict signal inputs only; execution-price fallbacks keep
+                # their own loader and the current-session bar stays eligible.
+                def signal_history_loader(*args, **kwargs):
+                    history = historical_close_loader(*args, **kwargs)
+                    if (
+                        not isinstance(history, pd.Series)
+                        or not isinstance(history.index, pd.DatetimeIndex)
+                        or history.index.hasnans
+                    ):
+                        raise ValueError("IBKR semiconductor signal history requires dated closes")
+                    signal_date = pd.Timestamp(as_of).date()
+                    return history.loc[history.index.date <= signal_date].sort_index(kind="stable")
+
             return build_semiconductor_rotation_inputs(
                 ib,
-                historical_close_loader,
+                signal_history_loader,
                 trend_ma_window=required_trend_ma_window(self.merged_runtime_config),
             )
         if _BENCHMARK_HISTORY_INPUT in self.required_inputs:
@@ -1542,11 +1557,11 @@ class LoadedStrategyRuntime:
             )
             if self.profile == "tqqq_growth_income":
                 signal_date = pd.Timestamp(as_of).date()
-                completed_bars = [
+                completed_bars = sorted([
                     bar
                     for bar in market_inputs["benchmark_history"]
                     if pd.Timestamp(bar["as_of"]).date() <= signal_date
-                ]
+                ], key=lambda bar: pd.Timestamp(bar["as_of"]).date())
                 if (
                     not completed_bars
                     or pd.Timestamp(completed_bars[-1]["as_of"]).date() != signal_date

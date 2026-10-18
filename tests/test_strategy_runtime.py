@@ -1400,9 +1400,15 @@ def test_value_target_runtime_builds_semiconductor_inputs(monkeypatch):
 
     def fake_loader(_ib, symbol, duration="2 Y", bar_size="1 day"):
         if symbol == "SOXL":
-            return [100.0] * 170
+            return strategy_runtime_module.pd.Series(
+                [100.0] * 170,
+                index=strategy_runtime_module.pd.date_range(end="2026-04-01", periods=170),
+            )
         if symbol == "SOXX":
-            return [200.0] * 170
+            return strategy_runtime_module.pd.Series(
+                [200.0] * 170,
+                index=strategy_runtime_module.pd.date_range(end="2026-04-01", periods=170),
+            )
         raise AssertionError(symbol)
 
     result = runtime.evaluate(
