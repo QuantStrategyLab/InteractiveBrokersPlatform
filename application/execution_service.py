@@ -460,14 +460,28 @@ def get_available_buying_power(
     return max(0.0, float(fallback_buying_power or 0.0))
 
 
+class _PendingOrdersUnavailableError(RuntimeError):
+    """Open-order evidence is incomplete; it cannot establish an empty book."""
+
+
+@dataclass(frozen=True)
+class _PendingOrderObservation:
+    symbols: tuple[str, ...]
+    cash_risk_unknown: bool = False
+
+
 def _iter_open_orders(ib) -> list[Any]:
     open_trades = getattr(ib, "openTrades", None)
     if callable(open_trades):
-        return list(open_trades() or [])
-    open_orders = getattr(ib, "openOrders", None)
-    if callable(open_orders):
-        return list(open_orders() or [])
-    return []
+        rows = open_trades()
+    else:
+        open_orders = getattr(ib, "openOrders", None)
+        if not callable(open_orders):
+            raise _PendingOrdersUnavailableError("open-order enumeration unavailable")
+        rows = open_orders()
+    if rows is None:
+        raise _PendingOrdersUnavailableError("open-order snapshot unavailable")
+    return list(rows)
 
 
 def _extract_open_order_symbol(order_like: Any) -> str | None:
@@ -501,19 +515,38 @@ def _extract_open_order_account(order_like: Any) -> str | None:
     return None
 
 
-def _collect_pending_symbols(ib, symbols: set[str], *, account_ids=None) -> tuple[str, ...]:
+def _observe_pending_orders(ib, symbols: set[str], *, account_ids=None) -> _PendingOrderObservation:
     selected_account_ids = _normalize_account_ids(account_ids)
     pending = []
+    cash_risk_unknown = False
     for order_like in _iter_open_orders(ib):
-        if not _matches_account(_extract_open_order_account(order_like), selected_account_ids):
-            continue
         status = _extract_open_order_status(order_like)
         if status in {"Cancelled", "ApiCancelled", "Inactive", "Filled"}:
             continue
+        account_id = _extract_open_order_account(order_like)
         symbol = _extract_open_order_symbol(order_like)
-        if symbol and symbol in symbols:
+        if selected_account_ids and account_id is None:
+            contract = getattr(order_like, "contract", None)
+            if contract is None:
+                contract = getattr(getattr(order_like, "order", None), "contract", None)
+            if (
+                symbol
+                and symbol not in symbols
+                and str(getattr(contract, "secType", "") or "").strip().upper() == "STK"
+            ):
+                # A known different stock cannot consume a managed stock's
+                # sellable quantity, but unknown ownership still taints cash.
+                # Keep reading: a later row can affect the managed securities.
+                cash_risk_unknown = True
+                continue
+            raise _PendingOrdersUnavailableError("open-order account unavailable")
+        if not _matches_account(account_id, selected_account_ids):
+            continue
+        if not symbol:
+            raise _PendingOrdersUnavailableError("open-order symbol unavailable")
+        if symbol in symbols:
             pending.append(symbol)
-    return tuple(sorted(dict.fromkeys(pending)))
+    return _PendingOrderObservation(tuple(sorted(dict.fromkeys(pending))), cash_risk_unknown)
 
 
 def _iter_fills(ib) -> list[Any]:
@@ -1721,11 +1754,20 @@ def execute_rebalance(
             (sum(current_mv.values()) - current_safe_haven_mv) / equity
         )
 
-    pending_symbols = _collect_pending_symbols(
-        ib,
-        set(all_symbols) | set(option_underliers),
-        account_ids=normalized_account_ids,
-    )
+    try:
+        pending_observation = _observe_pending_orders(
+            ib,
+            set(all_symbols) | set(option_underliers),
+            account_ids=normalized_account_ids,
+        )
+    except _PendingOrdersUnavailableError:
+        reason = "pending_orders_unavailable"
+        execution_summary["execution_status"] = "blocked"
+        execution_summary["no_op_reason"] = reason
+        execution_summary["skipped_reasons"].append(reason)
+        trade_logs.append(translator("failed", reason=reason))
+        return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
+    pending_symbols = pending_observation.symbols
     if pending_symbols:
         reason = f"pending_orders_detected:{','.join(pending_symbols)}"
         execution_summary["execution_status"] = "blocked"
@@ -1739,6 +1781,15 @@ def execute_rebalance(
             )
         )
         return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
+    if pending_observation.cash_risk_unknown:
+        # Reuse the existing BUY gate, without vetoing otherwise-qualified
+        # reductions. The normal claim, lock and sell limits still apply.
+        account_new_risk_buy_blocked = True
+        account_new_risk_reason_codes = (
+            *account_new_risk_reason_codes,
+            "PENDING_ORDER_CASH_RISK_UNKNOWN",
+        )
+        execution_summary["pending_order_cash_risk_unknown"] = True
 
     trade_logs.append(
         " | ".join(
