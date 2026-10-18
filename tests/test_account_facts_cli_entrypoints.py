@@ -19,6 +19,13 @@ SELECT_COMMANDS = re.findall(
     r"(?:(?!^      - name:).)*?^        run: (.+?)$",
     WORKFLOW,
 )
+DIGEST_WORKFLOW = (ROOT / ".github/workflows/digest-candidates-emit.yml").read_text()
+DIGEST_SELECT_COMMANDS = re.findall(
+    r"(?ms)^      - name: Select protected additional target before cloud authentication\n"
+    r"(?:(?!^      - name:).)*?^        run: (.+?)$",
+    DIGEST_WORKFLOW,
+)
+ALL_SELECT_COMMANDS = SELECT_COMMANDS + DIGEST_SELECT_COMMANDS
 PUBLISH_COMMANDS = re.findall(
     r"(?m)^      - name: Publish one validated report\n        run: (.+)$", WORKFLOW
 )
@@ -56,7 +63,7 @@ def cli_workspace(tmp_path):
     assert uv is not None, "uv is required to exercise the workflow command"
     env = {
         "PATH": os.pathsep.join((str(environment / "bin"), str(Path(uv).parent), os.defpath)),
-        "HOME": str(tmp_path),
+        "UV_NO_CONFIG": "1",
         "UV_CACHE_DIR": str(tmp_path / "uv-cache"),
         "UV_OFFLINE": "1",
         "UV_PYTHON_DOWNLOADS": "never",
@@ -95,10 +102,11 @@ def cli_workspace(tmp_path):
 
 def test_workflow_has_both_selector_steps_and_one_publisher():
     assert len(SELECT_COMMANDS) == 2
+    assert len(DIGEST_SELECT_COMMANDS) == 1
     assert len(PUBLISH_COMMANDS) == 1
 
 
-@pytest.mark.parametrize("command", SELECT_COMMANDS)
+@pytest.mark.parametrize("command", ALL_SELECT_COMMANDS)
 @pytest.mark.parametrize("index", [1, 2, 3])
 def test_workflow_selector_cli_exports_only_selected_project(cli_workspace, command, index):
     run, env_path, _ = cli_workspace
@@ -113,7 +121,8 @@ def test_workflow_selector_cli_exports_only_selected_project(cli_workspace, comm
 
 
 @pytest.mark.parametrize("failure", ["missing", "duplicate_identity", "primary_collision", "wrong_target"])
-def test_workflow_selector_cli_rejects_invalid_config_without_export(cli_workspace, failure):
+@pytest.mark.parametrize("command", ALL_SELECT_COMMANDS)
+def test_workflow_selector_cli_rejects_invalid_config_without_export(cli_workspace, failure, command):
     run, env_path, config = cli_workspace
     target = "additional-1"
     if failure == "missing":
@@ -125,7 +134,7 @@ def test_workflow_selector_cli_rejects_invalid_config_without_export(cli_workspa
     else:
         target = "primary-live"
 
-    result = run(SELECT_COMMANDS[0], target=target, config=config)
+    result = run(command, target=target, config=config)
 
     assert result.returncode == 1, result.stderr
     reason = "target_config_unavailable" if failure == "missing" else "target_config_invalid"

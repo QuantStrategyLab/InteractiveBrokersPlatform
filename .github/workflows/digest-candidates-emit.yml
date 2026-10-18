@@ -118,7 +118,7 @@ jobs:
         if: ${{ inputs.target == 'additional-1' || inputs.target == 'additional-2' || inputs.target == 'additional-3' }}
         env:
           IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}
-        run: python3 scripts/configure_account_facts_target.py
+        run: uv run --no-sync python -m scripts.configure_account_facts_target
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
