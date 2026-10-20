@@ -27,7 +27,9 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from application.broker_reconciliation_candidate import (
     SourceReceiptExpectation, validate_reconciliation_candidate_sources,
 )
-from scripts.build_reconciliation_baseline_candidate import load_source_inputs
+from scripts.build_reconciliation_baseline_candidate import (
+    _load_payload, load_authenticated_source_inputs, validate_authenticated_candidate,
+)
 
 from quant_platform_kit.common.broker_reconciliation_enrollment import (
     BrokerReconciliationBaselineCandidate,
@@ -340,6 +342,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--candidate", type=Path, required=True, help="Private output from build_reconciliation_baseline_candidate.py")
     parser.add_argument("--dual-review", type=Path, help="Optional private advisory review result")
+    parser.add_argument("--source-archive", action="append", type=Path, required=True)
     parser.add_argument("--source-records", type=Path, required=True)
     parser.add_argument("--source-expectations", type=Path, required=True)
     parser.add_argument("--recovery-id", required=True, help="Opaque legacy runtime recovery identifier")
@@ -355,21 +358,27 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     try:
-        records, expectations = load_source_inputs(args.source_records, args.source_expectations)
+        records, expectations, payloads = load_authenticated_source_inputs(
+            args.source_records, args.source_expectations, args.source_archive,
+        )
+        reference_now = _parse_time(args.now)
+        candidate_payload = _load_payload(args.candidate)
+        validate_authenticated_candidate(candidate_payload, payloads,
+                                         source_receipt_records=records, expectations=expectations, now=reference_now)
         snapshot = build_recovery_source_snapshot(
-            candidate_payload=_load_json(args.candidate, label="baseline candidate"),
+            candidate_payload=candidate_payload,
             dual_review_payload=_load_json(args.dual_review, label="dual review") if args.dual_review else None,
             source_receipt_records=records, expectations=expectations,
             recovery_id=args.recovery_id,
             source_id=args.source_id,
-            now=_parse_time(args.now),
+            now=reference_now,
         )
         output: dict[str, object] = {"snapshot": snapshot}
         if args.archive_gcs_uri:
             output["private_evidence_archive"] = archive_private_evidence_package(
                 build_private_evidence_package(
                     snapshot=snapshot,
-                    candidate_payload=_load_json(args.candidate, label="baseline candidate"),
+                    candidate_payload=candidate_payload,
                     dual_review_payload=_load_json(args.dual_review, label="dual review") if args.dual_review else None,
                     source_receipt_records=records, expectations=expectations,
                 ),

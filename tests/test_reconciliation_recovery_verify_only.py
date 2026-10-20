@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import pytest
 from datetime import datetime, timedelta, timezone
 
 from quant_platform_kit.common.broker_reconciliation import build_broker_reconciliation_evidence
@@ -239,28 +240,22 @@ def test_read_console_confirmation_uses_dedicated_bearer_header() -> None:
 
 
 def test_single_source_three_cli_path_needs_no_model_review(tmp_path, monkeypatch, capsys):
-    from dataclasses import asdict
+    from tests.test_reconciliation_baseline_candidate_script import _archive_inputs
     from scripts import build_reconciliation_baseline_candidate as builder
     from scripts import publish_reconciliation_recovery_source as publisher
     from scripts import verify_reconciliation_recovery as verifier
 
     start = datetime(2026, 8, 31, 1, 0, tzinfo=timezone.utc)
     evidence = _evidence(observed_at=start)
-    sources = _sources_for_evidences([evidence])
+    material = _archive_inputs(tmp_path / "original", [evidence])
 
     def save(name, value):
         path = tmp_path / name
         path.write_text(json.dumps(value), encoding="utf-8")
         return str(path)
 
-    source_args = [
-        "--source-records", save("records.json", sources["source_receipt_records"]),
-        "--source-expectations", save("expectations.json", [asdict(item) for item in sources["expectations"]]),
-    ]
-    assert builder.main([
-        "--receipt", save("receipt.json", {"evidence": evidence.to_dict()}),
-        "--now", start.isoformat(), *source_args,
-    ]) == 0
+    source_args = material["args"]
+    assert builder.main(["--now", start.isoformat(), *source_args]) == 0
     candidate = json.loads(capsys.readouterr().out)
     candidate_path = save("candidate.json", candidate)
     digest = candidate["candidate"]["candidate_sha256"]
@@ -278,9 +273,12 @@ def test_single_source_three_cli_path_needs_no_model_review(tmp_path, monkeypatc
     response = _console_response(digest, confirmed_at=start + timedelta(minutes=1))
     response["recovery"]["evidence_sample_count"] = 1
     monkeypatch.setattr(verifier, "read_console_confirmation", lambda **_kwargs: response)
+    current = _archive_inputs(tmp_path / "current", [_evidence(observed_at=start + timedelta(minutes=2))])
     assert verifier.main([
+        "--current-source-archive", str(current["archives"][0]),
+        "--current-source-records", str(current["records_path"]),
+        "--current-source-expectations", str(current["expectations_path"]),
         "--candidate", candidate_path, "--recovery-id", "ibkr-soxl-live-recovery",
-        "--current-receipt", save("current.json", {"evidence": _evidence(observed_at=start + timedelta(minutes=2)).to_dict()}),
         "--runtime-target", save("runtime.json", _runtime_target()),
         "--confirmation-url", "https://console.example/api/internal/reconciliation-recovery-confirmation",
         "--now", (start + timedelta(minutes=3)).isoformat(), *source_args,
@@ -308,3 +306,98 @@ def test_verifier_rejects_console_sample_count_not_matching_candidate():
             runtime_target_payload=_runtime_target(), recovery_id="ibkr-soxl-live-recovery",
             now=start + timedelta(minutes=5),
         )
+
+
+
+def _raw_verifier_case(tmp_path):
+    from tests.test_reconciliation_baseline_candidate_script import _archive_inputs
+    start = datetime(2026, 8, 31, 1, 0, tzinfo=timezone.utc)
+    source = _archive_inputs(tmp_path / "source", [_evidence(observed_at=start)])
+    current = _archive_inputs(tmp_path / "current", [_evidence(observed_at=start + timedelta(minutes=2))])
+    candidate = evaluate_receipts(source["payloads"], now=start,
+                                 source_receipt_records=source["records"], expectations=source["expectations"])
+    path = tmp_path / "candidate.json"
+    path.write_text(json.dumps(candidate))
+    runtime = tmp_path / "runtime.json"
+    runtime.write_text(json.dumps(_runtime_target()))
+    args = ["--candidate", str(path), "--runtime-target", str(runtime),
+            "--recovery-id", "ibkr-soxl-live-recovery", "--confirmation-url", "https://synthetic.invalid/confirmation",
+            "--now", (start + timedelta(minutes=3)).isoformat(),
+            "--current-source-archive", str(current["archives"][0]),
+            "--current-source-records", str(current["records_path"]),
+            "--current-source-expectations", str(current["expectations_path"]), *source["args"]]
+    return start, source, current, candidate, path, args
+
+
+def test_verifier_cli_rejects_unmatched_candidate_before_confirmation_read(tmp_path, monkeypatch):
+    import pytest
+    from scripts import verify_reconciliation_recovery as verifier
+    from quant_platform_kit.common.broker_reconciliation_enrollment import calculate_broker_reconciliation_baseline_candidate_sha256
+    _, _, _, candidate, path, args = _raw_verifier_case(tmp_path)
+    candidate["candidate"]["positions_sha256"] = "1" * 64
+    candidate["candidate"]["candidate_sha256"] = calculate_broker_reconciliation_baseline_candidate_sha256(candidate["candidate"])
+    path.write_text(json.dumps(candidate))
+    calls = []
+    monkeypatch.setattr(verifier, "read_console_confirmation", lambda **_k: calls.append(1))
+    with pytest.raises(SystemExit):
+        verifier.main(args)
+    assert not calls
+
+
+@pytest.mark.parametrize("attack", ["source_bytes", "current_bytes", "current_scheduler", "current_parsed_copy", "missing_current_auth"])
+def test_verifier_cli_authenticates_original_and_fresh_receipts_before_console(tmp_path, monkeypatch, attack):
+    from scripts import verify_reconciliation_recovery as verifier
+    from tests.test_reconciliation_baseline_candidate_script import _rewrite_archive
+    _, source, current, _, _, args = _raw_verifier_case(tmp_path)
+    if attack in ("source_bytes", "current_bytes"):
+        (source if attack == "source_bytes" else current)["archives"][0].write_bytes(b"tampered")
+    elif attack == "current_scheduler":
+        current["payloads"][0]["reconciliation_scheduler_job_sha256"] = "f" * 64
+        _rewrite_archive(current, current["payloads"][0], designate=True)
+    elif attack == "current_parsed_copy":
+        path = tmp_path / "current-copy.json"
+        path.write_text(json.dumps({"evidence": _evidence(observed_at=datetime(2026, 8, 31, 1, 2, tzinfo=timezone.utc)).to_dict()}))
+        args += ["--current-receipt", str(path)]
+    else:
+        index = args.index("--current-source-archive")
+        del args[index:index + 2]
+    calls = []
+    monkeypatch.setattr(verifier, "read_console_confirmation", lambda **_k: calls.append(1))
+    with pytest.raises(SystemExit):
+        verifier.main(args)
+    assert not calls
+
+
+@pytest.mark.parametrize("mutation", ["account_scope_sha256", "strategy_profile", "observed_at"])
+def test_verifier_authenticated_current_receipt_still_needs_existing_activation_contract(tmp_path, monkeypatch, capsys, mutation):
+    from scripts import verify_reconciliation_recovery as verifier
+    from tests.test_reconciliation_baseline_candidate_script import _archive_inputs
+    start, _, _, candidate, _, args = _raw_verifier_case(tmp_path)
+    if mutation == "observed_at":
+        evidence = _evidence(observed_at=start)  # A valid archive predating human confirmation.
+    elif mutation == "account_scope_sha256":
+        # Build a fresh valid evidence under a different physical-account digest.
+        from quant_platform_kit.common.broker_reconciliation import BrokerReconciliationEvidence, calculate_broker_reconciliation_evidence_sha256
+        value = _evidence(observed_at=start + timedelta(minutes=2)).to_dict()
+        value[mutation] = "1" * 64
+        value["evidence_sha256"] = calculate_broker_reconciliation_evidence_sha256(value)
+        evidence = BrokerReconciliationEvidence.from_dict(value)
+    else:
+        from quant_platform_kit.common.broker_reconciliation import BrokerReconciliationEvidence, calculate_broker_reconciliation_evidence_sha256
+        value = _evidence(observed_at=start + timedelta(minutes=2)).to_dict()
+        value[mutation] = "other-profile"
+        value["evidence_sha256"] = calculate_broker_reconciliation_evidence_sha256(value)
+        evidence = BrokerReconciliationEvidence.from_dict(value)
+    wrong = _archive_inputs(tmp_path / "other", [evidence])
+    for flag, value in (("--current-source-archive", wrong["archives"][0]),
+                        ("--current-source-records", wrong["records_path"]),
+                        ("--current-source-expectations", wrong["expectations_path"])):
+        args[args.index(flag) + 1] = str(value)
+    response = _console_response(candidate["candidate"]["candidate_sha256"], confirmed_at=start + timedelta(minutes=1))
+    response["recovery"]["evidence_sample_count"] = 1
+    monkeypatch.setattr(verifier, "read_console_confirmation", lambda **_k: response)
+    assert verifier.main(args) == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["ready_for_atomic_state_transition"] is False
+    assert result["transition_plan"] is None
+    assert result["policy"]["state_write_attempted"] is False
