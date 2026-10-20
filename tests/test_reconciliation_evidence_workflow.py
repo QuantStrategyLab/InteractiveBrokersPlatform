@@ -1,6 +1,14 @@
 from pathlib import Path
+from dataclasses import asdict
+from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import re
+import subprocess
+import textwrap
+import zipfile
+
+import pytest
 
 
 WORKFLOW = (
@@ -138,3 +146,187 @@ def test_producer_source_record_field_shape_reaches_strict_consumer():
     ))
     assert all(set(record) == producer_fields for record in canonical)
     assert [record["scheduler_job_sha256"] for record in canonical] == ["e" * 64, "f" * 64]
+
+
+def _producer_materials(tmp_path, *, receipt_fault=None):
+    from application.broker_reconciliation_candidate import SourceReceiptExpectation
+    from tests.test_reconciliation_recovery_verify_only import _evidence
+
+    start = datetime(2026, 8, 31, 1, 0, tzinfo=timezone.utc)
+    evidence = _evidence(observed_at=start)
+    profile = evidence.strategy_profile
+    job_name = f"ibkr-reconcile-{profile}-45-1"
+    scheduler_hash = hashlib.sha256(job_name.encode()).hexdigest()
+    runtime_report = {
+        "status": "ok", "errors": [],
+        "diagnostics": {
+            "reconciliation_scheduler_job_sha256": scheduler_hash,
+            "broker_reconciliation": {
+                "schema_version": "ibkr_reconciliation_candidate.v1",
+                "evidence": evidence.to_dict(), "recovery_blockers": [],
+                "permits_active_lkg": True, "expected_digests_configured": True,
+            },
+        },
+    }
+    if receipt_fault == "scheduler":
+        runtime_report["diagnostics"]["reconciliation_scheduler_job_sha256"] = "0" * 64
+    elif receipt_fault is not None:
+        runtime_report["diagnostics"]["broker_reconciliation"]["evidence"]["evidence_sha256"] = receipt_fault
+
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    receipt_step = workflow.split("      - name: Read private no-order reconciliation candidate", 1)[1].split("      - name:", 1)[0]
+    # Execute the exact jq transformation, guards and digest extraction from
+    # the real producer. Replace only its cloud input with synthetic stdin.
+    receipt_fragment = receipt_step.split('gcloud storage cat "$report_uri" | ', 1)[1].split("          jq -r '[.reconciliation.permits_active_lkg", 1)[0]
+    receipt_script = "set -euo pipefail\nmkdir -p reports\n" + textwrap.dedent(receipt_fragment)
+    output = tmp_path / "receipt-output"
+    clean_env = {
+        "PATH": "/usr/bin:/bin:/sbin", "LC_ALL": "C", "PROFILE": profile,
+        "SCHEDULER_JOB_SHA256": scheduler_hash, "GITHUB_OUTPUT": str(output),
+        "serving_revision": "synthetic-revision", "service_revision_commit_sha": "e" * 40,
+        "service_deploy_run_id": "100",
+    }
+    assert not any(command in receipt_script for command in ("gcloud ", "gh ", "curl ", "wget "))
+    receipt_run = subprocess.run(
+        ["/bin/bash", "-c", receipt_script], cwd=tmp_path, env=clean_env,
+        input=json.dumps(runtime_report), capture_output=True, text=True, check=False,
+    )
+    if receipt_fault is not None:
+        return {"receipt_run": receipt_run}
+    assert receipt_run.returncode == 0, receipt_run.stderr
+    outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
+    report_path = tmp_path / "reports" / f"{profile}.json"
+    artifact_path = tmp_path / "synthetic-upload-artifact.zip"
+    with zipfile.ZipFile(artifact_path, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.write(report_path, arcname=f"{profile}.json")
+    # upload-artifact's outer archive digest is independently supplied to the
+    # record step. It is never replaced by the nested canonical evidence hash.
+    artifact_hash = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+    record_step = workflow.split("      - name: Generate reconciliation source record", 1)[1].split("      - name:", 1)[0]
+    record_script = textwrap.dedent(record_step.split("        run: |\n", 1)[1])
+    assert not any(command in record_script for command in ("gcloud ", "gh ", "curl ", "wget "))
+    record_env = {
+        "PATH": "/usr/bin:/bin:/sbin", "LC_ALL": "C",
+        "ARTIFACT_ID": "45", "ARTIFACT_SHA256": artifact_hash,
+        "EVIDENCE_SHA256": outputs["evidence_sha256"],
+        "REPOSITORY": "QuantStrategyLab/InteractiveBrokersPlatform",
+        "WORKFLOW_REF": "QuantStrategyLab/InteractiveBrokersPlatform/.github/workflows/collect-reconciliation-evidence.yml@refs/heads/main",
+        "WORKFLOW_SHA": "c" * 40, "WORKFLOW_HEAD_SHA": "c" * 40,
+        "WORKFLOW_RUN_ID": "45", "WORKFLOW_RUN_ATTEMPT": "1", "PROFILE": profile,
+        "SERVICE": "synthetic-service", "SERVICE_REVISION": "synthetic-revision",
+        "SERVICE_REVISION_COMMIT_SHA": "e" * 40, "SERVICE_DEPLOY_RUN_ID": "100",
+        "SCHEDULER_JOB_SHA256": scheduler_hash,
+    }
+    record_run = subprocess.run(
+        ["/bin/bash", "-c", record_script], cwd=tmp_path, env=record_env,
+        capture_output=True, text=True, check=False,
+    )
+    assert record_run.returncode == 0, record_run.stderr
+    record = json.loads((tmp_path / "source-records" / f"{profile}.json").read_text())
+    # Designation is assembled from known synthetic job/run/revision metadata
+    # and the actual archive bytes, never from the untrusted generated record.
+    expectation = SourceReceiptExpectation(
+        strategy_profile=profile, repository="QuantStrategyLab/InteractiveBrokersPlatform",
+        workflow_path=".github/workflows/collect-reconciliation-evidence.yml",
+        workflow_ref="refs/heads/main", workflow_conclusion="success", workflow_run_id="45",
+        workflow_run_attempt="1", workflow_head_sha="c" * 40, artifact_id="45",
+        artifact_name=f"ibkr-reconciliation-{profile}-45", artifact_sha256=artifact_hash,
+        evidence_sha256=evidence.evidence_sha256, service_name="synthetic-service",
+        service_revision="synthetic-revision", service_revision_commit_sha="e" * 40,
+        service_deploy_run_id="100", scheduler_job_sha256=hashlib.sha256(job_name.encode()).hexdigest(),
+    )
+    return {
+        "record": record, "expectation": expectation, "payload": json.loads(report_path.read_text()),
+        "evidence": evidence, "artifact_path": artifact_path, "report_path": report_path, "start": start,
+    }
+
+
+def test_real_producer_materials_reach_builder_and_verify_only(tmp_path):
+    from scripts.build_reconciliation_baseline_candidate import evaluate_receipts
+    from scripts.verify_reconciliation_recovery import verify_reconciliation_recovery
+    from tests.test_reconciliation_recovery_verify_only import _console_response, _evidence, _runtime_target
+
+    material = _producer_materials(tmp_path)
+    source = {"source_receipt_records": [material["record"]], "expectations": [material["expectation"]]}
+    candidate = evaluate_receipts([material["payload"]], now=material["start"], **source)
+    record = material["record"]
+    assert record["artifact_sha256"] == hashlib.sha256(material["artifact_path"].read_bytes()).hexdigest()
+    assert record["evidence_sha256"] == material["evidence"].evidence_sha256
+    assert record["artifact_sha256"] != record["evidence_sha256"]
+    assert record["scheduler_job_sha256"] == material["payload"]["reconciliation_scheduler_job_sha256"]
+    assert candidate["ready_for_independent_review"] is True
+    confirmed_at = material["start"] + timedelta(minutes=1)
+    confirmation = _console_response(candidate["candidate"]["candidate_sha256"], confirmed_at=confirmed_at)
+    confirmation["recovery"]["evidence_sample_count"] = 1
+    result = verify_reconciliation_recovery(
+        candidate_payload=candidate, **source, confirmation_payload=confirmation,
+        current_receipt_payload={"evidence": _evidence(observed_at=confirmed_at + timedelta(minutes=1)).to_dict()},
+        runtime_target_payload=_runtime_target(), recovery_id="ibkr-soxl-live-recovery",
+        now=confirmed_at + timedelta(minutes=2),
+    )
+    assert result["ready_for_atomic_state_transition"] is True
+    assert result["policy"] == {
+        "controller_mode": "verify_only", "no_order": True,
+        "execution_authority_granted": False, "state_write_attempted": False,
+    }
+
+
+@pytest.mark.parametrize("fault", [
+    "scheduler", "hash_swap", "outer_file_evidence_hash", "artifact_tamper", "evidence_tamper",
+    "rehashed_evidence_tamper", "unknown", "missing", "malformed", "wrong_run",
+])
+def test_real_producer_materials_reject_tampering(tmp_path, fault):
+    from quant_platform_kit.common.broker_reconciliation import calculate_broker_reconciliation_evidence_sha256
+    from scripts.build_reconciliation_baseline_candidate import evaluate_receipts
+
+    material = _producer_materials(tmp_path)
+    record, payload = material["record"], material["payload"]
+    if fault == "scheduler":
+        record["scheduler_job_sha256"] = "0" * 64
+    elif fault == "hash_swap":
+        record["artifact_sha256"], record["evidence_sha256"] = record["evidence_sha256"], record["artifact_sha256"]
+    elif fault == "outer_file_evidence_hash":
+        record["evidence_sha256"] = hashlib.sha256(material["report_path"].read_bytes()).hexdigest()
+    elif fault == "artifact_tamper":
+        record["artifact_sha256"] = "0" * 64
+    elif fault in {"evidence_tamper", "rehashed_evidence_tamper"}:
+        evidence = payload["reconciliation"]["evidence"]
+        evidence["cash_sha256"] = "9" * 64
+        if fault == "rehashed_evidence_tamper":
+            evidence["evidence_sha256"] = calculate_broker_reconciliation_evidence_sha256(evidence)
+    elif fault == "unknown":
+        record["untrusted_extra"] = "not-allowed"
+    elif fault == "missing":
+        record.pop("scheduler_job_sha256")
+    elif fault == "malformed":
+        record["scheduler_job_sha256"] = "Z" * 64
+    elif fault == "wrong_run":
+        record["workflow_run_id"] = "99"
+    with pytest.raises(ValueError):
+        evaluate_receipts(
+            [payload], now=material["start"], source_receipt_records=[record],
+            expectations=[material["expectation"]],
+        )
+
+
+@pytest.mark.parametrize("fault", ["scheduler", "", None, 1, "g" * 64, "A" * 64, "a" * 63])
+def test_real_receipt_fragment_rejects_scheduler_or_malformed_inner_hash(tmp_path, fault):
+    # None is also a malformed JSON digest, not a request to skip this control.
+    if fault is None:
+        fault = False
+    material = _producer_materials(tmp_path, receipt_fault=fault)
+    assert material["receipt_run"].returncode != 0
+
+
+def test_shared_source_fixture_does_not_infer_expectation_from_tampered_record():
+    from scripts.build_reconciliation_baseline_candidate import evaluate_receipts
+    from tests.test_reconciliation_baseline_candidate_script import _sources_for_evidences
+    from tests.test_reconciliation_recovery_verify_only import _evidence
+
+    evidence = _evidence(observed_at=datetime(2026, 8, 31, 1, 0, tzinfo=timezone.utc))
+    sources = _sources_for_evidences([evidence])
+    original_designation = asdict(sources["expectations"][0])
+    sources["source_receipt_records"][0]["scheduler_job_sha256"] = "0" * 64
+    assert asdict(sources["expectations"][0]) == original_designation
+    with pytest.raises(ValueError, match="provenance does not match"):
+        evaluate_receipts([{"evidence": evidence.to_dict()}], now=evidence.observed_at, **sources)

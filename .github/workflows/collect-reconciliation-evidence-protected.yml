@@ -291,7 +291,7 @@ jobs:
             and .reconciliation.evidence.strategy_profile == $profile
             and (.reconciliation.recovery_blockers | type == "array")
           ' "reports/${PROFILE}.json" >/dev/null
-          evidence_sha256="$(sha256sum "reports/${PROFILE}.json" | awk '{print $1}')"
+          evidence_sha256="$(jq -er '.reconciliation.evidence.evidence_sha256 | select(type == "string" and test("^[0-9a-f]{64}$"))' "reports/${PROFILE}.json")"
           test "${#evidence_sha256}" -eq 64
           {
             echo "evidence_sha256=$evidence_sha256"
