@@ -23,7 +23,7 @@ def admitted_env() -> dict[str, str]:
         "GITHUB_RUN_ATTEMPT": "1", "GITHUB_RUN_ID": "12345",
         "ENABLE_GITHUB_CLOUD_RUN_DEPLOY": "true",
         "INPUT_TARGET": "configured", "INPUT_CONFIGURED_SERVICE": "",
-        "INPUT_SOURCE_COMMIT": release.SOURCE, "INPUT_DEPLOY_IMAGE": "true",
+        "INPUT_SOURCE_COMMIT": release.SOURCE, "INPUT_DEPLOY_IMAGE": "false",
         "INPUT_SYNC_ENV": "false", "INPUT_APPROVE_TRAFFIC_SHIFT": "false",
         "INPUT_APPROVE_SCHEDULER_SYNC": "false", "GCP_PROJECT_ID": release.PROJECT,
         "GCP_DEPLOY_SERVICE_ACCOUNT": release.DEPLOYER,
@@ -35,7 +35,7 @@ def admitted_env() -> dict[str, str]:
     ("GITHUB_REF", "refs/heads/candidate"), ("GITHUB_EVENT_NAME", "push"),
     ("GITHUB_RUN_ATTEMPT", "2"), ("ENABLE_GITHUB_CLOUD_RUN_DEPLOY", "false"),
     ("INPUT_SOURCE_COMMIT", "b" * 40), ("INPUT_TARGET", "hk-verify"),
-    ("INPUT_CONFIGURED_SERVICE", "another-service"), ("INPUT_DEPLOY_IMAGE", "false"),
+    ("INPUT_CONFIGURED_SERVICE", "another-service"), ("INPUT_DEPLOY_IMAGE", "true"),
     ("INPUT_SYNC_ENV", "true"), ("INPUT_APPROVE_TRAFFIC_SHIFT", "true"),
     ("INPUT_APPROVE_SCHEDULER_SYNC", "true"), ("GCP_PROJECT_ID", "different"),
     ("GCP_DEPLOY_SERVICE_ACCOUNT", "another"), ("GCP_RUNTIME_SERVICE_ACCOUNT", "another"),
@@ -183,43 +183,8 @@ def test_disabled_scanning_cost_guard_is_metadata_only(monkeypatch):
     assert "--format=value(vulnerabilityScanningConfig.enablementState)" in seen[0]
 
 
-def test_context_contains_only_fixed_overlay_and_rejects_tamper(tmp_path, monkeypatch):
-    source = tmp_path / "source"
-    source.mkdir()
-    (source / "safe.py").write_bytes(b"fixture\n")
-    (source / "ignored.py").write_bytes(b"not-in-overlay\n")
-    monkeypatch.setattr(release, "SOURCE_FILES", {"safe.py": release.sha(b"fixture\n")})
-    monkeypatch.setattr(release, "run", lambda *args, **kwargs: release.SOURCE.encode())
-    destination = tmp_path / "context"
-    release.context(source, destination)
-    assert sorted(str(path.relative_to(destination)) for path in destination.rglob("*") if path.is_file()) == ["Dockerfile", "overlay/safe.py"]
-    assert (destination / "Dockerfile").read_text() == f"FROM {release.BASE_IMAGE}\nCOPY --chown=1000:1000 overlay/ /app/\n"
-    (source / "safe.py").write_bytes(b"tampered")
-    with pytest.raises(release.ReleaseError, match="source_file_mismatch"):
-        release.context(source, tmp_path / "tampered-context")
 
 
-@pytest.mark.parametrize("stderr,missing", [
-    (b"NOT_FOUND: fixture", True), (b"HTTP 404", True),
-    (b"PERMISSION_DENIED storage.objects.get resource404 fixture", False),
-    (b"403: not found", False), (b"error resource140412", False),
-])
-def test_missing_is_not_permission_bypass_and_native_output_is_private(monkeypatch, stderr, missing):
-    seen = []
-
-    def command(*args, **kwargs):
-        seen.append(kwargs)
-        return subprocess.CompletedProcess(args, 1, b"fixture-private-stdout", stderr)
-
-    monkeypatch.setattr(release.subprocess, "run", command)
-    if missing:
-        assert release.run(["fixture"], allow_missing=True) == b""
-    else:
-        with pytest.raises(release.ReleaseError) as error:
-            release.run(["fixture"], allow_missing=True)
-        assert "fixture" not in str(error.value)
-    assert seen[0]["capture_output"] is True
-    assert seen[0]["env"]["CLOUDSDK_CORE_DISABLE_FILE_LOGGING"] == "true"
 
 
 def test_workflow_bash_gate_matches_helper_and_excludes_normal_job(tmp_path):
@@ -239,88 +204,8 @@ def test_workflow_bash_gate_matches_helper_and_excludes_normal_job(tmp_path):
     assert "persist-credentials: false" in job
 
 
-def test_overlay_never_executes_image_entrypoint(monkeypatch, tmp_path):
-    commands = []
-
-    def command(args, **kwargs):
-        commands.append(args)
-        if args[1:3] == ["image", "inspect"]:
-            return json.dumps(["base"] if args[3] == release.BASE_IMAGE else ["base", "overlay"]).encode()
-        if args[1] == "create":
-            return b"a" * 64
-        return b""
-
-    monkeypatch.setattr(release, "run", command)
-    monkeypatch.setattr(release, "SOURCE_FILES", {"safe.py": release.sha(b"fixture")})
-    monkeypatch.setattr(release, "PACKAGES", {})
-    monkeypatch.setattr(release, "copy_file", lambda *args: b"wrong")
-    with pytest.raises(release.ReleaseError, match="image_source_file_mismatch"):
-        release.verify_image(tmp_path)
-    assert any(args[1] == "rm" for args in commands)
-    assert all(args[1] not in {"run", "start", "exec"} for args in commands)
-    assert "--entrypoint=/bin/true" in next(args for args in commands if args[1] == "create")
 
 
-@pytest.mark.parametrize("registry_mismatch", [False, True])
-def test_one_release_builds_once_and_only_replaces_zero_traffic_template(monkeypatch, tmp_path, service, original, registry_mismatch):
-    for key, value in admitted_env().items():
-        monkeypatch.setenv(key, value)
-    monkeypatch.setenv("CLOUD_RUN_SERVICE_TARGETS_JSON", json.dumps([{"service_name": "fixture-service"}]))
-    monkeypatch.setattr(release, "SERVICE_HASH", release.sha("fixture-service"))
-    monkeypatch.setattr(release, "REVISION_HASH", release.sha("fixture-serving"))
-    monkeypatch.setattr(release, "context", lambda *args: None)
-    monkeypatch.setattr(release, "verify_image", lambda *args: release.PACKAGES.copy())
-    monkeypatch.setattr(release, "revision_from_lockfile", lambda *args: release.PACKAGES["us_equity_strategies-0.7.60"])
-    commands, cloud_calls, replaces = [], [], []
-
-    def command(args, **kwargs):
-        commands.append(args)
-        if args[1:4] == ["artifacts", "repositories", "describe"]:
-            return b"SCANNING_DISABLED"
-        if args[1:5] == ["artifacts", "docker", "images", "describe"]:
-            if any(item[1] == "push" for item in commands):
-                assert args[5] == IMAGE  # Never re-resolve a mutable tag after push.
-                return ("sha256:" + ("b" if registry_mismatch else "a") * 64).encode()
-            return b""
-        if args[1] == "push":
-            return (release.IMAGE_TAG.rsplit(":", 1)[1] + ": digest: sha256:" + "a" * 64 + " size: 1234\n").encode()
-        return b""
-
-    def cloud(args, *, data=None, allow_missing=False):
-        cloud_calls.append(args)
-        if args[:3] == ["run", "services", "describe"]:
-            result = copy.deepcopy(service)
-            if replaces:
-                result["spec"] = replaces[0]["spec"]
-            return result
-        if args[3] == "fixture-serving":
-            return copy.deepcopy(original)
-        if not replaces:
-            assert allow_missing
-            return {}
-        result = copy.deepcopy(replaces[0]["spec"]["template"])
-        result["status"] = {"conditions": [{"type": "Ready", "status": "True"}]}
-        return result
-
-    monkeypatch.setattr(release, "run", command)
-    monkeypatch.setattr(release, "cloud", cloud)
-    monkeypatch.setattr(release, "replace_service", lambda body: replaces.append(body))
-    report = {}
-    if registry_mismatch:
-        with pytest.raises(release.ReleaseError, match="pushed_registry_digest_mismatch"):
-            release.release(tmp_path / "source", tmp_path / "context", report)
-        assert not replaces
-        return
-    release.release(tmp_path / "source", tmp_path / "context", report)
-    assert report["status"] == "PASS_NO_TRAFFIC"
-    assert len(replaces) == 1
-    assert replaces[0]["spec"]["traffic"] == release.routes(service)
-    assert sum(args[1] == "build" for args in commands) == 1
-    assert sum(args[1] == "push" for args in commands) == 1
-    assert all(args[:3] in (["run", "services", "describe"], ["run", "revisions", "describe"]) for args in cloud_calls)
-    assert "fixture-preserved" not in json.dumps(report)
-    assert "fixture-secret" not in json.dumps(report)
-    assert "opaque_fixture" not in json.dumps(report)
 
 
 @pytest.mark.parametrize("status", [200, 403, 409, 500])
@@ -340,12 +225,213 @@ def test_direct_replace_keeps_original_cas_and_never_retries(monkeypatch, servic
         with pytest.raises(release.ReleaseError, match=f"cloud_run_replace_http_{status}_no_retry"):
             release.replace_service(body, session=session)
     assert len(calls) == 1
+    assert calls[0][0] == "https://us-central1-run.googleapis.com/apis/serving.knative.dev/v1/namespaces/interactivebrokersquant/services/fixture-service"
     assert calls[0][1]["json"]["metadata"]["resourceVersion"] == "opaque-token"
     assert calls[0][1]["allow_redirects"] is False
     assert calls[0][1]["timeout"] == 60
 
 
-@pytest.mark.parametrize("output", [b"", b"digest: sha256:untrusted", b"other-tag: digest: sha256:" + b"a" * 64 + b" size: 1"])
-def test_pushed_manifest_digest_must_come_from_exact_push_receipt(output):
-    with pytest.raises(release.ReleaseError, match="pushed_manifest_digest_unavailable"):
-        release.pushed_digest(output)
+def response(status, payload):
+    return SimpleNamespace(status_code=status, json=lambda: payload)
+
+
+@pytest.mark.parametrize("http,sdk,code,allowed", [
+    (404, "NOT_FOUND", 404, True),
+    (403, "PERMISSION_DENIED", 403, False),
+    (403, "NOT_FOUND", 404, False),
+    (404, "PERMISSION_DENIED", 403, False),
+    (404, "NOT_FOUND", 403, False),
+    (404, None, 404, False),
+    (404, ["NOT_FOUND"], 404, False),
+    (500, "INTERNAL", 500, False),
+    (401, "UNAUTHENTICATED", 401, False),
+    (302, None, None, False),
+    (None, None, None, False),
+    ("404", "NOT_FOUND", 404, False),
+])
+def test_only_structured_NOT_FOUND_establishes_absence(http, sdk, code, allowed):
+    calls = []
+
+    def get(url, **kwargs):
+        calls.append((url, kwargs))
+        return response(http, {"error": {"status": sdk, "code": code, "message": "Cannot find revision [fixture-candidate]; NOT_FOUND fixture-private-text"}})
+
+    report = {}
+    if allowed:
+        assert release.read_revision("fixture-candidate", report, phase="candidate_absence", session=SimpleNamespace(get=get), allow_missing=True) == {}
+        assert report["revision_queries"][0]["decision"] == "not_found"
+    else:
+        with pytest.raises(release.ReleaseError):
+            release.read_revision("fixture-candidate", report, phase="candidate_absence", session=SimpleNamespace(get=get), allow_missing=True)
+        assert report["revision_queries"][0]["decision"] == "stop"
+    assert len(calls) == 1
+    assert calls[0][0] == "https://us-central1-run.googleapis.com/apis/serving.knative.dev/v1/namespaces/interactivebrokersquant/revisions/fixture-candidate"
+    assert calls[0][1] == {"timeout": 60, "allow_redirects": False}
+    assert "fixture-private-text" not in json.dumps(report)
+    assert "fixture-candidate" not in json.dumps(report)
+
+
+def test_original_revision_NOT_FOUND_cannot_be_accepted():
+    report = {}
+    session = SimpleNamespace(get=lambda *a, **k: response(404, {"error": {"code": 404, "status": "NOT_FOUND"}}))
+    with pytest.raises(release.ReleaseError, match="revision_get_http_404_NOT_FOUND_no_retry"):
+        release.read_revision("fixture-original", report, phase="original", session=session)
+    assert report["revision_queries"][0]["http_status"] == 404
+    assert report["revision_queries"][0]["sdk_status"] == "NOT_FOUND"
+
+
+@pytest.mark.parametrize("failure", ["transport", "invalid-json", "message-only", "wrong-success-name"])
+def test_revision_unknowns_stop_without_message_guess_or_retry(failure):
+    calls = []
+
+    def get(*args, **kwargs):
+        calls.append(1)
+        if failure == "transport":
+            raise TimeoutError("fixture-private-text HTTP404 NOT_FOUND")
+        if failure == "invalid-json":
+            def bad_json():
+                raise ValueError("Cannot find revision [fixture-candidate]")
+            return SimpleNamespace(status_code=404, json=bad_json)
+        if failure == "message-only":
+            return response(404, {"message": "Cannot find revision [fixture-candidate] NOT_FOUND"})
+        return response(200, {"metadata": {"name": "another-revision"}, "spec": {}})
+
+    report = {}
+    with pytest.raises(release.ReleaseError) as error:
+        release.read_revision("fixture-candidate", report, phase="candidate_absence", session=SimpleNamespace(get=get), allow_missing=True)
+    assert len(calls) == 1
+    assert report["revision_queries"][0]["decision"] == "stop"
+    assert "fixture-private-text" not in str(error.value) + json.dumps(report)
+
+
+@pytest.mark.parametrize("stderr", [
+    b"ERROR: (gcloud.run.revisions.describe) Cannot find revision [fixture-candidate]",
+    b"NOT_FOUND: fixture-private-text", b"HTTP 404", b"403: NOT_FOUND",
+])
+def test_official_CLI_message_is_never_HTTP_or_permission_evidence(monkeypatch, stderr):
+    calls = []
+
+    def command(*args, **kwargs):
+        calls.append(kwargs)
+        return subprocess.CompletedProcess(args, 1, b"fixture-private-stdout", stderr)
+
+    monkeypatch.setattr(release.subprocess, "run", command)
+    with pytest.raises(release.ReleaseError, match="^native_command_exit_1_no_retry$"):
+        release.run(["gcloud", "run", "revisions", "describe", "fixture-candidate"])
+    assert len(calls) == 1
+    assert calls[0]["env"]["CLOUDSDK_CORE_DISABLE_FILE_LOGGING"] == "true"
+
+
+def test_source_still_requires_frozen_overlay_and_all_pins_without_copy(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "safe.py").write_bytes(b"fixture\n")
+    lock = ('[[package]]\nname = "us-equity-strategies"\nsource = { git = "https://example.invalid/repo#' + release.PACKAGES["us_equity_strategies-0.7.60"] + '" }\n').encode()
+    (source / "uv.lock").write_bytes(lock)
+    monkeypatch.setattr(release, "SOURCE_FILES", {"safe.py": release.sha(b"fixture\n")})
+    monkeypatch.setattr(release, "SOURCE_LOCK_HASH", release.sha(lock))
+    monkeypatch.setattr(release, "run", lambda *a, **k: release.SOURCE.encode())
+    release.verify_source(source)
+    assert sorted(path.name for path in source.iterdir()) == ["safe.py", "uv.lock"]
+    (source / "safe.py").write_bytes(b"tampered")
+    with pytest.raises(release.ReleaseError, match="source_file_mismatch"):
+        release.verify_source(source)
+    (source / "safe.py").write_bytes(b"fixture\n")
+    (source / "uv.lock").write_bytes(lock + b"# changed\n")
+    with pytest.raises(release.ReleaseError, match="source_lock_changed"):
+        release.verify_source(source)
+
+
+@pytest.mark.parametrize("failure", [None, "registry-mismatch", "permission", "unknown", "original-permission", "candidate-exists"])
+def test_reuse_only_release_never_builds_or_pushes_and_denial_never_writes(monkeypatch, tmp_path, service, original, failure):
+    for key, value in admitted_env().items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("CLOUD_RUN_SERVICE_TARGETS_JSON", json.dumps([{"service_name": "fixture-service"}]))
+    monkeypatch.setattr(release, "SERVICE_HASH", release.sha("fixture-service"))
+    monkeypatch.setattr(release, "REVISION_HASH", release.sha("fixture-serving"))
+    monkeypatch.setattr(release, "QUALIFIED_BASELINE", release._digest(release.nonnotification(original)))
+    monkeypatch.setattr(release, "verify_source", lambda *a: None)
+    monkeypatch.setattr(release, "revision_from_lockfile", lambda *a: release.PACKAGES["us_equity_strategies-0.7.60"])
+    commands, gets, puts, closed = [], [], [], []
+
+    def command(args, **kwargs):
+        commands.append(args)
+        assert args[0] != "docker"
+        if args[1:4] == ["artifacts", "repositories", "describe"]:
+            return b"SCANNING_DISABLED"
+        assert args[1:5] == ["artifacts", "docker", "images", "describe"]
+        assert args[5] == release.QUALIFIED_IMAGE
+        return (("sha256:" + "b" * 64) if failure == "registry-mismatch" else release.QUALIFIED_DIGEST).encode()
+
+    def get(url, **kwargs):
+        gets.append(url)
+        name = url.rsplit("/", 1)[1]
+        if name == "fixture-serving":
+            if failure == "original-permission":
+                return response(403, {"error": {"code": 403, "status": "PERMISSION_DENIED"}})
+            return response(200, copy.deepcopy(original))
+        if not puts:
+            if failure == "permission":
+                return response(403, {"error": {"code": 403, "status": "PERMISSION_DENIED", "message": "Cannot find revision [fixture]"}})
+            if failure == "unknown":
+                return response(404, {"message": "Cannot find revision [fixture]"})
+            if failure == "candidate-exists":
+                return response(200, {"metadata": {"name": name}, "spec": {}})
+            return response(404, {"error": {"code": 404, "status": "NOT_FOUND"}})
+        result = copy.deepcopy(puts[0]["spec"]["template"])
+        result["status"] = {"conditions": [{"type": "Ready", "status": "True"}]}
+        return response(200, result)
+
+    def put(url, **kwargs):
+        puts.append(copy.deepcopy(kwargs["json"]))
+        return response(200, {})
+
+    def cloud(args):
+        assert args[:3] == ["run", "services", "describe"]
+        result = copy.deepcopy(service)
+        if puts:
+            result["spec"] = copy.deepcopy(puts[0]["spec"])
+        return result
+
+    session = SimpleNamespace(get=get, put=put, close=lambda: closed.append(1))
+    monkeypatch.setattr(release, "authorized_session", lambda: session)
+    monkeypatch.setattr(release, "run", command)
+    monkeypatch.setattr(release, "cloud", cloud)
+    report = {}
+    if failure:
+        with pytest.raises(release.ReleaseError):
+            release.release(tmp_path / "source", report)
+        assert not puts
+        assert len(gets) == (1 if failure in {"registry-mismatch", "original-permission"} else 2)
+    else:
+        release.release(tmp_path / "source", report)
+        assert report["status"] == "PASS_NO_TRAFFIC"
+        assert len(puts) == 1
+        assert puts[0]["spec"]["traffic"] == release.routes(service)
+        assert puts[0]["spec"]["template"]["spec"]["containers"][0]["image"] == release.QUALIFIED_IMAGE
+        assert [item["http_status"] for item in report["revision_queries"]] == [200, 404, 200]
+        assert report["image_qualification_run"] == 39512119214
+        assert report["build_commands"] == report["push_commands"] == 0
+    assert closed == [1]
+    assert all(args[0] == "gcloud" for args in commands)
+    assert "fixture-secret" not in json.dumps(report)
+
+
+def test_HTTP_diagnostics_are_available_in_safe_log_without_summary_UI(monkeypatch, tmp_path, capsys):
+    report_file = tmp_path / "result.json"
+    monkeypatch.setattr(release.sys, "argv", ["deploy", "--source", str(tmp_path), "--report", str(report_file), "--execute"])
+
+    def stop(source, report):
+        report["revision_queries"].append({"phase": "candidate_absence", "http_status": 403, "sdk_code": 403,
+                                            "sdk_status": "PERMISSION_DENIED", "decision": "stop", "revision_sha256": "a" * 64})
+        raise release.ReleaseError("revision_get_http_403_PERMISSION_DENIED_no_retry")
+
+    monkeypatch.setattr(release, "release", stop)
+    assert release.main() == 1
+    output = capsys.readouterr().out
+    line = next(line for line in output.splitlines() if line.startswith("NOTIFICATION_RESULT_JSON="))
+    emitted = json.loads(line.split("=", 1)[1])
+    assert emitted == json.loads(report_file.read_text())
+    assert emitted["revision_queries"][0]["http_status"] == 403
+    assert emitted["revision_queries"][0]["sdk_status"] == "PERMISSION_DENIED"
+    assert emitted["revision_create_attempts"] == 0
