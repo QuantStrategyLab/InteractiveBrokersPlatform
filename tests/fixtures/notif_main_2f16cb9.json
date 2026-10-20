@@ -1810,7 +1810,7 @@
   "attention:blocked:zh": {
     "sends": [
       {
-        "text": "🚨 ibkr · -account · soxl_soxx_trend_income\n结果：已禁止新增风险\n原因：operational_uncertain: 运行状态不确定 / 故障; new_risk_prohibited: 风控已拦截；调用方未提供具体原因码\n下一步：打开管理站处理恢复 / 复位（需授权）",
+        "text": "🚨 IBKR · -account · 半导体趋势收益\n结果：已禁止新增风险\n原因：operational_uncertain: 运行状态不确定 / 故障; new_risk_prohibited: 风控已拦截；调用方未提供具体原因码\n下一步：打开管理站处理恢复 / 复位（需授权）",
         "alert_key": "attention/ibkr/-account/soxl_soxx_trend_income/halt/operational_uncertain"
       }
     ],
@@ -1830,7 +1830,7 @@
   "daily_digest:attention:blocked:zh": {
     "sends": [
       {
-        "text": "🚨 ibkr · -account · soxl_soxx_trend_income\n结果：已禁止新增风险\n原因：operational_uncertain: 运行状态不确定 / 故障; new_risk_prohibited: 风控已拦截；调用方未提供具体原因码\n下一步：打开管理站处理恢复 / 复位（需授权）",
+        "text": "🚨 IBKR · -account · 半导体趋势收益\n结果：已禁止新增风险\n原因：operational_uncertain: 运行状态不确定 / 故障; new_risk_prohibited: 风控已拦截；调用方未提供具体原因码\n下一步：打开管理站处理恢复 / 复位（需授权）",
         "alert_key": "attention/ibkr/-account/soxl_soxx_trend_income/halt/operational_uncertain"
       }
     ],
@@ -1850,7 +1850,7 @@
   "attention:blocked:en": {
     "sends": [
       {
-        "text": "🚨 ibkr · -account · soxl_soxx_trend_income\nResult: new risk additions prohibited\nReason: operational_uncertain: operational uncertainty / fault; new_risk_prohibited: a risk guard blocked additions; the caller did not provide the specific reason code\nNext: open the management console for recovery / reset (authorization required)",
+        "text": "🚨 IBKR · -account · Semiconductor Trend Income\nResult: new risk additions prohibited\nReason: operational_uncertain: operational uncertainty / fault; new_risk_prohibited: a risk guard blocked additions; the caller did not provide the specific reason code\nNext: open the management console for recovery / reset (authorization required)",
         "alert_key": "attention/ibkr/-account/soxl_soxx_trend_income/halt/operational_uncertain"
       }
     ],
@@ -1870,7 +1870,7 @@
   "daily_digest:attention:blocked:en": {
     "sends": [
       {
-        "text": "🚨 ibkr · -account · soxl_soxx_trend_income\nResult: new risk additions prohibited\nReason: operational_uncertain: operational uncertainty / fault; new_risk_prohibited: a risk guard blocked additions; the caller did not provide the specific reason code\nNext: open the management console for recovery / reset (authorization required)",
+        "text": "🚨 IBKR · -account · Semiconductor Trend Income\nResult: new risk additions prohibited\nReason: operational_uncertain: operational uncertainty / fault; new_risk_prohibited: a risk guard blocked additions; the caller did not provide the specific reason code\nNext: open the management console for recovery / reset (authorization required)",
         "alert_key": "attention/ibkr/-account/soxl_soxx_trend_income/halt/operational_uncertain"
       }
     ],

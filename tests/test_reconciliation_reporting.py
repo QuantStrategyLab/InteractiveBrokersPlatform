@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+from types import SimpleNamespace
+
+import pytest
 
 from quant_platform_kit.common.broker_reconciliation import build_broker_reconciliation_evidence
 from quant_platform_kit.common.runtime_reports import persist_runtime_report
@@ -137,3 +140,52 @@ def test_persistable_reconciliation_report_rejects_untrusted_request_id() -> Non
     sanitized = build_persistable_reconciliation_report(report)
 
     assert "reconciliation_request_id" not in sanitized["diagnostics"]
+
+
+@pytest.mark.parametrize("shape", ["empty", "null", "missing"])
+@pytest.mark.parametrize("source_complete", [True, False, None])
+def test_persistent_pin_main_raw_flow_roundtrip_preserves_unknowns(
+    strategy_module, monkeypatch, tmp_path, shape, source_complete,
+):
+    import quant_platform_kit.cloud as cloud
+    from quant_platform_kit.common import runtime_reports
+
+    module = strategy_module
+    assert module.persist_runtime_report is runtime_reports.persist_runtime_report
+    phases, local_payloads, cloud_payloads = [], [], []
+    original_write = runtime_reports.write_runtime_report_json
+
+    def local_write(report, *, output_path):
+        path = original_write(report, output_path=output_path)
+        phases.append("local")
+        local_payloads.append(json.loads(path.read_text()))
+        return path
+
+    def cloud_write(uri, data, **kwargs):
+        assert uri.startswith("gs://synthetic-only/")
+        phases.append("cloud")
+        cloud_payloads.append(json.loads(data))
+
+    monkeypatch.setattr(runtime_reports, "write_runtime_report_json", local_write)
+    monkeypatch.setattr(cloud, "get_object_store", lambda **kwargs: SimpleNamespace(write_text=cloud_write))
+    flows = {"source_complete": source_complete}
+    if shape != "missing":
+        flows["transactions"] = [] if shape == "empty" else None
+    report = {
+        "schema_version": "runtime_report.v1", "platform": "ibkr",
+        "strategy_profile": "global_etf_rotation", "run_id": "synthetic-only",
+        "started_at": "2026-10-20T00:00:00Z", "account_external_flows": flows,
+    }
+    path = tmp_path / "report.json"
+    module.persist_runtime_report(report, output_path=path, cloud_prefix_uri="gs://synthetic-only/reports")
+    assert phases == ["local", "cloud", "local"]
+    assert len(local_payloads) == 2 and len(cloud_payloads) == 1
+    for payload in [*local_payloads, *cloud_payloads, json.loads(path.read_text())]:
+        actual = payload["account_external_flows"]
+        if shape == "empty":
+            assert actual["transactions"] == []
+        else:
+            assert actual.get("transactions") is None
+        assert actual.get("source_complete") is source_complete
+    assert "runtime_report_cloud_uri" not in local_payloads[0]["artifacts"]
+    assert local_payloads[-1]["artifacts"]["runtime_report_cloud_uri"].startswith("gs://synthetic-only/")
