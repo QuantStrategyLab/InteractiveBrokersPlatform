@@ -37,6 +37,7 @@ _SOURCE_RECORD_FIELDS = frozenset(
         "service_revision",
         "service_revision_commit_sha",
         "service_deploy_run_id",
+        "scheduler_job_sha256",
     }
 )
 
@@ -61,6 +62,7 @@ class SourceReceiptExpectation:
     service_revision: str
     service_revision_commit_sha: str
     service_deploy_run_id: str
+    scheduler_job_sha256: str
 
 
 def _canonical_text(value: object, *, field_name: str) -> str:
@@ -159,6 +161,9 @@ def _normalize_expectations(
             "service_deploy_run_id": _canonical_text(
                 expectation.service_deploy_run_id, field_name="service_deploy_run_id"
             ),
+            "scheduler_job_sha256": _canonical_sha256(
+                expectation.scheduler_job_sha256, field_name="scheduler_job_sha256"
+            ),
         }
         if normalized_expectation["artifact_name"] != (
             "ibkr-reconciliation-"
@@ -189,6 +194,8 @@ def _normalize_expectations(
 
 
 def _normalize_source_record(value: Mapping[str, object]) -> dict[str, str]:
+    if isinstance(value, Mapping) and "scheduler_job_sha256" not in value:
+        raise ValueError("source receipt record is missing required scheduler_job_sha256")
     if not isinstance(value, Mapping) or set(value) != _SOURCE_RECORD_FIELDS:
         raise ValueError("source receipt record has invalid fields")
     if value["schema_version"] != SOURCE_RECEIPT_RECORD_SCHEMA_VERSION:
@@ -228,6 +235,9 @@ def _normalize_source_record(value: Mapping[str, object]) -> dict[str, str]:
         ),
         "service_deploy_run_id": _canonical_text(
             value["service_deploy_run_id"], field_name="service_deploy_run_id"
+        ),
+        "scheduler_job_sha256": _canonical_sha256(
+            value["scheduler_job_sha256"], field_name="scheduler_job_sha256"
         ),
     }
 

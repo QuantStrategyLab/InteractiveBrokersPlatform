@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import hashlib
 
 import pytest
 
@@ -52,6 +53,9 @@ def _sources_for_evidences(evidences):
     expectations = []
     records = []
     for index, evidence in enumerate(evidences, start=1):
+        # Independent synthetic scheduler identity, not inferred from a record
+        # under validation. Match the real producer's job-name hashing rule.
+        scheduler_job_name = f"ibkr-reconcile-{evidence.strategy_profile}-{index}-1"
         expectation = SourceReceiptExpectation(
             strategy_profile=evidence.strategy_profile,
             repository="QuantStrategyLab/InteractiveBrokersPlatform",
@@ -62,11 +66,13 @@ def _sources_for_evidences(evidences):
             artifact_sha256="d" * 64, evidence_sha256=evidence.evidence_sha256,
             service_name="synthetic-service", service_revision="synthetic-revision",
             service_revision_commit_sha="e" * 40, service_deploy_run_id="100",
+            scheduler_job_sha256=hashlib.sha256(scheduler_job_name.encode()).hexdigest(),
         )
         expectations.append(expectation)
         record = asdict(expectation)
         for key in ("strategy_profile", "workflow_ref", "workflow_conclusion"):
             record.pop(key)
+        record["scheduler_job_sha256"] = hashlib.sha256(scheduler_job_name.encode()).hexdigest()
         records.append({"schema_version": SOURCE_RECEIPT_RECORD_SCHEMA_VERSION, **record})
     return {"source_receipt_records": records, "expectations": tuple(expectations)}
 
