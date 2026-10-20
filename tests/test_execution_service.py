@@ -1,4 +1,8 @@
 from types import SimpleNamespace
+from tempfile import TemporaryDirectory
+from pathlib import Path
+
+from tests.conftest import synthetic_account_submission
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -51,6 +55,9 @@ def _signal_metadata(
 def execute_rebalance(*args, **kwargs):
     """Give legacy order-plan fixtures a synthetic approved decision envelope."""
     metadata = kwargs.get("signal_metadata")
+    if not kwargs.get("dry_run_only", False) and metadata and metadata.get("allocation"):
+        kwargs.setdefault("account_ids", ("DU00000003",))
+        kwargs.setdefault("strategy_profile", "synthetic-profile")
     if metadata and isinstance(metadata.get("allocation"), dict):
         metadata = dict(metadata)
         if kwargs.get("strategy_profile") == "tqqq_growth_income":
@@ -77,6 +84,20 @@ def execute_rebalance(*args, **kwargs):
             },
         )
         kwargs["signal_metadata"] = metadata
+    if (not kwargs.get("dry_run_only", False) and metadata and metadata.get("allocation")
+            and "account_execution_session" not in kwargs):
+        # Existing plan tests now state the durable submission prerequisites.
+        # Explicit session=None keeps missing-session negative cases unassisted.
+        with TemporaryDirectory() as temporary:
+            directory = Path(kwargs.get("execution_lock_dir") or temporary) / "account-journal"
+            session, submit, receipt = synthetic_account_submission(
+                kwargs["submit_order_intent"], local_dir=directory,
+                metadata=kwargs["signal_metadata"], profile=kwargs["strategy_profile"],
+                account_id=kwargs["account_ids"][0], receipt=kwargs.get("runtime_release_receipt"),
+            )
+            kwargs.update(account_execution_session=session, submit_order_intent=submit,
+                          runtime_release_receipt=receipt)
+            return _execute_rebalance(*args, **kwargs)
     return _execute_rebalance(*args, **kwargs)
 
 
@@ -1686,7 +1707,8 @@ def test_execute_rebalance_skips_when_pending_orders_exist():
             return [
                 SimpleNamespace(
                     contract=SimpleNamespace(symbol="VOO"),
-                    orderStatus=SimpleNamespace(status="Submitted"),
+                    order=SimpleNamespace(account="DU00000003", action="BUY", totalQuantity=1),
+                    orderStatus=SimpleNamespace(status="Submitted", remaining=1),
                 )
             ]
 
@@ -2234,7 +2256,7 @@ def uncertain_cycle(tmp_path, monkeypatch):
 
         def accountValues(self):
             return [SimpleNamespace(
-                tag="CashBalance", currency="USD", value="1500", account="synthetic-account",
+                tag="CashBalance", currency="USD", value="1500", account="DU00000003",
             )]
 
     def run(first_report, *, multiple=False, first_side="sell", claim_error=False):
@@ -2252,7 +2274,7 @@ def uncertain_cycle(tmp_path, monkeypatch):
             risk_gate="APPROVE", risk_flags=("risk_gate:passed",),
         )
         metadata["risk_authority"] = {
-            "strategy_profile": "tqqq_growth_income", "account_ids": ("synthetic-account",),
+            "strategy_profile": "tqqq_growth_income", "account_ids": ("DU00000003",),
             "trade_date": metadata["trade_date"], "signal_date": None,
             "effective_date": metadata["effective_date"], "snapshot_as_of": None,
             "portfolio_equity": 2000.0, "targets": targets,
@@ -2277,14 +2299,20 @@ def uncertain_cycle(tmp_path, monkeypatch):
                 return first_report
             return SimpleNamespace(broker_order_id="later", status="Submitted")
 
+        session, submit, receipt = synthetic_account_submission(
+            submit, local_dir=tmp_path / "account-journal", metadata=metadata,
+            profile="tqqq_growth_income", account_id="DU00000003",
+        )
+        state.session = session
         return _execute_rebalance(
             FakeIB(), targets, positions, {"equity": 2000.0, "buying_power": 1500.0},
             fetch_quote_snapshots=lambda _ib, syms: {
                 s: SimpleNamespace(last_price=50.0) for s in syms
             },
             submit_order_intent=submit, order_intent_cls=OrderIntent,
+            account_execution_session=session, runtime_release_receipt=receipt,
             acquire_execution_claim=claim, translator=build_translator("en"),
-            strategy_profile="tqqq_growth_income", account_ids=("synthetic-account",),
+            strategy_profile="tqqq_growth_income", account_ids=("DU00000003",),
             signal_metadata=metadata, dry_run_only=False, cash_reserve_ratio=0.0,
             rebalance_threshold_ratio=0.0, limit_buy_premium=1.0, sell_settle_delay_sec=0.0,
             execution_lock_dir=tmp_path, return_summary=True,
@@ -2315,7 +2343,7 @@ def test_unknown_outcome_halts_following_buys_and_sells(uncertain_cycle, status,
     assert pending["broker_order_id"] == "original-order"
     assert pending["filled_quantity"] == 1.0
     assert pending["average_fill_price"] == 49.0
-    assert pending["account_id"] == "synthetic-account"
+    assert pending["account_id"] == "DU00000003"
     assert summary["orders_filled"] == []
     assert summary["orders_skipped"] == []
     assert uncertain_cycle.receipt is report
@@ -2323,6 +2351,19 @@ def test_unknown_outcome_halts_following_buys_and_sells(uncertain_cycle, status,
 
 @pytest.mark.parametrize("report", [None, SimpleNamespace(), {"status": "Filled"}, SimpleNamespace(status="Submitted")])
 def test_missing_broker_report_stops_without_discarding_intent(uncertain_cycle, report):
+    if getattr(report, "status", None) == "Submitted":
+        # A recognized ACK without broker identity is rejected by real dispatch;
+        # retain the attempt and original missing identity rather than fake ACK.
+        with pytest.raises(RuntimeError, match="broker result facts are uncertain"):
+            uncertain_cycle.run(report, multiple=True)
+        attempts = uncertain_cycle.session.read_state()["attempts"]
+        assert len(attempts) == 1
+        attempt = next(iter(attempts.values()))
+        assert attempt["certainty"] == "UNKNOWN"
+        assert attempt["observation"]["broker_order_id"] is None
+        assert len(uncertain_cycle.submitted) == len(uncertain_cycle.claims) == 1
+        assert uncertain_cycle.receipt is report
+        return
     _logs, summary = uncertain_cycle.run(report, multiple=True)
     assert len(uncertain_cycle.submitted) == 1
     assert summary["outcome_unknown"] is True
@@ -2355,7 +2396,7 @@ def test_unknown_same_intent_retry_stays_locked_with_empty_open_trades(uncertain
     assert retry["execution_status"] == "blocked"
     assert retry["no_op_reason"].startswith("same_day_execution_locked")
     assert json.loads(lock.read_text()) == identity
-    assert identity["account_ids"] == ["synthetic-account"]
+    assert identity["account_ids"] == ["DU00000003"]
     assert identity["target_hash"]
 
 
@@ -2423,7 +2464,7 @@ def test_partial_fill_then_failure_retains_actual_adapter_facts(uncertain_cycle,
     assert trade.orderStatus.filled == 1.0
     assert trade.orderStatus.avgFillPrice == 49.0
     assert trade.order.orderId == 123
-    assert trade.order.account == "synthetic-account"
+    assert trade.order.account == "DU00000003"
     if failure == "receipt-persistence":
         assert uncertain_cycle.confirmed_receipt.filled_quantity == 1.0
         assert uncertain_cycle.confirmed_receipt.broker_order_id == "123"
@@ -2468,6 +2509,7 @@ def test_persistent_executor_missing_session_never_calls_submit(tmp_path, no_ord
         fetch_quote_snapshots=lambda _ib, symbols: {s: SimpleNamespace(last_price=50.0) for s in symbols},
         submit_order_intent=lambda *_a, **_kw: submitted.append(True), order_intent_cls=OrderIntent,
         acquire_execution_claim=lambda: claims.append(True) or True, translator=build_translator("en"),
+        account_execution_session=None,
         strategy_profile="global_etf_rotation", account_ids=("U00000003",),
         signal_metadata=_signal_metadata(targets, risk_symbols=("VOO",), trade_date="2026-10-20"),
         dry_run_only=False, cash_reserve_ratio=0, rebalance_threshold_ratio=0,
@@ -2481,4 +2523,4 @@ def test_persistent_executor_missing_session_never_calls_submit(tmp_path, no_ord
             execute_rebalance(*args, **kwargs)
     assert submitted == []
     assert claims == []
-    assert not list(tmp_path.rglob("account_submissions/*.json"))
+    assert not list((tmp_path / "account-journal" / "account_submissions").rglob("*.json"))

@@ -3,6 +3,8 @@ from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+from tests.conftest import synthetic_account_submission
+
 import pytest
 
 from application.execution_service import execute_rebalance
@@ -400,7 +402,9 @@ def test_run_strategy_core_passes_signal_metadata_to_execution():
         strategy_symbols=None,
         signal_metadata=None,
         acquire_execution_claim=None,
+        account_execution_session=None,
     ):
+        observed["account_execution_session"] = account_execution_session
         observed["strategy_symbols"] = strategy_symbols
         observed["signal_metadata"] = signal_metadata
         return []
@@ -447,6 +451,7 @@ def test_run_strategy_core_passes_signal_metadata_to_execution():
     )
 
     assert result.result == "OK - executed"
+    assert observed["account_execution_session"] is None
     assert observed["strategy_symbols"] == ("AAA", "BOXX")
     assert observed["signal_metadata"]["managed_symbols"] == ("AAA", "BOXX")
     assert observed["messages"] == []
@@ -945,6 +950,18 @@ def claim_cycle(tmp_path, monkeypatch, strategy_module):
             "max_target_values": {symbol: weight * equity for symbol, weight in targets.items()},
         }
         kwargs["signal_metadata"] = signal_metadata
+        if not kwargs.get("dry_run_only", False) and not state.use_runner_session:
+            # Isolate the old claim fault from the new account grant prerequisite.
+            # The persistent_runner tests below instead use the actual main gate.
+            session, submit_fn, receipt = synthetic_account_submission(
+                lambda ib, intent: state.adapters.submit_order_intent_fn(ib, intent),
+                local_dir=tmp_path / "claim-test-journal", metadata=signal_metadata,
+                profile=kwargs["strategy_profile"], account_id="DU00000003",
+                receipt=kwargs.get("runtime_release_receipt"),
+            )
+            kwargs["account_execution_session"] = session
+            kwargs["runtime_release_receipt"] = receipt
+            kwargs["submit_order_intent"] = submit_fn
         return execute_rebalance(*args, execution_lock_dir=tmp_path / "locks", **kwargs)
 
     adapters = build_runtime_broker_adapters(
@@ -960,7 +977,7 @@ def claim_cycle(tmp_path, monkeypatch, strategy_module):
         application_execute_rebalance_fn=execute_with_observed_claim,
         execute_paper_liquidation_fn=unexpected,
         translator=_build_test_translator(), strategy_profile="global_etf_rotation",
-        account_group="synthetic-paper", service_name=None, account_ids=(),
+        account_group="synthetic-paper", service_name=None, account_ids=("DU00000003",),
         dry_run_only=False, cash_reserve_ratio=0.0, cash_reserve_floor_usd=0.0,
         rebalance_threshold_ratio=0.02, limit_buy_premium=1.0,
         quantity_step=1.0, min_order_notional=10.0,
@@ -970,6 +987,7 @@ def claim_cycle(tmp_path, monkeypatch, strategy_module):
     state = SimpleNamespace(
         submitted=submitted, metadata=metadata, store=store, config=config,
         adapters=adapters, positions={}, target_weights={"VOO": 0.5},
+        use_runner_session=False,
     )
     monkeypatch.setattr(strategy_module, "build_broker_adapters", lambda **_kwargs: state.adapters)
 
@@ -1163,6 +1181,7 @@ def test_successful_dry_run_orders_are_not_real_trade_notifications():
 @pytest.fixture
 def persistent_runner(claim_cycle, strategy_module, monkeypatch):
     state = claim_cycle
+    state.use_runner_session = True
     receipt = {"attestation_state": "self_attested", "release_id": "synthetic-release",
                "strategy_release": {"strategy_revision": "a" * 40}}
     state.status = "Submitted"
@@ -1216,7 +1235,7 @@ def test_persistent_runner_old_qpk_contract_and_dry_run_do_not_submit(persistent
     with pytest.raises(RuntimeError, match="session|contract"):
         state.run()
     assert state.submitted == []
-    assert not list(state.store.local_dir.rglob("account_submissions/*.json"))
+    assert not list((state.store.local_dir / "account_submissions").rglob("*.json"))
 
 
 def test_persistent_runner_no_order_zero_new_registration(persistent_runner):
