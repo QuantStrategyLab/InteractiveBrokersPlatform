@@ -3,6 +3,11 @@ name: Deploy Cloud Run
 on:
   workflow_dispatch:
     inputs:
+      notification_only:
+        description: "Fixed reviewed IBKR notification overlay; requires deploy_image=true and sync/traffic/scheduler=false."
+        required: true
+        type: boolean
+        default: false
       target:
         description: "Deployment target to run. Use hk-verify for an isolated HK dry-run Cloud Run service."
         required: true
@@ -72,6 +77,7 @@ jobs:
       id-token: write
     uses: ./.github/workflows/sync-cloud-run-env-protected.yml
     with:
+      notification_only: ${{ inputs.notification_only }}
       target: ${{ inputs.target }}
       configured_service: ${{ inputs.configured_service }}
       source_commit: ${{ inputs.source_commit }}
