@@ -9,14 +9,12 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
-import io
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
-import tarfile
 import time
 
 from scripts.verify_cloud_run_no_traffic_deploy import _active_traffic, _digest
@@ -25,12 +23,17 @@ from scripts.verify_image_ues_release_binding import check, new_report, revision
 SOURCE = "07a98e1559ec1acf7199f419facfe5c3ad5f124d"
 PROJECT = "interactivebrokersquant"
 REGION = "us-central1"
+RUN_API = f"https://{REGION}-run.googleapis.com/apis/serving.knative.dev/v1/namespaces/{PROJECT}"
 DEPLOYER = f"ibkr-platform-deploy@{PROJECT}.iam.gserviceaccount.com"
 RUNTIME = f"ibkr-platform-runtime@{PROJECT}.iam.gserviceaccount.com"
 REPOSITORY = f"{REGION}-docker.pkg.dev/{PROJECT}/cloud-run-source-deploy/interactivebrokersplatform/cloud-run"
 BASE_DIGEST = "sha256:9fca942d37139f2343aae2c1da2d2ba83610e8df0cf63a27e579774ba3940885"
 BASE_IMAGE = f"{REPOSITORY}@{BASE_DIGEST}"
-IMAGE_TAG = f"{REPOSITORY}:notification-only-40bf-07a98e1559ec"
+QUALIFIED_DIGEST = "sha256:458a3af3910a0a636841ba3b0d3cb547604ac960c0aa47d03e1c17dc89f2aa3a"
+QUALIFIED_IMAGE = f"{REPOSITORY}@{QUALIFIED_DIGEST}"
+QUALIFICATION_RUN = 39512119214
+QUALIFIED_BASELINE = "61c14e3e3382828722a25a09d12a88ef808fa3f43ea3347bfa126bc3a930bc99"
+SOURCE_LOCK_HASH = "b77d42e4d5ed6b644a1fa5c5b037c8dc1957a2d9dfc523045e45f0c89fa86f90"
 SERVICE_HASH = "6445e856e49a76d83e1aaf938723166d227ba6c5e83b3e83d5bd259bb641019e"
 REVISION_HASH = "bd167f3f9f771ae3c6b5adc5e973b2e6d27b2f23818d19e6a0a3eeb41f0bae5a"
 TARGET_HASH = "c9912a3bf99c97605a0791e5ecbcc1d344444daf4f64b2c699d717b2d8b8c8ac"
@@ -83,56 +86,84 @@ def sha(value: bytes | str) -> str:
     return hashlib.sha256(value.encode() if isinstance(value, str) else value).hexdigest()
 
 
-def run(command: list[str], *, data: bytes | None = None, timeout: int = 60, allow_missing: bool = False) -> bytes:
+def run(command: list[str], *, data: bytes | None = None, timeout: int = 60) -> bytes:
     env = dict(os.environ, CLOUDSDK_CORE_DISABLE_FILE_LOGGING="true", CLOUDSDK_CORE_LOG_HTTP="false")
     try:
         result = subprocess.run(command, input=data, capture_output=True, timeout=timeout, env=env, check=False)
     except subprocess.TimeoutExpired:
         raise ReleaseError("command_timeout_no_retry") from None
     if result.returncode:
-        stderr = result.stderr.decode(errors="replace")
-        denied = re.search(r"PERMISSION_DENIED|forbidden|\b403\b", stderr, re.I)
-        if allow_missing and not denied and re.search(r"\bNOT_FOUND\b|\bnot found\b|\bHTTP[ /:]*404\b|\(404\)", stderr, re.I):
-            return b""
-        permissions = sorted(set(re.findall(r"\b(?:run|storage|artifactregistry|iam|logging)\.[A-Za-z.]+", stderr)))
-        code = ",".join(permissions) if permissions else "native_command_failed"
-        raise ReleaseError(code + ":no_retry")
+        # A CLI method name or message is not a structured HTTP/IAM status.
+        raise ReleaseError(f"native_command_exit_{result.returncode}_no_retry")
     return result.stdout
 
 
-def cloud(args: list[str], *, allow_missing: bool = False) -> dict:
-    require(len(args) == 4 and args[:3] in (["run", "services", "describe"], ["run", "revisions", "describe"]), "cloud_reader_only")
-    output = run(["gcloud", *args, f"--project={PROJECT}", f"--region={REGION}", "--format=json", "--quiet"], allow_missing=allow_missing)
-    return json.loads(output) if output else {}
+def cloud(args: list[str]) -> dict:
+    require(len(args) == 4 and args[:3] == ["run", "services", "describe"], "cloud_service_reader_only")
+    return json.loads(run(["gcloud", *args, f"--project={PROJECT}", f"--region={REGION}", "--format=json", "--quiet"]))
+
+
+def authorized_session():
+    """Consume the original Actions ADC through the official SDK, without export."""
+    require(bool(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")), "original_actions_ADC_required")
+    sdk = Path(run(["gcloud", "info", "--format=value(installation.sdk_root)"]).decode().strip())
+    vendor = sdk / "lib" / "third_party"
+    require(vendor.is_dir(), "official_auth_client_unavailable")
+    sys.path.insert(0, str(vendor))
+    try:
+        import google.auth
+        from google.auth.transport.requests import AuthorizedSession
+        credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        require(getattr(credentials, "service_account_email", None) == DEPLOYER, "original_ADC_identity_required")
+        return AuthorizedSession(credentials, max_refresh_attempts=0)
+    except ReleaseError:
+        raise
+    except Exception:
+        raise ReleaseError("official_ADC_client_unavailable") from None
+
+
+def read_revision(name: str, report: dict, *, phase: str, session, allow_missing: bool = False) -> dict:
+    """Only an HTTP 404 with structured NOT_FOUND may establish absence."""
+    require(bool(re.fullmatch(r"[a-z][a-z0-9-]{0,62}", name)), "invalid_revision_name")
+    require(phase in {"original", "candidate_absence", "candidate_readiness"}, "invalid_revision_query_phase")
+    entry = {"phase": phase, "revision_sha256": sha(name), "http_status": None, "sdk_status": "UNKNOWN", "sdk_code": None, "decision": "stop"}
+    report.setdefault("revision_queries", []).append(entry)
+    try:
+        response = session.get(f"{RUN_API}/revisions/{name}",
+                               timeout=60, allow_redirects=False)
+    except Exception:
+        raise ReleaseError("revision_get_transport_failed_no_retry") from None
+    status = response.status_code
+    require(type(status) is int and 100 <= status <= 599, "revision_get_unknown_HTTP_status_no_retry")
+    entry["http_status"] = status
+    try:
+        payload = response.json()
+    except Exception:
+        raise ReleaseError(f"revision_get_http_{status}_unknown_payload_no_retry") from None
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if isinstance(error, dict):
+        states = {"NOT_FOUND", "PERMISSION_DENIED", "UNAUTHENTICATED", "INVALID_ARGUMENT", "FAILED_PRECONDITION", "ABORTED", "UNAVAILABLE", "INTERNAL", "UNKNOWN", "DEADLINE_EXCEEDED", "RESOURCE_EXHAUSTED"}
+        entry["sdk_status"] = error.get("status") if isinstance(error.get("status"), str) and error["status"] in states else "UNKNOWN"
+        entry["sdk_code"] = error.get("code") if type(error.get("code")) is int else None
+    if status == 200:
+        require(isinstance(payload, dict) and "error" not in payload and isinstance(payload.get("metadata"), dict) and payload["metadata"].get("name") == name and isinstance(payload.get("spec"), dict), "revision_get_invalid_success_payload_no_retry")
+        entry.update(sdk_status="OK", decision="found")
+        return payload
+    if status == 404 and entry["sdk_status"] == "NOT_FOUND" and entry["sdk_code"] == 404 and allow_missing:
+        entry["decision"] = "not_found"
+        return {}
+    raise ReleaseError(f"revision_get_http_{status}_{entry['sdk_status']}_no_retry")
 
 
 def replace_service(body: dict, *, session=None) -> None:
-    """Preserve the read resourceVersion; gcloud replace rewrites that token.
-
-    The official auth client consumes the existing Actions ADC internally.
-    No token, credential file body, request body or response body is exported.
-    """
+    """Preserve the original CAS token; never retry a write or export its body."""
     name = body["metadata"]["name"]
     require(sha(name) == SERVICE_HASH and bool(body["metadata"].get("resourceVersion")), "fixed_service_and_concurrency_token_required")
     owned = session is None
     if owned:
-        require(bool(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")), "original_actions_ADC_required")
-        sdk = Path(run(["gcloud", "info", "--format=value(installation.sdk_root)"]).decode().strip())
-        vendor = sdk / "lib" / "third_party"
-        require(vendor.is_dir(), "official_auth_client_unavailable")
-        sys.path.insert(0, str(vendor))
-        try:
-            import google.auth
-            from google.auth.transport.requests import AuthorizedSession
-            credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-            require(getattr(credentials, "service_account_email", None) == DEPLOYER, "original_ADC_identity_required")
-            session = AuthorizedSession(credentials, max_refresh_attempts=0)
-        except ReleaseError:
-            raise
-        except Exception:
-            raise ReleaseError("official_ADC_client_unavailable") from None
+        session = authorized_session()
     try:
-        response = session.put(f"https://run.googleapis.com/apis/serving.knative.dev/v1/projects/{PROJECT}/locations/{REGION}/services/{name}",
+        response = session.put(f"{RUN_API}/services/{name}",
                                json=body, timeout=60, allow_redirects=False)
         status = response.status_code
     except Exception:
@@ -149,7 +180,7 @@ def validate_dispatch(env: dict[str, str]) -> str:
     require(env.get("ENABLE_GITHUB_CLOUD_RUN_DEPLOY") == "true", "repository_deployment_gate_disabled")
     require(env.get("INPUT_SOURCE_COMMIT") == SOURCE, "fixed_notification_source_required")
     require(env.get("INPUT_TARGET") == "configured" and not env.get("INPUT_CONFIGURED_SERVICE"), "fixed_private_target_alias_required")
-    require(env.get("INPUT_DEPLOY_IMAGE") == "true", "image_build_required")
+    require(env.get("INPUT_DEPLOY_IMAGE") == "false", "fixed_image_reuse_required_no_rebuild")
     require(all(env.get(key) == "false" for key in ("INPUT_SYNC_ENV", "INPUT_APPROVE_TRAFFIC_SHIFT", "INPUT_APPROVE_SCHEDULER_SYNC")), "broad_mutation_not_authorized")
     require(env.get("GCP_PROJECT_ID") == PROJECT and env.get("GCP_DEPLOY_SERVICE_ACCOUNT") == DEPLOYER and env.get("GCP_RUNTIME_SERVICE_ACCOUNT") == RUNTIME, "original_identity_binding_required")
     run_id = env.get("GITHUB_RUN_ID", "")
@@ -175,48 +206,13 @@ def resolve_service(raw: str) -> str:
     return matches[0]
 
 
-def context(source: Path, destination: Path) -> None:
+def verify_source(source: Path) -> None:
     require(run(["git", "-C", str(source), "rev-parse", "HEAD"]).decode().strip() == SOURCE, "source_checkout_mismatch")
-    require(not destination.exists(), "context_already_exists")
     for relative, expected in SOURCE_FILES.items():
         path = source / relative
         require(path.is_file() and not path.is_symlink() and sha(path.read_bytes()) == expected, "source_file_mismatch")
-    for relative in SOURCE_FILES:
-        path = destination / "overlay" / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes((source / relative).read_bytes())
-    (destination / "Dockerfile").write_text(f"FROM {BASE_IMAGE}\nCOPY --chown=1000:1000 overlay/ /app/\n")
-
-
-def copy_file(container: str, path: str) -> bytes:
-    raw = run(["docker", "cp", f"{container}:{path}", "-"])
-    with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
-        members = archive.getmembers()
-        require(len(members) == 1 and members[0].isfile() and members[0].size < 2_000_000, "unexpected_image_file")
-        return archive.extractfile(members[0]).read()
-
-
-def verify_image(source: Path) -> dict[str, str]:
-    base_layers = json.loads(run(["docker", "image", "inspect", BASE_IMAGE, "--format", "{{json .RootFS.Layers}} "]))
-    layers = json.loads(run(["docker", "image", "inspect", IMAGE_TAG, "--format", "{{json .RootFS.Layers}} "]))
-    require(layers[:-1] == base_layers and len(layers) == len(base_layers) + 1, "base_layers_changed")
-    container = run(["docker", "create", "--network=none", "--entrypoint=/bin/true", IMAGE_TAG]).decode().strip()
-    require(bool(re.fullmatch(r"[0-9a-f]{64}", container)), "invalid_static_container")
-    try:
-        for path, expected in SOURCE_FILES.items():
-            require(sha(copy_file(container, "/app/" + path)) == expected, "image_source_file_mismatch")
-        installed = {}
-        for dist, expected in PACKAGES.items():
-            prefix = f"/app/.venv/lib/python3.12/site-packages/{dist}.dist-info/"
-            metadata = copy_file(container, prefix + "METADATA").decode()
-            direct = json.loads(copy_file(container, prefix + "direct_url.json"))
-            require(direct.get("vcs_info", {}).get("commit_id") == expected, "installed_package_commit_changed")
-            require("\nVersion: " + dist.rsplit("-", 1)[1] + "\n" in "\n" + metadata, "installed_package_version_changed")
-            installed[dist] = expected
-        require(revision_from_lockfile(source / "uv.lock") == PACKAGES["us_equity_strategies-0.7.60"], "source_ues_pin_changed")
-        return installed
-    finally:
-        run(["docker", "rm", container])
+    require(sha((source / "uv.lock").read_bytes()) == SOURCE_LOCK_HASH, "source_lock_changed")
+    require(revision_from_lockfile(source / "uv.lock") == PACKAGES["us_equity_strategies-0.7.60"], "source_ues_pin_changed")
 
 
 def env_map(revision: dict) -> dict[str, dict]:
@@ -338,79 +334,71 @@ def verify_readback(before: dict, original: dict, after: dict, revision: dict, e
                     for key in PROVENANCE_LABELS), "revision_provenance_mismatch")
 
 
-def pushed_digest(output: bytes) -> str:
-    tag = re.escape(IMAGE_TAG.rsplit(":", 1)[1])
-    matches = re.findall(rf"^{tag}: digest: (sha256:[0-9a-f]{{64}}) size: [0-9]+\s*$", output.decode(), re.M)
-    require(len(matches) == 1, "pushed_manifest_digest_unavailable")
-    return matches[0]
-
-
-def release(source: Path, destination: Path, report: dict) -> None:
+def release(source: Path, report: dict) -> None:
     run_id = validate_dispatch(dict(os.environ))
+    verify_source(source)
     service_name = resolve_service(os.environ.get("CLOUD_RUN_SERVICE_TARGETS_JSON", ""))
     print("::add-mask::" + service_name)
     before = cloud(["run", "services", "describe", service_name])
     revision_name = original_revision(before)
     print("::add-mask::" + revision_name)
-    original = cloud(["run", "revisions", "describe", revision_name])
-    require(original["spec"]["serviceAccountName"] == RUNTIME, "original_runtime_identity_mismatch")
-    require(original.get("status", {}).get("imageDigest", original["spec"]["containers"][0]["image"]).endswith(BASE_DIGEST), "original_image_changed")
-    target = runtime_target(original)
-    budget_guard(before, original)
-    registry_cost_guard()
-    report.update({"target": ALIAS, "source": SOURCE, "original_target_fingerprint": TARGET_HASH, "original_nonnotification_sha256": _digest(nonnotification(original))})
-    # Do not rebuild an image after a successful prior push or an uncertain run.
-    existing = run(["gcloud", "artifacts", "docker", "images", "describe", IMAGE_TAG, f"--project={PROJECT}", "--format=value(image_summary.digest)", "--quiet"], allow_missing=True)
-    require(not existing.strip(), "candidate_tag_already_exists_do_not_rebuild")
-    context(source, destination)
-    run(["gcloud", "auth", "configure-docker", f"{REGION}-docker.pkg.dev", "--quiet"])
-    # BuildKit's FROM cache alone need not expose the base to image inspect.
-    run(["docker", "pull", BASE_IMAGE], timeout=180)
-    run(["docker", "build", "--network=none", "--tag", IMAGE_TAG, str(destination)], timeout=600)
-    installed = verify_image(source)
-    report["installed_commits"] = installed
-    binding = new_report()
-    require(not check({"image": installed["us_equity_strategies-0.7.60"], "lockfile": revision_from_lockfile(source / "uv.lock")}, [(ALIAS, target)], report=binding), "original_release_risk_binding_mismatch")
-    report["release_risk_binding"] = binding
-    digest = pushed_digest(run(["docker", "push", IMAGE_TAG], timeout=180))
-    image = REPOSITORY + "@" + digest
-    registry_digest = run(["gcloud", "artifacts", "docker", "images", "describe", image, f"--project={PROJECT}", "--format=value(image_summary.digest)", "--quiet"]).decode().strip()
-    require(registry_digest == digest, "pushed_registry_digest_mismatch")
-    report["image_digest"] = digest
-    fresh = cloud(["run", "services", "describe", service_name])
-    require(bool(before.get("metadata", {}).get("resourceVersion")), "service_concurrency_token_required")
-    require(fresh.get("metadata", {}).get("resourceVersion") == before.get("metadata", {}).get("resourceVersion") and fresh.get("spec") == before.get("spec") and routes(fresh) == routes(before), "service_changed_during_build")
-    body = candidate(before, original, image, run_id)
-    candidate_name = body["spec"]["template"]["metadata"]["name"]
-    print("::add-mask::" + candidate_name)
-    require(not cloud(["run", "revisions", "describe", candidate_name], allow_missing=True), "candidate_revision_already_exists")
-    report["revision_create_attempts"] = 1
-    replace_service(body)
-    report["candidate_revision_sha256"] = sha(candidate_name)
-    for _ in range(24):
-        revision = cloud(["run", "revisions", "describe", candidate_name], allow_missing=True)
-        if any(condition.get("type") == "Ready" and condition.get("status") == "True" for condition in revision.get("status", {}).get("conditions", [])):
-            after = cloud(["run", "services", "describe", service_name])
-            verify_readback(before, original, after, revision, body)
-            report.update({"status": "PASS_NO_TRAFFIC", "readiness": True, "traffic_unchanged": True, "nonnotification_unchanged": True, "routing_literals": ROUTING, "actual_loaded_ues": "NOT_ATTESTED"})
-            return
-        if any(condition.get("type") == "Ready" and condition.get("status") == "False" for condition in revision.get("status", {}).get("conditions", [])):
-            raise ReleaseError("candidate_readiness_failed_no_retry")
-        time.sleep(10)
-    raise ReleaseError("candidate_readiness_timeout_no_retry")
+    session = authorized_session()
+    try:
+        original = read_revision(revision_name, report, phase="original", session=session)
+        require(original["spec"]["serviceAccountName"] == RUNTIME, "original_runtime_identity_mismatch")
+        require(original.get("status", {}).get("imageDigest", original["spec"]["containers"][0]["image"]).endswith(BASE_DIGEST), "original_image_changed")
+        target = runtime_target(original)
+        baseline = _digest(nonnotification(original))
+        require(baseline == QUALIFIED_BASELINE, "qualified_nonnotification_baseline_changed")
+        budget_guard(before, original)
+        registry_cost_guard()
+        # Adopt only the already qualified immutable image. No Docker/build/push path.
+        registry_digest = run(["gcloud", "artifacts", "docker", "images", "describe", QUALIFIED_IMAGE, f"--project={PROJECT}", "--format=value(image_summary.digest)", "--quiet"]).decode().strip()
+        require(registry_digest == QUALIFIED_DIGEST, "qualified_registry_digest_mismatch")
+        report.update({"target": ALIAS, "source": SOURCE, "original_target_fingerprint": TARGET_HASH, "original_nonnotification_sha256": baseline,
+                       "image_digest": QUALIFIED_DIGEST, "image_qualification_run": QUALIFICATION_RUN,
+                       "image_evidence_scope": "reused_prior_static_qualification_and_immutable_registry_read",
+                       "prior_installed_commits": PACKAGES, "build_commands": 0, "push_commands": 0})
+        binding = new_report()
+        binding["evidence_scope"] = "prior_qualified_image_and_current_original_target"
+        require(not check({"image": PACKAGES["us_equity_strategies-0.7.60"], "lockfile": revision_from_lockfile(source / "uv.lock")}, [(ALIAS, target)], report=binding), "original_release_risk_binding_mismatch")
+        report["release_risk_binding"] = binding
+        fresh = cloud(["run", "services", "describe", service_name])
+        require(bool(before.get("metadata", {}).get("resourceVersion")), "service_concurrency_token_required")
+        require(fresh.get("metadata", {}).get("resourceVersion") == before.get("metadata", {}).get("resourceVersion") and fresh.get("spec") == before.get("spec") and routes(fresh) == routes(before), "service_changed_during_preflight")
+        body = candidate(before, original, QUALIFIED_IMAGE, run_id)
+        candidate_name = body["spec"]["template"]["metadata"]["name"]
+        print("::add-mask::" + candidate_name)
+        require(not read_revision(candidate_name, report, phase="candidate_absence", session=session, allow_missing=True), "candidate_revision_already_exists")
+        report["revision_create_attempts"] = 1
+        replace_service(body, session=session)
+        report["candidate_revision_sha256"] = sha(candidate_name)
+        for _ in range(24):
+            revision = read_revision(candidate_name, report, phase="candidate_readiness", session=session, allow_missing=True)
+            if any(condition.get("type") == "Ready" and condition.get("status") == "True" for condition in revision.get("status", {}).get("conditions", [])):
+                after = cloud(["run", "services", "describe", service_name])
+                verify_readback(before, original, after, revision, body)
+                report.update({"status": "PASS_NO_TRAFFIC", "readiness": True, "traffic_unchanged": True, "nonnotification_unchanged": True, "routing_literals": ROUTING, "actual_loaded_ues": "NOT_ATTESTED"})
+                return
+            if any(condition.get("type") == "Ready" and condition.get("status") == "False" for condition in revision.get("status", {}).get("conditions", [])):
+                raise ReleaseError("candidate_readiness_failed_no_retry")
+            time.sleep(10)
+        raise ReleaseError("candidate_readiness_timeout_no_retry")
+    finally:
+        session.close()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", required=True, type=Path)
-    parser.add_argument("--context", required=True, type=Path)
     parser.add_argument("--report", required=True, type=Path)
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args()
-    report = {"status": "FAILED_OR_NOT_EXECUTED", "revision_create_attempts": 0, "automatic_retries": 0, "IAM_or_scheduler_calls": 0}
+    report = {"status": "FAILED_OR_NOT_EXECUTED", "revision_create_attempts": 0, "automatic_retries": 0, "IAM_or_scheduler_calls": 0,
+              "revision_queries": [], "build_commands": 0, "push_commands": 0, "image_pull_commands": 0}
     try:
         require(args.execute, "explicit_execution_required")
-        release(args.source, args.context, report)
+        release(args.source, report)
     except ReleaseError as exc:
         report["error_code"] = str(exc)  # ReleaseError accepts only constant codes/permission tokens.
         report["status"] = "FAILED_STOPPED"
@@ -424,7 +412,8 @@ def main() -> int:
         return 1
     finally:
         args.report.write_text(json.dumps(report, sort_keys=True) + "\n")
-    print("Verified fixed notification image and zero-traffic revision; production traffic unchanged.")
+        print("NOTIFICATION_RESULT_JSON=" + json.dumps(report, sort_keys=True))
+    print("Verified fixed image adoption and zero-traffic revision; production traffic unchanged.")
     return 0
 
 

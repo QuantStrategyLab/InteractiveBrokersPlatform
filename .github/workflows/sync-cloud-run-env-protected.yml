@@ -1736,7 +1736,7 @@ jobs:
           test "${INPUT_SOURCE_COMMIT}" = 07a98e1559ec1acf7199f419facfe5c3ad5f124d
           test "${INPUT_TARGET}" = configured
           test -z "${INPUT_CONFIGURED_SERVICE}"
-          test "${INPUT_DEPLOY_IMAGE}" = true
+          test "${INPUT_DEPLOY_IMAGE}" = false
           test "${INPUT_SYNC_ENV}" = false
           test "${INPUT_APPROVE_TRAFFIC_SHIFT}" = false
           test "${INPUT_APPROVE_SCHEDULER_SYNC}" = false
@@ -1770,13 +1770,12 @@ jobs:
           project_id: ${{ env.GCP_PROJECT_ID }}
           version: ">= 416.0.0"
 
-      - name: Build fixed overlay and verify no-traffic revision
+      - name: Adopt fixed verified image and verify no-traffic revision
         env:
           CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}
         run: |
           python3 -m scripts.deploy_notification_only \
             --source source \
-            --context "${RUNNER_TEMP}/ibkr-notification-context" \
             --report "${RUNNER_TEMP}/notification-only.json" \
             --execute
 
