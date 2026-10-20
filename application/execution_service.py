@@ -297,6 +297,9 @@ _PARTIALLY_FILLED_ORDER_STATUSES = frozenset({"PartiallyFilled", "Partial"})
 _PENDING_ORDER_STATUSES = frozenset(
     {"PendingSubmit", "ApiPending", "ApiPendingSubmit", "Submitted", "PreSubmitted"}
 )
+_REJECTED_OR_CANCELLED_ORDER_STATUSES = frozenset(
+    {"Rejected", "rejected", "Cancelled", "ApiCancelled"}
+)
 
 
 def _record_order_outcome(
@@ -314,6 +317,33 @@ def _record_order_outcome(
     """
     normalized_status = str(status or "").strip()
     prefix = "option_orders" if option_order else "orders"
+    known_statuses = (
+        _FILLED_ORDER_STATUSES | _PARTIALLY_FILLED_ORDER_STATUSES
+        | _PENDING_ORDER_STATUSES | _REJECTED_OR_CANCELLED_ORDER_STATUSES
+    )
+    broker_order_id = order_payload.get("broker_order_id")
+    # The selected IBKR adapter stringifies orderId, including None. Classify
+    # missing identities without rewriting the original report or rejecting 0.
+    missing_broker_order_id = broker_order_id is None or (
+        isinstance(broker_order_id, str)
+        and (not broker_order_id.strip() or broker_order_id == "None")
+    )
+    if normalized_status not in known_statuses or (
+        normalized_status not in _REJECTED_OR_CANCELLED_ORDER_STATUSES
+        and missing_broker_order_id
+    ):
+        # Acceptance/remaining obligations are unknown. Retain the original
+        # report and identity for reconciliation; never count this as a reject
+        # or use its apparent proceeds to authorize another order.
+        execution_summary[f"{prefix}_pending"].append(order_payload)
+        execution_summary["submission_halted"] = True
+        execution_summary["outcome_unknown"] = True
+        execution_summary["execution_status"] = "pending_reconciliation"
+        execution_summary["no_op_reason"] = "broker_order_outcome_unknown"
+        execution_summary["skipped_reasons"].append(
+            f"broker_order_outcome_unknown:{order_payload.get('symbol')}:{normalized_status or 'unknown'}"
+        )
+        return "unknown"
     if normalized_status in _FILLED_ORDER_STATUSES:
         execution_summary[f"{prefix}_filled"].append(order_payload)
         return "filled"
@@ -908,12 +938,14 @@ def _execute_option_order_intents(
                 account_id=order_account_id,
             )
         report = submit_order_intent(ib, order_intent)
-        _, status_msg = check_order_submitted(report, translator=translator)
         status = str(getattr(report, "status", "") or "")
         order_payload = {
             **payload,
             "status": status,
             "broker_order_id": getattr(report, "broker_order_id", None),
+            "account_id": order_account_id,
+            "filled_quantity": getattr(report, "filled_quantity", None),
+            "average_fill_price": getattr(report, "average_fill_price", None),
         }
         outcome = _record_order_outcome(
             execution_summary,
@@ -921,6 +953,10 @@ def _execute_option_order_intents(
             status=status,
             option_order=True,
         )
+        if outcome == "unknown":
+            trade_logs.append(translator("failed", reason="broker_order_outcome_unknown"))
+            return buying_power
+        _, status_msg = check_order_submitted(report, translator=translator)
         trade_logs.append(f"option {action} {symbol} {format_quantity(quantity)} @{limit_price:.2f} {status_msg}")
         if outcome != "failed" and action.startswith("buy"):
             buying_power -= estimated_notional
@@ -2078,7 +2114,6 @@ def execute_rebalance(
                 account_id=order_account_id,
             ),
         )
-        _, status_msg = check_order_submitted(report, translator=translator)
         status = str(getattr(report, "status", "") or "")
         order_payload = {
             "symbol": symbol,
@@ -2086,8 +2121,15 @@ def execute_rebalance(
             "quantity": qty,
             "status": status,
             "broker_order_id": getattr(report, "broker_order_id", None),
+            "account_id": order_account_id,
+            "filled_quantity": getattr(report, "filled_quantity", None),
+            "average_fill_price": getattr(report, "average_fill_price", None),
         }
         outcome = _record_order_outcome(execution_summary, order_payload, status=status)
+        if outcome == "unknown":
+            trade_logs.append(translator("failed", reason="broker_order_outcome_unknown"))
+            return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
+        _, status_msg = check_order_submitted(report, translator=translator)
         trade_logs.append(translator("market_sell", symbol=symbol, qty=format_quantity(qty)) + f" {status_msg}")
         if outcome != "failed":
             sell_executed = True
@@ -2274,7 +2316,6 @@ def execute_rebalance(
                     account_id=order_account_id,
                 ),
             )
-            _, status_msg = check_order_submitted(report, translator=translator)
             status = str(getattr(report, "status", "") or "")
             order_payload = {
                 "symbol": symbol,
@@ -2283,8 +2324,15 @@ def execute_rebalance(
                 "limit_price": limit_price,
                 "status": status,
                 "broker_order_id": getattr(report, "broker_order_id", None),
+                "account_id": order_account_id,
+                "filled_quantity": getattr(report, "filled_quantity", None),
+                "average_fill_price": getattr(report, "average_fill_price", None),
             }
             outcome = _record_order_outcome(execution_summary, order_payload, status=status)
+            if outcome == "unknown":
+                trade_logs.append(translator("failed", reason="broker_order_outcome_unknown"))
+                return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
+            _, status_msg = check_order_submitted(report, translator=translator)
             trade_logs.append(
                 translator("limit_buy", symbol=symbol, qty=format_quantity(qty), price=f"{limit_price:.2f}") + f" {status_msg}"
             )
@@ -2303,6 +2351,8 @@ def execute_rebalance(
         order_account_id=order_account_id,
         buying_power=buying_power,
     )
+    if execution_summary.get("submission_halted"):
+        return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
 
     has_terminal_order = bool(
         execution_summary["orders_submitted"]
