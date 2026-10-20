@@ -28,7 +28,9 @@ from quant_platform_kit.common.reconciliation_recovery import (
 )
 
 from application.broker_reconciliation_candidate import SourceReceiptExpectation
-from scripts.build_reconciliation_baseline_candidate import extract_reconciliation_evidence, load_source_inputs
+from scripts.build_reconciliation_baseline_candidate import (
+    _load_payload, extract_reconciliation_evidence, load_authenticated_source_inputs, validate_authenticated_candidate,
+)
 from scripts.publish_reconciliation_recovery_source import (
     _load_json,
     _parse_time,
@@ -223,30 +225,46 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--candidate", type=Path, required=True, help="Private QPK baseline-candidate output")
     parser.add_argument("--dual-review", type=Path, help="Optional private advisory review result")
+    parser.add_argument("--source-archive", action="append", type=Path, required=True)
     parser.add_argument("--source-records", type=Path, required=True)
     parser.add_argument("--source-expectations", type=Path, required=True)
-    parser.add_argument("--current-receipt", type=Path, required=True, help="Fresh post-confirmation private /reconcile receipt")
+    parser.add_argument("--current-source-archive", type=Path, required=True)
+    parser.add_argument("--current-source-records", type=Path, required=True)
+    parser.add_argument("--current-source-expectations", type=Path, required=True)
+    parser.add_argument("--current-receipt", type=Path, help="Optional exact copy of authenticated fresh receipt")
     parser.add_argument("--runtime-target", type=Path, required=True, help="Read-only deployed RUNTIME_TARGET_JSON snapshot")
     parser.add_argument("--confirmation-url", required=True, help="QRS private controller-read HTTPS endpoint")
     parser.add_argument("--recovery-id", required=True)
     parser.add_argument("--now", help="Optional ISO-8601 time used for deterministic validation")
     args = parser.parse_args(argv)
     try:
-        records, expectations = load_source_inputs(args.source_records, args.source_expectations)
+        records, expectations, payloads = load_authenticated_source_inputs(
+            args.source_records, args.source_expectations, args.source_archive,
+        )
+        reference_now = _parse_time(args.now)
+        candidate_payload = _load_payload(args.candidate)
+        validate_authenticated_candidate(candidate_payload, payloads,
+                                         source_receipt_records=records, expectations=expectations, now=reference_now)
+        _, _, current_payloads = load_authenticated_source_inputs(
+            args.current_source_records, args.current_source_expectations, [args.current_source_archive],
+        )
+        current_payload = current_payloads[0]
+        if args.current_receipt and _load_payload(args.current_receipt) != current_payload:
+            raise ValueError("source_current_parsed_copy_mismatch")
         confirmation = read_console_confirmation(
             confirmation_url=args.confirmation_url,
             recovery_id=args.recovery_id,
             token=os.environ.get(RECONCILIATION_RECOVERY_CONTROLLER_TOKEN_ENV, ""),
         )
         result = verify_reconciliation_recovery(
-            candidate_payload=_load_json(args.candidate, label="baseline candidate"),
+            candidate_payload=candidate_payload,
             dual_review_payload=_load_json(args.dual_review, label="dual review") if args.dual_review else None,
             source_receipt_records=records, expectations=expectations,
             confirmation_payload=confirmation,
-            current_receipt_payload=_load_json(args.current_receipt, label="current reconciliation receipt"),
+            current_receipt_payload=current_payload,
             runtime_target_payload=_load_json(args.runtime_target, label="runtime target"),
             recovery_id=args.recovery_id,
-            now=_parse_time(args.now),
+            now=reference_now,
         )
     except (ValueError, RuntimeError) as exc:
         parser.error(str(exc))

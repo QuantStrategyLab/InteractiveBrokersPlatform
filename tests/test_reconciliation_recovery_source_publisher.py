@@ -259,3 +259,38 @@ def test_both_consumers_revalidate_sources_and_candidate_members(consumer, fault
                 current_receipt_payload={"evidence": _evidence(observed_at=start + timedelta(minutes=4)).to_dict()},
                 runtime_target_payload=_runtime_target(), recovery_id="ibkr-soxl-live-recovery", now=start + timedelta(minutes=5),
             )
+
+
+@pytest.mark.parametrize("attack", ["archive_bytes", "rehashed_candidate", "parsed_only"])
+def test_publisher_cli_authenticates_before_archive_or_publish(tmp_path, monkeypatch, capsys, attack):
+    import json
+    from scripts import build_reconciliation_baseline_candidate as builder
+    from scripts import publish_reconciliation_recovery_source as publisher
+    from tests.test_reconciliation_baseline_candidate_script import _archive_inputs, _healthy_evidence
+    from quant_platform_kit.common.broker_reconciliation_enrollment import calculate_broker_reconciliation_baseline_candidate_sha256
+    material = _archive_inputs(tmp_path, [_healthy_evidence()])
+    assert builder.main(["--now", "2026-08-30T08:01:00Z", *material["args"]]) == 0
+    candidate = json.loads(capsys.readouterr().out)
+    if attack == "rehashed_candidate":
+        candidate["candidate"]["account_scope_sha256"] = "1" * 64
+        candidate["candidate"]["candidate_sha256"] = calculate_broker_reconciliation_baseline_candidate_sha256(candidate["candidate"])
+        # The old content-root check alone accepts this internally consistent
+        # candidate; the CLI must bind it to the authenticated raw observations.
+        publisher.extract_baseline_candidate(candidate, source_receipt_records=material["records"],
+                                             expectations=material["expectations"])
+    path = tmp_path / "candidate.json"
+    path.write_text(json.dumps(candidate))
+    if attack == "archive_bytes":
+        material["archives"][0].write_bytes(b"tampered")
+    calls = []
+    monkeypatch.setattr(publisher, "archive_private_evidence_package", lambda *_a, **_k: calls.append("archive"))
+    monkeypatch.setattr(publisher, "publish_recovery_source_snapshot", lambda *_a, **_k: calls.append("publish"))
+    with pytest.raises(SystemExit) as rejected:
+        publisher.main([
+            "--candidate", str(path), "--recovery-id", "synthetic-recovery",
+            "--now", "2026-08-30T08:01:00Z",
+            "--publish-url", "https://synthetic.invalid/source", "--archive-gcs-uri", "gs://synthetic/source",
+            *(material["args"][:4] if attack == "parsed_only" else material["args"]),
+        ])
+    assert rejected.value.code == 2
+    assert calls == []
