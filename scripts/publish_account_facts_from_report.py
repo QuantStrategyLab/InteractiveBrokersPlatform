@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 from collections.abc import Mapping, Sequence
@@ -561,7 +562,12 @@ def publish_ibkr_account_facts_history(
         observed = _observed_timestamp(facts.get("observed_at"))
         current = now.astimezone(timezone.utc)
         if observed < current - IBKR_ACCOUNT_FACTS_MAX_AGE or observed > current + timedelta(minutes=5):
-            raise _ProjectionError("observation_stale")
+            return {
+                "status": "skipped",
+                "reason": "observation_stale",
+                "age_seconds": (current - observed).total_seconds(),
+                "direction": "too_old" if observed < current else "future",
+            }
         endpoint = urlsplit(_text(sync_url))
         if (
             _text(sync_url) != IBKR_ACCOUNT_FACTS_SYNC_URL
@@ -841,6 +847,16 @@ def _print_cli_result(result: Mapping[str, Any]) -> None:
     diagnostic = _format_identity_mismatch_diagnostic(result)
     if diagnostic is not None:
         print(diagnostic)
+    if result.get("status") == "skipped" and result.get("reason") == "observation_stale":
+        age = result.get("age_seconds")
+        direction = result.get("direction")
+        if type(age) is float and math.isfinite(age) and (
+            (direction == "too_old" and age > IBKR_ACCOUNT_FACTS_MAX_AGE.total_seconds())
+            or (direction == "future" and age < -timedelta(minutes=5).total_seconds())
+        ):
+            print(json.dumps({
+                "reason": "observation_stale", "age_seconds": age, "direction": direction,
+            }, sort_keys=True))
 
 
 class _NoRedirect(HTTPRedirectHandler):

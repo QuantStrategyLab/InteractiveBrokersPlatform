@@ -4,7 +4,7 @@ import json
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -65,6 +65,127 @@ def _project(report: dict[str, object]) -> dict[str, object]:
         expected_account_selector=["U00000001"],
         expected_deployment_selector="live-primary",
     )
+
+
+def _observability_publish_args():
+    return {
+        "source_report_uri": "gs://qsl-runtime-reports/ibkr/report-1.json",
+        "sync_url": publisher.IBKR_ACCOUNT_FACTS_SYNC_URL, "sync_token": "TOKEN_CANARY",
+        "target_id": "ibkr-primary", "expected_report_prefix": "gs://qsl-runtime-reports/ibkr",
+        "expected_project_id": "example-project", "expected_service_name": "ibkr-primary-service",
+        "expected_runtime_revision": "runtime-revision-001", "expected_account_scope": "live-primary",
+        "expected_account_selector": ["U00000001"], "expected_deployment_selector": "live-primary",
+    }
+
+
+@pytest.mark.parametrize("age,direction", [
+    (129600, None), (129600.000001, "too_old"), (-300, None), (-300.000001, "future"),
+])
+def test_stale_observability_strict_boundaries_and_pre_post_rejection(monkeypatch, capsys, age, direction):
+    requests = []
+
+    class Response:
+        status = 201
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self, _limit):
+            return b'{"ok":true,"stored":true,"unchanged":false}'
+
+    class Opener:
+        def open(self, request, *, timeout):
+            requests.append(request)
+            return Response()
+
+    monkeypatch.setattr(publisher, "build_opener", lambda *_args: Opener())
+    observed = datetime(2026, 9, 30, 1, 0, 1, tzinfo=timezone.utc)
+    result = publisher.publish_ibkr_account_facts_history(
+        _report(), now=observed + timedelta(seconds=age), **_observability_publish_args(),
+    )
+    publisher._print_cli_result(result)
+    lines = capsys.readouterr().out.splitlines()
+    if direction is None:
+        assert result == {"status": "published"}
+        assert lines == ["published:unknown"]
+        assert len(requests) == 1
+    else:
+        assert result == {"status": "skipped", "reason": "observation_stale", "age_seconds": age, "direction": direction}
+        assert lines[0] == "skipped:observation_stale"
+        assert json.loads(lines[1]) == {"reason": "observation_stale", "age_seconds": age, "direction": direction}
+        assert requests == []
+        # Staleness must still win before endpoint/auth validation and any POST.
+        result = publisher.publish_ibkr_account_facts_history(
+            _report(), now=observed + timedelta(seconds=age),
+            **{**_observability_publish_args(), "sync_url": "https://URI_CANARY.invalid", "sync_token": ""},
+        )
+        assert result["reason"] == "observation_stale"
+        assert requests == []
+
+
+@pytest.mark.parametrize("age,direction", [(129601, "too_old"), (-301, "future")])
+def test_stale_observability_cli_preserves_exit_and_hides_private_input(monkeypatch, capsys, age, direction):
+    observed = datetime(2026, 9, 30, 1, 0, 1, tzinfo=timezone.utc)
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return observed + timedelta(seconds=age)
+
+    env = {
+        "IBKR_ACCOUNT_FACTS_TARGET": "primary-live",
+        "IBKR_ACCOUNT_FACTS_REPORT_PREFIX": "gs://URI_CANARY/reports",
+        "IBKR_ACCOUNT_FACTS_TARGET_ID": "private-target-canary",
+        "IBKR_ACCOUNT_FACTS_PROJECT_ID": "PROJECT_CANARY",
+        "IBKR_ACCOUNT_FACTS_SERVICE_NAME": "SERVICE_CANARY",
+        "IBKR_ACCOUNT_FACTS_RUNTIME_REVISION": "REVISION_CANARY",
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE": "SCOPE_CANARY",
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON": '["U987654321"]',
+        "IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR": "DEPLOYMENT_CANARY",
+        "IBKR_ACCOUNT_FACTS_SYNC_URL": publisher.IBKR_ACCOUNT_FACTS_SYNC_URL,
+        "IBKR_ACCOUNT_FACTS_SYNC_TOKEN": "TOKEN_CANARY",
+    }
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("IBKR_ACCOUNT_FACTS_REPORT_NAME", raising=False)
+    monkeypatch.setattr(publisher, "datetime", FrozenDateTime)
+    monkeypatch.setattr(publisher, "_latest_report_uri", lambda **_kwargs: "gs://URI_CANARY/reports/PRIVATE_FILENAME.json")
+    report = _report()
+    report["summary"]["account_facts"]["net_assets"] = "987654321.12"
+    report["summary"]["account_facts"]["account_ids"] = ["U987654321"]
+    monkeypatch.setattr(publisher, "_load_gcs_report", lambda *_args, **_kwargs: report)
+    monkeypatch.setattr(publisher, "build_opener", lambda *_args: pytest.fail("stale must stop before POST"))
+    assert publisher.main() == 1
+    output = capsys.readouterr().out
+    lines = output.splitlines()
+    assert lines[0] == "skipped:observation_stale"
+    assert len(lines) == 2
+    assert json.loads(lines[1]) == {"reason": "observation_stale", "age_seconds": age, "direction": direction}
+    for forbidden in ["CANARY", "PRIVATE", "U987654321", "987654321.12", "gs://", "2026-", "observed_at", "now", "fingerprint", "selection_mode"]:
+        assert forbidden not in output
+
+
+@pytest.mark.parametrize("age,direction", [
+    (float("nan"), "too_old"), (float("inf"), "too_old"), (-float("inf"), "future"),
+    (True, "too_old"), ("ACCOUNT_CANARY", "too_old"), ({"asset": "ASSET_CANARY"}, "future"),
+    (129601.0, "too_old\nURI_CANARY"), (-301.0, "too_old"), (129601.0, "future"),
+    (129600.0, "too_old"), (-300.0, "future"), (None, "future"),
+])
+def test_stale_observability_does_not_format_forged_metadata(age, direction, capsys):
+    publisher._print_cli_result({
+        "status": "skipped", "reason": "observation_stale", "age_seconds": age, "direction": direction,
+        "source_report_uri": "gs://URI_CANARY", "observed_at": "TIME_CANARY", "account": "ACCOUNT_CANARY",
+    })
+    assert capsys.readouterr().out == "skipped:observation_stale\n"
+
+
+@pytest.mark.parametrize("status,reason", [("published", "unknown"), ("unchanged", "observation_unchanged"), ("skipped", "account_facts_invalid"), ("skipped", "publish_target_invalid")])
+def test_stale_observability_leaves_other_cli_results_unchanged(status, reason, capsys):
+    publisher._print_cli_result({"status": status, "reason": reason, "age_seconds": 129601.0, "direction": "too_old"})
+    assert capsys.readouterr().out == f"{status}:{reason}\n"
 
 
 def _additional_targets() -> dict[str, dict[str, object]]:
@@ -420,7 +541,10 @@ def test_publisher_accepts_36_hour_boundary_and_rejects_older_or_future_without_
     older = publisher.publish_ibkr_account_facts_history(
         _report(), now=datetime(2026, 10, 1, 13, 0, 2, tzinfo=timezone.utc), **args
     )
-    assert older == {"status": "skipped", "reason": "observation_stale"}
+    assert older == {
+        "status": "skipped", "reason": "observation_stale",
+        "age_seconds": 129601.0, "direction": "too_old",
+    }
 
     future = _report()
     future_facts = future["summary"]["account_facts"]  # type: ignore[index]
@@ -430,7 +554,10 @@ def test_publisher_accepts_36_hour_boundary_and_rejects_older_or_future_without_
     future_observation = publisher.publish_ibkr_account_facts_history(
         future, now=datetime(2026, 9, 30, 1, 0, 1, tzinfo=timezone.utc), **args
     )
-    assert future_observation == {"status": "skipped", "reason": "observation_stale"}
+    assert future_observation == {
+        "status": "skipped", "reason": "observation_stale",
+        "age_seconds": -360.0, "direction": "future",
+    }
 
     missing_facts = _report()
     missing_facts["summary"].pop("account_facts")  # type: ignore[union-attr]
