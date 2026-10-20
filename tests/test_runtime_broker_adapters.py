@@ -743,3 +743,250 @@ def test_paper_cycle_facts_still_require_original_report_selector_guard(
     if expected_present:
         assert summary["account_facts"] == result.account_facts
     assert observed["fetches"] == 1
+
+
+def test_persistent_main_submit_without_grant_never_reaches_adapter(strategy_module_factory, monkeypatch):
+    """A real public submit wrapper must reject before its venue adapter."""
+    from quant_platform_kit.common.models import OrderIntent
+
+    module = strategy_module_factory()
+    calls = []
+    monkeypatch.setattr(module, "submit_order_intent", lambda *args, **kwargs: calls.append((args, kwargs)))
+    with pytest.raises(RuntimeError, match="session|grant|contract"):
+        module.submit_market_order_intent(
+            object(), OrderIntent(symbol="VOO", side="buy", quantity=1, account_id="U00000003"),
+        )
+    assert calls == []
+
+
+@pytest.fixture
+def persistent_real_caller(tmp_path, monkeypatch, strategy_module_factory):
+    """Actual main -> adapter -> executor -> platform/QPK -> fake placeOrder."""
+    from dataclasses import replace
+    from functools import partial
+    from application import execution_service as service
+    from application.ibkr_order_execution import submit_order_intent as platform_submit
+    from quant_platform_kit.common import execution_state as contract
+    from quant_platform_kit.common.models import OrderIntent
+    from notifications.telegram import build_translator
+
+    module = strategy_module_factory()
+    account = "U00000003"
+    receipt = {"attestation_state": "self_attested", "release_id": "synthetic-release",
+               "strategy_release": {"strategy_revision": "a" * 40}, "loaded_at": "synthetic-time-a"}
+    targets = {"VOO": 0.0, "QQQM": 0.5}
+    metadata = {
+        "strategy_profile": "global_etf_rotation", "trade_date": "2026-10-20",
+        "effective_date": "2026-10-20", "risk_gate": "APPROVE", "risk_flags": ("risk_gate:passed",),
+        "account_new_risk_snapshot": {"observation_status": "COMPLETE", "reconciliation_status": "VERIFIED", "circuit_breaker_state": "CLOSED"},
+        "allocation": {"target_mode": "weight", "strategy_symbols": tuple(targets), "risk_symbols": tuple(targets),
+                       "income_symbols": (), "safe_haven_symbols": (), "targets": targets},
+        "risk_authority": {"strategy_profile": "global_etf_rotation", "account_ids": (account,),
+                           "trade_date": "2026-10-20", "signal_date": None, "effective_date": "2026-10-20",
+                           "snapshot_as_of": None, "portfolio_equity": 2000.0, "targets": targets,
+                           "max_target_values": {"VOO": 0.0, "QQQM": 1000.0}},
+    }
+    state = SimpleNamespace(submitted=[], status="Submitted", filled=0, fill_price=0,
+                            metadata=metadata, receipt=receipt, executor_calls=[], claim_calls=[])
+
+    class FakeIB:
+        def openTrades(self): return []
+        def fills(self): return []
+        def accountValues(self):
+            return [SimpleNamespace(tag="CashBalance", currency="USD", value="1500", account=account)]
+        def qualifyContracts(self, value): return [value]
+        def placeOrder(self, instrument, order):
+            state.submitted.append((instrument, order))
+            return SimpleNamespace(order=SimpleNamespace(orderId=len(state.submitted)), orderStatus=SimpleNamespace(
+                status=state.status, filled=state.filled, avgFillPrice=state.fill_price,
+            ))
+
+    ib = FakeIB()
+    monkeypatch.setattr(service.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(service, "maybe_publish_attention_for_admission", lambda *_a, **_kw: {})
+    monkeypatch.setattr("application.account_new_risk_gate_support.resolve_production_drift_status_from_store", lambda **_kw: None)
+    monkeypatch.setattr(module, "submit_order_intent", lambda _ib, intent, **kwargs: platform_submit(
+        _ib, intent, wait_seconds=0,
+        stock_factory=lambda symbol, _ex, _cur: SimpleNamespace(symbol=symbol),
+        market_order_factory=lambda side, qty: SimpleNamespace(action=side, totalQuantity=qty),
+        limit_order_factory=lambda side, qty, price: SimpleNamespace(action=side, totalQuantity=qty, lmtPrice=price),
+        **kwargs,
+    ))
+    # A partial binds the real executor; no fake final executor in this chain.
+    executor = partial(service.execute_rebalance, execution_lock_dir=tmp_path / "locks")
+    adapters = replace(
+        _build_adapters(account_ids=(account,)), strategy_profile="global_etf_rotation",
+        submit_order_intent_fn=module.submit_market_order_intent,
+        application_execute_rebalance_fn=executor, order_intent_cls=OrderIntent,
+        fetch_quote_snapshots_fn=lambda _ib, symbols: {s: SimpleNamespace(last_price=50.0) for s in symbols},
+        translator=build_translator("en"), limit_buy_premium=1.0,
+        runtime_release_receipt={**receipt, "loaded_at": "synthetic-time-b"},
+        sell_settle_delay_sec=0,
+    )
+    monkeypatch.setattr(module, "build_broker_adapters", lambda **_kw: state.adapters)
+    store = contract.ExecutionMarkerStore(local_dir=tmp_path / "state")
+    state.module, state.adapters, state.store, state.ib = module, adapters, store, ib
+
+    def session():
+        cls = getattr(contract, "AccountSubmissionSession", None)
+        if cls is None:
+            return None
+        return cls(store, broker="ibkr", account_id=account, owner_id="global_etf_rotation", profile="global_etf_rotation",
+                   intent_id=contract.submission_intent_digest(metadata, "global_etf_rotation"),
+                   release_id=contract.submission_release_digest(receipt))
+
+    state.session = session
+
+    def run(*, execution_session="new", dry_run=False):
+        selected = session() if execution_session == "new" else execution_session
+        state.adapters = replace(state.adapters, dry_run_only=dry_run)
+        return module.execute_rebalance(
+            ib, targets, {"VOO": {"quantity": 10.0, "avg_cost": 50.0}},
+            {"equity": 2000.0, "buying_power": 1500.0}, signal_metadata=metadata,
+            acquire_execution_claim=lambda: state.claim_calls.append(True) or True,
+            account_execution_session=selected,
+        )
+
+    state.run = run
+    state.tmp_path = tmp_path
+    return state
+
+
+def test_persistent_main_real_caller_transmits_and_records_two_known_acks(persistent_real_caller):
+    state = persistent_real_caller
+    _logs, summary = state.run()
+    assert [(c.symbol, o.action, o.totalQuantity) for c, o in state.submitted] == [("VOO", "SELL", 10), ("QQQM", "BUY", 20)]
+    assert summary["execution_status"] == "pending_reconciliation"
+    attempts = state.session().read_state()["attempts"]
+    assert len(attempts) == 2
+    assert {a["certainty"] for a in attempts.values()} == {"KNOWN_PENDING"}
+    assert len(state.claim_calls) == 2
+
+
+def test_persistent_main_unknown_account_survives_new_date_and_intent(persistent_real_caller):
+    state = persistent_real_caller
+    state.status = "Unknown"
+    _logs, summary = state.run()
+    assert len(state.submitted) == 1
+    assert summary["outcome_unknown"] is True
+    state.metadata["trade_date"] = "2026-10-21"
+    state.metadata["effective_date"] = "2026-10-21"
+    state.metadata["risk_authority"].update(trade_date="2026-10-21", effective_date="2026-10-21")
+    with pytest.raises(RuntimeError, match="unresolved"):
+        state.run()
+    assert len(state.submitted) == 1
+
+
+def test_persistent_main_missing_session_rejects(persistent_real_caller):
+    state = persistent_real_caller
+    with pytest.raises(RuntimeError, match="session|contract"):
+        state.run(execution_session=None)
+    assert state.submitted == []
+
+
+def test_persistent_main_release_mismatch_rejects_before_reservation(persistent_real_caller):
+    from dataclasses import replace
+    state = persistent_real_caller
+    session = state.session()
+    state.adapters = replace(state.adapters, runtime_release_receipt={**state.receipt, "release_id": "different"})
+    with pytest.raises(RuntimeError, match="binding"):
+        state.run(execution_session=session)
+    assert state.submitted == []
+    assert session.read_state()["attempts"] == {}
+
+
+def test_persistent_main_dry_run_no_reservations_or_venue(persistent_real_caller):
+    state = persistent_real_caller
+    _logs, summary = state.run(dry_run=True)
+    assert summary["mode"] == "dry_run"
+    assert state.submitted == []
+    assert state.claim_calls == []
+    assert not list((state.tmp_path / "state").rglob("*.json"))
+
+
+def test_persistent_main_old_contract_imports_but_no_submit(persistent_real_caller, monkeypatch):
+    from quant_platform_kit.common import execution_state as contract
+    state = persistent_real_caller
+    monkeypatch.delattr(contract, "AccountSubmissionSession", raising=False)
+    with pytest.raises(RuntimeError, match="session|contract"):
+        state.run(execution_session=None)
+    assert state.submitted == []
+
+
+@pytest.mark.parametrize("status,filled,price", [("PartiallyFilled", 1, 49), ("Rejected", 0, 0)])
+def test_persistent_main_first_partial_or_reject_retains_healthy_path(persistent_real_caller, status, filled, price):
+    state = persistent_real_caller
+    state.status, state.filled, state.fill_price = status, filled, price
+    _logs, summary = state.run()
+    assert len(state.submitted) == 2
+    assert not summary.get("outcome_unknown")
+    attempts = state.session().read_state()["attempts"]
+    assert {a["certainty"] for a in attempts.values()} == ({"KNOWN_PENDING"} if filled else {"TERMINAL"})
+    assert {a["filled_quantity"] for a in attempts.values()} == {float(filled)}
+
+
+def test_persistent_main_transport_after_place_order_is_durable_unknown(persistent_real_caller, monkeypatch):
+    state = persistent_real_caller
+    original = state.ib.placeOrder
+
+    def accepted_then_disconnect(instrument, order):
+        original(instrument, order)
+        raise ConnectionError("synthetic broker disconnect after accepted call")
+
+    monkeypatch.setattr(state.ib, "placeOrder", accepted_then_disconnect)
+    with pytest.raises(ConnectionError):
+        state.run()
+    assert len(state.submitted) == 1
+    assert {a["certainty"] for a in state.session().read_state()["attempts"].values()} == {"UNKNOWN"}
+
+
+def test_persistent_main_old_worker_paused_at_venue_cannot_be_stolen(persistent_real_caller, monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from quant_platform_kit.common.models import OrderIntent
+    from quant_platform_kit.common import execution_state as contract
+    state = persistent_real_caller
+    original = state.ib.placeOrder
+    paused, resume = threading.Event(), threading.Event()
+
+    def before_actual_venue(instrument, order):
+        paused.set()
+        assert resume.wait(5)
+        return original(instrument, order)
+
+    monkeypatch.setattr(state.ib, "placeOrder", before_actual_venue)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        worker = pool.submit(state.run)
+        assert paused.wait(5)
+        try:
+            other = contract.AccountSubmissionSession(
+                state.store, broker="ibkr", account_id="U00000003", owner_id="same-owner",
+                profile="global_etf_rotation", intent_id="c"*64,
+                release_id=contract.submission_release_digest(state.receipt),
+            )
+            with pytest.raises(RuntimeError, match="unresolved"):
+                other.reserve(OrderIntent(symbol="QQQM", side="buy", quantity=1, account_id="U00000003"))
+            assert state.submitted == []
+        finally:
+            resume.set()
+        worker.result(timeout=5)
+    # One original SELL and its legal known-ACK successor; no competing worker order.
+    assert [(c.symbol, o.action) for c, o in state.submitted] == [("VOO", "SELL"), ("QQQM", "BUY")]
+
+
+def test_persistent_main_rejects_wrong_broker_grant_and_future_contract(persistent_real_caller, monkeypatch):
+    from quant_platform_kit.common import execution_state as contract
+    from quant_platform_kit.common.models import OrderIntent
+    state = persistent_real_caller
+    order = OrderIntent(symbol="VOO", side="sell", quantity=1, account_id="U00000003")
+    wrong = contract.AccountSubmissionSession(
+        state.store, broker="other", account_id="U00000003", owner_id="same", profile="global_etf_rotation",
+        intent_id="c"*64, release_id=contract.submission_release_digest(state.receipt),
+    )
+    grant = wrong.reserve(order)
+    with pytest.raises(RuntimeError, match="session|contract"):
+        state.module.submit_market_order_intent(state.ib, order, account_execution_session=wrong, execution_grant=grant)
+    monkeypatch.setattr(contract.AccountSubmissionSession, "contract_version", "future.v2")
+    with pytest.raises(RuntimeError, match="session|contract"):
+        state.run()
+    assert state.submitted == []

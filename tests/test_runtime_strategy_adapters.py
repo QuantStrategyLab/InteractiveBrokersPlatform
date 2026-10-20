@@ -1,4 +1,8 @@
 from types import SimpleNamespace
+from dataclasses import replace
+import json
+
+import pytest
 
 import pandas as pd
 
@@ -191,7 +195,10 @@ def test_strategy_plugin_true_crisis_builds_escalated_alert_message():
     alerts = adapters.build_strategy_plugin_alert_messages((signal,))
 
     assert len(alerts) == 1
-    assert alerts[0].subject == "alert:soxl_soxx_trend_income:Crisis:true crisis"
+    assert alerts[0].subject == "alert:Semiconductor Trend Income:Crisis:true crisis"
+    assert "/soxl_soxx_trend_income/crisis_response_shadow/" in alerts[0].alert_key
+    assert alerts[0].metadata["target"] == "soxl_soxx_trend_income"
+    assert alerts[0].metadata["strategy_label"] == "soxl_soxx_trend_income"
     assert "plugin=Crisis" in alerts[0].body
     assert "route=true crisis" in alerts[0].body
     assert "action=defend" in alerts[0].body
@@ -225,3 +232,74 @@ def test_strategy_plugin_load_error_is_non_blocking():
         "Plugin signal failed to load: ValueError: bad config; this run falls back to built-in strategy rules",
         "Plugin impact this run: no usable plugin signal loaded",
     )
+
+
+@pytest.mark.parametrize("valid_schema", [False, True], ids=["missing-schema", "valid-schema"])
+def test_persistent_pin_registered_plugin_main_loader_fallback_and_report(
+    strategy_module_factory, monkeypatch, tmp_path, valid_schema,
+):
+    module = strategy_module_factory(STRATEGY_PROFILE="tqqq_growth_income", NOTIFY_LANG="en")
+    payload = {
+        "as_of": "2026-10-20", "strategy": "tqqq_growth_income", "plugin": "market_regime_control",
+        "mode": "shadow", "configured_mode": "shadow", "effective_mode": "shadow",
+        "canonical_route": "no_action", "suggested_action": "watch_only", "would_trade_if_enabled": False,
+        "execution_controls": {
+            "broker_order_allowed": False, "live_allocation_mutation_allowed": False,
+            "repository_broker_write_allowed": False, "repository_allocation_mutation_allowed": False,
+            "strategy_runtime_metadata_allowed": False,
+        },
+    }
+    if valid_schema:
+        payload["schema_version"] = "market_regime_control.v1"
+    artifact = tmp_path / "plugin.json"
+    artifact.write_text(json.dumps(payload))
+    mounts = json.dumps([{
+        "strategy": "tqqq_growth_income", "plugin": "market_regime_control", "signal_path": str(artifact),
+    }])
+    monkeypatch.setattr(module, "RUNTIME_SETTINGS", replace(module.RUNTIME_SETTINGS, strategy_plugin_mounts_json=mounts))
+    # Both wrappers call the installed QPK registered loader/report builder.
+    signals, error = module.load_strategy_plugin_signals()
+    report = {
+        "schema_version": "runtime_report.v1", "platform": "ibkr",
+        "strategy_profile": "tqqq_growth_income", "run_id": "synthetic-plugin",
+        "started_at": "2026-10-20T00:00:00Z",
+    }
+    module.attach_strategy_plugin_report(report, signals=signals, error=error)
+    calls = []
+    monkeypatch.setattr(module, "compute_signals", lambda *args, **kwargs: calls.append(kwargs))
+    # Real composer closure forwards a valid enhancement, or uses native rules
+    # without pretending a rejected artifact was loaded successfully.
+    composer = module.build_composer(strategy_plugin_signals=signals)
+    composer.compute_signals_fn(SimpleNamespace(), {})
+    if valid_schema:
+        assert len(signals) == 1 and error is None
+        assert calls == [{"strategy_plugin_signals": signals}]
+        assert report["summary"]["strategy_plugins"]
+        assert "strategy_plugin_error" not in report.get("diagnostics", {})
+    else:
+        assert signals == () and "schema_version is required" in error
+        assert calls == [{}]
+        assert report["diagnostics"]["strategy_plugin_error"] == error
+        assert not report.get("summary", {}).get("strategy_plugins")
+        lines = module.build_strategy_plugin_error_notification_lines(error)
+        assert any("built-in" in line for line in lines)
+    path = tmp_path / "final-report.json"
+    module.persist_runtime_report(report, output_path=path)
+    saved = json.loads(path.read_text())
+    if valid_schema:
+        assert len(saved["summary"]["strategy_plugins"]) == 1
+        persisted = saved["summary"]["strategy_plugins"][0]
+        for key in ("strategy", "plugin", "schema_version", "configured_mode", "effective_mode",
+                    "execution_controls", "canonical_route", "suggested_action", "would_trade_if_enabled", "as_of"):
+            assert persisted[key] == payload[key]
+        assert persisted["runtime_consumption"] == {
+            "artifact_position_control_requested": False, "artifact_schema_is_legacy_v1": True,
+            "authority": "shadow_only", "broker_order_allowed": False,
+            "direct_position_control_allowed": False, "live_allocation_mutation_allowed": False,
+            "runtime_metadata_non_authoritative": True,
+        }
+        assert "strategy_plugin_error" not in saved.get("diagnostics", {})
+    else:
+        assert saved["diagnostics"]["strategy_plugin_error"] == error
+        assert not saved.get("summary", {}).get("strategy_plugins")
+    assert json.loads(artifact.read_text()) == payload

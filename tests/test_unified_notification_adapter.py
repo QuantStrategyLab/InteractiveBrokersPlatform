@@ -247,7 +247,11 @@ def test_opted_in_cycle_keeps_all_broker_and_persistence_calls(routing, monkeypa
     observed = adapter.with_run(report(), capture_cycle, monkeypatch, case, "en")
     def keep(data):
         return [call for call in data["calls"] if call[0] != "send"]
-    assert keep(observed) == keep(baseline[f"cycle:{case}:en"])
+    expected = baseline[f"cycle:{case}:en"]
+    for call in expected["calls"]:
+        if call[0] == "execute":
+            call[-1]["account_execution_session"] = None
+    assert keep(observed) == keep(expected)
     assert observed["result"] == baseline[f"cycle:{case}:en"]["result"]
 
 

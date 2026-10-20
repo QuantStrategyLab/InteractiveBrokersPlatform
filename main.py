@@ -588,13 +588,24 @@ def fetch_market_quote_snapshots(ib, symbols, **kwargs):
     )
 
 
-def submit_market_order_intent(ib, order_intent, **kwargs):
-    return submit_order_intent(
-        ib,
-        order_intent,
-        stock_exchange=MARKET_EXCHANGE,
-        stock_currency=MARKET_CURRENCY,
-        **kwargs,
+def submit_market_order_intent(
+    ib, order_intent, *, account_execution_session=None, execution_grant=None, **kwargs,
+):
+    # The public venue wrapper is the final grant gate for every platform caller,
+    # including callers outside rebalance. No old-pin/missing-session fallback.
+    from quant_platform_kit.common import execution_state as contract
+
+    session_type = getattr(contract, "AccountSubmissionSession", ())
+    if (not isinstance(account_execution_session, session_type)
+            or account_execution_session.broker != "ibkr"
+            or account_execution_session.contract_version != "account_submission.v1"):
+        raise RuntimeError("IBKR account submission session/contract required")
+    return account_execution_session.dispatch(
+        execution_grant, order_intent,
+        lambda: submit_order_intent(
+            ib, order_intent, stock_exchange=MARKET_EXCHANGE,
+            stock_currency=MARKET_CURRENCY, **kwargs,
+        ),
     )
 
 
@@ -1426,6 +1437,7 @@ def execute_rebalance(
     strategy_symbols=None,
     signal_metadata=None,
     acquire_execution_claim=None,
+    account_execution_session=None,
     dry_run_only_override: bool | None = None,
 ):
     return build_broker_adapters(dry_run_only_override=dry_run_only_override).execute_rebalance(
@@ -1436,6 +1448,7 @@ def execute_rebalance(
         strategy_symbols=strategy_symbols,
         signal_metadata=signal_metadata,
         acquire_execution_claim=acquire_execution_claim,
+        account_execution_session=account_execution_session,
     )
 
 

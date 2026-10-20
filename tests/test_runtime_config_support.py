@@ -2162,3 +2162,21 @@ def test_load_trusted_runtime_risk_policy_from_runtime_target_json(monkeypatch):
 def test_load_trusted_runtime_risk_policy_absent_when_missing(monkeypatch):
     monkeypatch.setenv("RUNTIME_TARGET_JSON", json.dumps({"platform_id": "ibkr"}))
     assert runtime_config_support_module._load_trusted_runtime_risk_policy() is None
+
+
+@pytest.mark.parametrize("key,attribute", [
+    ("IBKR_DRY_RUN_ONLY", "dry_run_only"),
+    ("IBKR_CASH_ONLY_EXECUTION", "cash_only_execution"),
+])
+@pytest.mark.parametrize("value", [None, "true", "false", "ture"])
+def test_persistent_pin_main_initialization_safety_flags(
+    strategy_module_factory, monkeypatch, key, attribute, value,
+):
+    # Exercise actual main/settings initialization, never a broker connection.
+    monkeypatch.delenv("QSL_" + key, raising=False)
+    if value == "ture":
+        with pytest.raises(ValueError, match=key):
+            strategy_module_factory(**{key: value})
+    else:
+        module = strategy_module_factory(**{key: value})
+        assert getattr(module.RUNTIME_SETTINGS, attribute) is (value != "false")

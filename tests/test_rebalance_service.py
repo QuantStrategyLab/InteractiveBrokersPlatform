@@ -3,6 +3,8 @@ from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+from tests.conftest import synthetic_account_submission
+
 import pytest
 
 from application.execution_service import execute_rebalance
@@ -400,7 +402,9 @@ def test_run_strategy_core_passes_signal_metadata_to_execution():
         strategy_symbols=None,
         signal_metadata=None,
         acquire_execution_claim=None,
+        account_execution_session=None,
     ):
+        observed["account_execution_session"] = account_execution_session
         observed["strategy_symbols"] = strategy_symbols
         observed["signal_metadata"] = signal_metadata
         return []
@@ -447,6 +451,7 @@ def test_run_strategy_core_passes_signal_metadata_to_execution():
     )
 
     assert result.result == "OK - executed"
+    assert observed["account_execution_session"] is None
     assert observed["strategy_symbols"] == ("AAA", "BOXX")
     assert observed["signal_metadata"]["managed_symbols"] == ("AAA", "BOXX")
     assert observed["messages"] == []
@@ -908,7 +913,7 @@ def claim_cycle(tmp_path, monkeypatch, strategy_module):
     ib = SimpleNamespace(
         isConnected=lambda: True, disconnect=lambda: None,
         openTrades=lambda: [], fills=lambda: [],
-        accountValues=lambda: [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1000")],
+        accountValues=lambda: [SimpleNamespace(tag="CashBalance", currency="USD", value="1000", account="DU00000003")],
     )
     config = IBKRRebalanceConfig(
         translator=_build_test_translator(), separator="---",
@@ -945,6 +950,18 @@ def claim_cycle(tmp_path, monkeypatch, strategy_module):
             "max_target_values": {symbol: weight * equity for symbol, weight in targets.items()},
         }
         kwargs["signal_metadata"] = signal_metadata
+        if not kwargs.get("dry_run_only", False) and not state.use_runner_session:
+            # Isolate the old claim fault from the new account grant prerequisite.
+            # The persistent_runner tests below instead use the actual main gate.
+            session, submit_fn, receipt = synthetic_account_submission(
+                lambda ib, intent: state.adapters.submit_order_intent_fn(ib, intent),
+                local_dir=tmp_path / "claim-test-journal", metadata=signal_metadata,
+                profile=kwargs["strategy_profile"], account_id="DU00000003",
+                receipt=kwargs.get("runtime_release_receipt"),
+            )
+            kwargs["account_execution_session"] = session
+            kwargs["runtime_release_receipt"] = receipt
+            kwargs["submit_order_intent"] = submit_fn
         return execute_rebalance(*args, execution_lock_dir=tmp_path / "locks", **kwargs)
 
     adapters = build_runtime_broker_adapters(
@@ -960,7 +977,7 @@ def claim_cycle(tmp_path, monkeypatch, strategy_module):
         application_execute_rebalance_fn=execute_with_observed_claim,
         execute_paper_liquidation_fn=unexpected,
         translator=_build_test_translator(), strategy_profile="global_etf_rotation",
-        account_group="synthetic-paper", service_name=None, account_ids=(),
+        account_group="synthetic-paper", service_name=None, account_ids=("DU00000003",),
         dry_run_only=False, cash_reserve_ratio=0.0, cash_reserve_floor_usd=0.0,
         rebalance_threshold_ratio=0.02, limit_buy_premium=1.0,
         quantity_step=1.0, min_order_notional=10.0,
@@ -970,6 +987,7 @@ def claim_cycle(tmp_path, monkeypatch, strategy_module):
     state = SimpleNamespace(
         submitted=submitted, metadata=metadata, store=store, config=config,
         adapters=adapters, positions={}, target_weights={"VOO": 0.5},
+        use_runner_session=False,
     )
     monkeypatch.setattr(strategy_module, "build_broker_adapters", lambda **_kwargs: state.adapters)
 
@@ -1158,3 +1176,72 @@ def test_successful_dry_run_orders_are_not_real_trade_notifications():
     assert _should_publish_execution_notification(
         config=config, signal_metadata={}, execution_summary={"execution_status": "blocked", "no_op_reason": "account_new_risk_gate"}, trade_logs=[],
     )
+
+
+@pytest.fixture
+def persistent_runner(claim_cycle, strategy_module, monkeypatch):
+    state = claim_cycle
+    state.use_runner_session = True
+    receipt = {"attestation_state": "self_attested", "release_id": "synthetic-release",
+               "strategy_release": {"strategy_revision": "a" * 40}}
+    state.status = "Submitted"
+    state.config = replace(state.config, execution_state_store=state.store, execution_dedup_enabled=True,
+                           runtime_release_receipt=receipt)
+
+    def fake_venue(_ib, intent, **_kwargs):
+        state.submitted.append(intent)
+        return SimpleNamespace(broker_order_id=str(len(state.submitted)), status=state.status,
+                               filled_quantity=0, average_fill_price=0)
+
+    monkeypatch.setattr(strategy_module, "submit_order_intent", fake_venue)
+    state.adapters = replace(state.adapters, account_ids=("DU00000003",), runtime_release_receipt=receipt,
+                             submit_order_intent_fn=strategy_module.submit_market_order_intent)
+    return state
+
+
+def test_persistent_runner_first_ack_and_new_healthy_intent(persistent_runner):
+    state = persistent_runner
+    first = state.run()
+    assert first.execution_summary["orders_pending"]
+    assert len(state.submitted) == 1
+    state.metadata.update(effective_date="2026-04-02", trade_date="2026-04-02",
+                          snapshot_as_of="2026-04-02T14:00:00Z")
+    state.run()
+    assert len(state.submitted) == 2
+    from quant_platform_kit.common import execution_state as contract
+    session = contract.AccountSubmissionSession(state.store, broker="ibkr", account_id="DU00000003",
+        owner_id="global_etf_rotation", profile="global_etf_rotation",
+        intent_id="c"*64, release_id="b"*64)
+    assert {a["certainty"] for a in session.read_state()["attempts"].values()} == {"KNOWN_PENDING"}
+
+
+def test_persistent_runner_unknown_new_date_target_snapshot_and_healthy_injection_still_blocks(persistent_runner):
+    state = persistent_runner
+    state.status = "Unknown"
+    first = state.run()
+    assert first.execution_summary["outcome_unknown"] is True
+    state.metadata.update(effective_date="2026-04-02", snapshot_as_of="2026-04-02T14:00:00Z")
+    state.metadata["allocation"] = _weight_allocation({"VOO": 0.75}, risk_symbols=("VOO",))
+    state.target_weights = {"VOO": 0.75}
+    with pytest.raises(RuntimeError, match="unresolved"):
+        state.run(execution_state_store=ExecutionMarkerStore(local_dir=state.store.local_dir))
+    assert len(state.submitted) == 1
+
+
+def test_persistent_runner_old_qpk_contract_and_dry_run_do_not_submit(persistent_runner, monkeypatch):
+    from quant_platform_kit.common import execution_state as contract
+    state = persistent_runner
+    monkeypatch.delattr(contract, "AccountSubmissionSession", raising=False)
+    with pytest.raises(RuntimeError, match="session|contract"):
+        state.run()
+    assert state.submitted == []
+    assert not list((state.store.local_dir / "account_submissions").rglob("*.json"))
+
+
+def test_persistent_runner_no_order_zero_new_registration(persistent_runner):
+    state = persistent_runner
+    state.target_weights = {"VOO": 0.0}
+    state.metadata["allocation"] = _weight_allocation({"VOO": 0.0}, risk_symbols=("VOO",))
+    state.run()
+    assert state.submitted == []
+    assert not list(state.store.local_dir.rglob("*.json"))

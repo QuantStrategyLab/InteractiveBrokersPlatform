@@ -163,4 +163,8 @@ def test_flags_off_entrypoints_match_main_call_recorders(monkeypatch, kind, case
     golden = json.loads((Path(__file__).parent / "fixtures/notif_main_2f16cb9.json").read_text())
     expected = golden[("daily_digest:" if legacy_mode else "") + f"{kind}:{case}:{locale}"]
     observed = CAPTURE[kind](monkeypatch, case, locale)
-    assert observed == copy.deepcopy(expected)
+    expected = copy.deepcopy(expected)
+    for call in expected.get("calls", []):
+        if call[0] == "execute":
+            call[-1]["account_execution_session"] = None
+    assert observed == expected

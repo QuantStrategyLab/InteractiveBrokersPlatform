@@ -7,6 +7,7 @@ import pytest
 
 from application import execution_service as service
 from quant_platform_kit.common.models import OrderIntent
+from tests.conftest import synthetic_account_submission
 
 
 class FakeIB:
@@ -27,7 +28,7 @@ class FakeIB:
                        orderStatus=NS(status="Submitted"))]
         if mode in {"missing_account", "missing_symbol", "pending"}:
             return [NS(contract=NS(symbol=None if mode == "missing_symbol" else self.symbol),
-                       order=NS(account=None if mode == "missing_account" else "FAKE_A"),
+                       order=NS(account=None if mode == "missing_account" else "DU00000003"),
                        orderStatus=NS(status="Submitted"))]
         return []
 
@@ -35,7 +36,7 @@ class FakeIB:
         return []
 
     def accountValues(self):
-        return [NS(account="FAKE_A", tag="CashBalance", currency="USD", value="1000")]
+        return [NS(account="DU00000003", tag="CashBalance", currency="USD", value="1000")]
 
 
 @pytest.fixture
@@ -60,7 +61,7 @@ def execute(monkeypatch, tmp_path):
             "allocation": {"target_mode": "weight", "strategy_symbols": (symbol,),
                 "risk_symbols": (symbol,), "income_symbols": (), "safe_haven_symbols": (),
                 "targets": targets},
-            "risk_authority": {"strategy_profile": profile, "account_ids": ("FAKE_A",),
+            "risk_authority": {"strategy_profile": profile, "account_ids": ("DU00000003",),
                 "trade_date": today, "signal_date": None, "effective_date": today,
                 "snapshot_as_of": None, "portfolio_equity": 1000.,
                 "targets": targets, "max_target_values": {symbol: 100.}},
@@ -80,12 +81,17 @@ def execute(monkeypatch, tmp_path):
             claims.append(True)
             return claim
 
+        session, submit, receipt = synthetic_account_submission(
+            submit, local_dir=tmp_path / "account-journal", metadata=metadata,
+            profile=profile, account_id="DU00000003",
+        )
         return service.execute_rebalance(
             FakeIB(mode, symbol), {}, {symbol: {"quantity": 2}} if reducing else {}, account,
             fetch_quote_snapshots=lambda ib, symbols: {s: NS(last_price=100.) for s in symbols},
             submit_order_intent=submit, order_intent_cls=OrderIntent,
             translator=lambda key, **kwargs: key, acquire_execution_claim=acquire,
-            strategy_profile=profile, account_ids=("FAKE_A",), signal_metadata=metadata,
+            account_execution_session=session, runtime_release_receipt=receipt,
+            strategy_profile=profile, account_ids=("DU00000003",), signal_metadata=metadata,
             dry_run_only=False, execution_mode="live", cash_reserve_ratio=0.,
             rebalance_threshold_ratio=0., limit_buy_premium=1., sell_settle_delay_sec=0,
             execution_lock_dir=tmp_path, return_summary=True,

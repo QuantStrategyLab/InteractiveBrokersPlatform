@@ -12,6 +12,33 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
+def synthetic_account_submission(venue, *, local_dir, metadata, profile, account_id, receipt=None):
+    """Explicit positive-test prerequisite: real journal, owned grant and dispatch.
+
+    Only the final venue is fake. Missing library capability raises normally;
+    this helper never patches an admission API or supplies a default permission.
+    """
+    from quant_platform_kit.common import execution_state as contract
+
+    if receipt is None:
+        receipt = {
+            "attestation_state": "self_attested", "release_id": "synthetic-test-release",
+            "strategy_release": {"strategy_revision": "a" * 40},
+        }
+    session = contract.AccountSubmissionSession(
+        contract.ExecutionMarkerStore(local_dir=local_dir), broker="ibkr",
+        account_id=account_id, owner_id=profile, profile=profile,
+        intent_id=contract.submission_intent_digest(metadata, profile),
+        release_id=contract.submission_release_digest(receipt),
+    )
+
+    def submit(ib, intent, *, account_execution_session, execution_grant):
+        assert account_execution_session is session
+        return session.dispatch(execution_grant, intent, lambda: venue(ib, intent))
+
+    return session, submit, receipt
+
+
 @pytest.fixture
 def strategy_module_factory(monkeypatch):
     def load_strategy_module(**env_overrides):

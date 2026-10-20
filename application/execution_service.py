@@ -1395,6 +1395,7 @@ def execute_rebalance(
     strategy_symbols=None,
     signal_metadata=None,
     acquire_execution_claim=None,
+    account_execution_session=None,
     strategy_profile=None,
     account_group=None,
     service_name=None,
@@ -1424,13 +1425,30 @@ def execute_rebalance(
         delegate_submit = submit_order_intent
 
         def submit_claimed_order(ib, order_intent):
+            from quant_platform_kit.common import execution_state as contract
+
+            session_type = getattr(contract, "AccountSubmissionSession", ())
+            if (not isinstance(account_execution_session, session_type)
+                    or account_execution_session.contract_version != "account_submission.v1"):
+                raise RuntimeError("IBKR account submission session/contract required")
+            if (
+                account_execution_session.broker != "ibkr"
+                or account_execution_session.release_id != contract.submission_release_digest(runtime_release_receipt)
+                or account_execution_session.intent_id != contract.submission_intent_digest(signal_metadata, strategy_profile)
+                or account_execution_session.profile != strategy_profile
+            ):
+                raise RuntimeError("IBKR account session intent/release binding mismatch")
             if acquire_execution_claim is None or not acquire_execution_claim():
                 # N13 T1 consult-only: local claim still wins; ignore decision.
                 consult_t1_live_submit(identity_held=False, dry_run_bypass=False)
                 raise RuntimeError("IBKR execution claim required; refusing broker submission")
             # Shadow consult after successful claim; deny must not block submit.
             consult_t1_live_submit(identity_held=True, dry_run_bypass=False)
-            return delegate_submit(ib, order_intent)
+            grant = account_execution_session.reserve(order_intent)
+            return delegate_submit(
+                ib, order_intent, account_execution_session=account_execution_session,
+                execution_grant=grant,
+            )
 
         submit_order_intent = submit_claimed_order
     signal_metadata = signal_metadata or {}
