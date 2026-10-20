@@ -2838,3 +2838,196 @@ def test_option_unknown_same_intent_retry_keeps_existing_cycle_lock(uncertain_cy
     assert "same_day_execution_locked" in retry["no_op_reason"]
     assert len(uncertain_cycle.submitted) == submitted
     assert len(uncertain_cycle.claims) == claims
+
+
+@pytest.fixture
+def pinned_id_adapter():
+    """Use the real platform/QPK adapter; only broker objects are synthetic."""
+    from application.ibkr_order_execution import submit_order_intent
+
+    facts = SimpleNamespace(trades=[], reports=[])
+
+    def adapter_for(underlying_id, status):
+        def adapter(ib, intent):
+            def place_order(_contract, order):
+                order.orderId = underlying_id
+                trade = SimpleNamespace(
+                    order=order,
+                    orderStatus=SimpleNamespace(
+                        status=status,
+                        filled=(
+                            intent.quantity
+                            if status == "Filled"
+                            else 0.0
+                            if status
+                            in {"Rejected", "rejected", "Cancelled", "ApiCancelled"}
+                            else 0.5
+                        ),
+                        avgFillPrice=49.0,
+                    ),
+                )
+                facts.trades.append(trade)
+                return trade
+
+            ib.qualifyContracts = lambda contract: [contract]
+            ib.placeOrder = place_order
+            report = submit_order_intent(
+                ib,
+                intent,
+                wait_seconds=0,
+                stock_factory=lambda symbol, _exchange, _currency: SimpleNamespace(
+                    symbol=symbol
+                ),
+                option_factory=lambda *args, **kwargs: SimpleNamespace(
+                    symbol=intent.symbol
+                ),
+                market_order_factory=lambda side, qty: SimpleNamespace(
+                    action=side, totalQuantity=qty
+                ),
+                limit_order_factory=lambda side, qty, price: SimpleNamespace(
+                    action=side, totalQuantity=qty, lmtPrice=price
+                ),
+            )
+            facts.reports.append(report)
+            return report
+
+        return adapter
+
+    facts.adapter_for = adapter_for
+    return facts
+
+
+@pytest.mark.parametrize(
+    "underlying_id", [None, "", " \t "], ids=["none", "empty", "blank"]
+)
+@pytest.mark.parametrize("status", ["Submitted", "PartiallyFilled", "Filled"])
+@pytest.mark.parametrize("first_side", ["sell", "buy"])
+def test_pinned_adapter_missing_id_halts_real_stock_cycle(
+    uncertain_cycle,
+    pinned_id_adapter,
+    underlying_id,
+    status,
+    first_side,
+):
+    _logs, summary = uncertain_cycle.run(
+        pinned_id_adapter.adapter_for(underlying_id, status),
+        multiple=True,
+        first_side=first_side,
+    )
+    report = pinned_id_adapter.reports[0]
+    assert report.broker_order_id == str(underlying_id)
+    assert report.status == status
+    assert len(uncertain_cycle.submitted) == len(uncertain_cycle.claims) == 1
+    assert len(pinned_id_adapter.trades) == 1
+    assert uncertain_cycle.submitted[0].side == first_side
+    assert summary["submission_halted"] is True
+    assert summary["outcome_unknown"] is True
+    assert summary["no_op_reason"] == "broker_order_outcome_unknown"
+    assert summary["execution_status"] == "pending_reconciliation"
+    assert summary["projected_sell_release_value"] == 0.0
+    pending = summary["orders_pending"][0]
+    assert pending["broker_order_id"] == report.broker_order_id
+    assert (
+        pending["account_id"] == report.raw_payload["account_id"] == "synthetic-account"
+    )
+    assert pending["filled_quantity"] == report.filled_quantity
+    assert pending["average_fill_price"] == report.average_fill_price
+    assert summary["orders_filled"] == summary["orders_partially_filled"] == []
+    assert summary["orders_skipped"] == []
+    locks = {p.name: p.read_bytes() for p in uncertain_cycle.lock_dir.glob("*.json")}
+    assert locks
+    _logs, retry = uncertain_cycle.run(None, multiple=True, first_side=first_side)
+    assert retry["execution_status"] == "blocked"
+    assert len(uncertain_cycle.submitted) == len(uncertain_cycle.claims) == 1
+    assert {
+        p.name: p.read_bytes() for p in uncertain_cycle.lock_dir.glob("*.json")
+    } == locks
+
+
+@pytest.mark.parametrize("underlying_id", [0, "0", 123, "known-order"])
+@pytest.mark.parametrize("status", ["Submitted", "PartiallyFilled", "Filled"])
+def test_pinned_adapter_known_id_preserves_stock_continuation(
+    uncertain_cycle,
+    pinned_id_adapter,
+    underlying_id,
+    status,
+):
+    _logs, summary = uncertain_cycle.run(
+        pinned_id_adapter.adapter_for(underlying_id, status),
+        multiple=True,
+    )
+    report = pinned_id_adapter.reports[0]
+    assert report.broker_order_id == str(underlying_id)
+    assert len(uncertain_cycle.submitted) == len(uncertain_cycle.claims) == 4
+    assert not summary.get("submission_halted", False)
+    assert not summary.get("outcome_unknown", False)
+    destination = {
+        "Submitted": "pending",
+        "PartiallyFilled": "partially_filled",
+        "Filled": "filled",
+    }[status]
+    assert summary[f"orders_{destination}"][0]["broker_order_id"] == str(underlying_id)
+
+
+@pytest.mark.parametrize("underlying_id", [None, "", " \t "])
+@pytest.mark.parametrize(
+    "status", ["Rejected", "rejected", "Cancelled", "ApiCancelled"]
+)
+def test_pinned_adapter_terminal_negative_keeps_missing_id_exception(
+    uncertain_cycle,
+    pinned_id_adapter,
+    underlying_id,
+    status,
+):
+    _logs, summary = uncertain_cycle.run(
+        pinned_id_adapter.adapter_for(underlying_id, status),
+        multiple=True,
+    )
+    assert len(uncertain_cycle.submitted) == len(uncertain_cycle.claims) == 4
+    assert not summary.get("submission_halted", False)
+    assert not summary.get("outcome_unknown", False)
+    skipped = summary["orders_skipped"][0]
+    assert skipped["broker_order_id"] == str(underlying_id)
+    assert skipped["reason"] == status
+    assert skipped["account_id"] == "synthetic-account"
+
+
+@pytest.mark.parametrize("underlying_id", [None, "", " \t ", 0, "known-option"])
+def test_pinned_adapter_id_classification_in_dormant_option_branch(
+    uncertain_cycle,
+    pinned_id_adapter,
+    underlying_id,
+):
+    # uncertain_cycle explicitly bypasses only the unchanged option preflight
+    # in this test and submits one known stock prefix before the real helper.
+    _logs, summary = uncertain_cycle.run(
+        pinned_id_adapter.adapter_for(underlying_id, "Submitted"),
+        dormant_option_branch=True,
+        option_actions=("buy_to_open", "sell_to_close"),
+    )
+    report = pinned_id_adapter.reports[0]
+    assert report.broker_order_id == str(underlying_id)
+    assert report.raw_payload["asset_class"] == "option"
+    missing = underlying_id is None or underlying_id == "" or underlying_id == " \t "
+    if missing:
+        assert len(uncertain_cycle.submitted) == len(uncertain_cycle.claims) == 2
+        assert summary["submission_halted"] is True
+        assert summary["outcome_unknown"] is True
+        assert summary["no_op_reason"] == "broker_order_outcome_unknown"
+        pending = summary["option_orders_pending"][0]
+        assert pending["broker_order_id"] == report.broker_order_id
+        assert pending["filled_quantity"] == 0.5
+        assert pending["average_fill_price"] == 49.0
+        assert pending["account_id"] == "synthetic-account"
+    else:
+        assert len(uncertain_cycle.submitted) == len(uncertain_cycle.claims) == 3
+        assert not summary.get("submission_halted", False)
+
+
+def test_numeric_zero_report_id_does_not_add_a_new_invalid_id_policy(uncertain_cycle):
+    _logs, summary = uncertain_cycle.run(
+        SimpleNamespace(status="Submitted", broker_order_id=0)
+    )
+    assert len(uncertain_cycle.submitted) == len(uncertain_cycle.claims) == 2
+    assert not summary.get("submission_halted", False)
+    assert summary["orders_pending"][0]["broker_order_id"] == 0

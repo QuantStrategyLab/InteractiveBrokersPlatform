@@ -321,9 +321,16 @@ def _record_order_outcome(
         _FILLED_ORDER_STATUSES | _PARTIALLY_FILLED_ORDER_STATUSES
         | _PENDING_ORDER_STATUSES | _REJECTED_OR_CANCELLED_ORDER_STATUSES
     )
+    broker_order_id = order_payload.get("broker_order_id")
+    # The selected IBKR adapter stringifies orderId, including None. Classify
+    # missing identities without rewriting the original report or rejecting 0.
+    missing_broker_order_id = broker_order_id is None or (
+        isinstance(broker_order_id, str)
+        and (not broker_order_id.strip() or broker_order_id == "None")
+    )
     if normalized_status not in known_statuses or (
         normalized_status not in _REJECTED_OR_CANCELLED_ORDER_STATUSES
-        and not order_payload.get("broker_order_id")
+        and missing_broker_order_id
     ):
         # Acceptance/remaining obligations are unknown. Retain the original
         # report and identity for reconciliation; never count this as a reject
