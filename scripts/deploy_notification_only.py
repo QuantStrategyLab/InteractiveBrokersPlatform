@@ -15,11 +15,12 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tarfile
 import time
 
 from scripts.verify_cloud_run_no_traffic_deploy import _active_traffic, _digest
-from scripts.verify_image_ues_release_binding import GuardError, check, new_report, revision_from_lockfile
+from scripts.verify_image_ues_release_binding import check, new_report, revision_from_lockfile
 
 SOURCE = "07a98e1559ec1acf7199f419facfe5c3ad5f124d"
 PROJECT = "interactivebrokersquant"
@@ -99,10 +100,47 @@ def run(command: list[str], *, data: bytes | None = None, timeout: int = 60, all
     return result.stdout
 
 
-def cloud(args: list[str], *, data: dict | None = None, allow_missing: bool = False) -> dict:
-    output = run(["gcloud", *args, f"--project={PROJECT}", f"--region={REGION}", "--format=json", "--quiet"],
-                 data=json.dumps(data).encode() if data is not None else None, allow_missing=allow_missing)
+def cloud(args: list[str], *, allow_missing: bool = False) -> dict:
+    require(len(args) == 4 and args[:3] in (["run", "services", "describe"], ["run", "revisions", "describe"]), "cloud_reader_only")
+    output = run(["gcloud", *args, f"--project={PROJECT}", f"--region={REGION}", "--format=json", "--quiet"], allow_missing=allow_missing)
     return json.loads(output) if output else {}
+
+
+def replace_service(body: dict, *, session=None) -> None:
+    """Preserve the read resourceVersion; gcloud replace rewrites that token.
+
+    The official auth client consumes the existing Actions ADC internally.
+    No token, credential file body, request body or response body is exported.
+    """
+    name = body["metadata"]["name"]
+    require(sha(name) == SERVICE_HASH and bool(body["metadata"].get("resourceVersion")), "fixed_service_and_concurrency_token_required")
+    owned = session is None
+    if owned:
+        require(bool(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")), "original_actions_ADC_required")
+        sdk = Path(run(["gcloud", "info", "--format=value(installation.sdk_root)"]).decode().strip())
+        vendor = sdk / "lib" / "third_party"
+        require(vendor.is_dir(), "official_auth_client_unavailable")
+        sys.path.insert(0, str(vendor))
+        try:
+            import google.auth
+            from google.auth.transport.requests import AuthorizedSession
+            credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+            require(getattr(credentials, "service_account_email", None) == DEPLOYER, "original_ADC_identity_required")
+            session = AuthorizedSession(credentials, max_refresh_attempts=0)
+        except ReleaseError:
+            raise
+        except Exception:
+            raise ReleaseError("official_ADC_client_unavailable") from None
+    try:
+        response = session.put(f"https://run.googleapis.com/apis/serving.knative.dev/v1/projects/{PROJECT}/locations/{REGION}/services/{name}",
+                               json=body, timeout=60, allow_redirects=False)
+        status = response.status_code
+    except Exception:
+        raise ReleaseError("cloud_run_replace_transport_failed_no_retry") from None
+    finally:
+        if owned:
+            session.close()
+    require(status == 200, "cloud_run_replace_http_" + str(int(status)) + "_no_retry")
 
 
 def validate_dispatch(env: dict[str, str]) -> str:
@@ -281,16 +319,30 @@ def candidate(service: dict, original: dict, image: str, run_id: str) -> dict:
     return result
 
 
-def verify_readback(before: dict, original: dict, after: dict, revision: dict, image: str) -> None:
+def verify_readback(before: dict, original: dict, after: dict, revision: dict, expected: dict) -> None:
     require(routes(after) == routes(before), "routes_changed_stop_without_rollback")
+    desired_routes = after.get("spec", {}).get("traffic", [])
+    require(not any(route.get("latestRevision") for route in desired_routes) and
+            routes({"status": {"traffic": desired_routes}}) == routes(before), "desired_routes_changed")
     require(metadata(after.get("metadata", {}), template=False) == metadata(before.get("metadata", {}), template=False), "service_metadata_changed")
     require({key: value for key, value in after.get("spec", {}).items() if key not in {"template", "traffic"}} ==
             {key: value for key, value in before.get("spec", {}).items() if key not in {"template", "traffic"}}, "service_spec_changed")
-    require(nonnotification(revision) == nonnotification(original), "revision_nonnotification_template_changed")
-    require(revision["spec"]["containers"][0]["image"] == image, "revision_image_mismatch")
-    require(all(env_map(revision).get(key) == {"name": key, "value": value} for key, value in ROUTING.items()), "routing_literals_not_bound")
-    require(runtime_target(revision) == runtime_target(original), "revision_target_changed")
-    require(revision.get("metadata", {}).get("labels", {}).get("commit-sha") == SOURCE, "revision_provenance_mismatch")
+    wanted = expected["spec"]["template"]
+    for actual in (revision, after.get("spec", {}).get("template", {})):
+        require(nonnotification(actual) == nonnotification(original), "revision_nonnotification_template_changed")
+        require(actual["spec"]["containers"][0]["image"] == wanted["spec"]["containers"][0]["image"], "revision_image_mismatch")
+        require(all(env_map(actual).get(key) == {"name": key, "value": value} for key, value in ROUTING.items()), "routing_literals_not_bound")
+        require(runtime_target(actual) == runtime_target(original), "revision_target_changed")
+        require(actual.get("metadata", {}).get("name") == wanted["metadata"]["name"] and
+                all(actual.get("metadata", {}).get("labels", {}).get(key) == wanted["metadata"]["labels"][key]
+                    for key in PROVENANCE_LABELS), "revision_provenance_mismatch")
+
+
+def pushed_digest(output: bytes) -> str:
+    tag = re.escape(IMAGE_TAG.rsplit(":", 1)[1])
+    matches = re.findall(rf"^{tag}: digest: (sha256:[0-9a-f]{{64}}) size: [0-9]+\s*$", output.decode(), re.M)
+    require(len(matches) == 1, "pushed_manifest_digest_unavailable")
+    return matches[0]
 
 
 def release(source: Path, destination: Path, report: dict) -> None:
@@ -320,10 +372,10 @@ def release(source: Path, destination: Path, report: dict) -> None:
     binding = new_report()
     require(not check({"image": installed["us_equity_strategies-0.7.60"], "lockfile": revision_from_lockfile(source / "uv.lock")}, [(ALIAS, target)], report=binding), "original_release_risk_binding_mismatch")
     report["release_risk_binding"] = binding
-    run(["docker", "push", IMAGE_TAG], timeout=180)
-    digest = run(["gcloud", "artifacts", "docker", "images", "describe", IMAGE_TAG, f"--project={PROJECT}", "--format=value(image_summary.digest)", "--quiet"]).decode().strip()
-    require(bool(re.fullmatch(r"sha256:[0-9a-f]{64}", digest)), "registry_digest_invalid")
+    digest = pushed_digest(run(["docker", "push", IMAGE_TAG], timeout=180))
     image = REPOSITORY + "@" + digest
+    registry_digest = run(["gcloud", "artifacts", "docker", "images", "describe", image, f"--project={PROJECT}", "--format=value(image_summary.digest)", "--quiet"]).decode().strip()
+    require(registry_digest == digest, "pushed_registry_digest_mismatch")
     report["image_digest"] = digest
     fresh = cloud(["run", "services", "describe", service_name])
     require(bool(before.get("metadata", {}).get("resourceVersion")), "service_concurrency_token_required")
@@ -333,13 +385,13 @@ def release(source: Path, destination: Path, report: dict) -> None:
     print("::add-mask::" + candidate_name)
     require(not cloud(["run", "revisions", "describe", candidate_name], allow_missing=True), "candidate_revision_already_exists")
     report["revision_create_attempts"] = 1
-    cloud(["run", "services", "replace", "-", "--async"], data=body)
+    replace_service(body)
     report["candidate_revision_sha256"] = sha(candidate_name)
     for _ in range(24):
         revision = cloud(["run", "revisions", "describe", candidate_name], allow_missing=True)
         if any(condition.get("type") == "Ready" and condition.get("status") == "True" for condition in revision.get("status", {}).get("conditions", [])):
             after = cloud(["run", "services", "describe", service_name])
-            verify_readback(before, original, after, revision, image)
+            verify_readback(before, original, after, revision, body)
             report.update({"status": "PASS_NO_TRAFFIC", "readiness": True, "traffic_unchanged": True, "nonnotification_unchanged": True, "routing_literals": ROUTING, "actual_loaded_ues": "NOT_ATTESTED"})
             return
         if any(condition.get("type") == "Ready" and condition.get("status") == "False" for condition in revision.get("status", {}).get("conditions", [])):
@@ -364,7 +416,7 @@ def main() -> int:
         report["status"] = "FAILED_STOPPED"
         print("Notification-only release stopped; no automatic retry or traffic rollback.")
         return 1
-    except (ValueError, KeyError, TypeError, OSError, GuardError):
+    except Exception:
         # Never print exception objects that might include opaque runtime data.
         report["status"] = "FAILED_STOPPED"
         report["error_code"] = "invalid_local_or_native_data"

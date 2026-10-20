@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -89,13 +90,17 @@ def test_candidate_copies_serving_template_and_keeps_concrete_traffic(service, o
     assert body["spec"]["traffic"] == release.routes(service)
     assert all("latestRevision" not in route for route in body["spec"]["traffic"])
     assert {key: release.env_map(revision)[key]["value"] for key in release.ROUTING} == release.ROUTING
-    release.verify_readback(service, original, service, revision, IMAGE)
+    after = copy.deepcopy(service)
+    after["spec"] = body["spec"]
+    release.verify_readback(service, original, after, revision, body)
 
 
 @pytest.mark.parametrize("mutation", ["literal", "secret-version", "resources", "target", "image", "label", "traffic", "tag", "service-spec"])
 def test_readback_rejects_nonnotification_or_routing_changes(service, original, mutation):
-    revision = release.candidate(service, original, IMAGE, "12345")["spec"]["template"]
+    expected = release.candidate(service, original, IMAGE, "12345")
+    revision = copy.deepcopy(expected["spec"]["template"])
     after = copy.deepcopy(service)
+    after["spec"] = copy.deepcopy(expected["spec"])
     container = revision["spec"]["containers"][0]
     if mutation == "literal":
         release.env_map(revision)["ORDINARY_SETTING"]["value"] = "changed"
@@ -116,7 +121,28 @@ def test_readback_rejects_nonnotification_or_routing_changes(service, original, 
     else:
         after["spec"]["unexpected"] = True
     with pytest.raises(release.ReleaseError):
-        release.verify_readback(service, original, after, revision, IMAGE)
+        release.verify_readback(service, original, after, revision, expected)
+
+
+@pytest.mark.parametrize("mutation", ["literal", "image", "labels", "routing", "latest-route"])
+def test_readback_rejects_concurrent_desired_template_or_route_changes(service, original, mutation):
+    expected = release.candidate(service, original, IMAGE, "12345")
+    revision = copy.deepcopy(expected["spec"]["template"])
+    after = copy.deepcopy(service)
+    after["spec"] = copy.deepcopy(expected["spec"])
+    desired = after["spec"]["template"]
+    if mutation == "literal":
+        release.env_map(desired)["ORDINARY_SETTING"]["value"] = "concurrent-change"
+    elif mutation == "image":
+        desired["spec"]["containers"][0]["image"] = release.BASE_IMAGE
+    elif mutation == "labels":
+        desired["metadata"]["labels"]["user-label"] = "concurrent-change"
+    elif mutation == "routing":
+        release.env_map(desired)["QSL_ROUTINE_NOTIFICATION_MODE"]["value"] = "digest"
+    else:
+        after["spec"]["traffic"] = [{"latestRevision": True, "percent": 100}]
+    with pytest.raises(release.ReleaseError):
+        release.verify_readback(service, original, after, revision, expected)
 
 
 def test_zero_candidate_does_not_shift_routes_but_tags_stay_guarded(service):
@@ -235,7 +261,8 @@ def test_overlay_never_executes_image_entrypoint(monkeypatch, tmp_path):
     assert "--entrypoint=/bin/true" in next(args for args in commands if args[1] == "create")
 
 
-def test_one_release_builds_once_and_only_replaces_zero_traffic_template(monkeypatch, tmp_path, service, original):
+@pytest.mark.parametrize("registry_mismatch", [False, True])
+def test_one_release_builds_once_and_only_replaces_zero_traffic_template(monkeypatch, tmp_path, service, original, registry_mismatch):
     for key, value in admitted_env().items():
         monkeypatch.setenv(key, value)
     monkeypatch.setenv("CLOUD_RUN_SERVICE_TARGETS_JSON", json.dumps([{"service_name": "fixture-service"}]))
@@ -251,14 +278,16 @@ def test_one_release_builds_once_and_only_replaces_zero_traffic_template(monkeyp
         if args[1:4] == ["artifacts", "repositories", "describe"]:
             return b"SCANNING_DISABLED"
         if args[1:5] == ["artifacts", "docker", "images", "describe"]:
-            return ("sha256:" + "a" * 64).encode() if any(item[1] == "push" for item in commands) else b""
+            if any(item[1] == "push" for item in commands):
+                assert args[5] == IMAGE  # Never re-resolve a mutable tag after push.
+                return ("sha256:" + ("b" if registry_mismatch else "a") * 64).encode()
+            return b""
+        if args[1] == "push":
+            return (release.IMAGE_TAG.rsplit(":", 1)[1] + ": digest: sha256:" + "a" * 64 + " size: 1234\n").encode()
         return b""
 
     def cloud(args, *, data=None, allow_missing=False):
         cloud_calls.append(args)
-        if args[:3] == ["run", "services", "replace"]:
-            replaces.append(data)
-            return {}
         if args[:3] == ["run", "services", "describe"]:
             result = copy.deepcopy(service)
             if replaces:
@@ -275,14 +304,48 @@ def test_one_release_builds_once_and_only_replaces_zero_traffic_template(monkeyp
 
     monkeypatch.setattr(release, "run", command)
     monkeypatch.setattr(release, "cloud", cloud)
+    monkeypatch.setattr(release, "replace_service", lambda body: replaces.append(body))
     report = {}
+    if registry_mismatch:
+        with pytest.raises(release.ReleaseError, match="pushed_registry_digest_mismatch"):
+            release.release(tmp_path / "source", tmp_path / "context", report)
+        assert not replaces
+        return
     release.release(tmp_path / "source", tmp_path / "context", report)
     assert report["status"] == "PASS_NO_TRAFFIC"
     assert len(replaces) == 1
     assert replaces[0]["spec"]["traffic"] == release.routes(service)
     assert sum(args[1] == "build" for args in commands) == 1
     assert sum(args[1] == "push" for args in commands) == 1
-    assert all(args[:3] in (["run", "services", "describe"], ["run", "revisions", "describe"], ["run", "services", "replace"]) for args in cloud_calls)
+    assert all(args[:3] in (["run", "services", "describe"], ["run", "revisions", "describe"]) for args in cloud_calls)
     assert "fixture-preserved" not in json.dumps(report)
     assert "fixture-secret" not in json.dumps(report)
     assert "opaque_fixture" not in json.dumps(report)
+
+
+@pytest.mark.parametrize("status", [200, 403, 409, 500])
+def test_direct_replace_keeps_original_cas_and_never_retries(monkeypatch, service, original, status):
+    monkeypatch.setattr(release, "SERVICE_HASH", release.sha("fixture-service"))
+    body = release.candidate(service, original, IMAGE, "12345")
+    calls = []
+
+    def put(url, **kwargs):
+        calls.append((url, kwargs))
+        return SimpleNamespace(status_code=status)
+
+    session = SimpleNamespace(put=put)
+    if status == 200:
+        release.replace_service(body, session=session)
+    else:
+        with pytest.raises(release.ReleaseError, match=f"cloud_run_replace_http_{status}_no_retry"):
+            release.replace_service(body, session=session)
+    assert len(calls) == 1
+    assert calls[0][1]["json"]["metadata"]["resourceVersion"] == "opaque-token"
+    assert calls[0][1]["allow_redirects"] is False
+    assert calls[0][1]["timeout"] == 60
+
+
+@pytest.mark.parametrize("output", [b"", b"digest: sha256:untrusted", b"other-tag: digest: sha256:" + b"a" * 64 + b" size: 1"])
+def test_pushed_manifest_digest_must_come_from_exact_push_receipt(output):
+    with pytest.raises(release.ReleaseError, match="pushed_manifest_digest_unavailable"):
+        release.pushed_digest(output)

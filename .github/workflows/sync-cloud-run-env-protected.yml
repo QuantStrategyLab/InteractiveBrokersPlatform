@@ -80,97 +80,6 @@ env:
   GCP_ARTIFACT_REGISTRY_REPOSITORY: cloud-run-source-deploy
 
 jobs:
-  notification-only:
-    name: Fixed notification overlay / no traffic
-    if: github.event_name == 'workflow_dispatch' && inputs.notification_only == true
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-      id-token: write
-    env:
-      ENABLE_GITHUB_CLOUD_RUN_DEPLOY: ${{ vars.ENABLE_GITHUB_CLOUD_RUN_DEPLOY }}
-      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
-      INPUT_TARGET: ${{ inputs.target }}
-      INPUT_CONFIGURED_SERVICE: ${{ inputs.configured_service }}
-      INPUT_SOURCE_COMMIT: ${{ inputs.source_commit }}
-      INPUT_DEPLOY_IMAGE: ${{ inputs.deploy_image }}
-      INPUT_SYNC_ENV: ${{ inputs.sync_env }}
-      INPUT_APPROVE_TRAFFIC_SHIFT: ${{ inputs.approve_traffic_shift }}
-      INPUT_APPROVE_SCHEDULER_SYNC: ${{ inputs.approve_scheduler_sync }}
-      CLOUDSDK_CORE_DISABLE_FILE_LOGGING: "true"
-      CLOUDSDK_CORE_LOG_HTTP: "false"
-    steps:
-      # Reject broader or repeat execution before any cloud authentication.
-      - name: Admit fixed notification dispatch
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "${GITHUB_EVENT_NAME}" = workflow_dispatch
-          test "${GITHUB_REF}" = refs/heads/main
-          test "${GITHUB_RUN_ATTEMPT}" = 1
-          test "${ENABLE_GITHUB_CLOUD_RUN_DEPLOY}" = true
-          test "${INPUT_SOURCE_COMMIT}" = 07a98e1559ec1acf7199f419facfe5c3ad5f124d
-          test "${INPUT_TARGET}" = configured
-          test -z "${INPUT_CONFIGURED_SERVICE}"
-          test "${INPUT_DEPLOY_IMAGE}" = true
-          test "${INPUT_SYNC_ENV}" = false
-          test "${INPUT_APPROVE_TRAFFIC_SHIFT}" = false
-          test "${INPUT_APPROVE_SCHEDULER_SYNC}" = false
-          test "${GCP_PROJECT_ID}" = interactivebrokersquant
-          test "${GCP_DEPLOY_SERVICE_ACCOUNT}" = ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com
-          test "${GCP_RUNTIME_SERVICE_ACCOUNT}" = ibkr-platform-runtime@interactivebrokersquant.iam.gserviceaccount.com
-
-      - name: Checkout trusted notification orchestration
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-
-      - name: Checkout frozen notification application
-        uses: actions/checkout@v6
-        with:
-          repository: ${{ github.repository }}
-          ref: 07a98e1559ec1acf7199f419facfe5c3ad5f124d
-          path: source
-          persist-credentials: false
-
-      - name: Authenticate notification runner through original WIF binding
-        uses: google-github-actions/auth@v3
-        with:
-          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ env.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
-
-      - name: Set up notification gcloud
-        uses: google-github-actions/setup-gcloud@v3
-        with:
-          project_id: ${{ env.GCP_PROJECT_ID }}
-          version: ">= 416.0.0"
-
-      - name: Build fixed overlay and verify no-traffic revision
-        env:
-          CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}
-        run: |
-          python3 -m scripts.deploy_notification_only \
-            --source source \
-            --context "${RUNNER_TEMP}/ibkr-notification-context" \
-            --report "${RUNNER_TEMP}/notification-only.json" \
-            --execute
-
-      - name: Summarize bounded notification result
-        if: always()
-        run: |
-          python3 - <<'PY'
-          import os
-          from pathlib import Path
-          report = Path(os.environ["RUNNER_TEMP"]) / "notification-only.json"
-          if report.is_file():
-              with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as stream:
-                  stream.write("Fixed notification release evidence (static pins; loaded UES not attested):\n\n```json\n")
-                  stream.write(report.read_text())
-                  stream.write("```\n")
-          PY
-
   sync-cloud-run-env:
     name: Deploy / Sync Cloud Run
     # Production deployment and environment sync require an explicit operator dispatch.
@@ -1779,3 +1688,108 @@ jobs:
               --async \
               --quiet
           done <<< "${old_digests}"
+
+  notification-only:
+    name: Fixed notification overlay / no traffic
+    if: github.event_name == 'workflow_dispatch' && inputs.notification_only == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ENABLE_GITHUB_CLOUD_RUN_DEPLOY: ${{ vars.ENABLE_GITHUB_CLOUD_RUN_DEPLOY }}
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+      INPUT_TARGET: ${{ inputs.target }}
+      INPUT_CONFIGURED_SERVICE: ${{ inputs.configured_service }}
+      INPUT_SOURCE_COMMIT: ${{ inputs.source_commit }}
+      INPUT_DEPLOY_IMAGE: ${{ inputs.deploy_image }}
+      INPUT_SYNC_ENV: ${{ inputs.sync_env }}
+      INPUT_APPROVE_TRAFFIC_SHIFT: ${{ inputs.approve_traffic_shift }}
+      INPUT_APPROVE_SCHEDULER_SYNC: ${{ inputs.approve_scheduler_sync }}
+      CLOUDSDK_CORE_DISABLE_FILE_LOGGING: "true"
+      CLOUDSDK_CORE_LOG_HTTP: "false"
+    steps:
+      - name: Require infrastructure variables
+        env:
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          IBKR_GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
+          IBKR_RUNTIME_SERVICE_ACCOUNT: ${{ vars.IBKR_RUNTIME_SERVICE_ACCOUNT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in IBKR_DEPLOY_SERVICE_ACCOUNT IBKR_GCP_PROJECT_ID IBKR_RUNTIME_SERVICE_ACCOUNT; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is required" >&2
+              exit 2
+            fi
+          done
+
+      - name: Admit fixed notification dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_EVENT_NAME}" = workflow_dispatch
+          test "${GITHUB_REF}" = refs/heads/main
+          test "${GITHUB_RUN_ATTEMPT}" = 1
+          test "${ENABLE_GITHUB_CLOUD_RUN_DEPLOY}" = true
+          test "${INPUT_SOURCE_COMMIT}" = 07a98e1559ec1acf7199f419facfe5c3ad5f124d
+          test "${INPUT_TARGET}" = configured
+          test -z "${INPUT_CONFIGURED_SERVICE}"
+          test "${INPUT_DEPLOY_IMAGE}" = true
+          test "${INPUT_SYNC_ENV}" = false
+          test "${INPUT_APPROVE_TRAFFIC_SHIFT}" = false
+          test "${INPUT_APPROVE_SCHEDULER_SYNC}" = false
+          test "${GCP_PROJECT_ID}" = interactivebrokersquant
+          test "${GCP_DEPLOY_SERVICE_ACCOUNT}" = ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com
+          test "${GCP_RUNTIME_SERVICE_ACCOUNT}" = ibkr-platform-runtime@interactivebrokersquant.iam.gserviceaccount.com
+
+      - name: Checkout trusted notification orchestration
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Checkout frozen notification application
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository }}
+          ref: 07a98e1559ec1acf7199f419facfe5c3ad5f124d
+          path: source
+          persist-credentials: false
+
+      - name: Authenticate notification runner through original WIF binding
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
+
+      - name: Set up notification gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          version: ">= 416.0.0"
+
+      - name: Build fixed overlay and verify no-traffic revision
+        env:
+          CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}
+        run: |
+          python3 -m scripts.deploy_notification_only \
+            --source source \
+            --context "${RUNNER_TEMP}/ibkr-notification-context" \
+            --report "${RUNNER_TEMP}/notification-only.json" \
+            --execute
+
+      - name: Summarize bounded notification result
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          report = Path(os.environ["RUNNER_TEMP"]) / "notification-only.json"
+          if report.is_file():
+              with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as stream:
+                  stream.write("Fixed notification release evidence (static pins; loaded UES not attested):\n\n```json\n")
+                  stream.write(report.read_text())
+                  stream.write("```\n")
+          PY
