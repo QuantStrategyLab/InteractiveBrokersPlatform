@@ -1,4 +1,6 @@
 from pathlib import Path
+import json
+import re
 
 
 WORKFLOW = (
@@ -117,3 +119,22 @@ def test_reconciliation_evidence_binds_scheduler_job_to_exact_receipt() -> None:
         assert marker in workflow
 
     assert 'textPayload:\\"reconciliation_receipt_ready\\"' in workflow
+
+
+def test_producer_source_record_field_shape_reaches_strict_consumer():
+    from application.broker_reconciliation_candidate import canonical_source_receipt_records_json
+    from tests.test_broker_reconciliation_candidate import _expectations, _records
+
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    source_object = workflow.split("'{\n              schema_version:", 1)[1].split("}'", 1)[0]
+    producer_fields = {"schema_version"} | set(re.findall(r"^\s+([a-z_0-9]+):\s+\$", source_object, re.M))
+    assert len(producer_fields) == 15
+    assert "scheduler_job_sha256" in producer_fields
+    # Field shape comes from the real producer, not the consumer's field set.
+    # Expectations are independently specified synthetic run/revision bindings.
+    records = [{field: record[field] for field in producer_fields} for record in _records()]
+    canonical = json.loads(canonical_source_receipt_records_json(
+        records, strategy_profile="global_etf_rotation", expectations=_expectations(),
+    ))
+    assert all(set(record) == producer_fields for record in canonical)
+    assert [record["scheduler_job_sha256"] for record in canonical] == ["e" * 64, "f" * 64]
