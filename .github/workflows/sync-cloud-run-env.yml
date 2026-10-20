@@ -8,6 +8,11 @@ on:
         required: true
         type: boolean
         default: false
+      notification_readback_only:
+        description: "GET only the fixed failed notification candidate and original baseline; requires notification_only=true and all deployment controls=false."
+        required: true
+        type: boolean
+        default: false
       target:
         description: "Deployment target to run. Use hk-verify for an isolated HK dry-run Cloud Run service."
         required: true
@@ -78,6 +83,7 @@ jobs:
     uses: ./.github/workflows/sync-cloud-run-env-protected.yml
     with:
       notification_only: ${{ inputs.notification_only }}
+      notification_readback_only: ${{ inputs.notification_readback_only }}
       target: ${{ inputs.target }}
       configured_service: ${{ inputs.configured_service }}
       source_commit: ${{ inputs.source_commit }}

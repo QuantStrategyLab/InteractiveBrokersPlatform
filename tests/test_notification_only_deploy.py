@@ -23,6 +23,7 @@ def admitted_env() -> dict[str, str]:
         "GITHUB_RUN_ATTEMPT": "1", "GITHUB_RUN_ID": "12345",
         "ENABLE_GITHUB_CLOUD_RUN_DEPLOY": "true",
         "INPUT_TARGET": "configured", "INPUT_CONFIGURED_SERVICE": "",
+        "INPUT_NOTIFICATION_READBACK_ONLY": "false",
         "INPUT_SOURCE_COMMIT": release.SOURCE, "INPUT_DEPLOY_IMAGE": "false",
         "INPUT_SYNC_ENV": "false", "INPUT_APPROVE_TRAFFIC_SHIFT": "false",
         "INPUT_APPROVE_SCHEDULER_SYNC": "false", "GCP_PROJECT_ID": release.PROJECT,
@@ -435,3 +436,95 @@ def test_HTTP_diagnostics_are_available_in_safe_log_without_summary_UI(monkeypat
     assert emitted["revision_queries"][0]["http_status"] == 403
     assert emitted["revision_queries"][0]["sdk_status"] == "PERMISSION_DENIED"
     assert emitted["revision_create_attempts"] == 0
+
+
+def test_projection_keeps_runtime_and_secret_material_private():
+    before = {"spec": {"containers": [{"env": [{"name": "PRIVATE_ACCOUNT_MARKER", "value": "PRIVATE_VALUE_MARKER"}],
+                                        "resources": {"limits": {"cpu": "1", "memory": "512Mi"}}}]},
+              "metadata": {"labels": {"PRIVATE_KEY_MARKER": "PRIVATE_LABEL_MARKER"}}}
+    after = copy.deepcopy(before)
+    after["spec"]["containers"][0]["env"][0]["value"] = "NEW_PRIVATE_VALUE_MARKER"
+    after["metadata"]["labels"]["PRIVATE_KEY_MARKER"] = "NEW_PRIVATE_LABEL_MARKER"
+    after["spec"]["containers"][0]["resources"]["limits"]["cpu"] = "1000m"
+    projection = release.difference_projection(before, after)
+    output = json.dumps(projection)
+    assert "PRIVATE_" not in output
+    assert any(d.get("before_resource_literal") == "1" and d.get("after_resource_literal") == "1000m" for d in projection)
+    assert any(d["path"].endswith("/env/0/value") for d in projection)
+    assert release.difference_projection({"spec": {"timeoutSeconds": 1}}, {"spec": {"timeoutSeconds": True}}) == [
+        {"path": "/spec/timeoutSeconds", "change": "changed", "before_type": "int", "after_type": "bool"}]
+
+
+@pytest.mark.parametrize("permission_denied", [False, True])
+def test_fixed_readback_is_three_gets_only_and_never_writes(monkeypatch, tmp_path, service, original, permission_denied):
+    for key, value in admitted_env().items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("INPUT_NOTIFICATION_READBACK_ONLY", "true")
+    monkeypatch.setenv("CLOUD_RUN_SERVICE_TARGETS_JSON", json.dumps([{"service_name": "fixture-service"}]))
+    monkeypatch.setattr(release, "SERVICE_HASH", release.sha("fixture-service"))
+    monkeypatch.setattr(release, "REVISION_HASH", release.sha("fixture-serving"))
+    monkeypatch.setattr(release, "QUALIFIED_BASELINE", release._digest(release.nonnotification(original)))
+    monkeypatch.setattr(release, "verify_source", lambda *a: None)
+    candidate = release.candidate(service, original, release.QUALIFIED_IMAGE, release.READBACK_RUN)["spec"]["template"]
+    monkeypatch.setattr(release, "READBACK_REVISION_HASH", release.sha(candidate["metadata"]["name"]))
+    candidate["spec"]["containers"][0]["resources"]["limits"]["cpu"] = "1000m"
+    candidate["status"] = {"conditions": [{"type": "Ready", "status": "True"}]}
+    service["spec"]["template"] = copy.deepcopy(candidate)
+    service_reads, gets, closed = [], [], []
+
+    def cloud(args):
+        assert args == ["run", "services", "describe", "fixture-service"]
+        service_reads.append(args)
+        return copy.deepcopy(service)
+
+    def get(url, **kwargs):
+        assert kwargs == {"timeout": 60, "allow_redirects": False}
+        gets.append(url)
+        if len(gets) == 1:
+            body, status = original, 200
+            assert url == release.RUN_API + "/revisions/fixture-serving"
+        else:
+            assert url == release.RUN_API + "/revisions/" + candidate["metadata"]["name"]
+            body, status = ({"error": {"code": 403, "status": "PERMISSION_DENIED", "message": "PRIVATE_MESSAGE"}}, 403) if permission_denied else (candidate, 200)
+        return SimpleNamespace(status_code=status, json=lambda: copy.deepcopy(body))
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("readback must never execute writes, registry, image or Secret Manager commands")
+
+    monkeypatch.setattr(release, "cloud", cloud)
+    monkeypatch.setattr(release, "authorized_session", lambda: SimpleNamespace(get=get, close=lambda: closed.append(True)))
+    for name in ["run", "replace_service", "registry_cost_guard", "release"]:
+        monkeypatch.setattr(release, name, forbidden)
+    report = {"revision_queries": [], "revision_create_attempts": 0}
+    if permission_denied:
+        with pytest.raises(release.ReleaseError, match="403"):
+            release.readback_only(tmp_path, report)
+        assert report["revision_queries"][-1]["http_status"] == 403
+        assert "projection" not in report
+    else:
+        release.readback_only(tmp_path, report)
+        assert report["status"] == "READBACK_ONLY_COMPLETE"
+        assert report["write_operations"] == 0
+        assert report["candidate_ready"] and report["original_still_receives_100_percent"]
+        assert report["projection"]["candidate_revision"]["difference_count"] == 1
+        assert report["projection"]["candidate_revision"]["target_entry_unchanged"]
+        assert report["projection"]["candidate_revision"]["routing_literals_match"]
+    assert len(service_reads) == 1 and len(gets) == 2 and closed == [True]
+    assert report["revision_create_attempts"] == 0
+    assert all(s not in json.dumps(report) for s in ["fixture-secret", "PRIVATE_MESSAGE", "fixture-preserved", "retain-without-reset"])
+
+
+def test_readback_selector_cannot_enter_release(monkeypatch, tmp_path):
+    monkeypatch.setenv("INPUT_NOTIFICATION_READBACK_ONLY", "true")
+    monkeypatch.setattr(release, "cloud", lambda *a: pytest.fail("must stop before cloud"))
+    with pytest.raises(release.ReleaseError, match="readback_cannot_execute_release"):
+        release.release(tmp_path, {})
+
+
+def test_readback_input_cannot_fall_into_broad_deploy_job():
+    protected = (ROOT / ".github/workflows/sync-cloud-run-env-protected.yml").read_text()
+    wrapper = (ROOT / ".github/workflows/sync-cloud-run-env.yml").read_text()
+    assert "inputs.notification_only != true && inputs.notification_readback_only != true" in protected
+    assert "notification_readback_only: ${{ inputs.notification_readback_only }}" in wrapper
+    assert "INPUT_NOTIFICATION_READBACK_ONLY: ${{ inputs.notification_readback_only }}" in protected
+    assert 'mode=--readback-only; else mode=--execute' in protected

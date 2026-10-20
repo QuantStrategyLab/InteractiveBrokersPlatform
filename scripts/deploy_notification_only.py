@@ -32,6 +32,8 @@ BASE_IMAGE = f"{REPOSITORY}@{BASE_DIGEST}"
 QUALIFIED_DIGEST = "sha256:458a3af3910a0a636841ba3b0d3cb547604ac960c0aa47d03e1c17dc89f2aa3a"
 QUALIFIED_IMAGE = f"{REPOSITORY}@{QUALIFIED_DIGEST}"
 QUALIFICATION_RUN = 39512119214
+READBACK_RUN = "39517314697"
+READBACK_REVISION_HASH = "34d03b94a1c4d621cf8db3463817bddf7b21808a9750c047160eaa9687861433"
 QUALIFIED_BASELINE = "61c14e3e3382828722a25a09d12a88ef808fa3f43ea3347bfa126bc3a930bc99"
 SOURCE_LOCK_HASH = "b77d42e4d5ed6b644a1fa5c5b037c8dc1957a2d9dfc523045e45f0c89fa86f90"
 SERVICE_HASH = "6445e856e49a76d83e1aaf938723166d227ba6c5e83b3e83d5bd259bb641019e"
@@ -335,6 +337,7 @@ def verify_readback(before: dict, original: dict, after: dict, revision: dict, e
 
 
 def release(source: Path, report: dict) -> None:
+    require(os.environ.get("INPUT_NOTIFICATION_READBACK_ONLY", "false") == "false", "readback_cannot_execute_release")
     run_id = validate_dispatch(dict(os.environ))
     verify_source(source)
     service_name = resolve_service(os.environ.get("CLOUD_RUN_SERVICE_TARGETS_JSON", ""))
@@ -388,17 +391,108 @@ def release(source: Path, report: dict) -> None:
         session.close()
 
 
+def difference_projection(before: dict, after: dict) -> list[dict]:
+    """Paths/types only; never serialize runtime values or secret references."""
+    result = []
+    structural = {"spec", "metadata", "labels", "annotations", "containers", "env", "name", "value", "valueFrom",
+                  "secretKeyRef", "key", "resources", "limits", "cpu", "memory", "ports", "containerPort", "protocol",
+                  "command", "args", "serviceAccountName", "containerConcurrency", "timeoutSeconds", "volumes", "items",
+                  "emptyDir", "medium", "sizeLimit", "secret", "secretName", "volumeMounts", "mountPath", "readOnly",
+                  "startupProbe", "livenessProbe", "httpGet", "path", "port", "tcpSocket", "initialDelaySeconds",
+                  "timeoutSeconds", "periodSeconds", "successThreshold", "failureThreshold", "nodeSelector"}
+
+    def segment(key: str, index: int) -> str:
+        provider = re.fullmatch(r"(?:run\.googleapis\.com|autoscaling\.knative\.dev|client\.knative\.dev)/[A-Za-z][A-Za-z0-9_-]{0,64}", key)
+        return key.replace("~", "~0").replace("/", "~1") if key in structural or provider else f"<unlisted-key-{index}>"
+
+    def walk(left, right, path: str) -> None:
+        if not isinstance(left, (dict, list)) and type(left) is type(right) and left == right:
+            return
+        if isinstance(left, dict) and isinstance(right, dict):
+            for index, key in enumerate(sorted(set(left) | set(right))):
+                child = path + "/" + segment(key, index)
+                if key not in left or key not in right:
+                    result.append({"path": child, "change": "added" if key not in left else "removed",
+                                   "before_type": type(left[key]).__name__ if key in left else "absent",
+                                   "after_type": type(right[key]).__name__ if key in right else "absent"})
+                else:
+                    walk(left[key], right[key], child)
+        elif isinstance(left, list) and isinstance(right, list):
+            for index in range(max(len(left), len(right))):
+                if index >= min(len(left), len(right)):
+                    result.append({"path": path + f"/{index}", "change": "added" if index >= len(left) else "removed",
+                                   "before_type": type(left[index]).__name__ if index < len(left) else "absent",
+                                   "after_type": type(right[index]).__name__ if index < len(right) else "absent"})
+                else:
+                    walk(left[index], right[index], path + f"/{index}")
+        else:
+            entry = {"path": path, "change": "changed", "before_type": type(left).__name__, "after_type": type(right).__name__}
+            # These bounded CPU/memory literals are ordinary resource metadata.
+            if re.fullmatch(r"/spec/containers/\d+/resources/limits/(?:cpu|memory)", path):
+                for label, value in (("before", left), ("after", right)):
+                    if isinstance(value, str) and re.fullmatch(r"[0-9]+(?:\.[0-9]+)?(?:m|Ki|Mi|Gi|Ti|K|M|G)?", value):
+                        entry[label + "_resource_literal"] = value
+            result.append(entry)
+
+    walk(before, after, "")
+    return result
+
+
+def readback_only(source: Path, report: dict) -> None:
+    """GET only the fixed service and the two already-authorized revisions."""
+    require(os.environ.get("INPUT_NOTIFICATION_READBACK_ONLY") == "true", "explicit_readback_dispatch_required")
+    validate_dispatch(dict(os.environ))
+    verify_source(source)
+    service_name = resolve_service(os.environ.get("CLOUD_RUN_SERVICE_TARGETS_JSON", ""))
+    print("::add-mask::" + service_name)
+    service = cloud(["run", "services", "describe", service_name])
+    original_name = original_revision(service)
+    print("::add-mask::" + original_name)
+    session = authorized_session()
+    try:
+        original = read_revision(original_name, report, phase="original", session=session)
+        require(_digest(nonnotification(original)) == QUALIFIED_BASELINE, "qualified_nonnotification_baseline_changed")
+        runtime_target(original)
+        expected = candidate(service, original, QUALIFIED_IMAGE, READBACK_RUN)
+        candidate_name = expected["spec"]["template"]["metadata"]["name"]
+        require(sha(candidate_name) == READBACK_REVISION_HASH, "fixed_readback_revision_mismatch")
+        print("::add-mask::" + candidate_name)
+        revision = read_revision(candidate_name, report, phase="candidate_readiness", session=session)
+        baseline = nonnotification(original)
+        projected = {}
+        for label, actual in (("candidate_revision", revision), ("service_template", service["spec"]["template"])):
+            normalized = nonnotification(actual)
+            differences = difference_projection(baseline, normalized)
+            projected[label] = {"nonnotification_sha256": _digest(normalized), "difference_count": len(differences),
+                                "differences": differences[:64], "differences_truncated": len(differences) > 64,
+                                "image_matches_qualified": actual["spec"]["containers"][0]["image"] == QUALIFIED_IMAGE,
+                                "target_entry_unchanged": env_map(actual).get("RUNTIME_TARGET_JSON") == env_map(original).get("RUNTIME_TARGET_JSON"),
+                                "routing_literals_match": all(env_map(actual).get(k) == {"name": k, "value": v} for k, v in ROUTING.items())}
+        report.update({"status": "READBACK_ONLY_COMPLETE", "mode": "readback_only", "readback_source_run": READBACK_RUN,
+                       "candidate_revision_sha256": READBACK_REVISION_HASH, "original_nonnotification_sha256": _digest(baseline),
+                       "candidate_ready": any(c.get("type") == "Ready" and c.get("status") == "True" for c in revision.get("status", {}).get("conditions", [])),
+                       "original_still_receives_100_percent": True, "service_template_is_fixed_candidate": service["spec"]["template"].get("metadata", {}).get("name") == candidate_name,
+                       "projection": projected, "service_reads": 1, "revision_reads": 2, "write_operations": 0,
+                       "image_digest": QUALIFIED_DIGEST, "actual_loaded_ues": "NOT_ATTESTED"})
+    finally:
+        session.close()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--report", required=True, type=Path)
     parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--readback-only", action="store_true")
     args = parser.parse_args()
     report = {"status": "FAILED_OR_NOT_EXECUTED", "revision_create_attempts": 0, "automatic_retries": 0, "IAM_or_scheduler_calls": 0,
               "revision_queries": [], "build_commands": 0, "push_commands": 0, "image_pull_commands": 0}
     try:
-        require(args.execute, "explicit_execution_required")
-        release(args.source, report)
+        require(args.execute != args.readback_only, "one_explicit_mode_required")
+        if args.readback_only:
+            readback_only(args.source, report)
+        else:
+            release(args.source, report)
     except ReleaseError as exc:
         report["error_code"] = str(exc)  # ReleaseError accepts only constant codes/permission tokens.
         report["status"] = "FAILED_STOPPED"
