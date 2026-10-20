@@ -2210,3 +2210,246 @@ def test_execute_rebalance_uses_price_fallbacks_for_live_when_quotes_missing(mon
     assert summary["price_fallback_source"] == "historical_close"
     assert summary["price_source_mode"] == "mixed_market_quote_historical_close"
     assert any(log.startswith("price_fallback_prices count=1") for log in trade_logs)
+
+
+@pytest.fixture
+def uncertain_cycle(tmp_path, monkeypatch):
+    """Real executor/claim/identity lock with offline approval and broker reports."""
+    from application import execution_service as service
+
+    monkeypatch.setattr(service.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(service, "maybe_publish_attention_for_admission", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        "application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
+        lambda **_kwargs: None,
+    )
+    state = SimpleNamespace(submitted=[], claims=[], receipt=None)
+
+    class FakeIB:
+        def openTrades(self):
+            return []
+
+        def fills(self):
+            return []
+
+        def accountValues(self):
+            return [SimpleNamespace(
+                tag="CashBalance", currency="USD", value="1500", account="synthetic-account",
+            )]
+
+    def run(first_report, *, multiple=False, first_side="sell", claim_error=False):
+        targets = {"TQQQ": 0.0, "QQQM": 0.5}
+        positions = {"TQQQ": {"quantity": 10.0, "avg_cost": 50.0}}
+        if multiple:
+            targets.update(SOXL=0.0, SOXX=0.2)
+            positions["SOXL"] = {"quantity": 2.0, "avg_cost": 50.0}
+        if first_side == "buy":
+            targets = {"TQQQ": 0.25, "QQQM": 0.25}
+            positions = {}
+        metadata = _signal_metadata(targets, risk_symbols=tuple(targets), trade_date="2026-10-20")
+        metadata.update(
+            effective_date=datetime.now(ZoneInfo("America/New_York")).date().isoformat(),
+            risk_gate="APPROVE", risk_flags=("risk_gate:passed",),
+        )
+        metadata["risk_authority"] = {
+            "strategy_profile": "tqqq_growth_income", "account_ids": ("synthetic-account",),
+            "trade_date": metadata["trade_date"], "signal_date": None,
+            "effective_date": metadata["effective_date"], "snapshot_as_of": None,
+            "portfolio_equity": 2000.0, "targets": targets,
+            "max_target_values": {s: w * 2000.0 for s, w in targets.items()},
+        }
+
+        def claim():
+            state.claims.append("synthetic-cycle-identity")
+            if claim_error:
+                raise OSError("synthetic claim persistence failure")
+            return True
+
+        def submit(_ib, intent):
+            state.submitted.append(intent)
+            if len(state.submitted) == 1:
+                # A broker receipt may survive even if its durable write fails.
+                state.receipt = first_report
+                if isinstance(first_report, Exception):
+                    raise first_report
+                if callable(first_report):
+                    return first_report(_ib, intent)
+                return first_report
+            return SimpleNamespace(broker_order_id="later", status="Submitted")
+
+        return _execute_rebalance(
+            FakeIB(), targets, positions, {"equity": 2000.0, "buying_power": 1500.0},
+            fetch_quote_snapshots=lambda _ib, syms: {
+                s: SimpleNamespace(last_price=50.0) for s in syms
+            },
+            submit_order_intent=submit, order_intent_cls=OrderIntent,
+            acquire_execution_claim=claim, translator=build_translator("en"),
+            strategy_profile="tqqq_growth_income", account_ids=("synthetic-account",),
+            signal_metadata=metadata, dry_run_only=False, cash_reserve_ratio=0.0,
+            rebalance_threshold_ratio=0.0, limit_buy_premium=1.0, sell_settle_delay_sec=0.0,
+            execution_lock_dir=tmp_path, return_summary=True,
+        )
+
+    state.run = run
+    state.lock_dir = tmp_path
+    return state
+
+
+@pytest.mark.parametrize("multiple", [False, True], ids=["audit-sell-buy", "later-sell-and-buy"])
+@pytest.mark.parametrize("status", ["Unknown", "", None, "unrecognized", "PendingCancel", "Inactive"])
+def test_unknown_outcome_halts_following_buys_and_sells(uncertain_cycle, status, multiple):
+    report = SimpleNamespace(
+        broker_order_id="original-order", status=status,
+        filled_quantity=1.0, average_fill_price=49.0,
+    )
+    _logs, summary = uncertain_cycle.run(report, multiple=multiple)
+    assert len(uncertain_cycle.submitted) == 1
+    assert uncertain_cycle.submitted[0].side == "sell"
+    assert len(uncertain_cycle.claims) == 1
+    assert summary["submission_halted"] is True
+    assert summary["outcome_unknown"] is True
+    assert summary["execution_status"] == "pending_reconciliation"
+    assert summary["no_op_reason"] == "broker_order_outcome_unknown"
+    assert summary["projected_sell_release_value"] == 0.0
+    pending = summary["orders_pending"][0]
+    assert pending["broker_order_id"] == "original-order"
+    assert pending["filled_quantity"] == 1.0
+    assert pending["average_fill_price"] == 49.0
+    assert pending["account_id"] == "synthetic-account"
+    assert summary["orders_filled"] == []
+    assert summary["orders_skipped"] == []
+    assert uncertain_cycle.receipt is report
+
+
+@pytest.mark.parametrize("report", [None, SimpleNamespace(), {"status": "Filled"}, SimpleNamespace(status="Submitted")])
+def test_missing_broker_report_stops_without_discarding_intent(uncertain_cycle, report):
+    _logs, summary = uncertain_cycle.run(report, multiple=True)
+    assert len(uncertain_cycle.submitted) == 1
+    assert summary["outcome_unknown"] is True
+    assert summary["orders_pending"][0]["quantity"] == uncertain_cycle.submitted[0].quantity
+    assert summary["orders_pending"][0]["broker_order_id"] is None
+    assert summary["orders_pending"][0]["filled_quantity"] is None
+
+
+def test_unknown_buy_stops_later_buy(uncertain_cycle):
+    _logs, summary = uncertain_cycle.run(
+        SimpleNamespace(broker_order_id="buy-unknown", status="Unknown"), first_side="buy",
+    )
+    assert len(uncertain_cycle.submitted) == 1
+    assert uncertain_cycle.submitted[0].side == "buy"
+    assert summary["execution_status"] == "pending_reconciliation"
+    assert summary["submission_halted"] is True
+
+
+def test_unknown_same_intent_retry_stays_locked_with_empty_open_trades(uncertain_cycle):
+    import json
+    from pathlib import Path
+
+    report = SimpleNamespace(broker_order_id="original-order", status="Unknown")
+    _logs, first = uncertain_cycle.run(report)
+    lock = Path(first["lock_path"])
+    identity = json.loads(lock.read_text())
+    _logs, retry = uncertain_cycle.run(report)
+    assert len(uncertain_cycle.submitted) == 1
+    assert len(uncertain_cycle.claims) == 1
+    assert retry["execution_status"] == "blocked"
+    assert retry["no_op_reason"].startswith("same_day_execution_locked")
+    assert json.loads(lock.read_text()) == identity
+    assert identity["account_ids"] == ["synthetic-account"]
+    assert identity["target_hash"]
+
+
+@pytest.mark.parametrize("error", [TimeoutError("synthetic timeout"), OSError("synthetic receipt write failure")])
+def test_submit_exception_preserves_claim_and_stops_cycle(uncertain_cycle, error):
+    with pytest.raises(type(error)):
+        uncertain_cycle.run(error, multiple=True)
+    assert len(uncertain_cycle.submitted) == 1
+    assert len(uncertain_cycle.claims) == 1
+    assert uncertain_cycle.receipt is error
+    assert list(uncertain_cycle.lock_dir.glob("*.json"))
+
+
+def test_claim_persistence_failure_prevents_submit(uncertain_cycle):
+    with pytest.raises(OSError, match="claim persistence"):
+        uncertain_cycle.run(None, claim_error=True)
+    assert uncertain_cycle.submitted == []
+    assert len(uncertain_cycle.claims) == 1
+    assert list(uncertain_cycle.lock_dir.glob("*.json"))
+
+
+@pytest.mark.parametrize("status", ["Rejected", "rejected", "Cancelled", "ApiCancelled", "Submitted"])
+def test_known_outcome_retains_existing_continuation(uncertain_cycle, status):
+    _logs, summary = uncertain_cycle.run(SimpleNamespace(broker_order_id="known-order", status=status))
+    assert [(i.symbol, i.side) for i in uncertain_cycle.submitted] == [
+        ("TQQQ", "sell"), ("QQQM", "buy"),
+    ]
+    assert not summary.get("submission_halted", False)
+    assert not summary.get("outcome_unknown", False)
+
+
+@pytest.mark.parametrize("failure", ["disconnect", "receipt-persistence"])
+def test_partial_fill_then_failure_retains_actual_adapter_facts(uncertain_cycle, failure):
+    from application.ibkr_order_execution import submit_order_intent
+
+    class DisconnectedStatus:
+        filled = 1.0
+        avgFillPrice = 49.0
+
+        @property
+        def status(self):
+            raise ConnectionError("synthetic disconnect after partial fill")
+
+    def adapter_then_failure(ib, intent):
+        status = (DisconnectedStatus() if failure == "disconnect" else SimpleNamespace(
+            status="PartiallyFilled", filled=1.0, avgFillPrice=49.0,
+        ))
+        uncertain_cycle.broker_trade = SimpleNamespace(
+            order=SimpleNamespace(orderId=123, account=intent.account_id), orderStatus=status,
+        )
+        ib.qualifyContracts = lambda contract: [contract]
+        ib.placeOrder = lambda _contract, _order: uncertain_cycle.broker_trade
+        uncertain_cycle.confirmed_receipt = submit_order_intent(
+            ib, intent, wait_seconds=0,
+            stock_factory=lambda symbol, _exchange, _currency: SimpleNamespace(symbol=symbol),
+            market_order_factory=lambda side, qty: SimpleNamespace(action=side, totalQuantity=qty),
+        )
+        raise OSError("synthetic receipt persistence failure")
+
+    with pytest.raises(ConnectionError if failure == "disconnect" else OSError):
+        uncertain_cycle.run(adapter_then_failure, multiple=True)
+    assert len(uncertain_cycle.submitted) == 1
+    assert len(uncertain_cycle.claims) == 1
+    trade = uncertain_cycle.broker_trade
+    assert trade.orderStatus.filled == 1.0
+    assert trade.orderStatus.avgFillPrice == 49.0
+    assert trade.order.orderId == 123
+    assert trade.order.account == "synthetic-account"
+    if failure == "receipt-persistence":
+        assert uncertain_cycle.confirmed_receipt.filled_quantity == 1.0
+        assert uncertain_cycle.confirmed_receipt.broker_order_id == "123"
+    # The broker facts and original claim survive; empty openTrades cannot retry.
+    _logs, retry = uncertain_cycle.run(None, multiple=True)
+    assert retry["execution_status"] == "blocked"
+    assert len(uncertain_cycle.submitted) == 1
+    assert len(uncertain_cycle.claims) == 1
+
+
+def test_unknown_summary_uses_existing_reconciliation_receipt(uncertain_cycle):
+    from application.execution_receipt_adapter import attach_cycle_execution_receipt
+
+    _logs, summary = uncertain_cycle.run(SimpleNamespace(
+        broker_order_id="original-order", status="Unknown", filled_quantity=1.0,
+        average_fill_price=49.0,
+    ))
+    report = {
+        "platform": "interactive_brokers", "strategy_profile": "tqqq_growth_income",
+        "dry_run": False, "runtime_target": {"execution_mode": "live"},
+        "runtime_release_receipt": {
+            "attestation_state": "self_attested",
+            "strategy_release": {"strategy_revision": "a" * 40},
+        },
+    }
+    attach_cycle_execution_receipt(report, summary, {}, execution_failed=False)
+    assert report["execution_receipt"]["outcome"] == "reconciliation_required"
+    assert report["execution_receipt"]["broker_confirmation"] == "reconciliation_required"
+    assert summary["orders_pending"][0]["filled_quantity"] == 1.0
