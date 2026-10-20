@@ -334,6 +334,7 @@ class IBKRRuntimeBrokerAdapters:
         strategy_symbols=None,
         signal_metadata=None,
         acquire_execution_claim=None,
+        account_execution_session=None,
     ):
         return self.application_execute_rebalance_fn(
             ib,
@@ -347,6 +348,7 @@ class IBKRRuntimeBrokerAdapters:
             strategy_symbols=strategy_symbols,
             signal_metadata=signal_metadata or {},
             acquire_execution_claim=acquire_execution_claim,
+            account_execution_session=account_execution_session,
             strategy_profile=self.strategy_profile,
             account_group=self.account_group,
             service_name=self.service_name,

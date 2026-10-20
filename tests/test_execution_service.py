@@ -2453,3 +2453,32 @@ def test_unknown_summary_uses_existing_reconciliation_receipt(uncertain_cycle):
     assert report["execution_receipt"]["outcome"] == "reconciliation_required"
     assert report["execution_receipt"]["broker_confirmation"] == "reconciliation_required"
     assert summary["orders_pending"][0]["filled_quantity"] == 1.0
+
+
+@pytest.mark.parametrize("no_order", [False, True])
+def test_persistent_executor_missing_session_never_calls_submit(tmp_path, no_order):
+    submitted, claims = [], []
+    ib = SimpleNamespace(
+        openTrades=lambda: [], fills=lambda: [],
+        accountValues=lambda: [SimpleNamespace(tag="CashBalance", currency="USD", value="1500", account="U00000003")],
+    )
+    targets = {"VOO": 0.5 if no_order else 0.0}
+    args = (ib, targets, {"VOO": {"quantity": 20.0, "avg_cost": 50.0}}, {"equity": 2000.0, "buying_power": 1500.0})
+    kwargs = dict(
+        fetch_quote_snapshots=lambda _ib, symbols: {s: SimpleNamespace(last_price=50.0) for s in symbols},
+        submit_order_intent=lambda *_a, **_kw: submitted.append(True), order_intent_cls=OrderIntent,
+        acquire_execution_claim=lambda: claims.append(True) or True, translator=build_translator("en"),
+        strategy_profile="global_etf_rotation", account_ids=("U00000003",),
+        signal_metadata=_signal_metadata(targets, risk_symbols=("VOO",), trade_date="2026-10-20"),
+        dry_run_only=False, cash_reserve_ratio=0, rebalance_threshold_ratio=0,
+        limit_buy_premium=1.0, sell_settle_delay_sec=0, execution_lock_dir=tmp_path, return_summary=True,
+    )
+    if no_order:
+        _logs, summary = execute_rebalance(*args, **kwargs)
+        assert summary["execution_status"] == "no_op"
+    else:
+        with pytest.raises(RuntimeError, match="session|contract"):
+            execute_rebalance(*args, **kwargs)
+    assert submitted == []
+    assert claims == []
+    assert not list(tmp_path.rglob("account_submissions/*.json"))

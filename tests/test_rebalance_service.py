@@ -908,7 +908,7 @@ def claim_cycle(tmp_path, monkeypatch, strategy_module):
     ib = SimpleNamespace(
         isConnected=lambda: True, disconnect=lambda: None,
         openTrades=lambda: [], fills=lambda: [],
-        accountValues=lambda: [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1000")],
+        accountValues=lambda: [SimpleNamespace(tag="CashBalance", currency="USD", value="1000", account="DU00000003")],
     )
     config = IBKRRebalanceConfig(
         translator=_build_test_translator(), separator="---",
@@ -1158,3 +1158,71 @@ def test_successful_dry_run_orders_are_not_real_trade_notifications():
     assert _should_publish_execution_notification(
         config=config, signal_metadata={}, execution_summary={"execution_status": "blocked", "no_op_reason": "account_new_risk_gate"}, trade_logs=[],
     )
+
+
+@pytest.fixture
+def persistent_runner(claim_cycle, strategy_module, monkeypatch):
+    state = claim_cycle
+    receipt = {"attestation_state": "self_attested", "release_id": "synthetic-release",
+               "strategy_release": {"strategy_revision": "a" * 40}}
+    state.status = "Submitted"
+    state.config = replace(state.config, execution_state_store=state.store, execution_dedup_enabled=True,
+                           runtime_release_receipt=receipt)
+
+    def fake_venue(_ib, intent, **_kwargs):
+        state.submitted.append(intent)
+        return SimpleNamespace(broker_order_id=str(len(state.submitted)), status=state.status,
+                               filled_quantity=0, average_fill_price=0)
+
+    monkeypatch.setattr(strategy_module, "submit_order_intent", fake_venue)
+    state.adapters = replace(state.adapters, account_ids=("DU00000003",), runtime_release_receipt=receipt,
+                             submit_order_intent_fn=strategy_module.submit_market_order_intent)
+    return state
+
+
+def test_persistent_runner_first_ack_and_new_healthy_intent(persistent_runner):
+    state = persistent_runner
+    first = state.run()
+    assert first.execution_summary["orders_pending"]
+    assert len(state.submitted) == 1
+    state.metadata.update(effective_date="2026-04-02", trade_date="2026-04-02",
+                          snapshot_as_of="2026-04-02T14:00:00Z")
+    state.run()
+    assert len(state.submitted) == 2
+    from quant_platform_kit.common import execution_state as contract
+    session = contract.AccountSubmissionSession(state.store, broker="ibkr", account_id="DU00000003",
+        owner_id="global_etf_rotation", profile="global_etf_rotation",
+        intent_id="c"*64, release_id="b"*64)
+    assert {a["certainty"] for a in session.read_state()["attempts"].values()} == {"KNOWN_PENDING"}
+
+
+def test_persistent_runner_unknown_new_date_target_snapshot_and_healthy_injection_still_blocks(persistent_runner):
+    state = persistent_runner
+    state.status = "Unknown"
+    first = state.run()
+    assert first.execution_summary["outcome_unknown"] is True
+    state.metadata.update(effective_date="2026-04-02", snapshot_as_of="2026-04-02T14:00:00Z")
+    state.metadata["allocation"] = _weight_allocation({"VOO": 0.75}, risk_symbols=("VOO",))
+    state.target_weights = {"VOO": 0.75}
+    with pytest.raises(RuntimeError, match="unresolved"):
+        state.run(execution_state_store=ExecutionMarkerStore(local_dir=state.store.local_dir))
+    assert len(state.submitted) == 1
+
+
+def test_persistent_runner_old_qpk_contract_and_dry_run_do_not_submit(persistent_runner, monkeypatch):
+    from quant_platform_kit.common import execution_state as contract
+    state = persistent_runner
+    monkeypatch.delattr(contract, "AccountSubmissionSession", raising=False)
+    with pytest.raises(RuntimeError, match="session|contract"):
+        state.run()
+    assert state.submitted == []
+    assert not list(state.store.local_dir.rglob("account_submissions/*.json"))
+
+
+def test_persistent_runner_no_order_zero_new_registration(persistent_runner):
+    state = persistent_runner
+    state.target_weights = {"VOO": 0.0}
+    state.metadata["allocation"] = _weight_allocation({"VOO": 0.0}, risk_symbols=("VOO",))
+    state.run()
+    assert state.submitted == []
+    assert not list(state.store.local_dir.rglob("*.json"))

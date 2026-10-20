@@ -1295,6 +1295,30 @@ def run_strategy_core(
                         raise RuntimeError("IBKR execution claim unavailable; refusing broker submission") from None
             return execution_claim_acquired
 
+        # New QPK APIs are optional at import time because the declared pin is
+        # unchanged. Missing capability/identity leaves session=None: only a
+        # real submit is rejected by the executor, while no-order/dry-run stays
+        # free of account reservations.
+        account_execution_session = None
+        if not config.dry_run_only:
+            from quant_platform_kit.common import execution_state as contract
+
+            session_type = getattr(contract, "AccountSubmissionSession", None)
+            if (session_type is not None and execution_state_store is not None
+                    and getattr(session_type, "contract_version", None) == "account_submission.v1"):
+                try:
+                    profile = str(signal_metadata.get("strategy_profile") or config.strategy_profile or "")
+                    account_execution_session = session_type(
+                        execution_state_store, broker="ibkr",
+                        account_id=_resolve_physical_account_id(config=config, snapshot=snapshot),
+                        owner_id=profile, profile=profile,
+                        intent_id=contract.submission_intent_digest(signal_metadata, profile),
+                        release_id=contract.submission_release_digest(config.runtime_release_receipt),
+                    )
+                except (RuntimeError, ValueError, TypeError):
+                    # Never fabricate a healthy account root or legacy grant.
+                    account_execution_session = None
+
         execution_result = runtime.execute_rebalance(
             ib,
             resolved_target_weights,
@@ -1303,6 +1327,7 @@ def run_strategy_core(
             strategy_symbols=allocation.get("strategy_symbols"),
             signal_metadata=signal_metadata,
             acquire_execution_claim=acquire_execution_claim,
+            account_execution_session=account_execution_session,
         )
         if isinstance(execution_result, tuple) and len(execution_result) == 2:
             trade_logs, execution_summary = execution_result
