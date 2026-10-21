@@ -15,6 +15,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+from notifications.routine_observations import minimum_notional_decision
 from application.account_new_risk_gate_support import (
     apply_combined_scale_to_target_weights,
     build_portfolio_from_account_values,
@@ -1782,6 +1783,7 @@ def execute_rebalance(
     missing_price_symbols: list[str] = []
     insufficient_buying_power_symbols: list[str] = []
     min_notional_symbols: list[str] = []
+    min_notional_decisions: list[dict[str, object]] = []
     quantity_zero_symbols: list[str] = []
     anticipated_buying_power = get_available_buying_power(
         ib,
@@ -1882,6 +1884,10 @@ def execute_rebalance(
             continue
         if buy_value < minimum_order_notional:
             min_notional_symbols.append(symbol)
+            observation = minimum_notional_decision(symbol=symbol, observed_value=buy_value,
+                limit=minimum_order_notional, currency=execution_summary["market_currency"])
+            if observation is not None:
+                min_notional_decisions.append(observation)
             continue
         limit_price = _limit_buy_price(symbol, price, limit_buy_premium, limit_buy_premium_by_symbol)
         qty, _forced_whole_share = _planned_buy_order_quantity(
@@ -1915,6 +1921,7 @@ def execute_rebalance(
         elif min_notional_symbols:
             symbols = ",".join(sorted(dict.fromkeys(min_notional_symbols)))
             reason = f"min_notional:{symbols}"
+            execution_summary["notification_routine_decisions"] = min_notional_decisions
         elif quantity_zero_symbols:
             symbols = ",".join(sorted(dict.fromkeys(quantity_zero_symbols)))
             reason = f"quantity_zero:{symbols}"
@@ -2209,6 +2216,10 @@ def execute_rebalance(
                 continue
             if buy_value < minimum_order_notional:
                 execution_summary["orders_skipped"].append({"symbol": symbol, "side": "buy", "reason": "min_notional"})
+                observation = minimum_notional_decision(symbol=symbol, observed_value=buy_value,
+                    limit=minimum_order_notional, currency=execution_summary["market_currency"])
+                if observation is not None:
+                    execution_summary.setdefault("notification_routine_decisions", []).append(observation)
                 continue
 
             limit_price = _limit_buy_price(symbol, price, limit_buy_premium, limit_buy_premium_by_symbol)

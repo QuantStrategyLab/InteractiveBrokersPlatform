@@ -148,6 +148,11 @@ def project_notification_events(records: Sequence[Mapping[str, Any]]) -> dict[st
         annotations = [item["block_reason"] for item in items if item.get("block_reason")]
         if annotations and not count_conflict and all(value == annotations[0] for value in annotations):
             row["block_reason"] = dict(annotations[0])
+        for name in ("account_alias", "routine_decisions"):
+            observations = [item[name] for item in items if item.get(name)]
+            if (observations and not any(name in item.get("_display_conflicts", ()) for item in items)
+                    and all(value == observations[0] for value in observations)):
+                row[name] = observations[0]
         if alert:
             row.update(reason_code="notification_incident_observed", execution_status="execution_alert")
         else:
