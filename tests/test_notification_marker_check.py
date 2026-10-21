@@ -455,32 +455,42 @@ def test_readback_verified_absence_never_creates():
     assert 'fields=' in session.calls[0][1]
 
 
-def test_readback_existing_execution_reads_only_exact_names_and_safe_counts():
+def test_readback_existing_execution_uses_exact_list_and_safe_counts():
     name = control.JOB + '/executions/existing-one'
     session = Replies((200, {'name': control.JOB, 'executionCount': 1, 'latestCreatedExecution': {'name': name},
                             'private_extra': 'synthetic-private-value'}),
+                      (200, {'executions': [{'name': name, 'job': control.JOB}]}),
                       (200, {'name': name, 'job': control.JOB, 'taskCount': 1, 'succeededCount': 0,
-                             'failedCount': 1, 'conditions': [{'type': 'Completed', 'state': 'CONDITION_FAILED'}]}))
+                             'failedCount': 1, 'conditions': [{'type': 'Completed', 'state': 'CONDITION_FAILED'}]}),
+                      (404, {'error': {'code': 404}}), (200, {'entries': []}))
     report = {}
     control.read_probe(session, report)
     assert report['status'] == 'job_observed' and report['execution']['failed_count'] == 1
-    assert [method for method, _, _ in session.calls] == ['GET', 'GET']
-    assert name in session.calls[-1][1] and 'fields=' in session.calls[-1][1]
+    assert [method for method, _, _ in session.calls] == ['GET', 'GET', 'GET', 'GET', 'POST']
+    assert name in session.calls[2][1] and 'fields=' in session.calls[2][1]
     assert 'synthetic-private' not in json.dumps(report)
 
 
-def test_readback_foreign_execution_never_follows_or_lists():
+def test_readback_unusable_latest_pointer_still_uses_exact_job_list():
+    name = control.JOB + '/executions/existing-one'
     session = Replies((200, {'name': control.JOB, 'executionCount': 1,
-                            'latestCreatedExecution': {'name': control.JOB + '-other/executions/foreign'}}))
-    with pytest.raises(control.Stop, match='execution_identity_rejected'):
-        control.read_probe(session, {})
-    assert len(session.calls) == 1
-
-
-def test_readback_missing_execution_count_stays_unknown():
-    session, report = Replies((200, {'name': control.JOB})), {}
+                            'latestCreatedExecution': {'name': 'unusable-reference'}}),
+                      (200, {'executions': [{'name': name, 'job': control.JOB}]}),
+                      (200, {'name': name, 'job': control.JOB, 'conditions': []}),
+                      (404, {'error': {'code': 404}}), (200, {'entries': []}))
+    report = {}
     control.read_probe(session, report)
-    assert report['status'] == 'job_observed' and report['execution_count'] is None
+    assert report['execution']['name'] == name
+    assert report['execution_source'] == 'exact_job_list'
+    assert 'latestCreatedExecution' not in session.calls[0][1]
+
+
+@pytest.mark.parametrize('count', [None, 2])
+def test_readback_missing_or_multiple_execution_count_stops(count):
+    report = {}
+    session = Replies((200, {'name': control.JOB, 'executionCount': count}))
+    with pytest.raises(control.Stop, match='execution_count_not_unique_or_unknown'):
+        control.read_probe(session, report)
     assert len(session.calls) == 1
 
 

@@ -346,7 +346,7 @@ def control_request(session, report, method, url, *, body=None, missing=False, o
 def read_probe(session, report):
     # Server-side partial responses exclude environment, arguments, secrets,
     # free-text condition messages and arbitrary annotations.
-    fields = 'name,executionCount,latestCreatedExecution(name)'
+    fields = 'name,executionCount'
     job = control_request(session, report, 'GET', API + JOB + '?fields=' + fields,
                           missing=True, phase='job_status_read_only')
     report.update(job_found=job is not None, actual_delivery='not_attempted', production_mutations=0)
@@ -357,22 +357,19 @@ def read_probe(session, report):
     count = job.get('executionCount')
     require(count is None or type(count) is int and count >= 0, 'execution_count_unknown')
     report.update(job_name=JOB, execution_count=count)
-    latest = job.get('latestCreatedExecution') or {}
-    require(isinstance(latest, dict), 'execution_identity_rejected')
-    residual = not latest and count == 1
-    if residual:
-        # Jobs.get can report an execution count without the latest pointer.
-        # List only this exact Job; never enumerate a project or another Job.
+    require(count in (0, 1), 'execution_count_not_unique_or_unknown')
+    if count == 1:
+        # The Job's latestCreatedExecution reference can have a shape the
+        # controller cannot verify. Resolve the sole Execution from this
+        # exact Job's collection and confirm its parent on GET instead.
         fields = 'executions(name,job),nextPageToken'
         listed = control_request(session, report, 'GET', API + JOB + '/executions?pageSize=2&fields=' + fields,
                                  phase='exact_job_executions_read_only')
         rows = listed.get('executions')
         require(isinstance(rows, list) and len(rows) == 1 and not listed.get('nextPageToken')
                 and isinstance(rows[0], dict), 'execution_list_not_unique')
-        latest = rows[0]
+        name = rows[0].get('name', '')
         report['execution_source'] = 'exact_job_list'
-    if latest or count:
-        name = latest.get('name', '')
         require(isinstance(name, str) and re.fullmatch(re.escape(JOB) + r'/executions/[a-zA-Z0-9_-]+', name), 'execution_identity_rejected')
         fields = 'name,job,taskCount,succeededCount,failedCount,cancelledCount,conditions(type,state,reason,executionReason)'
         execution = control_request(session, report, 'GET', API + name + '?fields=' + fields, phase='existing_execution_read_only')
@@ -394,9 +391,8 @@ def read_probe(session, report):
             if isinstance(value, str) and re.fullmatch('[A-Z_]{1,64}', value):
                 observed[source] = value
         report['execution'] = observed
-        if residual:
-            read_fixed_object_metadata(session, report)
-            read_fixed_execution_receipt(session, report, name)
+        read_fixed_object_metadata(session, report)
+        read_fixed_execution_receipt(session, report, name)
     report['status'] = 'job_observed'
 
 
