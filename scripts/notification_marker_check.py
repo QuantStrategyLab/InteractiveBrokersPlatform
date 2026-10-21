@@ -374,22 +374,41 @@ def read_probe(session, report):
     report['status'] = 'job_observed'
 
 
-def validate_probe(session, report):
-    """One server validation of the fixed create body; never persist or execute."""
+def validate_probe(session, report, *, sleep=time.sleep, clock=time.monotonic):
+    """Validate the fixed body and read its exact operation without persisting a Job."""
+    deadline = clock() + 90
+    def request(method, url, **kwargs):
+        return control_request(session, report, method, url, deadline=deadline, clock=clock, **kwargs)
     url = API + JOB + '?fields=name'
-    require(control_request(session, report, 'GET', url, missing=True,
-                            phase='validation_job_absence') is None, 'job_already_exists_no_validation')
+    require(request('GET', url, missing=True, phase='validation_job_absence') is None,
+            'job_already_exists_no_validation')
     expected = job_body()
     require(digest(expected) == JOB_CREATE_BODY_SHA, 'job_create_body_changed')
     report.update(request_body_sha256=JOB_CREATE_BODY_SHA, validation_attempts=1,
                   execution_submissions=0, actual_delivery='not_attempted', production_mutations=0)
-    value = control_request(session, report, 'POST',
+    value = request('POST',
         API + PARENT + '/jobs?jobId=' + JOB_ID + '&validateOnly=true', body=expected,
         phase='job_validate_only')
-    report['validation_operation_done'] = value.get('done') if type(value.get('done')) is bool else None
-    require(report['validation_operation_done'] is True, 'validation_completion_unknown_no_poll')
-    require(control_request(session, report, 'GET', url, missing=True,
-                            phase='validation_job_absence_after') is None, 'job_present_after_validation')
+    name = value.get('name')
+    parents = (PARENT, f'projects/303168642265/locations/{REGION}')
+    require(isinstance(name, str) and any(re.fullmatch(re.escape(parent) + r'/operations/[A-Za-z0-9_-]+', name)
+                                          for parent in parents), 'validation_operation_identity_rejected')
+    report.update(validation_operation_name_verified=True, validation_operation_done=False,
+                  validation_operation_polls=0)
+    while value.get('done') is not True:
+        require(value.get('done') is None or value.get('done') is False,
+                'validation_operation_state_unknown')
+        remaining = deadline - clock()
+        require(remaining > 0, 'validation_operation_timeout_no_retry')
+        sleep(min(2, remaining))
+        require(clock() < deadline, 'validation_operation_timeout_no_retry')
+        report['validation_operation_polls'] += 1
+        value = request('GET', API + name + '?fields=name,done,error', phase='validation_operation_read_only')
+        require(value.get('name') == name, 'validation_operation_identity_changed')
+    report['validation_operation_done'] = True
+    job = request('GET', url, missing=True, phase='validation_job_absence_after')
+    report['job_found'] = job is not None
+    require(job is None, 'job_present_after_validation')
     report.update(status='validated_only_job_absent', job_found=False)
 
 
