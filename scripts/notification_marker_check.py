@@ -362,7 +362,7 @@ def read_probe(session, report):
         # The Job's latestCreatedExecution reference can have a shape the
         # controller cannot verify. Resolve the sole Execution from this
         # exact Job's collection and confirm its parent on GET instead.
-        fields = 'executions(name,job),nextPageToken'
+        fields = 'executions(name),nextPageToken'
         listed = control_request(session, report, 'GET', API + JOB + '/executions?pageSize=2&fields=' + fields,
                                  phase='exact_job_executions_read_only')
         rows = listed.get('executions')
@@ -371,9 +371,11 @@ def read_probe(session, report):
         name = rows[0].get('name', '')
         report['execution_source'] = 'exact_job_list'
         require(isinstance(name, str) and re.fullmatch(re.escape(JOB) + r'/executions/[a-zA-Z0-9_-]+', name), 'execution_identity_rejected')
-        fields = 'name,job,taskCount,succeededCount,failedCount,cancelledCount,conditions(type,state,reason,executionReason)'
+        fields = 'name,taskCount,succeededCount,failedCount,cancelledCount,conditions(type,state,reason,executionReason)'
         execution = control_request(session, report, 'GET', API + name + '?fields=' + fields, phase='existing_execution_read_only')
-        require(execution.get('name') == name and execution.get('job') == JOB, 'execution_identity_rejected')
+        # The exact Job list and full Execution name bind the parent. The
+        # redundant `job` response field can be absent or canonicalized.
+        require(execution.get('name') == name, 'execution_identity_rejected')
         observed = {'name': name}
         for source, key in (('taskCount', 'task_count'), ('succeededCount', 'succeeded_count'),
                             ('failedCount', 'failed_count'), ('cancelledCount', 'cancelled_count')):
