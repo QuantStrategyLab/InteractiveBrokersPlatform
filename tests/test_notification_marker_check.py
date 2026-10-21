@@ -484,6 +484,82 @@ def test_readback_missing_execution_count_stays_unknown():
     assert len(session.calls) == 1
 
 
+def test_readback_count_one_without_latest_uses_exact_job_and_safe_object_log_projection():
+    name = control.JOB + '/executions/one-retained-execution'
+    session = Replies(
+        (200, {'name': control.JOB, 'executionCount': 1}),
+        (200, {'executions': [{'name': name, 'job': control.JOB}]}),
+        (200, {'name': name, 'job': control.JOB, 'taskCount': 1, 'failedCount': 1,
+               'conditions': [{'type': 'Completed', 'state': 'CONDITION_FAILED',
+                               'executionReason': 'NON_ZERO_EXIT_CODE', 'message': 'synthetic-private-value'}]}),
+        (200, {'name': probe.OBJECT, 'generation': '42', 'size': '80', 'private': 'synthetic-private-value'}),
+        (200, {'entries': [{'jsonPayload': {'schema_version': 1, 'probe_id': control.NONCE,
+                                            'status': 'stop', 'reason': 'permission_denied', 'http_status': 403,
+                                            'private': 'synthetic-private-value'}}]}),
+    )
+    report = {}
+    control.read_probe(session, report)
+    assert report['status'] == 'job_observed' and report['execution_source'] == 'exact_job_list'
+    assert report['execution']['name'] == name and report['execution']['failed_count'] == 1
+    assert report['execution']['executionReason'] == 'NON_ZERO_EXIT_CODE'
+    assert report['synthetic_object'] == {'found': True, 'generation': '42', 'size_bytes': 80}
+    assert report['probe_receipt']['reason'] == 'permission_denied'
+    assert 'synthetic-private-value' not in json.dumps(report)
+    assert [method for method, _, _ in session.calls] == ['GET', 'GET', 'GET', 'GET', 'POST']
+    assert control.JOB + '/executions?pageSize=2' in session.calls[1][1]
+    assert '/storage/v1/b/' + probe.BUCKET + '/o/' in session.calls[3][1]
+    assert session.calls[4][1].endswith('/entries:list')
+    assert not any(url.endswith(':run') or 'jobId=' in url for _, url, _ in session.calls)
+
+
+def test_readback_exact_object_absence_and_no_receipt_are_explicit():
+    name = control.JOB + '/executions/one-retained-execution'
+    session = Replies((200, {'name': control.JOB, 'executionCount': 1}),
+                      (200, {'executions': [{'name': name, 'job': control.JOB}]}),
+                      (200, {'name': name, 'job': control.JOB, 'failedCount': 1,
+                             'conditions': [{'type': 'Completed', 'state': 'CONDITION_FAILED'}]}),
+                      (404, {'error': {'code': 404}}), (200, {'entries': []}))
+    report = {}
+    control.read_probe(session, report)
+    assert report['synthetic_object'] == {'found': False}
+    assert report['safe_probe_receipt_found'] is False
+
+
+@pytest.mark.parametrize('listed', [
+    {'executions': []},
+    {'executions': [{'name': 'other'}], 'nextPageToken': 'more'},
+    {'executions': [{'name': 'projects/other/locations/us-central1/jobs/other/executions/foreign'}]},
+])
+def test_readback_missing_latest_rejects_ambiguous_or_foreign_list(listed):
+    session = Replies((200, {'name': control.JOB, 'executionCount': 1}), (200, listed))
+    with pytest.raises(control.Stop):
+        control.read_probe(session, {})
+    assert len(session.calls) == 2
+
+
+def test_readback_execution_list_permission_denied_stops_that_query():
+    session = Replies((200, {'name': control.JOB, 'executionCount': 1}),
+                      (403, {'error': {'code': 403, 'status': 'PERMISSION_DENIED'}}))
+    with pytest.raises(control.Stop):
+        control.read_probe(session, {})
+    assert len(session.calls) == 2
+
+
+def test_readback_object_metadata_denial_is_recorded_without_retry_or_payload():
+    name = control.JOB + '/executions/one-retained-execution'
+    session = Replies((200, {'name': control.JOB, 'executionCount': 1}),
+                      (200, {'executions': [{'name': name, 'job': control.JOB}]}),
+                      (200, {'name': name, 'job': control.JOB, 'conditions': []}),
+                      (403, {'error': {'code': 403, 'message': 'synthetic-private-value'}}),
+                      (200, {'entries': []}))
+    report = {}
+    with pytest.raises(control.Stop, match='residual_read_incomplete:object_metadata_permission_denied'):
+        control.read_probe(session, report)
+    assert report['requests'][-2]['error_category'] == 'permission_denied'
+    assert 'synthetic-private-value' not in json.dumps(report)
+    assert len(session.calls) == 5
+
+
 def test_readback_requires_approval_false_and_original_identity():
     env = admitted('probe-readback')
     assert control.validate_dispatch('probe-readback', env) == 'a' * 40
