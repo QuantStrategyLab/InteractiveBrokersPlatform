@@ -68,6 +68,15 @@ REVISION_HASH = "bd167f3f9f771ae3c6b5adc5e973b2e6d27b2f23818d19e6a0a3eeb41f0bae5
 TARGET_HASH = "c9912a3bf99c97605a0791e5ecbcc1d344444daf4f64b2c699d717b2d8b8c8ac"
 ALIAS = "IBKR-TQQQ-A"
 ROUTING = {"IBKR_UNIFIED_NOTIFICATION_ENABLED": "false", "QSL_ROUTINE_NOTIFICATION_MODE": "immediate", "QSL_DIGEST_ROUTINE_ORDERS": "false"}
+NOTIFICATION_IDENTITY_SHA = "63b3de300be2c9a5f3dc8c4dc4ff8377abe8b1dd5f5b9c85e1a6b32862a93d8a"
+NOTIFICATION_SLOT = "ibkr-tqqq-a"
+NOTIFICATION_IDENTITY_KEYS = ("DIGEST_OPAQUE_ACCOUNT_UID", "DIGEST_TARGET_ID", "DIGEST_STORE_TARGET")
+NOTIFICATION_STORE_KEYS = ("DIGEST_CANDIDATES_GCS_URI", "IBKR_NOTIFICATION_MARKER_GCS_URI")
+NOTIFICATION_STORE_HASHES = {
+    "DIGEST_CANDIDATES_GCS_URI": "885047b4aa157ffc3426d9342c9771467e118e984757875ea7b097fc6d6af155",
+    "IBKR_NOTIFICATION_MARKER_GCS_URI": "c398ca5fd005a546d8ee613bcca6d8ba05355b99ae1ffb9d5c268444418dd17e",
+}
+NOTIFICATION_SERVING_IMAGE = REPOSITORY + "@sha256:c99569018e551cb44631c97d0af59f0eb1035a45a4cba688529093be5718134b"
 PACKAGES = {
     "quant_platform_kit-1.0.0": "bd8d06e50f88927eb525c2c585752435ab24492a",
     "us_equity_strategies-0.7.60": "4a3943883cd6b5bbfe32a559e56a91b40a81b7ce",
@@ -334,6 +343,182 @@ def runtime_target(revision: dict) -> dict:
     require(sha(json.dumps(baseline, ensure_ascii=True, sort_keys=True, separators=(",", ":"))) == TARGET_HASH, "approved_target_fingerprint_mismatch")
     require(target.get("strategy_profile") == "tqqq_growth_income" and target.get("execution_mode") == "live" and target.get("dry_run_only") is False, "original_profile_mode_guard_mismatch")
     return target
+
+
+def prepare_notification_binding(original: dict, binding: dict, stores: dict, approved_store_hashes: dict) -> tuple[dict, dict, dict]:
+    """Prepare five exact ordinary fields and private rollback; no API or routing.
+
+    The caller supplies only the already matched per-target business row and
+    explicitly reviewed store hashes. The protected caller is read-only.
+    """
+    require(set(binding) == {"RUNTIME_TARGET_JSON", *NOTIFICATION_IDENTITY_KEYS}, "notification_binding_keys_invalid")
+    require(set(stores) == set(approved_store_hashes) == set(NOTIFICATION_STORE_KEYS), "notification_store_keys_invalid")
+    target = runtime_target(original)
+    bound = binding["RUNTIME_TARGET_JSON"]
+    try:
+        bound = json.loads(bound) if isinstance(bound, str) else bound
+    except (ValueError, TypeError):
+        raise ReleaseError("notification_binding_target_invalid") from None
+    require(_digest(bound) == _digest(target), "notification_binding_full_target_changed")
+    before = env_map(original)
+    alternative = before.get("QSL_RUNTIME_TARGET_JSON", {})
+    require(set(alternative) <= {"name", "value", "valueFrom"}, "notification_effective_target_shape_unknown")
+    require("valueFrom" not in alternative, "notification_effective_target_reference_unresolved")
+    try:
+        effective = json.loads(alternative["value"]) if alternative.get("value") else target
+    except (ValueError, TypeError):
+        raise ReleaseError("notification_effective_target_invalid") from None
+    require(_digest(effective) == _digest(target), "notification_effective_target_differs")
+    require(all(before.get(k) == {"name": k, "value": v} for k, v in ROUTING.items()), "notification_routing_not_off")
+    require(all(isinstance(binding[k], str) and binding[k].strip() for k in NOTIFICATION_IDENTITY_KEYS), "notification_identity_missing")
+    row = {"platform_id": "ibkr", "opaque_account_uid": binding["DIGEST_OPAQUE_ACCOUNT_UID"],
+           "target_id": binding["DIGEST_TARGET_ID"], "strategy_profile": target["strategy_profile"]}
+    require(_digest(row) == NOTIFICATION_IDENTITY_SHA and binding["DIGEST_STORE_TARGET"] == NOTIFICATION_SLOT, "notification_canonical_identity_mismatch")
+    for name, value in stores.items():
+        require(isinstance(value, str) and bool(re.fullmatch(r"gs://[a-z0-9][a-z0-9._-]+/[a-zA-Z0-9_./-]+", value)), "notification_store_uri_invalid")
+        require(isinstance(approved_store_hashes[name], str) and bool(re.fullmatch(r"[0-9a-f]{64}", approved_store_hashes[name]))
+                and sha(value) == approved_store_hashes[name], "notification_store_not_approved")
+    values = {**{k: binding[k] for k in NOTIFICATION_IDENTITY_KEYS}, **stores}
+    require(all(k not in before or before[k] == {"name": k, "value": v} for k, v in values.items()), "notification_existing_value_or_reference_conflict")
+    result = copy.deepcopy(original)
+    entries = copy.deepcopy(before)
+    rollback = {k: copy.deepcopy(before.get(k)) for k in values}
+    entries.update({k: {"name": k, "value": v} for k, v in values.items()})
+    result["spec"]["containers"][0]["env"] = sorted(entries.values(), key=lambda entry: entry["name"])
+    verify_notification_binding_update(original, result, values)
+    report = {"identity_row_sha256": _digest(row), "expected_single_member_sha256": _digest([row]),
+              "slot_sha256": sha(NOTIFICATION_SLOT), "store_sha256": dict(approved_store_hashes),
+              "changed_fields": sorted(k for k in values if k not in before), "private_rollback_sha256": _digest(rollback),
+              "routing_unchanged": True, "nonnotification_unchanged": True, "cloud_operations": 0}
+    return result, rollback, report
+
+
+def verify_notification_binding_update(original: dict, updated: dict, values: dict) -> None:
+    require(set(values) == {*NOTIFICATION_IDENTITY_KEYS, *NOTIFICATION_STORE_KEYS}, "notification_patch_keys_invalid")
+    entries = env_map(updated)
+    require(all(entries.get(k) == {"name": k, "value": v} for k, v in values.items()), "notification_patch_value_changed")
+    restored = copy.deepcopy(updated)
+    entries = copy.deepcopy(entries)
+    before = env_map(original)
+    for name in values:
+        if name in before:
+            entries[name] = copy.deepcopy(before[name])
+        else:
+            entries.pop(name, None)
+    restored["spec"]["containers"][0]["env"] = sorted(entries.values(), key=lambda entry: entry["name"])
+    baseline = copy.deepcopy(original)
+    baseline["spec"]["containers"][0]["env"] = sorted(before.values(), key=lambda entry: entry["name"])
+    require(_digest(restored) == _digest(baseline), "notification_patch_changed_other_template_field")
+
+
+def validate_binding_prepare_dispatch(env: dict[str, str]) -> tuple[str, str, str]:
+    """Separate, read-only admission for the current serving notification binding."""
+    require(env.get("GITHUB_EVENT_NAME") == "workflow_dispatch" and env.get("GITHUB_REF") == "refs/heads/main"
+            and env.get("GITHUB_RUN_ATTEMPT") == "1", "trusted_main_dispatch_required")
+    require(env.get("INPUT_NOTIFICATION_MARKER_MODE") == "binding-prepare"
+            and env.get("INPUT_NOTIFICATION_ONLY") == "false"
+            and env.get("INPUT_NOTIFICATION_READBACK_ONLY") == "false", "binding_prepare_mode_required")
+    require(env.get("INPUT_SOURCE_COMMIT") == COMBINED_SOURCE, "fixed_notification_source_required")
+    require(env.get("INPUT_TARGET") == "configured" and not env.get("INPUT_CONFIGURED_SERVICE"), "fixed_private_target_alias_required")
+    require(all(env.get(key) == "false" for key in ("INPUT_DEPLOY_IMAGE", "INPUT_SYNC_ENV",
+            "INPUT_APPROVE_TRAFFIC_SHIFT", "INPUT_APPROVE_SCHEDULER_SYNC", "INPUT_APPROVE_MARKER_PROBE")),
+            "broad_mutation_not_authorized")
+    require(env.get("GCP_PROJECT_ID") == PROJECT and env.get("GCP_DEPLOY_SERVICE_ACCOUNT") == DEPLOYER
+            and env.get("GCP_RUNTIME_SERVICE_ACCOUNT") == RUNTIME, "original_identity_binding_required")
+    revision_sha = env.get("INPUT_EXPECTED_SERVING_REVISION_SHA256", "")
+    target_sha = env.get("INPUT_EXPECTED_FULL_TARGET_SHA256", "")
+    service_spec_sha = env.get("INPUT_EXPECTED_SERVICE_SPEC_SHA256", "")
+    require(all(re.fullmatch(r"[0-9a-f]{64}", value) for value in (revision_sha, target_sha, service_spec_sha)),
+            "fresh_revision_target_and_service_hash_required")
+    return revision_sha, target_sha, service_spec_sha
+
+
+def selected_notification_binding(raw: str) -> dict:
+    """Take one exact target row from the protected in-memory business binding."""
+    require(bool(raw) and len(raw) <= 1048576, "protected_binding_missing_or_oversized")
+    try:
+        rows = json.loads(raw)
+    except (TypeError, ValueError):
+        raise ReleaseError("protected_binding_invalid") from None
+    require(isinstance(rows, list) and len(rows) <= 100, "protected_binding_shape_invalid")
+    matches = []
+    for row in rows:
+        require(isinstance(row, dict), "protected_binding_row_invalid")
+        value = row.get("RUNTIME_TARGET_JSON")
+        try:
+            target = json.loads(value) if isinstance(value, str) else value
+            baseline = {key: item for key, item in target.items() if key != "live_continuity"}
+        except (TypeError, ValueError, AttributeError):
+            raise ReleaseError("protected_binding_target_invalid") from None
+        if sha(json.dumps(baseline, ensure_ascii=True, sort_keys=True, separators=(",", ":"))) == TARGET_HASH:
+            require(set(row) == {"RUNTIME_TARGET_JSON", *NOTIFICATION_IDENTITY_KEYS},
+                    "exact_binding_row_keys_invalid")
+            matches.append(row)
+    require(len(matches) == 1, "exact_protected_binding_not_unique")
+    return matches[0]
+
+
+def prepare_binding_snapshot(service: dict, revision: dict, binding: dict, stores: dict,
+                             revision_sha: str, full_target_sha: str, service_spec_sha: str) -> dict:
+    """Validate the exact serving snapshot and return only a safe preparation receipt."""
+    name = service.get("metadata", {}).get("name", "")
+    require(isinstance(name, str) and sha(name) == SERVICE_HASH
+            and bool(service["metadata"].get("resourceVersion")), "fixed_service_and_concurrency_token_required")
+    generation = service["metadata"].get("generation")
+    observed = service.get("status", {}).get("observedGeneration")
+    require(type(generation) is int and generation > 0 and type(observed) is int and generation == observed,
+            "service_generation_not_observed")
+    require(_digest(service.get("spec")) == service_spec_sha, "approved_service_spec_changed")
+    active = _active_traffic(service.get("status", {}).get("traffic", []))
+    require(len(active) == 1 and active[0]["percent"] == 100
+            and sha(active[0]["revisionName"]) == revision_sha
+            and revision.get("metadata", {}).get("name") == active[0]["revisionName"],
+            "approved_serving_revision_changed")
+    require(any(item.get("type") == "Ready" and item.get("status") == "True"
+                for item in revision.get("status", {}).get("conditions", [])), "serving_revision_not_ready")
+    desired = service.get("spec", {}).get("traffic", [])
+    require(len(desired) == 1 and desired[0].get("latestRevision") is True
+            and desired[0].get("percent") == 100 and not desired[0].get("revisionName")
+            and not desired[0].get("tag"), "latest_follow_traffic_policy_changed")
+    template = service["spec"]["template"]
+    for item in (revision, template):
+        require(item["spec"]["serviceAccountName"] == RUNTIME
+                and item["spec"]["containers"][0]["image"] == NOTIFICATION_SERVING_IMAGE,
+                "serving_image_or_runtime_identity_changed")
+        require(_digest(runtime_target(item)) == full_target_sha, "approved_full_target_changed")
+        prepare_notification_binding(item, binding, stores, NOTIFICATION_STORE_HASHES)
+    require(revision.get("metadata", {}).get("labels", {}).get("commit-sha") == COMBINED_SOURCE,
+            "serving_source_changed")
+    updated, rollback, safe = prepare_notification_binding(template, binding, stores, NOTIFICATION_STORE_HASHES)
+    safe.pop("cloud_operations", None)  # The pure helper count excludes this caller's two GETs.
+    safe.update(status="PREPARED_READ_ONLY", serving_revision_sha256=revision_sha,
+                original_template_sha256=_digest(template), proposed_template_sha256=_digest(updated),
+                approved_full_target_sha256=full_target_sha, approved_service_spec_sha256=service_spec_sha,
+                private_rollback_sha256=_digest(rollback),
+                current_traffic_percent=100, latest_follow_preserved=True,
+                service_reads=1, revision_reads=1, write_operations=0)
+    return safe
+
+
+def binding_prepare_only(source: Path, report: dict) -> None:
+    revision_sha, target_sha, service_spec_sha = validate_binding_prepare_dispatch(dict(os.environ))
+    verify_source(source, combined=True)
+    service_name = resolve_service(os.environ.get("CLOUD_RUN_SERVICE_TARGETS_JSON", ""))
+    print("::add-mask::" + service_name)
+    binding = selected_notification_binding(os.environ.get("DIGEST_TARGET_BINDINGS_JSON", ""))
+    stores = {key: os.environ.get(key, "") for key in NOTIFICATION_STORE_KEYS}
+    service = cloud(["run", "services", "describe", service_name])
+    active = _active_traffic(service.get("status", {}).get("traffic", []))
+    require(len(active) == 1 and active[0]["percent"] == 100
+            and sha(active[0]["revisionName"]) == revision_sha, "approved_serving_revision_changed")
+    print("::add-mask::" + active[0]["revisionName"])
+    session = authorized_session()
+    try:
+        revision = read_revision(active[0]["revisionName"], report, phase="original", session=session)
+    finally:
+        session.close()
+    report.update(prepare_binding_snapshot(service, revision, binding, stores, revision_sha, target_sha,
+                                           service_spec_sha))
 
 
 def metadata(value: dict, *, template: bool) -> dict:
@@ -622,12 +807,15 @@ def main() -> int:
     parser.add_argument("--report", required=True, type=Path)
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--readback-only", action="store_true")
+    parser.add_argument("--binding-prepare-only", action="store_true")
     args = parser.parse_args()
     report = {"status": "FAILED_OR_NOT_EXECUTED", "revision_create_attempts": 0, "automatic_retries": 0, "IAM_or_scheduler_calls": 0,
               "revision_queries": [], "build_commands": 0, "push_commands": 0, "image_pull_commands": 0}
     try:
-        require(args.execute != args.readback_only, "one_explicit_mode_required")
-        if args.readback_only:
+        require(sum((args.execute, args.readback_only, args.binding_prepare_only)) == 1, "one_explicit_mode_required")
+        if args.binding_prepare_only:
+            binding_prepare_only(args.source, report)
+        elif args.readback_only:
             readback_only(args.source, report)
         else:
             release(args.source, report)
@@ -645,7 +833,9 @@ def main() -> int:
     finally:
         args.report.write_text(json.dumps(report, sort_keys=True) + "\n")
         print("NOTIFICATION_RESULT_JSON=" + json.dumps(report, sort_keys=True))
-    if args.readback_only:
+    if args.binding_prepare_only:
+        print("Prepared exact notification binding read-only; no cloud writes.")
+    elif args.readback_only:
         print("Verified existing fixed candidate read-only; no cloud writes.")
     else:
         print("Verified fixed image adoption and zero-traffic revision; production traffic unchanged.")

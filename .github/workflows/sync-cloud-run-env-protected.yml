@@ -26,6 +26,15 @@ on:
       source_commit:
         type: string
         required: false
+      expected_serving_revision_sha256:
+        type: string
+        required: false
+      expected_full_target_sha256:
+        type: string
+        required: false
+      expected_service_spec_sha256:
+        type: string
+        required: false
       cloud_run_region:
         type: string
         required: false
@@ -52,6 +61,8 @@ on:
         required: false
     secrets:
       DIGEST_TARGET_BINDINGS_JSON:
+        required: false
+      IBKR_NOTIFICATION_MARKER_GCS_URI:
         required: false
       DIGEST_OPAQUE_ACCOUNT_UID:
         required: false
@@ -1870,6 +1881,104 @@ jobs:
         with:
           name: notification-binding-${{ github.run_id }}
           path: ${{ runner.temp }}/notification-binding.safe.json
+          if-no-files-found: error
+
+  notification-binding-prepare:
+    name: Prepare exact IBKR notification binding / read only
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.notification_marker_mode == 'binding-prepare'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+      INPUT_NOTIFICATION_MARKER_MODE: ${{ inputs.notification_marker_mode }}
+      INPUT_APPROVE_MARKER_PROBE: ${{ inputs.approve_marker_probe }}
+      INPUT_NOTIFICATION_ONLY: ${{ inputs.notification_only }}
+      INPUT_NOTIFICATION_READBACK_ONLY: ${{ inputs.notification_readback_only }}
+      INPUT_TARGET: ${{ inputs.target }}
+      INPUT_CONFIGURED_SERVICE: ${{ inputs.configured_service }}
+      INPUT_SOURCE_COMMIT: ${{ inputs.source_commit }}
+      INPUT_EXPECTED_SERVING_REVISION_SHA256: ${{ inputs.expected_serving_revision_sha256 }}
+      INPUT_EXPECTED_FULL_TARGET_SHA256: ${{ inputs.expected_full_target_sha256 }}
+      INPUT_EXPECTED_SERVICE_SPEC_SHA256: ${{ inputs.expected_service_spec_sha256 }}
+      INPUT_DEPLOY_IMAGE: ${{ inputs.deploy_image }}
+      INPUT_SYNC_ENV: ${{ inputs.sync_env }}
+      INPUT_APPROVE_TRAFFIC_SHIFT: ${{ inputs.approve_traffic_shift }}
+      INPUT_APPROVE_SCHEDULER_SYNC: ${{ inputs.approve_scheduler_sync }}
+      CLOUDSDK_CORE_DISABLE_FILE_LOGGING: "true"
+      CLOUDSDK_CORE_LOG_HTTP: "false"
+    steps:
+      - name: Require infrastructure variables
+        env:
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          IBKR_GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
+          IBKR_RUNTIME_SERVICE_ACCOUNT: ${{ vars.IBKR_RUNTIME_SERVICE_ACCOUNT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in IBKR_DEPLOY_SERVICE_ACCOUNT IBKR_GCP_PROJECT_ID IBKR_RUNTIME_SERVICE_ACCOUNT; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is required" >&2
+              exit 2
+            fi
+          done
+
+      - name: Admit one read-only binding preparation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_RUN_ATTEMPT}" = 1
+          test "${INPUT_SOURCE_COMMIT}" = 8ad644a724dbb9de63287d32b181a49c85e48af6
+          test "${INPUT_TARGET}" = configured
+          test -z "${INPUT_CONFIGURED_SERVICE}"
+          for name in INPUT_APPROVE_MARKER_PROBE INPUT_NOTIFICATION_ONLY INPUT_NOTIFICATION_READBACK_ONLY INPUT_DEPLOY_IMAGE INPUT_SYNC_ENV INPUT_APPROVE_TRAFFIC_SHIFT INPUT_APPROVE_SCHEDULER_SYNC; do
+            test "${!name}" = false
+          done
+          [[ "${INPUT_EXPECTED_SERVING_REVISION_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${INPUT_EXPECTED_FULL_TARGET_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${INPUT_EXPECTED_SERVICE_SPEC_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          test "${GCP_PROJECT_ID}" = interactivebrokersquant
+          test "${GCP_DEPLOY_SERVICE_ACCOUNT}" = ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com
+          test "${GCP_RUNTIME_SERVICE_ACCOUNT}" = ibkr-platform-runtime@interactivebrokersquant.iam.gserviceaccount.com
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ inputs.source_commit }}
+          path: source
+          persist-credentials: false
+
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          version: ">= 416.0.0"
+
+      - name: Prepare exact five-field diff without service write
+        env:
+          CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}
+          DIGEST_TARGET_BINDINGS_JSON: ${{ secrets.DIGEST_TARGET_BINDINGS_JSON }}
+          DIGEST_CANDIDATES_GCS_URI: ${{ vars.DIGEST_CANDIDATES_GCS_URI }}
+          IBKR_NOTIFICATION_MARKER_GCS_URI: ${{ secrets.IBKR_NOTIFICATION_MARKER_GCS_URI }}
+        run: python3 -m scripts.deploy_notification_only --source source --binding-prepare-only --report "${RUNNER_TEMP}/notification-binding-prepare.safe.json"
+
+      - name: Preserve anonymous preparation result only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: notification-binding-prepare-${{ github.run_id }}
+          path: ${{ runner.temp }}/notification-binding-prepare.safe.json
           if-no-files-found: error
 
   notification-marker-probe:
