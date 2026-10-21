@@ -1904,6 +1904,8 @@ def execute_rebalance(
         quantity_zero_symbols.append(symbol)
 
     if not has_sell_plan and not has_buy_plan:
+        if min_notional_decisions:
+            execution_summary["notification_routine_decisions"] = min_notional_decisions
         reason = "target_diff_below_threshold"
         status = "no_op"
         if missing_price_symbols:
@@ -1921,7 +1923,6 @@ def execute_rebalance(
         elif min_notional_symbols:
             symbols = ",".join(sorted(dict.fromkeys(min_notional_symbols)))
             reason = f"min_notional:{symbols}"
-            execution_summary["notification_routine_decisions"] = min_notional_decisions
         elif quantity_zero_symbols:
             symbols = ",".join(sorted(dict.fromkeys(quantity_zero_symbols)))
             reason = f"quantity_zero:{symbols}"

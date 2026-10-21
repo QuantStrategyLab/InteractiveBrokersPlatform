@@ -13,12 +13,19 @@ from test_execution_service import OrderIntent, _signal_metadata, execute_rebala
 from test_unified_notification_adapter import cycle, event, healthy_receipt_report, report, routing, TARGET, NOW
 
 
+@pytest.fixture(autouse=True)
+def synthetic_display_defaults(monkeypatch):
+    from notifications import display_names
+    monkeypatch.setattr(display_names, "_defaults", lambda: {"platforms": {"ibkr": "Demo IBKR"},
+        "strategies": {"global_etf_rotation": "Synthetic global strategy"}})
+
+
 def observation(symbol="DEMO", amount=25.0):
     return dict(reason_code="min_notional", observed_value=amount, limit=50.0, currency="USD", symbol=symbol)
 
 
-@pytest.mark.parametrize("with_sell", [False, True])
-def test_minimum_notional_is_recorded_at_each_actual_skip_without_changing_broker_actions(tmp_path, monkeypatch, with_sell):
+@pytest.mark.parametrize("case", ["no_sell", "sell", "missing_quote"])
+def test_minimum_notional_is_recorded_at_each_actual_skip_without_changing_broker_actions(tmp_path, monkeypatch, case):
     class FakeIB:
         def openTrades(self):
             return []
@@ -29,9 +36,12 @@ def test_minimum_notional_is_recorded_at_each_actual_skip_without_changing_broke
 
     targets = {"DEMO": 0.4}
     positions = {"DEMO": {"quantity": 3.75, "avg_cost": 100.0}}
+    with_sell = case == "sell"
     if with_sell:
         targets = {"AAA": 0.4, **targets}
         positions["AAA"] = {"quantity": 5.0, "avg_cost": 100.0}
+    if case == "missing_quote":
+        targets["NOQUOTE"] = 0.2
     submitted, claims = [], []
     def submit(_ib, intent):
         submitted.append(intent)
@@ -39,7 +49,7 @@ def test_minimum_notional_is_recorded_at_each_actual_skip_without_changing_broke
     monkeypatch.setattr(execution_service.time, "sleep", lambda _: None)
     _, summary = execute_rebalance(FakeIB(), targets, positions,
         {"equity": 1000.0, "buying_power": 1000.0},
-        fetch_quote_snapshots=lambda _ib, symbols: {s: SimpleNamespace(last_price=100.0) for s in symbols},
+        fetch_quote_snapshots=lambda _ib, symbols: {s: SimpleNamespace(last_price=100.0) for s in symbols if s != "NOQUOTE"},
         submit_order_intent=submit, order_intent_cls=OrderIntent,
         acquire_execution_claim=lambda: claims.append(True) or True,
         translator=translate, strategy_profile="tech_communication_pullback_enhancement",
@@ -50,7 +60,11 @@ def test_minimum_notional_is_recorded_at_each_actual_skip_without_changing_broke
     assert summary["notification_routine_decisions"] == [observation()]
     assert [(i.side, i.symbol) for i in submitted] == ([("sell", "AAA")] if with_sell else [])
     assert len(claims) == int(with_sell)
-    if not with_sell:
+    if case == "missing_quote":
+        assert summary["execution_status"] == "blocked"
+        assert summary["no_op_reason"] == "missing_price:NOQUOTE"
+        assert summary["orders_skipped"] == [{"symbol": "NOQUOTE", "reason": "missing_price"}]
+    elif not with_sell:
         assert summary["execution_status"] == "no_op"
         assert summary["no_op_reason"] == "min_notional:DEMO"
         assert summary["orders_skipped"] == []
