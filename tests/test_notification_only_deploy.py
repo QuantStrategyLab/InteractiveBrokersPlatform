@@ -58,7 +58,8 @@ def original(monkeypatch):
     fingerprint = {key: value for key, value in target.items() if key != "live_continuity"}
     monkeypatch.setattr(release, "TARGET_HASH", release.sha(json.dumps(fingerprint, sort_keys=True, separators=(",", ":"))))
     return {"metadata": {"name": "fixture-serving", "labels": {"user-label": "keep", "commit-sha": "old"},
-                         "annotations": {"autoscaling.knative.dev/minScale": "0", "run.googleapis.com/cpu-throttling": "true"}},
+                         "annotations": {"autoscaling.knative.dev/minScale": "0", "run.googleapis.com/cpu-throttling": "true",
+                                         "run.googleapis.com/ingress": "internal"}},
             "spec": {"serviceAccountName": release.RUNTIME, "containerConcurrency": 1, "timeoutSeconds": 60,
                      "volumes": [{"name": "data", "emptyDir": {"medium": "Memory"}}],
                      "containers": [{"image": release.BASE_IMAGE, "command": ["fixture-entrypoint"],
@@ -94,6 +95,58 @@ def test_candidate_copies_serving_template_and_keeps_concrete_traffic(service, o
     after = copy.deepcopy(service)
     after["spec"] = body["spec"]
     release.verify_readback(service, original, after, revision, body)
+
+
+@pytest.mark.parametrize("template_omits_ingress", [False, True])
+def test_ingress_service_scope_accepts_equal_revision_and_unchanged_service(service, original, template_omits_ingress):
+    expected = release.candidate(service, original, IMAGE, "12345")
+    revision = copy.deepcopy(expected["spec"]["template"])
+    after = copy.deepcopy(service)
+    after["spec"] = copy.deepcopy(expected["spec"])
+    if template_omits_ingress:
+        after["spec"]["template"]["metadata"]["annotations"].pop("run.googleapis.com/ingress")
+    release.verify_readback(service, original, after, revision, expected)
+    assert release.nonnotification(revision) == release.nonnotification(original)
+    assert after["metadata"]["annotations"]["run.googleapis.com/ingress"] == "internal"
+
+
+@pytest.mark.parametrize("mutation", ["service-value", "service-missing", "both-service-values", "template-value", "revision-missing",
+                                     "revision-value", "other-template-annotation", "unknown-original", "missing-original", "null-service"])
+def test_ingress_scope_never_hides_real_or_unknown_changes(service, original, mutation):
+    if mutation in {"unknown-original", "missing-original"}:
+        annotations = original["metadata"]["annotations"]
+        if mutation == "unknown-original":
+            annotations["run.googleapis.com/ingress"] = "unknown-private-value"
+            service["metadata"]["annotations"]["run.googleapis.com/ingress"] = "unknown-private-value"
+        else:
+            annotations.pop("run.googleapis.com/ingress")
+    expected = release.candidate(service, original, IMAGE, "12345")
+    revision = copy.deepcopy(expected["spec"]["template"])
+    after = copy.deepcopy(service)
+    after["spec"] = copy.deepcopy(expected["spec"])
+    template = after["spec"]["template"]
+    if mutation not in {"unknown-original", "missing-original", "null-service", "both-service-values"}:
+        template["metadata"]["annotations"].pop("run.googleapis.com/ingress", None)
+    if mutation == "service-value":
+        after["metadata"]["annotations"]["run.googleapis.com/ingress"] = "all"
+    elif mutation == "service-missing":
+        after["metadata"]["annotations"].pop("run.googleapis.com/ingress")
+    elif mutation == "both-service-values":
+        service["metadata"]["annotations"]["run.googleapis.com/ingress"] = "all"
+        after["metadata"]["annotations"]["run.googleapis.com/ingress"] = "all"
+    elif mutation == "template-value":
+        template["metadata"]["annotations"]["run.googleapis.com/ingress"] = "all"
+    elif mutation == "revision-missing":
+        revision["metadata"]["annotations"].pop("run.googleapis.com/ingress")
+    elif mutation == "revision-value":
+        revision["metadata"]["annotations"]["run.googleapis.com/ingress"] = "all"
+    elif mutation == "other-template-annotation":
+        template["metadata"]["annotations"].pop("run.googleapis.com/cpu-throttling")
+    elif mutation == "null-service":
+        service["metadata"]["annotations"]["run.googleapis.com/ingress"] = None
+        after["metadata"]["annotations"]["run.googleapis.com/ingress"] = None
+    with pytest.raises(release.ReleaseError):
+        release.verify_readback(service, original, after, revision, expected)
 
 
 @pytest.mark.parametrize("mutation", ["literal", "secret-version", "resources", "target", "image", "label", "traffic", "tag", "service-spec"])
@@ -465,8 +518,8 @@ def test_projection_never_discloses_unknown_provider_keys(namespace):
     assert "unlisted-key" in result
 
 
-@pytest.mark.parametrize("permission_denied", [False, True])
-def test_fixed_readback_is_three_gets_only_and_never_writes(monkeypatch, tmp_path, service, original, permission_denied):
+@pytest.mark.parametrize("failure", [None, "permission", "missing", "unknown", "transport", "not-ready", "resource-change", "ingress-change"])
+def test_fixed_readback_is_three_gets_only_and_never_writes(monkeypatch, tmp_path, service, original, failure):
     for key, value in admitted_env().items():
         monkeypatch.setenv(key, value)
     monkeypatch.setenv("INPUT_NOTIFICATION_READBACK_ONLY", "true")
@@ -477,9 +530,14 @@ def test_fixed_readback_is_three_gets_only_and_never_writes(monkeypatch, tmp_pat
     monkeypatch.setattr(release, "verify_source", lambda *a: None)
     candidate = release.candidate(service, original, release.QUALIFIED_IMAGE, release.READBACK_RUN)["spec"]["template"]
     monkeypatch.setattr(release, "READBACK_REVISION_HASH", release.sha(candidate["metadata"]["name"]))
-    candidate["spec"]["containers"][0]["resources"]["limits"]["cpu"] = "1000m"
-    candidate["status"] = {"conditions": [{"type": "Ready", "status": "True"}]}
+    if failure == "resource-change":
+        candidate["spec"]["containers"][0]["resources"]["limits"]["cpu"] = "1000m"
+    candidate["status"] = {"conditions": [{"type": "Ready", "status": "Unknown" if failure == "not-ready" else "True"}]}
     service["spec"]["template"] = copy.deepcopy(candidate)
+    service["spec"]["template"]["metadata"]["annotations"].pop("run.googleapis.com/ingress")
+    service["spec"]["traffic"] = release.routes(service)
+    if failure == "ingress-change":
+        service["metadata"]["annotations"]["run.googleapis.com/ingress"] = "all"
     service_reads, gets, closed = [], [], []
 
     def cloud(args):
@@ -495,7 +553,16 @@ def test_fixed_readback_is_three_gets_only_and_never_writes(monkeypatch, tmp_pat
             assert url == release.RUN_API + "/revisions/fixture-serving"
         else:
             assert url == release.RUN_API + "/revisions/" + candidate["metadata"]["name"]
-            body, status = ({"error": {"code": 403, "status": "PERMISSION_DENIED", "message": "PRIVATE_MESSAGE"}}, 403) if permission_denied else (candidate, 200)
+            if failure == "transport":
+                raise OSError("PRIVATE_MESSAGE")
+            if failure == "permission":
+                body, status = {"error": {"code": 403, "status": "PERMISSION_DENIED", "message": "PRIVATE_MESSAGE"}}, 403
+            elif failure == "missing":
+                body, status = {"error": {"code": 404, "status": "NOT_FOUND", "message": "PRIVATE_MESSAGE"}}, 404
+            elif failure == "unknown":
+                body, status = {}, None
+            else:
+                body, status = candidate, 200
         return SimpleNamespace(status_code=status, json=lambda: copy.deepcopy(body))
 
     def forbidden(*args, **kwargs):
@@ -506,17 +573,22 @@ def test_fixed_readback_is_three_gets_only_and_never_writes(monkeypatch, tmp_pat
     for name in ["run", "replace_service", "registry_cost_guard", "release"]:
         monkeypatch.setattr(release, name, forbidden)
     report = {"revision_queries": [], "revision_create_attempts": 0}
-    if permission_denied:
-        with pytest.raises(release.ReleaseError, match="403"):
+    if failure is not None:
+        with pytest.raises(release.ReleaseError):
             release.readback_only(tmp_path, report)
-        assert report["revision_queries"][-1]["http_status"] == 403
-        assert "projection" not in report
+        if failure in {"permission", "missing", "unknown", "transport"}:
+            assert "projection" not in report
+        assert report.get("status") != "READBACK_ONLY_VERIFIED_NO_TRAFFIC"
     else:
         release.readback_only(tmp_path, report)
-        assert report["status"] == "READBACK_ONLY_COMPLETE"
+        assert report["status"] == "READBACK_ONLY_VERIFIED_NO_TRAFFIC"
         assert report["write_operations"] == 0
         assert report["candidate_ready"] and report["original_still_receives_100_percent"]
-        assert report["projection"]["candidate_revision"]["difference_count"] == 1
+        assert report["projection"]["candidate_revision"]["difference_count"] == 0
+        assert report["projection"]["service_template"]["difference_count"] == 1
+        assert report["service_ingress_matches_qualified_baseline"]
+        assert report["revision_nonnotification_unchanged"] and report["service_template_scope_unchanged"]
+        assert report["routing_literals"] == release.ROUTING
         assert report["projection"]["candidate_revision"]["target_entry_unchanged"]
         assert report["projection"]["candidate_revision"]["routing_literals_match"]
     assert len(service_reads) == 1 and len(gets) == 2 and closed == [True]
