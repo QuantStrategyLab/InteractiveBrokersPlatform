@@ -24,7 +24,7 @@ def generation(value):
 
 
 def qualify(client):
-    result = {'schema_version': 1, 'status': 'stop', 'cleanup_attempted': False,
+    result = {'schema_version': 1, 'probe_id': NONCE, 'status': 'stop', 'cleanup_attempted': False,
               'residual_generations': [], 'write_outcome_unknown': False, 'production_marker_touched': False}
     owned = []
     def read_own(g, number):
@@ -143,7 +143,7 @@ class RuntimeClient:
                     details = json.loads(error.read(8192))['error']
                     reasons = {x.get('reason') for x in details.get('errors', []) if isinstance(x, dict)}
                     expected = 'notFound' if error.code == 404 else 'conditionNotMet'
-                    if details.get('code') == error.code and expected in reasons:
+                    if type(details.get('code')) is int and details['code'] == error.code and expected in reasons:
                         raise Stop('not_found' if error.code == 404 else 'precondition_failed', error.code)
                 except (ValueError, KeyError, TypeError):
                     pass
@@ -176,9 +176,9 @@ def main():
         result = qualify(RuntimeClient())
         result['runtime_principal_matches'] = True
     except Stop as error:
-        result = {'schema_version': 1, 'status': 'stop', 'reason': error.reason, 'http_status': error.status}
+        result = {'schema_version': 1, 'probe_id': NONCE, 'status': 'stop', 'reason': error.reason, 'http_status': error.status}
     except Exception:
-        result = {'schema_version': 1, 'status': 'stop', 'reason': 'local_unknown'}
+        result = {'schema_version': 1, 'probe_id': NONCE, 'status': 'stop', 'reason': 'local_unknown'}
     print(json.dumps(result, sort_keys=True))
     return 0 if result['status'] == 'pass_retained' else 1
 

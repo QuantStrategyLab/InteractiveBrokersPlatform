@@ -37,6 +37,10 @@ retry, alternate identity or reuse of an existing Job. It reads only the exact
 execution's anonymous log certificate. The Job and synthetic object stay for
 separately authorized cleanup. A failed/unknown write may leave an object;
 reported generations and the write-outcome flag preserve that uncertainty.
+Both text and structured JSON certificates are supported. A bound completed
+failed execution remains failed, but its nonce-bound diagnostic whitelist is
+retained too; unknown fields and arbitrary error messages are never exported.
+HTTP denial, transport failure or an unbound operation stops before log reads.
 
 Limits: one task, parallelism 1, retries 0, 1 CPU/512Mi, task timeout 60 seconds;
 probe HTTP deadline 45 seconds and at most 24 requests. Control requests have

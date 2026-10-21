@@ -19,7 +19,7 @@ PARENT = f'projects/{PROJECT}/locations/{REGION}'
 JOB = f'{PARENT}/jobs/{JOB_ID}'
 API = 'https://run.googleapis.com/v2/'
 NONCE = '3c5b1830-9184-4966-9232-f8f1e290fd18'
-PROBE_SHA = 'beeaed150492e7f6f8887276652f9f62856a4aae0a995c017305075c9dde59f1'
+PROBE_SHA = 'ce49359d6d6275a49a74bfbee4e0acccb61ee3f2ade7f796419eb29ed16c9c97'
 IDENTITY = ('platform_id', 'opaque_account_uid', 'target_id', 'strategy_profile')
 SECRET_NAMES = {'token', 'password', 'private_key', 'access_token', 'refresh_token', 'api_key', 'secret', 'client_secret', 'credentials', 'authorization_header'}
 
@@ -153,9 +153,39 @@ def verify_job(value, expected):
     return value['etag']
 
 
+def safe_probe_receipt(value):
+    require(type(value.get('schema_version')) is int and value['schema_version'] == 1
+            and value.get('probe_id') == NONCE and isinstance(value.get('status'), str)
+            and value['status'] in {'stop', 'pass_retained'}, 'probe_receipt_shape_rejected')
+    safe = {key: value[key] for key in ('schema_version', 'probe_id', 'status')}
+    reasons = {'qualified_retained_without_cleanup', 'generation_unknown', 'generation_mismatch', 'own_payload_mismatch',
+               'precondition_unexpected_success', 'object_already_exists', 'generation_not_advanced', 'live_generation_changed',
+               'local_unknown', 'runtime_principal_mismatch', 'runtime_token_unavailable', 'endpoint_rejected',
+               'request_budget_exhausted', 'response_size_unknown', 'permission_denied', 'not_found', 'precondition_failed',
+               'http_status_unknown', 'transport_unknown', 'object_or_method_rejected', 'response_json_unknown'}
+    if 'reason' in value:
+        safe['reason'] = value['reason'] if isinstance(value['reason'], str) and value['reason'] in reasons else 'unrecognized_probe_reason'
+    for key in ('CAS_checks_passed', 'runtime_principal_matches', 'cleanup_attempted', 'write_outcome_unknown', 'production_marker_touched'):
+        if type(value.get(key)) is bool:
+            safe[key] = value[key]
+    for key in ('observed_generations', 'residual_generations'):
+        generations = value.get(key)
+        if isinstance(generations, list) and len(generations) <= 4 and all(
+                isinstance(x, str) and re.fullmatch('[1-9][0-9]{0,31}', x) for x in generations):
+            safe[key] = generations
+    retained = value.get('retained_live_generation')
+    if isinstance(retained, str) and re.fullmatch('[1-9][0-9]{0,31}', retained):
+        safe['retained_live_generation'] = retained
+    if value.get('old_generation_retention') == 'unknown':
+        safe['old_generation_retention'] = 'unknown'
+    if type(value.get('http_status')) is int and 100 <= value['http_status'] <= 599:
+        safe['http_status'] = value['http_status']
+    return safe
+
+
 def execute_probe(session, report, *, sleep=time.sleep, clock=time.monotonic):
     deadline = clock() + 180
-    def request(method, url, *, body=None, missing=False, phase):
+    def request(method, url, *, body=None, missing=False, operation_result=False, phase):
         require(clock() < deadline, 'control_deadline_exceeded_no_retry')
         entry = {'phase': phase, 'http_status': None, 'sdk_status': 'UNKNOWN', 'sdk_code': None}
         report.setdefault('requests', []).append(entry)
@@ -174,17 +204,31 @@ def execute_probe(session, report, *, sleep=time.sleep, clock=time.monotonic):
             state = error.get('status')
             if state in {'NOT_FOUND', 'PERMISSION_DENIED', 'UNAUTHENTICATED', 'FAILED_PRECONDITION', 'ABORTED', 'UNAVAILABLE'}:
                 entry['sdk_status'] = state
-            if missing and response.status_code == 404 and error.get('code') == 404 and state == 'NOT_FOUND':
+            if missing and response.status_code == 404 and type(error.get('code')) is int and error['code'] == 404 and state == 'NOT_FOUND':
                 return None
+            # A completed run operation can carry a task-failure certificate in
+            # metadata. HTTP denial/transport failure never reaches this branch.
+            if operation_result and response.status_code == 200 and value.get('done') is True:
+                return value
         require(response.status_code == 200 and isinstance(value, dict) and not error, 'control_request_failed_no_retry')
         entry['sdk_status'] = 'OK'
         return value
-    def operation(value, phase):
+    def operation(value, phase, *, failed_execution=False):
         name = value.get('name', '')
         require(re.fullmatch(re.escape(PARENT) + r'/operations/[a-zA-Z0-9_-]+', name), 'operation_identity_rejected')
         while not value.get('done'):
             sleep(2)
-            value = request('GET', API + name, phase=phase)
+            value = request('GET', API + name, operation_result=failed_execution, phase=phase)
+            require(value.get('name') == name, 'operation_identity_changed')
+        if value.get('error') and failed_execution:
+            error, metadata = value['error'], value.get('metadata')
+            require(type(error.get('code')) is int and 1 <= error['code'] <= 16 and error['code'] not in {7, 16}
+                    and error.get('status') not in {'PERMISSION_DENIED', 'UNAUTHENTICATED'}
+                    and isinstance(metadata, dict) and metadata.get('failedCount') == 1
+                    and any(x.get('type') == 'Completed' and x.get('state') == 'CONDITION_FAILED'
+                            for x in metadata.get('conditions', [])), 'operation_result_failed_no_retry')
+            report['execution_operation_failed'] = True
+            return metadata
         require(not value.get('error') and isinstance(value.get('response'), dict), 'operation_result_failed_no_retry')
         return value['response']
     require(request('GET', API + JOB, missing=True, phase='job_absence') is None, 'job_already_exists_no_reuse')
@@ -196,27 +240,35 @@ def execute_probe(session, report, *, sleep=time.sleep, clock=time.monotonic):
     etag = verify_job(job, expected)
     report.update(job_template_verified=True, job_name=JOB, probe_code_sha256=PROBE_SHA, job_retained=True)
     report['execution_submit_attempts'] = 1
-    execution = operation(request('POST', API + JOB + ':run', body={'etag': etag}, phase='execute_once'), 'execution_operation')
+    execution = operation(request('POST', API + JOB + ':run', body={'etag': etag}, operation_result=True,
+                                  phase='execute_once'), 'execution_operation', failed_execution=True)
     name = execution.get('name', '')
     require(re.fullmatch(re.escape(JOB) + r'/executions/[a-zA-Z0-9_-]+', name) and execution.get('job') == JOB, 'execution_identity_rejected')
     report['execution_name'] = name
-    require(execution.get('taskCount') == 1 and execution.get('succeededCount') == 1
-            and execution.get('failedCount', 0) == 0 and execution.get('cancelledCount', 0) == 0, 'execution_not_successful')
-    require(any(x.get('type') == 'Completed' and x.get('state') == 'CONDITION_SUCCEEDED' for x in execution.get('conditions', [])), 'execution_completion_unproved')
+    completed = [x.get('state') for x in execution.get('conditions', []) if x.get('type') == 'Completed']
+    require(len(completed) == 1 and completed[0] in {'CONDITION_SUCCEEDED', 'CONDITION_FAILED'}, 'execution_completion_unproved')
+    successful = (execution.get('taskCount') == 1 and execution.get('succeededCount') == 1
+                  and execution.get('failedCount', 0) == 0 and execution.get('cancelledCount', 0) == 0
+                  and completed[0] == 'CONDITION_SUCCEEDED' and not report.get('execution_operation_failed'))
+    report['execution_successful'] = successful
     suffix = name.rsplit('/', 1)[1]
     entries = request('POST', 'https://logging.googleapis.com/v2/entries:list', body={
         'resourceNames': ['projects/' + PROJECT], 'pageSize': 10, 'orderBy': 'timestamp desc',
         'filter': f'resource.type="cloud_run_job" AND resource.labels.job_name="{JOB_ID}" AND labels."run.googleapis.com/execution_name"="{suffix}"'}, phase='anonymous_execution_receipt')
     certificates = []
     for entry in entries.get('entries', []):
-        try:
-            value = json.loads(entry.get('textPayload', ''))
-        except (ValueError, TypeError):
-            continue
+        value = entry.get('jsonPayload')
+        if not isinstance(value, dict):
+            try:
+                value = json.loads(entry.get('textPayload', ''))
+            except (ValueError, TypeError):
+                continue
         if isinstance(value, dict) and value.get('probe_id') == NONCE:
             certificates.append(value)
     require(len(certificates) == 1, 'anonymous_receipt_missing_or_ambiguous_no_retry')
-    proof = certificates[0]
+    proof = safe_probe_receipt(certificates[0])
+    report['probe_receipt'] = proof
+    require(successful, 'execution_not_successful')
     require(proof.get('status') == 'pass_retained' and proof.get('CAS_checks_passed') is True
             and proof.get('runtime_principal_matches') is True and proof.get('cleanup_attempted') is False
             and proof.get('write_outcome_unknown') is False and proof.get('production_marker_touched') is False, 'probe_receipt_rejected')

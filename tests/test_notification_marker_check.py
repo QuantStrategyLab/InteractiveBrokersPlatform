@@ -151,18 +151,23 @@ def test_probe_existing_or_denied_stops_without_deletion():
     for store in (Store(existing=True), Store(deny=True)):
         report = probe.qualify(store)
         assert report['status'] == 'stop'
+        assert report['probe_id'] == probe.NONCE
         assert store.calls in (['GET'], ['GET', 'POST'])
 
 
 class Session:
-    def __init__(self, *, status=404, sdk='NOT_FOUND', stale=False):
+    def __init__(self, *, status=404, sdk='NOT_FOUND', stale=False, error_code=None,
+                 structured=False, failed=False, terminal_error=False, control_denied=False):
         self.status, self.sdk, self.stale = status, sdk, stale
+        self.error_code = status if error_code is None else error_code
+        self.structured, self.failed = structured, failed
+        self.terminal_error, self.control_denied = terminal_error, control_denied
         self.calls = []
         self.body = None
     def request(self, method, url, json=None, **kwargs):
         self.calls.append((method, url, copy.deepcopy(json)))
         if len(self.calls) == 1:
-            return self.response(self.status, {'error': {'code': self.status, 'status': self.sdk}})
+            return self.response(self.status, {'error': {'code': self.error_code, 'status': self.sdk}})
         if url.endswith('/jobs?jobId=' + control.JOB_ID):
             self.body = copy.deepcopy(json)
             return self.response(200, self.op({'name': control.JOB}))
@@ -172,14 +177,26 @@ class Session:
             assert json == {'etag': 'synthetic-etag'}
             if self.stale:
                 return self.response(409, {'error': {'code': 409, 'status': 'ABORTED'}})
-            return self.response(200, self.op({'name': control.JOB + '/executions/synthetic-execution', 'job': control.JOB,
-                'taskCount': 1, 'succeededCount': 1, 'failedCount': 0,
-                'conditions': [{'type': 'Completed', 'state': 'CONDITION_SUCCEEDED'}]}))
+            if self.control_denied:
+                return self.response(403, {'error': {'code': 403, 'status': 'PERMISSION_DENIED'}})
+            execution = {'name': control.JOB + '/executions/synthetic-execution', 'job': control.JOB,
+                'taskCount': 1, 'succeededCount': 0 if self.failed else 1, 'failedCount': 1 if self.failed else 0,
+                'conditions': [{'type': 'Completed', 'state': 'CONDITION_FAILED' if self.failed else 'CONDITION_SUCCEEDED'}]}
+            if self.terminal_error:
+                return self.response(200, {'name': control.PARENT + '/operations/synthetic-op', 'done': True,
+                    'metadata': execution, 'error': {'code': 9, 'message': 'private error must not be copied'}})
+            return self.response(200, self.op(execution))
         assert url == 'https://logging.googleapis.com/v2/entries:list'
-        proof = {'probe_id': control.NONCE, 'status': 'pass_retained', 'CAS_checks_passed': True,
+        proof = {'schema_version': 1, 'probe_id': control.NONCE, 'status': 'pass_retained', 'CAS_checks_passed': True,
                  'runtime_principal_matches': True, 'cleanup_attempted': False, 'write_outcome_unknown': False,
                  'production_marker_touched': False, 'observed_generations': ['11', '12'], 'retained_live_generation': '12'}
-        return self.response(200, {'entries': [{'textPayload': __import__('json').dumps(proof)}]})
+        if self.failed:
+            proof.update(status='stop', reason='transport_unknown', CAS_checks_passed=False,
+                         residual_generations=['11'], write_outcome_unknown=True,
+                         private_field='synthetic-private-value')
+            proof.pop('retained_live_generation')
+        payload = {'jsonPayload': proof} if self.structured else {'textPayload': __import__('json').dumps(proof)}
+        return self.response(200, {'entries': [payload]})
     @staticmethod
     def response(status, body):
         return SimpleNamespace(status_code=status, json=lambda: body)
@@ -196,6 +213,75 @@ def test_exact_once_control_and_retained_receipt():
     assert report['retained_live_generation'] == '12'
     assert not any(method == 'DELETE' for method, _, _ in session.calls)
     assert control.job_body()['template']['template']['containers'][0].get('env') is None
+
+
+def test_structured_receipt_is_accepted_without_retry():
+    session, report = Session(structured=True), {}
+    control.execute_probe(session, report, sleep=lambda _: None)
+    assert report['status'] == 'pass_retained'
+    assert len([x for x in session.calls if x[1].endswith('entries:list')]) == 1
+
+
+@pytest.mark.parametrize('terminal_error', [False, True])
+def test_failed_bound_execution_preserves_only_safe_stop_certificate(terminal_error):
+    session, report = Session(failed=True, structured=True, terminal_error=terminal_error), {}
+    with pytest.raises(control.Stop, match='execution_not_successful'):
+        control.execute_probe(session, report, sleep=lambda _: None)
+    assert report['probe_receipt']['probe_id'] == control.NONCE
+    assert report['probe_receipt']['residual_generations'] == ['11']
+    assert report['probe_receipt']['write_outcome_unknown'] is True
+    assert 'synthetic-private-value' not in json.dumps(report)
+    assert 'private error' not in json.dumps(report)
+    assert len([x for x in session.calls if x[1].endswith('entries:list')]) == 1
+
+
+def test_control_denial_stops_without_log_read():
+    session = Session(control_denied=True)
+    with pytest.raises(control.Stop):
+        control.execute_probe(session, {}, sleep=lambda _: None)
+    assert not any(x[1].endswith('entries:list') for x in session.calls)
+
+
+def test_float_404_is_not_proof_of_absence():
+    session = Session(error_code=404.0)
+    with pytest.raises(control.Stop):
+        control.execute_probe(session, {}, sleep=lambda _: None)
+    assert len(session.calls) == 1
+
+
+@pytest.mark.parametrize('code', [7, 16, 403, 999, 9.0])
+def test_denied_or_unknown_terminal_operation_never_reads_logs(code):
+    class InvalidOperation(Session):
+        def request(self, method, url, **kwargs):
+            response = super().request(method, url, **kwargs)
+            if url.endswith(':run'):
+                response.json()['error']['code'] = code
+            return response
+    session = InvalidOperation(failed=True, terminal_error=True)
+    with pytest.raises(control.Stop):
+        control.execute_probe(session, {}, sleep=lambda _: None)
+    assert not any(x[1].endswith('entries:list') for x in session.calls)
+
+
+def test_failure_receipt_cannot_export_unrecognized_reason_or_fields():
+    safe = control.safe_probe_receipt({'schema_version': 1, 'probe_id': control.NONCE, 'status': 'stop',
+        'reason': 'synthetic-private-reason', 'residual_generations': ['11'], 'write_outcome_unknown': True,
+        'raw_private_field': 'synthetic-private-value', 'http_status': '403'})
+    assert safe['reason'] == 'unrecognized_probe_reason'
+    assert safe['residual_generations'] == ['11'] and safe['write_outcome_unknown'] is True
+    assert 'synthetic-private' not in json.dumps(safe)
+    assert 'http_status' not in safe
+
+
+def test_runtime_initialization_failure_still_has_probe_identity(monkeypatch, capsys):
+    class DeniedRuntime:
+        def __init__(self):
+            raise probe.Stop('permission_denied', 403)
+    monkeypatch.setattr(probe, 'RuntimeClient', DeniedRuntime)
+    monkeypatch.setattr(control.os, 'environ', {})
+    assert probe.main() == 1
+    safe = json.loads(capsys.readouterr().out)
+    assert safe['probe_id'] == probe.NONCE and safe['status'] == 'stop'
 
 
 @pytest.mark.parametrize('status,sdk', [(403, 'PERMISSION_DENIED'), (404, 'UNKNOWN'), (200, 'UNKNOWN')])
