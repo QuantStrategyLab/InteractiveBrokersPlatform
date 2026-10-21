@@ -47,15 +47,15 @@ on:
         description: "Full commit SHA from this repository to build when dispatching an image deployment."
         required: false
         type: string
-      expected_serving_revision_sha256:
+      expected_serving_revision_digest:
         description: "Fresh P-approved SHA256 of the exact currently serving revision name; binding preparation only."
         required: false
         type: string
-      expected_full_target_sha256:
+      expected_full_target_digest:
         description: "Fresh P-approved SHA256 of the complete effective runtime target; binding preparation only."
         required: false
         type: string
-      expected_service_spec_sha256:
+      expected_service_spec_digest:
         description: "Fresh P-approved SHA256 of the full current Service spec; binding preparation only."
         required: false
         type: string
@@ -119,9 +119,9 @@ jobs:
       target: ${{ inputs.target }}
       configured_service: ${{ inputs.configured_service }}
       source_commit: ${{ inputs.source_commit }}
-      expected_serving_revision_sha256: ${{ inputs.expected_serving_revision_sha256 }}
-      expected_full_target_sha256: ${{ inputs.expected_full_target_sha256 }}
-      expected_service_spec_sha256: ${{ inputs.expected_service_spec_sha256 }}
+      expected_serving_revision_digest: ${{ inputs.expected_serving_revision_digest }}
+      expected_full_target_digest: ${{ inputs.expected_full_target_digest }}
+      expected_service_spec_digest: ${{ inputs.expected_service_spec_digest }}
       cloud_run_region: ${{ inputs.cloud_run_region }}
       cloud_run_service: ${{ inputs.cloud_run_service }}
       account_group: ${{ inputs.account_group }}

@@ -26,13 +26,13 @@ on:
       source_commit:
         type: string
         required: false
-      expected_serving_revision_sha256:
+      expected_serving_revision_digest:
         type: string
         required: false
-      expected_full_target_sha256:
+      expected_full_target_digest:
         type: string
         required: false
-      expected_service_spec_sha256:
+      expected_service_spec_digest:
         type: string
         required: false
       cloud_run_region:
@@ -1831,58 +1831,6 @@ jobs:
                   stream.write("```\n")
           PY
 
-  notification-binding-read:
-    name: Read one exact IBKR business binding only
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.notification_marker_mode == 'binding-read'
-    runs-on: ubuntu-latest
-    timeout-minutes: 3
-    permissions:
-      contents: read
-    env:
-      INPUT_NOTIFICATION_MARKER_MODE: ${{ inputs.notification_marker_mode }}
-      INPUT_APPROVE_MARKER_PROBE: ${{ inputs.approve_marker_probe }}
-      INPUT_TARGET: ${{ inputs.target }}
-      INPUT_CONFIGURED_SERVICE: ${{ inputs.configured_service }}
-      INPUT_SOURCE_COMMIT: ${{ inputs.source_commit }}
-      INPUT_NOTIFICATION_ONLY: ${{ inputs.notification_only }}
-      INPUT_NOTIFICATION_READBACK_ONLY: ${{ inputs.notification_readback_only }}
-      INPUT_DEPLOY_IMAGE: ${{ inputs.deploy_image }}
-      INPUT_SYNC_ENV: ${{ inputs.sync_env }}
-      INPUT_APPROVE_TRAFFIC_SHIFT: ${{ inputs.approve_traffic_shift }}
-      INPUT_APPROVE_SCHEDULER_SYNC: ${{ inputs.approve_scheduler_sync }}
-      RUNTIME_TARGET_JSON: ${{ secrets.RUNTIME_TARGET_JSON }}
-      DIGEST_TARGET_BINDINGS_JSON: ${{ secrets.DIGEST_TARGET_BINDINGS_JSON }}
-      DIGEST_OPAQUE_ACCOUNT_UID: ${{ secrets.DIGEST_OPAQUE_ACCOUNT_UID }}
-      DIGEST_TARGET_ID: ${{ secrets.DIGEST_TARGET_ID }}
-      IBKR_DIGEST_OPAQUE_ACCOUNT_UID: ${{ secrets.IBKR_DIGEST_OPAQUE_ACCOUNT_UID }}
-      IBKR_DIGEST_TARGET_ID: ${{ secrets.IBKR_DIGEST_TARGET_ID }}
-      DIGEST_STORE_TARGET: ${{ vars.DIGEST_STORE_TARGET }}
-    steps:
-      - name: Require infrastructure variables
-        env:
-          IBKR_GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
-        run: |
-          set -euo pipefail
-          for name in IBKR_GCP_PROJECT_ID; do
-            if [[ -z "${!name:-}" ]]; then
-              echo "::error::$name is required" >&2
-              exit 2
-            fi
-          done
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - name: Emit safe hashes and runner-private four-field projection
-        run: python3 -m scripts.notification_marker_check --mode binding-read --report "${RUNNER_TEMP}/notification-binding.safe.json" --private-out "${RUNNER_TEMP}/notification-binding.private.json"
-      - name: Preserve anonymous binding receipt only
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: notification-binding-${{ github.run_id }}
-          path: ${{ runner.temp }}/notification-binding.safe.json
-          if-no-files-found: error
-
   notification-binding-prepare:
     name: Prepare exact IBKR notification binding / read only
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.notification_marker_mode == 'binding-prepare'
@@ -1900,9 +1848,9 @@ jobs:
       INPUT_TARGET: ${{ inputs.target }}
       INPUT_CONFIGURED_SERVICE: ${{ inputs.configured_service }}
       INPUT_SOURCE_COMMIT: ${{ inputs.source_commit }}
-      INPUT_EXPECTED_SERVING_REVISION_SHA256: ${{ inputs.expected_serving_revision_sha256 }}
-      INPUT_EXPECTED_FULL_TARGET_SHA256: ${{ inputs.expected_full_target_sha256 }}
-      INPUT_EXPECTED_SERVICE_SPEC_SHA256: ${{ inputs.expected_service_spec_sha256 }}
+      INPUT_EXPECTED_SERVING_REVISION_SHA256: ${{ inputs.expected_serving_revision_digest }}
+      INPUT_EXPECTED_FULL_TARGET_SHA256: ${{ inputs.expected_full_target_digest }}
+      INPUT_EXPECTED_SERVICE_SPEC_SHA256: ${{ inputs.expected_service_spec_digest }}
       INPUT_DEPLOY_IMAGE: ${{ inputs.deploy_image }}
       INPUT_SYNC_ENV: ${{ inputs.sync_env }}
       INPUT_APPROVE_TRAFFIC_SHIFT: ${{ inputs.approve_traffic_shift }}
@@ -1979,6 +1927,58 @@ jobs:
         with:
           name: notification-binding-prepare-${{ github.run_id }}
           path: ${{ runner.temp }}/notification-binding-prepare.safe.json
+          if-no-files-found: error
+
+  notification-binding-read:
+    name: Read one exact IBKR business binding only
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.notification_marker_mode == 'binding-read'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    env:
+      INPUT_NOTIFICATION_MARKER_MODE: ${{ inputs.notification_marker_mode }}
+      INPUT_APPROVE_MARKER_PROBE: ${{ inputs.approve_marker_probe }}
+      INPUT_TARGET: ${{ inputs.target }}
+      INPUT_CONFIGURED_SERVICE: ${{ inputs.configured_service }}
+      INPUT_SOURCE_COMMIT: ${{ inputs.source_commit }}
+      INPUT_NOTIFICATION_ONLY: ${{ inputs.notification_only }}
+      INPUT_NOTIFICATION_READBACK_ONLY: ${{ inputs.notification_readback_only }}
+      INPUT_DEPLOY_IMAGE: ${{ inputs.deploy_image }}
+      INPUT_SYNC_ENV: ${{ inputs.sync_env }}
+      INPUT_APPROVE_TRAFFIC_SHIFT: ${{ inputs.approve_traffic_shift }}
+      INPUT_APPROVE_SCHEDULER_SYNC: ${{ inputs.approve_scheduler_sync }}
+      RUNTIME_TARGET_JSON: ${{ secrets.RUNTIME_TARGET_JSON }}
+      DIGEST_TARGET_BINDINGS_JSON: ${{ secrets.DIGEST_TARGET_BINDINGS_JSON }}
+      DIGEST_OPAQUE_ACCOUNT_UID: ${{ secrets.DIGEST_OPAQUE_ACCOUNT_UID }}
+      DIGEST_TARGET_ID: ${{ secrets.DIGEST_TARGET_ID }}
+      IBKR_DIGEST_OPAQUE_ACCOUNT_UID: ${{ secrets.IBKR_DIGEST_OPAQUE_ACCOUNT_UID }}
+      IBKR_DIGEST_TARGET_ID: ${{ secrets.IBKR_DIGEST_TARGET_ID }}
+      DIGEST_STORE_TARGET: ${{ vars.DIGEST_STORE_TARGET }}
+    steps:
+      - name: Require infrastructure variables
+        env:
+          IBKR_GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          for name in IBKR_GCP_PROJECT_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is required" >&2
+              exit 2
+            fi
+          done
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Emit safe hashes and runner-private four-field projection
+        run: python3 -m scripts.notification_marker_check --mode binding-read --report "${RUNNER_TEMP}/notification-binding.safe.json" --private-out "${RUNNER_TEMP}/notification-binding.private.json"
+      - name: Preserve anonymous binding receipt only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: notification-binding-${{ github.run_id }}
+          path: ${{ runner.temp }}/notification-binding.safe.json
           if-no-files-found: error
 
   notification-marker-probe:
