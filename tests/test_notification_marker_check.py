@@ -584,13 +584,22 @@ def test_workflow_readback_step_cannot_select_execute_command():
 
 
 class ValidationSession:
-    def __init__(self, *, failure=None, existing=False, pending=False):
+    def __init__(self, *, failure=None, existing=False, pending=False, post_response=None,
+                 operation_responses=None, final_existing=False):
         self.calls = []
         self.failure, self.existing, self.pending = failure, existing, pending
+        self.post_response = post_response
+        self.operation_responses = list(operation_responses or [])
+        self.final_existing = final_existing
     def request(self, method, url, json=None, **kwargs):
         self.calls.append((method, url, copy.deepcopy(json)))
+        if method == 'GET' and '/operations/' in url:
+            assert url.endswith('?fields=name,done,error')
+            status, body = self.operation_responses.pop(0) if self.operation_responses else (
+                200, {'name': control.PARENT + '/operations/synthetic-validation', 'done': True})
+            return Session.response(status, body)
         if method == 'GET':
-            if self.existing:
+            if self.existing or (self.final_existing and any(call[0] == 'POST' for call in self.calls)):
                 return Session.response(200, {'name': control.JOB})
             return Session.response(404, {'error': {'code': 404, 'status': 'NOT_FOUND'}})
         assert url.endswith('/jobs?jobId=' + control.JOB_ID + '&validateOnly=true')
@@ -600,8 +609,9 @@ class ValidationSession:
                 'message': 'synthetic-private-token', 'details': [{'@type': 'type.googleapis.com/google.rpc.BadRequest',
                     'fieldViolations': [{'field': 'job.template.template.containers[0].args[3]',
                                          'description': 'synthetic-private-token'}]}]}})
-        return Session.response(200, {'name': control.PARENT + '/operations/synthetic-validation',
-                                     'done': not self.pending, 'response': {}})
+        return Session.response(200, self.post_response or {
+            'name': control.PARENT + '/operations/synthetic-validation',
+            'done': not self.pending, 'response': {}})
 
 
 def test_validation_only_posts_same_frozen_body_once_and_never_runs():
@@ -615,6 +625,8 @@ def test_validation_only_posts_same_frozen_body_once_and_never_runs():
     assert 'name' not in session.calls[1][2]
     assert all(':run' not in x[1] for x in session.calls)
     assert report['execution_submissions'] == 0
+    assert report['validation_operation_name_verified'] is True
+    assert 'synthetic-validation' not in json.dumps(report)
 
 
 @pytest.mark.parametrize('failure', [400, 403])
@@ -658,20 +670,123 @@ def test_control_error_main_report_and_stdout_keep_rejected_constraint_safely(fi
     assert ':run' not in session.calls[1][1]
 
 
-def test_validation_existing_job_or_changed_body_or_pending_stops(monkeypatch):
+def test_validation_existing_job_or_changed_body_stops(monkeypatch):
     existing = ValidationSession(existing=True)
     with pytest.raises(control.Stop, match='job_already_exists'):
         control.validate_probe(existing, {})
     assert [x[0] for x in existing.calls] == ['GET']
-    pending = ValidationSession(pending=True)
-    with pytest.raises(control.Stop, match='validation_completion_unknown'):
-        control.validate_probe(pending, {})
-    assert [x[0] for x in pending.calls] == ['GET', 'POST']
     monkeypatch.setattr(control, 'job_body', lambda: {'changed': True})
     changed = ValidationSession()
     with pytest.raises(control.Stop, match='job_create_body_changed'):
         control.validate_probe(changed, {})
     assert [x[0] for x in changed.calls] == ['GET']
+
+
+def test_pending_validation_reads_only_exact_operation_then_job_absence():
+    name = control.PARENT + '/operations/synthetic-validation'
+    session = ValidationSession(pending=True, operation_responses=[
+        (200, {'name': name, 'done': False}), (200, {'name': name, 'done': True})])
+    report = {}
+    control.validate_probe(session, report, sleep=lambda _: None)
+    assert report['status'] == 'validated_only_job_absent'
+    assert report['validation_operation_done'] is True
+    assert report['validation_operation_polls'] == 2
+    assert [method for method, _, _ in session.calls] == ['GET', 'POST', 'GET', 'GET', 'GET']
+    assert all(url == control.API + name + '?fields=name,done,error'
+               for _, url, _ in session.calls[2:4])
+    assert session.calls[-1][1] == control.API + control.JOB + '?fields=name'
+    assert name not in json.dumps(report)
+
+
+def test_missing_done_field_from_initial_response_is_polled():
+    name = control.PARENT + '/operations/synthetic-validation'
+    session = ValidationSession(post_response={'name': name}, operation_responses=[
+        (200, {'name': name, 'done': True})])
+    report = {}
+    control.validate_probe(session, report, sleep=lambda _: None)
+    assert report['status'] == 'validated_only_job_absent'
+    assert report['validation_operation_polls'] == 1
+    assert [method for method, _, _ in session.calls] == ['GET', 'POST', 'GET', 'GET']
+
+
+@pytest.mark.parametrize('name', [None, '',
+    'projects/other/locations/us-central1/operations/synthetic-validation',
+    'projects/interactivebrokersquant/locations/other/operations/synthetic-validation',
+    'projects/interactivebrokersquant/locations/us-central1/jobs/synthetic-validation'])
+def test_validation_rejects_missing_or_foreign_operation_name_before_poll(name):
+    session = ValidationSession(post_response={'name': name, 'done': False})
+    with pytest.raises(control.Stop, match='validation_operation_identity_rejected'):
+        control.validate_probe(session, {})
+    assert [method for method, _, _ in session.calls] == ['GET', 'POST']
+
+
+def test_validation_accepts_exact_known_project_number_operation_prefix():
+    name = 'projects/303168642265/locations/us-central1/operations/synthetic-validation'
+    session = ValidationSession(post_response={'name': name, 'done': True})
+    report = {}
+    control.validate_probe(session, report)
+    assert report['status'] == 'validated_only_job_absent'
+
+
+def test_validation_stops_if_operation_name_changes_or_get_is_denied():
+    name = control.PARENT + '/operations/synthetic-validation'
+    changed = ValidationSession(pending=True, operation_responses=[
+        (200, {'name': control.PARENT + '/operations/other', 'done': True})])
+    with pytest.raises(control.Stop, match='validation_operation_identity_changed'):
+        control.validate_probe(changed, {}, sleep=lambda _: None)
+    denied = ValidationSession(pending=True, operation_responses=[
+        (403, {'error': {'code': 403, 'status': 'PERMISSION_DENIED',
+                         'message': 'synthetic-private-token'}})])
+    report = {}
+    with pytest.raises(control.Stop, match='control_request_failed_no_retry'):
+        control.validate_probe(denied, report, sleep=lambda _: None)
+    assert report['requests'][-1]['http_status'] == 403
+    assert [method for method, _, _ in denied.calls] == ['GET', 'POST', 'GET']
+    assert 'synthetic-private-token' not in json.dumps(report)
+    assert denied.calls[-1][1] == control.API + name + '?fields=name,done,error'
+
+
+def test_validation_stops_on_operation_error_without_job_followup():
+    session = ValidationSession(post_response={
+        'name': control.PARENT + '/operations/synthetic-validation', 'done': True,
+        'error': {'code': 9, 'status': 'FAILED_PRECONDITION', 'message': 'synthetic-private-token'}})
+    report = {}
+    with pytest.raises(control.Stop, match='control_request_failed_no_retry'):
+        control.validate_probe(session, report)
+    assert [method for method, _, _ in session.calls] == ['GET', 'POST']
+    assert 'synthetic-private-token' not in json.dumps(report)
+    pending = ValidationSession(pending=True, operation_responses=[(200, {
+        'name': control.PARENT + '/operations/synthetic-validation', 'done': True,
+        'error': {'code': 9, 'status': 'FAILED_PRECONDITION', 'message': 'synthetic-private-token'}})])
+    report = {}
+    with pytest.raises(control.Stop, match='control_request_failed_no_retry'):
+        control.validate_probe(pending, report, sleep=lambda _: None)
+    assert [method for method, _, _ in pending.calls] == ['GET', 'POST', 'GET']
+    assert 'synthetic-private-token' not in json.dumps(report)
+
+
+def test_validation_operation_timeout_is_bounded_without_extra_request():
+    class Clock:
+        now = 0
+        def __call__(self):
+            return self.now
+        def sleep(self, seconds):
+            self.now += 100
+    clock = Clock()
+    session = ValidationSession(pending=True)
+    with pytest.raises(control.Stop, match='validation_operation_timeout_no_retry'):
+        control.validate_probe(session, {}, sleep=clock.sleep, clock=clock)
+    assert [method for method, _, _ in session.calls] == ['GET', 'POST']
+
+
+def test_validation_success_stops_if_job_is_present_after_operation():
+    session = ValidationSession(final_existing=True)
+    report = {}
+    with pytest.raises(control.Stop, match='job_present_after_validation'):
+        control.validate_probe(session, report)
+    assert report['validation_operation_done'] is True
+    assert report['job_found'] is True
+    assert [method for method, _, _ in session.calls] == ['GET', 'POST', 'GET']
 
 
 def test_validation_dispatch_requires_original_identity_and_no_execution_approval():
