@@ -97,6 +97,237 @@ def test_candidate_copies_serving_template_and_keeps_concrete_traffic(service, o
     release.verify_readback(service, original, after, revision, body)
 
 
+@pytest.fixture
+def notification_inputs(original, monkeypatch):
+    original["spec"]["containers"][0]["env"].extend({"name": k, "value": v} for k, v in release.ROUTING.items())
+    binding = {"RUNTIME_TARGET_JSON": release.runtime_target(original), "DIGEST_OPAQUE_ACCOUNT_UID": "synthetic-uid",
+               "DIGEST_TARGET_ID": "synthetic-canonical-target", "DIGEST_STORE_TARGET": release.NOTIFICATION_SLOT}
+    row = {"platform_id": "ibkr", "opaque_account_uid": "synthetic-uid", "target_id": "synthetic-canonical-target",
+           "strategy_profile": "tqqq_growth_income"}
+    monkeypatch.setattr(release, "NOTIFICATION_IDENTITY_SHA", release._digest(row))
+    stores = {"DIGEST_CANDIDATES_GCS_URI": "gs://synthetic-bucket/candidates", "IBKR_NOTIFICATION_MARKER_GCS_URI": "gs://synthetic-bucket/markers"}
+    return binding, stores, {k: release.sha(v) for k, v in stores.items()}
+
+
+def test_notification_binding_preparation_preserves_every_other_field_and_private_rollback(original, notification_inputs):
+    frozen = copy.deepcopy(original)
+    updated, rollback, safe = release.prepare_notification_binding(original, *notification_inputs)
+    assert original == frozen
+    assert set(rollback) == {*release.NOTIFICATION_IDENTITY_KEYS, *release.NOTIFICATION_STORE_KEYS}
+    assert all(v is None for v in rollback.values())
+    assert release.env_map(updated)["CREDENTIAL_REFERENCE"] == release.env_map(original)["CREDENTIAL_REFERENCE"]
+    assert updated["metadata"] == original["metadata"]
+    assert updated["spec"]["containers"][0]["image"] == original["spec"]["containers"][0]["image"]
+    assert safe["identity_row_sha256"] == release.NOTIFICATION_IDENTITY_SHA
+    assert safe["expected_single_member_sha256"] == release._digest([{"platform_id": "ibkr", "opaque_account_uid": "synthetic-uid",
+        "target_id": "synthetic-canonical-target", "strategy_profile": "tqqq_growth_income"}])
+    assert "synthetic-uid" not in json.dumps(safe) and "synthetic-canonical-target" not in json.dumps(safe)
+    assert "gs://" not in json.dumps(safe) and "fixture-secret" not in json.dumps(safe)
+
+
+def test_notification_binding_equal_effective_target_and_idempotent_input_reuses_existing_values(original, notification_inputs):
+    original["spec"]["containers"][0]["env"].append({"name": "QSL_RUNTIME_TARGET_JSON", "value": json.dumps(release.runtime_target(original))})
+    updated, _, _ = release.prepare_notification_binding(original, *notification_inputs)
+    again, rollback, safe = release.prepare_notification_binding(updated, *notification_inputs)
+    assert again == updated and not safe["changed_fields"]
+    assert all(v is not None for v in rollback.values())
+
+
+def test_notification_binding_unrecognized_effective_target_shape_is_not_absence(original, notification_inputs):
+    original["spec"]["containers"][0]["env"].append({"name": "QSL_RUNTIME_TARGET_JSON", "valueSource": {"secretKeyRef": {"secret": "synthetic"}}})
+    with pytest.raises(release.ReleaseError, match="shape_unknown"):
+        release.prepare_notification_binding(original, *notification_inputs)
+
+
+@pytest.mark.parametrize("source", ["binding", "qsl"])
+def test_notification_binding_risk_boolean_and_integer_are_not_equal(original, notification_inputs, source):
+    binding, stores, hashes = notification_inputs
+    target = release.runtime_target(original)
+    target["live_continuity"]["typed_guard"] = True
+    release.env_map(original)["RUNTIME_TARGET_JSON"]["value"] = json.dumps(target)
+    binding["RUNTIME_TARGET_JSON"] = copy.deepcopy(target)
+    changed = copy.deepcopy(target)
+    changed["live_continuity"]["typed_guard"] = 1
+    if source == "binding":
+        binding["RUNTIME_TARGET_JSON"] = changed
+    else:
+        original["spec"]["containers"][0]["env"].append({"name": "QSL_RUNTIME_TARGET_JSON", "value": json.dumps(changed)})
+    with pytest.raises(release.ReleaseError):
+        release.prepare_notification_binding(original, binding, stores, hashes)
+
+
+@pytest.mark.parametrize("reference", [{}, None])
+def test_notification_binding_empty_reference_is_not_absence(original, notification_inputs, reference):
+    original["spec"]["containers"][0]["env"].append({"name": "QSL_RUNTIME_TARGET_JSON", "valueFrom": reference})
+    with pytest.raises(release.ReleaseError, match="reference_unresolved"):
+        release.prepare_notification_binding(original, *notification_inputs)
+
+
+def test_notification_binding_full_template_verification_preserves_json_types(original, notification_inputs):
+    binding, stores, _ = notification_inputs
+    updated, _, _ = release.prepare_notification_binding(original, *notification_inputs)
+    updated["spec"]["containerConcurrency"] = True
+    values = {k: binding[k] for k in release.NOTIFICATION_IDENTITY_KEYS} | stores
+    with pytest.raises(release.ReleaseError, match="other_template_field"):
+        release.verify_notification_binding_update(original, updated, values)
+
+
+@pytest.mark.parametrize("field", ["DIGEST_OPAQUE_ACCOUNT_UID", "DIGEST_TARGET_ID", "DIGEST_STORE_TARGET"])
+def test_notification_binding_rejects_wrong_identity_without_mutating(original, notification_inputs, field):
+    binding, stores, hashes = notification_inputs
+    frozen = copy.deepcopy(original)
+    binding[field] = "different"
+    with pytest.raises(release.ReleaseError):
+        release.prepare_notification_binding(original, binding, stores, hashes)
+    assert original == frozen
+
+
+@pytest.mark.parametrize("conflict", ["literal", "reference", "qsl-target", "qsl-reference", "risk", "store", "routing", "extra-key"])
+def test_notification_binding_rejects_conflicts_and_unapproved_inputs(original, notification_inputs, conflict):
+    binding, stores, hashes = notification_inputs
+    entries = original["spec"]["containers"][0]["env"]
+    if conflict == "literal":
+        entries.append({"name": "DIGEST_TARGET_ID", "value": "existing-other-account"})
+    elif conflict == "reference":
+        entries.append({"name": "DIGEST_TARGET_ID", "valueFrom": {"secretKeyRef": {"name": "fixture-private", "key": "latest"}}})
+    elif conflict == "qsl-target":
+        entries.append({"name": "QSL_RUNTIME_TARGET_JSON", "value": json.dumps({"different": True})})
+    elif conflict == "qsl-reference":
+        entries.append({"name": "QSL_RUNTIME_TARGET_JSON", "valueFrom": {"secretKeyRef": {"name": "fixture-private", "key": "latest"}}})
+    elif conflict == "risk":
+        binding["RUNTIME_TARGET_JSON"] = {**binding["RUNTIME_TARGET_JSON"], "live_continuity": {"different": True}}
+    elif conflict == "store":
+        stores["DIGEST_CANDIDATES_GCS_URI"] = "gs://synthetic-unapproved/other"
+    elif conflict == "routing":
+        next(x for x in entries if x["name"] == "IBKR_UNIFIED_NOTIFICATION_ENABLED")["value"] = "true"
+    else:
+        binding["TELEGRAM_TOKEN"] = "must-never-be-consumed"
+    frozen = copy.deepcopy(original)
+    with pytest.raises(release.ReleaseError):
+        release.prepare_notification_binding(original, binding, stores, hashes)
+    assert original == frozen
+
+
+@pytest.mark.parametrize("mutation", ["image", "risk", "ordinary", "reference", "metadata", "binding"])
+def test_notification_binding_verifier_rejects_unrelated_or_identity_drift(original, notification_inputs, mutation):
+    binding, stores, _ = notification_inputs
+    updated, _, _ = release.prepare_notification_binding(original, *notification_inputs)
+    values = {k: binding[k] for k in release.NOTIFICATION_IDENTITY_KEYS} | stores
+    if mutation == "image":
+        updated["spec"]["containers"][0]["image"] = IMAGE
+    elif mutation == "risk":
+        release.env_map(updated)["RUNTIME_TARGET_JSON"]["value"] = "{}"
+    elif mutation == "ordinary":
+        release.env_map(updated)["ORDINARY_SETTING"]["value"] = "changed"
+    elif mutation == "reference":
+        release.env_map(updated)["CREDENTIAL_REFERENCE"]["valueFrom"]["secretKeyRef"]["key"] = "new"
+    elif mutation == "metadata":
+        updated["metadata"]["annotations"]["run.googleapis.com/ingress"] = "all"
+    else:
+        release.env_map(updated)["DIGEST_TARGET_ID"]["value"] = "changed"
+    with pytest.raises(release.ReleaseError):
+        release.verify_notification_binding_update(original, updated, values)
+
+
+def binding_prepare_env() -> dict[str, str]:
+    return {**admitted_env(), "INPUT_NOTIFICATION_MARKER_MODE": "binding-prepare",
+            "INPUT_NOTIFICATION_ONLY": "false", "INPUT_APPROVE_MARKER_PROBE": "false",
+            "INPUT_SOURCE_COMMIT": release.COMBINED_SOURCE,
+            "INPUT_EXPECTED_SERVING_REVISION_SHA256": "a" * 64,
+            "INPUT_EXPECTED_FULL_TARGET_SHA256": "b" * 64,
+            "INPUT_EXPECTED_SERVICE_SPEC_SHA256": "c" * 64}
+
+
+@pytest.mark.parametrize("key,value", [
+    ("INPUT_NOTIFICATION_MARKER_MODE", "disabled"), ("INPUT_NOTIFICATION_ONLY", "true"),
+    ("INPUT_NOTIFICATION_READBACK_ONLY", "true"), ("INPUT_APPROVE_MARKER_PROBE", "true"),
+    ("INPUT_DEPLOY_IMAGE", "true"), ("INPUT_SYNC_ENV", "true"),
+    ("INPUT_APPROVE_TRAFFIC_SHIFT", "true"), ("INPUT_APPROVE_SCHEDULER_SYNC", "true"),
+    ("INPUT_SOURCE_COMMIT", release.SOURCE),
+    ("INPUT_EXPECTED_SERVING_REVISION_SHA256", ""), ("INPUT_EXPECTED_FULL_TARGET_SHA256", "x" * 64),
+    ("INPUT_EXPECTED_SERVICE_SPEC_SHA256", ""),
+    ("GITHUB_RUN_ATTEMPT", "2"), ("GCP_DEPLOY_SERVICE_ACCOUNT", "different"),
+])
+def test_binding_prepare_rejects_broader_or_stale_dispatch(key, value):
+    env = binding_prepare_env()
+    assert release.validate_binding_prepare_dispatch(env) == ("a" * 64, "b" * 64, "c" * 64)
+    env[key] = value
+    with pytest.raises(release.ReleaseError):
+        release.validate_binding_prepare_dispatch(env)
+
+
+def test_binding_prepare_selects_one_exact_target_and_no_global_fallback(original, notification_inputs):
+    binding, _, _ = notification_inputs
+    other = {**binding, "RUNTIME_TARGET_JSON": {"different": True}}
+    assert release.selected_notification_binding(json.dumps([other, binding])) == binding
+    with pytest.raises(release.ReleaseError, match="not_unique"):
+        release.selected_notification_binding(json.dumps([binding, binding]))
+    with pytest.raises(release.ReleaseError, match="not_unique"):
+        release.selected_notification_binding(json.dumps([other]))
+
+
+@pytest.fixture
+def binding_serving_snapshot(service, original, notification_inputs, monkeypatch):
+    binding, stores, hashes = notification_inputs
+    monkeypatch.setattr(release, "NOTIFICATION_STORE_HASHES", hashes)
+    monkeypatch.setattr(release, "SERVICE_HASH", release.sha(service["metadata"]["name"]))
+    service["metadata"]["generation"] = 9
+    service["status"] = {"observedGeneration": 9,
+                         "traffic": [{"revisionName": original["metadata"]["name"], "percent": 100}]}
+    service["spec"]["template"] = copy.deepcopy(original)
+    for item in (original, service["spec"]["template"]):
+        item["spec"]["containers"][0]["image"] = release.NOTIFICATION_SERVING_IMAGE
+        item["metadata"]["labels"]["commit-sha"] = release.COMBINED_SOURCE
+    original["status"] = {"conditions": [{"type": "Ready", "status": "True"}]}
+    revision_sha = release.sha(original["metadata"]["name"])
+    target_sha = release._digest(release.runtime_target(original))
+    service_spec_sha = release._digest(service["spec"])
+    return service, original, binding, stores, revision_sha, target_sha, service_spec_sha
+
+
+def test_binding_prepare_read_only_snapshot_exact_diff_and_idempotence(binding_serving_snapshot):
+    service, revision, binding, stores, revision_sha, target_sha, service_spec_sha = binding_serving_snapshot
+    frozen_service, frozen_revision = copy.deepcopy(service), copy.deepcopy(revision)
+    safe = release.prepare_binding_snapshot(service, revision, binding, stores, revision_sha, target_sha, service_spec_sha)
+    assert safe["status"] == "PREPARED_READ_ONLY" and safe["write_operations"] == 0
+    assert safe["service_reads"] == safe["revision_reads"] == 1 and "cloud_operations" not in safe
+    assert len(safe["changed_fields"]) == 5
+    assert safe["latest_follow_preserved"] and safe["current_traffic_percent"] == 100
+    assert service == frozen_service and revision == frozen_revision
+    assert "synthetic-uid" not in json.dumps(safe) and "gs://" not in json.dumps(safe)
+    installed, rollback, _ = release.prepare_notification_binding(revision, binding, stores, release.NOTIFICATION_STORE_HASHES)
+    service["spec"]["template"] = copy.deepcopy(installed)
+    safe_again = release.prepare_binding_snapshot(service, installed, binding, stores, revision_sha, target_sha,
+                                                  release._digest(service["spec"]))
+    assert safe_again["changed_fields"] == []
+    assert all(rollback[name] is None for name in release.NOTIFICATION_IDENTITY_KEYS + release.NOTIFICATION_STORE_KEYS)
+
+
+@pytest.mark.parametrize("change", ["generation", "revision", "image", "source", "traffic", "target", "qsl", "service"])
+def test_binding_prepare_rejects_changed_serving_baseline(binding_serving_snapshot, change):
+    service, revision, binding, stores, revision_sha, target_sha, service_spec_sha = binding_serving_snapshot
+    if change == "generation":
+        service["status"]["observedGeneration"] = 8
+    elif change == "revision":
+        revision_sha = "f" * 64
+    elif change == "image":
+        service["spec"]["template"]["spec"]["containers"][0]["image"] = release.BASE_IMAGE
+    elif change == "source":
+        revision["metadata"]["labels"]["commit-sha"] = "f" * 40
+    elif change == "traffic":
+        service["spec"]["traffic"] = [{"revisionName": revision["metadata"]["name"], "percent": 100}]
+    elif change == "target":
+        target_sha = "f" * 64
+    elif change == "service":
+        service["spec"]["template"]["spec"]["timeoutSeconds"] = 999
+    else:
+        service["spec"]["template"]["spec"]["containers"][0]["env"].append(
+            {"name": "QSL_RUNTIME_TARGET_JSON", "value": "{}"})
+    with pytest.raises(release.ReleaseError):
+        release.prepare_binding_snapshot(service, revision, binding, stores, revision_sha, target_sha,
+                                         service_spec_sha)
+
+
 @pytest.mark.parametrize("template_omits_ingress", [False, True])
 def test_ingress_service_scope_accepts_equal_revision_and_unchanged_service(service, original, template_omits_ingress):
     expected = release.candidate(service, original, IMAGE, "12345")
