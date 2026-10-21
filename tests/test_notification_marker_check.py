@@ -531,6 +531,9 @@ def test_readback_count_one_without_latest_uses_exact_job_and_safe_object_log_pr
     assert '/storage/v1/b/' + probe.BUCKET + '/o/' in session.calls[3][1]
     assert session.calls[4][1].endswith('/entries:list')
     assert 'resource.labels.location="us-central1"' in session.calls[4][2]['json']['filter']
+    assert 'log_id("run.googleapis.com/stdout")' in session.calls[4][2]['json']['filter']
+    assert 'jsonPayload.probe_id="' + control.NONCE + '"' in session.calls[4][2]['json']['filter']
+    assert 'textPayload:"' + control.NONCE + '"' in session.calls[4][2]['json']['filter']
     assert not any(url.endswith(':run') or 'jobId=' in url for _, url, _ in session.calls)
 
 
@@ -545,6 +548,31 @@ def test_readback_exact_object_absence_and_no_receipt_are_explicit():
     control.read_probe(session, report)
     assert report['synthetic_object'] == {'found': False}
     assert report['safe_probe_receipt_found'] is False
+
+
+def test_readback_scoped_stdout_text_receipt_is_sanitized():
+    name = control.JOB + '/executions/existing-one'
+    receipt = {'schema_version': 1, 'probe_id': control.NONCE, 'status': 'stop',
+               'reason': 'precondition_failed', 'http_status': 412,
+               'private': 'synthetic-private-value'}
+    session = Replies((200, {'entries': [{'textPayload': json.dumps(receipt)}]}))
+    report = {}
+    control.read_fixed_execution_receipt(session, report, name)
+    assert report['probe_receipt']['reason'] == 'precondition_failed'
+    assert 'synthetic-private-value' not in json.dumps(report)
+    log_filter = session.calls[0][2]['json']['filter']
+    assert 'resource.labels.job_name="' + control.JOB_ID + '"' in log_filter
+    assert 'log_id("run.googleapis.com/stdout")' in log_filter
+    assert 'textPayload:"' + control.NONCE + '"' in log_filter
+
+
+def test_readback_scoped_stdout_pagination_still_stops():
+    name = control.JOB + '/executions/existing-one'
+    session = Replies((200, {'entries': [], 'nextPageToken': 'private-next-page'}))
+    report = {}
+    with pytest.raises(control.Stop, match='safe_probe_receipt_page_incomplete'):
+        control.read_fixed_execution_receipt(session, report, name)
+    assert 'private-next-page' not in json.dumps(report)
 
 
 @pytest.mark.parametrize('listed', [

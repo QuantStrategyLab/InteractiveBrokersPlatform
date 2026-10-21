@@ -435,7 +435,11 @@ def read_fixed_execution_receipt(session, report, name):
     suffix = name.rsplit('/', 1)[1]
     entries = control_request(session, report, 'POST', 'https://logging.googleapis.com/v2/entries:list', body={
         'resourceNames': ['projects/' + PROJECT], 'pageSize': 10, 'orderBy': 'timestamp desc',
-        'filter': f'resource.type="cloud_run_job" AND resource.labels.location="{REGION}" AND resource.labels.job_name="{JOB_ID}" AND labels."run.googleapis.com/execution_name"="{suffix}"'},
+        'filter': (f'resource.type="cloud_run_job" AND resource.labels.location="{REGION}" '
+                   f'AND resource.labels.job_name="{JOB_ID}" '
+                   f'AND labels."run.googleapis.com/execution_name"="{suffix}" '
+                   f'AND log_id("run.googleapis.com/stdout") '
+                   f'AND (jsonPayload.probe_id="{NONCE}" OR textPayload:"{NONCE}")')},
         phase='exact_execution_safe_log_read_only')
     require(isinstance(entries.get('entries', []), list) and not entries.get('nextPageToken'),
             'safe_probe_receipt_page_incomplete')
