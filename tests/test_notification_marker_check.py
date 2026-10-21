@@ -277,6 +277,59 @@ def test_control_error_retains_only_status_and_approved_field_paths():
     assert len(session.calls) == 1
 
 
+@pytest.mark.parametrize('field', [
+    'job.template.annotations',
+    'job.template.template.containers[0].args[123]',
+    'job.template.template.containers[0].env[12].valueSource.secretKeyRef.version',
+    'job.template.template.vpc_access.network_interfaces[12].subnetwork',
+    'template.template.containers[0].resources.limits',
+    'job.template.template.containers[0].resources.limits[cpu]',
+    'job.annotations.qsl.dev/probe-code-sha256',
+    'job.annotations[qsl.dev/probe-code-sha256]',
+])
+def test_control_error_keeps_complete_schema_paths_without_preset_field_list(field):
+    safe = control.control_error_projection({'code': 400, 'status': 'INVALID_ARGUMENT',
+        'message': 'Invalid value: synthetic-private-token',
+        'details': [{'@type': 'type.googleapis.com/google.rpc.BadRequest', 'fieldViolations': [
+            {'field': field, 'description': 'Invalid value: synthetic-private-selector'}]}]})
+    assert safe['bad_request_fields'] == [field]
+    assert safe['bad_request_violations'] == [{'field': field, 'category': 'invalid_value'}]
+    assert safe['unlisted_field_violations'] == 0
+    assert 'synthetic-private' not in json.dumps(safe)
+
+
+@pytest.mark.parametrize('field', [
+    'job..template', 'job.template[-1]', 'job.template[1000000]',
+    'job.template["synthetic-private-token"]',
+    'job.template\nsynthetic-private-token', 'job.template=synthetic-private-token',
+    'https://synthetic-private-token', 'job.' + 'a' * 65, 'job.' + 'a.' * 256 + 'x',
+    None, 123, True,
+])
+def test_control_error_rejects_values_and_unbounded_paths(field):
+    safe = control.control_error_projection({'code': 400, 'status': 'INVALID_ARGUMENT',
+        'details': [{'@type': 'type.googleapis.com/google.rpc.BadRequest', 'fieldViolations': [
+            {'field': field, 'description': 'synthetic-private-token'}]}]})
+    assert safe['bad_request_fields'] == []
+    assert safe['unlisted_field_violations'] == 1
+    assert 'synthetic-private' not in json.dumps(safe)
+
+
+def test_control_error_categorizes_server_constraint_without_exporting_request_values():
+    safe = control.control_error_projection({'code': 400, 'status': 'INVALID_ARGUMENT',
+        'message': 'Name must be at most 49 characters: synthetic-private-resource',
+        'details': [{'@type': 'type.googleapis.com/google.rpc.BadRequest', 'fieldViolations': [
+            {'field': 'job.name', 'description': 'Name length exceeds maximum: synthetic-private-value'},
+            {'field': 'job.template.annotations', 'description': 'unsupported field: synthetic-private-value'}]},
+            {'@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+             'reason': 'SYNTHETIC_PRIVATE_TOKEN', 'metadata': {'value': 'synthetic-private-value'}}]})
+    assert safe['error_category'] == 'maximum_length_exceeded'
+    assert safe['bad_request_violations'] == [
+        {'field': 'job.name', 'category': 'maximum_length_exceeded'},
+        {'field': 'job.template.annotations', 'category': 'unsupported_field'}]
+    assert 'synthetic-private' not in json.dumps(safe).lower()
+    assert 'synthetic_private' not in json.dumps(safe).lower()
+
+
 @pytest.mark.parametrize('status,code,sdk', [(404.0, 404, 'NOT_FOUND'), (404, 404.0, 'NOT_FOUND'),
     (404, '404', 'NOT_FOUND'), (403, 403, 'PERMISSION_DENIED'), (404, 404, 'UNKNOWN')])
 def test_readback_denial_or_unproved_absence_stops_after_one_get(status, code, sdk):

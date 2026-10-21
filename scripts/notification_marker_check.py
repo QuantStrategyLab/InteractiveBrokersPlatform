@@ -191,14 +191,29 @@ def control_error_projection(error):
     code, state = error.get('code'), error.get('status')
     safe = {'sdk_code': code if type(code) is int and 0 <= code <= 599 else None,
             'sdk_status': state if isinstance(state, str) and state in states else 'UNKNOWN'}
-    fixed_fields = {'name', 'jobId', 'parent', 'annotations', 'annotations.qsl.dev/probe-code-sha256',
-                    'template', 'template.taskCount', 'template.parallelism', 'template.template',
-                    'template.template.serviceAccount', 'template.template.maxRetries', 'template.template.timeout',
-                    'template.template.containers', 'template.template.containers[0]',
-                    'template.template.containers[0].image', 'template.template.containers[0].command',
-                    'template.template.containers[0].args', 'template.template.containers[0].resources',
-                    'template.template.containers[0].resources.limits.cpu', 'template.template.containers[0].resources.limits.memory'}
-    fields, unlisted = set(), 0
+    def category(text):
+        # Classify in memory; never export the server's request-value-bearing text.
+        text = text[:4096].lower() if isinstance(text, str) else ''
+        if re.search(r'length|characters|bytes', text) and re.search(r'at most|maximum|too long|exceeds|no more than', text):
+            return 'maximum_length_exceeded'
+        if re.search(r'unsupported|not supported|unknown field|unrecognized field', text):
+            return 'unsupported_field'
+        if re.search(r'required|must be provided|missing field', text):
+            return 'required_field'
+        if re.search(r'out of range|must be between', text):
+            return 'value_out_of_range'
+        if re.search(r'invalid format|must match|malformed', text):
+            return 'invalid_format'
+        if re.search(r'invalid value|not a valid', text):
+            return 'invalid_value'
+        return safe['sdk_status'].lower()
+    safe['error_category'] = category(error.get('message'))
+    # Accept schema key/index syntax rather than a preset list of field names.
+    # Quoted map values, whitespace, URLs and assignment text cannot pass.
+    key = r'[A-Za-z_][A-Za-z0-9_]{0,63}'
+    path_pattern = key + rf'(?:\.{key}|\[(?:[0-9]{{1,6}}|{key})\])*'
+    fixed_annotation = {'annotations.qsl.dev/probe-code-sha256', 'annotations[qsl.dev/probe-code-sha256]'}
+    fields, categorized, unlisted = set(), set(), 0
     details = error.get('details')
     for detail in details[:10] if isinstance(details, list) else []:
         if not isinstance(detail, dict) or detail.get('@type') != 'type.googleapis.com/google.rpc.BadRequest':
@@ -207,12 +222,15 @@ def control_error_projection(error):
         for violation in violations[:32] if isinstance(violations, list) else []:
             field = violation.get('field') if isinstance(violation, dict) else None
             path = field.removeprefix('job.') if isinstance(field, str) else ''
-            if path in fixed_fields or re.fullmatch(r'template\.template\.containers\[0\]\.(?:args\[[0-3]\]|command\[0\])', path):
+            if isinstance(field, str) and 1 <= len(field) <= 512 and (
+                    re.fullmatch(path_pattern, field) or path in fixed_annotation):
                 fields.add(field)
+                categorized.add((field, category(violation.get('description'))))
             else:
                 unlisted += 1
     if fields or unlisted:
-        safe.update(bad_request_fields=sorted(fields), unlisted_field_violations=unlisted)
+        safe.update(bad_request_fields=sorted(fields), unlisted_field_violations=unlisted,
+                    bad_request_violations=[{'field': field, 'category': kind} for field, kind in sorted(categorized)])
     return safe
 
 
