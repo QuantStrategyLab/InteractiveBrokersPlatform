@@ -13,6 +13,7 @@ from notifications.digest_snapshot.unified_contract import (
     CandidatePersistenceError, IncidentTracker, NotificationEvent,
     effective_notification_mode, route_notification_event, unified_notification_enabled,
 )
+from notifications.routine_observations import account_alias as display_account_alias, routine_decisions
 
 FLAG = "IBKR_UNIFIED_NOTIFICATION_ENABLED"
 _RUN = ContextVar("ibkr_notification_run", default=None)
@@ -107,7 +108,8 @@ def _state_store(env=None):
     return GCSMarkerStore(values.get("IBKR_NOTIFICATION_MARKER_GCS_URI", ""))
 
 
-def persist_candidate(fact, *, actually_ran=True, dry_run=False, state_store=None, candidate_store=None, env=None, block_reason=None):
+def persist_candidate(fact, *, actually_ran=True, dry_run=False, state_store=None, candidate_store=None, env=None,
+                      block_reason=None, display_alias="", decisions=()):
     """Persist event/run identity and bridge the existing candidate producer."""
     from scripts.project_digest_candidates import project_notification_events
     if actually_ran is not True:
@@ -125,12 +127,19 @@ def persist_candidate(fact, *, actually_ran=True, dry_run=False, state_store=Non
     record = {"event": fact, "actually_ran": actually_ran, "dry_run": dry_run}
     if block_reason:
         record["block_reason"] = block_reason
+    alias = display_account_alias({"DIGEST_ACCOUNT_ALIAS": display_alias})
+    observations = routine_decisions({"notification_routine_decisions": decisions})
+    if alias:
+        record["account_alias"] = alias
+    if observations:
+        record["routine_decisions"] = observations
     for _ in range(8):
         version, old = state_store.read(key)
         old = old or {"revision": 0, "events": {}}
         events = dict(old["events"])
         prior = events.get(fact["dedupe_key"])
         if prior is not None:
+            incoming = record
             # Observation time may change across monitors; never replace facts
             # from the same run or lose an earlier abnormal observation.
             count_fields = ("order_count", "fill_count")
@@ -149,6 +158,19 @@ def persist_candidate(fact, *, actually_ran=True, dry_run=False, state_store=Non
                 record = {**prior, "event": merged,
                           **({"conflict": True} if conflict else {}),
                           **({"block_reason": block_reason} if block_reason else {})}
+            # Display conflicts hide only the disputed observation. They never
+            # manufacture an execution/count conflict or change the event kind.
+            display_conflicts = set(prior.get("_display_conflicts", ())) & {"account_alias", "routine_decisions"}
+            for name in ("account_alias", "routine_decisions"):
+                if incoming.get(name):
+                    if prior.get(name) and prior[name] != incoming[name]:
+                        display_conflicts.add(name)
+                    elif name not in display_conflicts:
+                        record[name] = incoming[name]
+            for name in display_conflicts:
+                record.pop(name, None)
+            if display_conflicts:
+                record["_display_conflicts"] = sorted(display_conflicts)
         events[fact["dedupe_key"]] = record
         changed = events != old["events"]
         value = {"revision": old["revision"] + int(changed), "events": events}
@@ -179,8 +201,10 @@ def _identity(target=None):
                 matched.append(binding)
         if len(matched) == 1:
             values.update(matched[0])
+            if "DIGEST_ACCOUNT_ALIAS" not in matched[0]:
+                values.pop("DIGEST_ACCOUNT_ALIAS", None)
         elif matched or not matches(configured):
-            for key in ("DIGEST_OPAQUE_ACCOUNT_UID", "DIGEST_TARGET_ID", "IBKR_DIGEST_OPAQUE_ACCOUNT_UID", "IBKR_DIGEST_TARGET_ID"):
+            for key in ("DIGEST_OPAQUE_ACCOUNT_UID", "DIGEST_TARGET_ID", "IBKR_DIGEST_OPAQUE_ACCOUNT_UID", "IBKR_DIGEST_TARGET_ID", "DIGEST_ACCOUNT_ALIAS"):
                 values.pop(key, None)
     return {
         "platform_id": "ibkr", "opaque_account_uid": values.get("DIGEST_OPAQUE_ACCOUNT_UID") or values.get("IBKR_DIGEST_OPAQUE_ACCOUNT_UID"),
@@ -357,10 +381,12 @@ def publish_cycle(publisher, *, notification, execution, attention=False):
         if kind in {"order_submitted", "fill"}:
             return publisher.publish(notification)  # Real orders/fills retain their immediate sender.
         return send_incident(event, lambda: publisher.publish(notification), family="cycle")
+    _, display_values = _identity(report.get("runtime_target"))
     try:
         result = route_notification_event(
             event, env=os.environ, flag_key=FLAG,
-            persist_candidate=lambda fact: _checked_candidate(fact, actually_ran=True, dry_run=dry_run),
+            persist_candidate=lambda fact: _checked_candidate(fact, actually_ran=True, dry_run=dry_run,
+                display_alias=display_account_alias(display_values), decisions=routine_decisions(execution)),
             legacy=lambda: publisher.publish(notification), immediate=immediate,
         )
     except CandidatePersistenceError:
@@ -451,7 +477,8 @@ def publish_monitor(*, kind, send, report=None, target=None, now=None, family="r
     result = route_notification_event(
         event, env=os.environ, flag_key=FLAG,
         persist_candidate=lambda fact: _checked_candidate(fact, actually_ran=report is not None,
-            dry_run=source.get("dry_run") is True, env=values),
+            dry_run=source.get("dry_run") is True, env=values,
+            display_alias=display_account_alias(values), decisions=routine_decisions(source.get("summary") or {})),
         legacy=send, immediate=immediate,
     )
     if not result.candidate_persisted:
@@ -554,6 +581,7 @@ def persist_archived_reports(reports, env, *, now=None):
             return attach_execution_receipt(dict(source), source.get("execution_receipt"))["execution_receipt"]
         block_reason = _latest_notification_block_reason([report], validate_receipt)
         if not _checked_candidate(event.to_candidate(), env=env, actually_ran=True,
-                                  dry_run=report["dry_run"], block_reason=block_reason):
+                                  dry_run=report["dry_run"], block_reason=block_reason,
+                                  display_alias=display_account_alias(env), decisions=routine_decisions(summary)):
             raise CandidatePersistenceError("notification_candidate_write_unconfirmed")
     return {"status": "projected", "uploaded": True, "runs": len(reports)}

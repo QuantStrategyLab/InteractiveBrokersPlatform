@@ -4,6 +4,7 @@ import importlib
 import io
 import json
 import sys
+from datetime import datetime, timezone
 from types import SimpleNamespace
 import pytest
 from tests.test_notification_qrs_roundtrip import qrs as _qrs_fixture, archive_report, export_archive, intake
@@ -34,6 +35,12 @@ def test_actual_producer_to_final_qrs_delivery_receipt(qrs, monkeypatch, tmp_pat
     monkeypatch.setitem(sys.modules, 'credential_maintenance_notify', transport)
     sender = importlib.import_module('send_daily_digest_telegram')
     guard = sender.resend_guard
+    class FixtureClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 10, 17, 0, 17, tzinfo=timezone.utc)
+            return value.astimezone(tz) if tz is not None else value.replace(tzinfo=None)
+    monkeypatch.setattr(guard, 'datetime', FixtureClock)
     monkeypatch.setattr(guard, 'report_date', lambda: '2026-10-17')
     monkeypatch.setattr(guard, 'read_history', lambda *a, **kw: [])
     monkeypatch.setenv('GITHUB_ACTIONS', 'true')

@@ -1118,6 +1118,10 @@ def _build_cycle_report_summary(cycle_result, execution_summary, reconciliation_
         summary["account_facts"] = cycle_result.account_facts
     if quote_snapshot:
         summary["quote_snapshot"] = quote_snapshot
+    from notifications.routine_observations import routine_decisions
+    observations = routine_decisions(execution_summary)
+    if observations:
+        summary["notification_routine_decisions"] = observations
     from notifications.unified_adapter import enabled as unified_enabled
     if unified_enabled():
         from notifications.digest_snapshot.digest_candidates import summary_evidence
