@@ -9,9 +9,9 @@ import pytest
 from application import execution_service
 from notifications import unified_adapter as adapter
 from notifications.routine_observations import account_alias, minimum_notional_decision, routine_decisions
-from test_execution_service import OrderIntent, _signal_metadata, execute_rebalance, translate
-from test_unified_notification_adapter import cycle, event, healthy_receipt_report, report, TARGET, NOW
-from test_unified_notification_adapter import routing as routing
+from tests.test_execution_service import OrderIntent, _signal_metadata, execute_rebalance, translate
+from tests.test_unified_notification_adapter import cycle, event, healthy_receipt_report, report, TARGET, NOW
+from tests.test_unified_notification_adapter import routing as routing
 
 
 @pytest.fixture(autouse=True)
