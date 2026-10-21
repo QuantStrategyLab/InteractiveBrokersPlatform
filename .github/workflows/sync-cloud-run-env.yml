@@ -3,6 +3,20 @@ name: Deploy Cloud Run
 on:
   workflow_dispatch:
     inputs:
+      notification_marker_mode:
+        description: "Isolated notification business-binding read or retained synthetic marker Job; all deployment controls must be false."
+        required: true
+        type: choice
+        default: disabled
+        options:
+          - disabled
+          - binding-read
+          - execute-probe
+      approve_marker_probe:
+        description: "Separate approval for exactly one retained synthetic Job/object; never cleanup or production changes."
+        required: true
+        type: boolean
+        default: false
       notification_only:
         description: "Build the fixed reviewed notification overlay (deploy_image=true) or reuse the qualified image (false); sync/traffic/scheduler remain false."
         required: true
@@ -82,6 +96,8 @@ jobs:
       id-token: write
     uses: ./.github/workflows/sync-cloud-run-env-protected.yml
     with:
+      notification_marker_mode: ${{ inputs.notification_marker_mode }}
+      approve_marker_probe: ${{ inputs.approve_marker_probe }}
       notification_only: ${{ inputs.notification_only }}
       notification_readback_only: ${{ inputs.notification_readback_only }}
       target: ${{ inputs.target }}
@@ -107,3 +123,8 @@ jobs:
       STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN: ${{ secrets.STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN }}
       TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
       TG_TOKEN: ${{ secrets.TG_TOKEN }}
+      DIGEST_TARGET_BINDINGS_JSON: ${{ secrets.DIGEST_TARGET_BINDINGS_JSON }}
+      DIGEST_OPAQUE_ACCOUNT_UID: ${{ secrets.DIGEST_OPAQUE_ACCOUNT_UID }}
+      DIGEST_TARGET_ID: ${{ secrets.DIGEST_TARGET_ID }}
+      IBKR_DIGEST_OPAQUE_ACCOUNT_UID: ${{ secrets.IBKR_DIGEST_OPAQUE_ACCOUNT_UID }}
+      IBKR_DIGEST_TARGET_ID: ${{ secrets.IBKR_DIGEST_TARGET_ID }}
