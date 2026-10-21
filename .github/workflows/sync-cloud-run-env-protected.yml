@@ -1874,7 +1874,7 @@ jobs:
 
   notification-marker-probe:
     name: Fixed synthetic marker Job control
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && ((inputs.notification_marker_mode == 'execute-probe' && inputs.approve_marker_probe == true) || (inputs.notification_marker_mode == 'probe-readback' && inputs.approve_marker_probe == false))
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && ((inputs.notification_marker_mode == 'execute-probe' && inputs.approve_marker_probe == true) || ((inputs.notification_marker_mode == 'probe-readback' || inputs.notification_marker_mode == 'probe-validate-only') && inputs.approve_marker_probe == false))
     runs-on: ubuntu-latest
     timeout-minutes: 6
     permissions:
@@ -1930,6 +1930,9 @@ jobs:
       - name: Read fixed nonce Job status only
         if: inputs.notification_marker_mode == 'probe-readback'
         run: python3 -m scripts.notification_marker_check --mode probe-readback --report "${RUNNER_TEMP}/notification-marker.safe.json"
+      - name: Validate original fixed Job request without creating resources
+        if: inputs.notification_marker_mode == 'probe-validate-only'
+        run: python3 -m scripts.notification_marker_check --mode probe-validate-only --report "${RUNNER_TEMP}/notification-marker.safe.json"
       - name: Preserve synthetic receipt only
         if: always()
         uses: actions/upload-artifact@v4

@@ -393,7 +393,7 @@ def test_workflow_isolation_and_no_private_projection_artifact():
     assert 'notification_marker_mode' in (ROOT / '.github/workflows/sync-cloud-run-env.yml').read_text()
 
 
-@pytest.mark.parametrize('mode', ['binding-read', 'execute-probe', 'probe-readback', 'unknown-mode'])
+@pytest.mark.parametrize('mode', ['binding-read', 'execute-probe', 'probe-readback', 'probe-validate-only', 'unknown-mode'])
 def test_isolated_or_unknown_mode_never_starts_lifecycle(mode):
     wrapper = (ROOT / '.github/workflows/sync-cloud-run-env.yml').read_text()
     expression = wrapper.split('run-name: ${{ ', 1)[1].split(' }}', 1)[0]
@@ -421,3 +421,82 @@ def test_workflow_readback_step_cannot_select_execute_command():
     assert "if: inputs.notification_marker_mode == 'execute-probe'" in create
     assert "if: inputs.notification_marker_mode == 'probe-readback'" in read
     assert '--mode probe-readback' in read and '--mode execute-probe' not in read
+
+
+class ValidationSession:
+    def __init__(self, *, failure=None, existing=False, pending=False):
+        self.calls = []
+        self.failure, self.existing, self.pending = failure, existing, pending
+    def request(self, method, url, json=None, **kwargs):
+        self.calls.append((method, url, copy.deepcopy(json)))
+        if method == 'GET':
+            if self.existing:
+                return Session.response(200, {'name': control.JOB})
+            return Session.response(404, {'error': {'code': 404, 'status': 'NOT_FOUND'}})
+        assert url.endswith('/jobs?jobId=' + control.JOB_ID + '&validateOnly=true')
+        if self.failure:
+            return Session.response(self.failure, {'error': {'code': self.failure, 'status':
+                'PERMISSION_DENIED' if self.failure == 403 else 'INVALID_ARGUMENT',
+                'message': 'synthetic-private-token', 'details': [{'@type': 'type.googleapis.com/google.rpc.BadRequest',
+                    'fieldViolations': [{'field': 'job.template.template.containers[0].args[3]',
+                                         'description': 'synthetic-private-token'}]}]}})
+        return Session.response(200, {'name': control.PARENT + '/operations/synthetic-validation',
+                                     'done': not self.pending, 'response': {}})
+
+
+def test_validation_only_posts_same_frozen_body_once_and_never_runs():
+    session, report = ValidationSession(), {}
+    control.validate_probe(session, report)
+    assert report['status'] == 'validated_only_job_absent'
+    assert report['request_body_sha256'] == '0417a4f6a65cef88a2c29b5b113f1f5a935d1a7a364bdb249f73b5be9aa4a1fe'
+    assert [x[0] for x in session.calls] == ['GET', 'POST', 'GET']
+    assert session.calls[1][2] == control.job_body()
+    assert all(':run' not in x[1] for x in session.calls)
+    assert report['execution_submissions'] == 0
+
+
+@pytest.mark.parametrize('failure', [400, 403])
+def test_validation_rejection_stops_without_retry_and_keeps_safe_detail(failure):
+    session, report = ValidationSession(failure=failure), {}
+    with pytest.raises(control.Stop):
+        control.validate_probe(session, report)
+    assert [x[0] for x in session.calls] == ['GET', 'POST']
+    assert report['requests'][-1]['http_status'] == failure
+    assert report['requests'][-1]['bad_request_fields'] == ['job.template.template.containers[0].args[3]']
+    assert 'synthetic-private-token' not in json.dumps(report)
+
+
+def test_validation_existing_job_or_changed_body_or_pending_stops(monkeypatch):
+    existing = ValidationSession(existing=True)
+    with pytest.raises(control.Stop, match='job_already_exists'):
+        control.validate_probe(existing, {})
+    assert [x[0] for x in existing.calls] == ['GET']
+    pending = ValidationSession(pending=True)
+    with pytest.raises(control.Stop, match='validation_completion_unknown'):
+        control.validate_probe(pending, {})
+    assert [x[0] for x in pending.calls] == ['GET', 'POST']
+    monkeypatch.setattr(control, 'job_body', lambda: {'changed': True})
+    changed = ValidationSession()
+    with pytest.raises(control.Stop, match='original_job_body_changed'):
+        control.validate_probe(changed, {})
+    assert [x[0] for x in changed.calls] == ['GET']
+
+
+def test_validation_dispatch_requires_original_identity_and_no_execution_approval():
+    env = admitted('probe-validate-only')
+    assert control.validate_dispatch('probe-validate-only', env) == 'a' * 40
+    env['INPUT_APPROVE_MARKER_PROBE'] = 'true'
+    with pytest.raises(control.Stop):
+        control.validate_dispatch('probe-validate-only', env)
+    env = admitted('probe-validate-only')
+    env['GCP_RUNTIME_SERVICE_ACCOUNT'] = 'synthetic-other'
+    with pytest.raises(control.Stop):
+        control.validate_dispatch('probe-validate-only', env)
+
+
+def test_workflow_validation_step_is_independent_of_execute_and_readback():
+    source = (ROOT / '.github/workflows/sync-cloud-run-env-protected.yml').read_text()
+    validate = source.split('      - name: Validate original fixed Job request without creating resources\n')[1].split('      - name: Preserve synthetic receipt only\n')[0]
+    assert "if: inputs.notification_marker_mode == 'probe-validate-only'" in validate
+    assert '--mode probe-validate-only' in validate
+    assert '--mode execute-probe' not in validate and '--mode probe-readback' not in validate
