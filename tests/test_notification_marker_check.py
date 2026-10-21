@@ -308,3 +308,24 @@ def test_workflow_isolation_and_no_private_projection_artifact():
     assert 'path: ${{ runner.temp }}/notification-binding.safe.json' in read
     assert 'path: ${{ runner.temp }}/notification-binding.private.json' not in read
     assert 'notification_marker_mode' in (ROOT / '.github/workflows/sync-cloud-run-env.yml').read_text()
+
+
+@pytest.mark.parametrize('mode', ['binding-read', 'execute-probe', 'unknown-mode'])
+def test_isolated_or_unknown_mode_never_starts_lifecycle(mode):
+    wrapper = (ROOT / '.github/workflows/sync-cloud-run-env.yml').read_text()
+    expression = wrapper.split('run-name: ${{ ', 1)[1].split(' }}', 1)[0]
+    title = eval(expression.replace('inputs.notification_marker_mode', repr(mode))
+                 .replace('&&', 'and').replace('||', 'or'), {'__builtins__': {}})
+    lifecycle = (ROOT / '.github/workflows/runtime-target-lifecycle.yml').read_text()
+    condition = lifecycle.split('    if: ', 1)[1].splitlines()[0]
+    def admitted(event, display_title):
+        return eval(condition.replace('github.event_name', repr(event))
+                    .replace('github.event.workflow_run.display_title', repr(display_title))
+                    .replace('||', 'or'), {'__builtins__': {}})
+    # Both probe approval values use the same title: it is independent of
+    # approval and no skipped/failed check can enable the downstream jobs.
+    assert title == 'Notification check (isolated)'
+    assert not admitted('workflow_run', title)
+    assert not admitted('workflow_run', '')
+    assert admitted('workflow_run', 'Deploy Cloud Run')
+    assert admitted('schedule', '') and admitted('workflow_dispatch', '')

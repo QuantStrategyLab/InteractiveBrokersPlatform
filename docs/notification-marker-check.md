@@ -8,6 +8,10 @@ main, attempt 1, the exact controller commit in `source_commit`, configured
 target, and all image/env/traffic/Scheduler/old-notification controls false.
 Unknown modes cannot select a deployment job. Existing callers without the new
 mode retain their original behavior.
+All nonempty, non-disabled modes receive the fixed isolated run title. The
+existing lifecycle follow-up admits only the ordinary deployment title, so an
+isolated, failed, skipped or unknown-mode run cannot start its inventory jobs.
+Direct and scheduled lifecycle runs keep their existing behavior.
 
 The binding read accepts only the approved TQQQ target fingerprint and its
 original profile/mode. It selects one complete matching binding, or globals

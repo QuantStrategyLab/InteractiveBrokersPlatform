@@ -1,4 +1,5 @@
 name: Deploy Cloud Run
+run-name: ${{ inputs.notification_marker_mode != '' && inputs.notification_marker_mode != 'disabled' && 'Notification check (isolated)' || 'Deploy Cloud Run' }}
 
 on:
   workflow_dispatch:
