@@ -208,29 +208,104 @@ def control_error_projection(error):
             return 'invalid_value'
         return safe['sdk_status'].lower()
     safe['error_category'] = category(error.get('message'))
-    # Accept schema key/index syntax rather than a preset list of field names.
-    # Quoted map values, whitespace, URLs and assignment text cannot pass.
+    safe['message_truncated'] = isinstance(error.get('message'), str) and len(error['message']) > 4096
+    # Only this fixed request's known schema and static map keys may be public.
+    schema = {'job', 'job.name', 'job.annotations', 'job.labels',
+              'job.annotations[qsl.dev/probe-code-sha256]', 'job.template',
+              'job.template.annotations', 'job.template.labels', 'job.template.taskCount',
+              'job.template.parallelism', 'job.template.template',
+              'job.template.template.serviceAccount', 'job.template.template.maxRetries',
+              'job.template.template.timeout', 'job.template.template.containers',
+              'job.template.template.containers[]', 'job.template.template.containers[].image',
+              'job.template.template.containers[].command', 'job.template.template.containers[].command[]',
+              'job.template.template.containers[].args', 'job.template.template.containers[].args[]',
+              'job.template.template.containers[].resources', 'job.template.template.containers[].resources.limits',
+              'job.template.template.containers[].resources.limits.cpu',
+              'job.template.template.containers[].resources.limits.memory', 'parent', 'jobId'}
+    aliases = {'task_count': 'taskCount', 'service_account': 'serviceAccount',
+               'max_retries': 'maxRetries', 'job_id': 'jobId'}
     key = r'[A-Za-z_][A-Za-z0-9_]{0,63}'
     path_pattern = key + rf'(?:\.{key}|\[(?:[0-9]{{1,6}}|{key})\])*'
-    fixed_annotation = {'annotations.qsl.dev/probe-code-sha256', 'annotations[qsl.dev/probe-code-sha256]'}
-    fields, categorized, unlisted = set(), set(), 0
-    details = error.get('details')
-    for detail in details[:10] if isinstance(details, list) else []:
+    absent = object()
+    def json_type(value):
+        if value is absent:
+            return 'missing'
+        return {type(None): 'null', bool: 'boolean', int: 'integer', float: 'number',
+                str: 'string', list: 'array', dict: 'object'}.get(type(value), 'other')
+    def public_path(value):
+        path = re.sub(key, lambda m: aliases.get(m[0], m[0]), value)
+        path = path if path.startswith('job.') or path in {'job', 'parent', 'jobId'} else 'job.' + path
+        annotation = 'qsl.dev/probe-code-sha256'
+        if path in {'job.annotations.' + annotation, 'job.annotations[' + annotation + ']',
+                    'job.annotations["' + annotation + '"]', "job.annotations['" + annotation + "']"}:
+            path = 'job.annotations[' + annotation + ']'
+        for name in ('cpu', 'memory'):
+            for quoted in (name, '"' + name + '"', "'" + name + "'"):
+                path = path.replace('.limits[' + quoted + ']', '.limits.' + name)
+        def normalize(p):
+            return re.sub(r'\[[0-9]{1,6}\]', '[]', p)
+        prefixes = [path[:m.start()] for m in re.finditer(r'[.\[]', path)] + [path]
+        parents = [p for p in prefixes if normalize(p) in schema]
+        parent = max(parents, key=len) if parents else None
+        if normalize(path) in schema:
+            return path, parent, 'accepted'
+        state = 'unknown_schema' if re.fullmatch(path_pattern, path) else 'syntax_rejected'
+        return None, parent, state
+    fields, categorized, diagnostics, unlisted = set(), set(), [], 0
+    details = error.get('details', absent)
+    scan = {'details_state': json_type(details), 'details_total': len(details) if isinstance(details, list) else None,
+            'details_seen': 0, 'details_truncated_count': max(0, len(details) - 10) if isinstance(details, list) else 0,
+            'violations_total_in_seen_details': 0, 'violations_seen': 0,
+            'violations_truncated_in_seen_details': 0, 'detail_shapes': []}
+    for di, detail in enumerate(details[:10] if isinstance(details, list) else []):
+        scan['details_seen'] += 1
         if not isinstance(detail, dict) or detail.get('@type') != 'type.googleapis.com/google.rpc.BadRequest':
+            scan['detail_shapes'].append({'detail_index': di, 'state': 'non_object' if not isinstance(detail, dict)
+                                         else 'other_detail_type', 'type': json_type(detail)})
             continue
-        violations = detail.get('fieldViolations')
-        for violation in violations[:32] if isinstance(violations, list) else []:
-            field = violation.get('field') if isinstance(violation, dict) else None
-            path = field.removeprefix('job.') if isinstance(field, str) else ''
-            if isinstance(field, str) and 1 <= len(field) <= 512 and (
-                    re.fullmatch(path_pattern, field) or path in fixed_annotation):
-                fields.add(field)
-                categorized.add((field, category(violation.get('description'))))
+        violations = detail.get('fieldViolations', absent)
+        if not isinstance(violations, list):
+            scan['detail_shapes'].append({'detail_index': di, 'state': 'field_violations_not_array',
+                                         'type': json_type(violations)})
+            continue
+        scan['violations_total_in_seen_details'] += len(violations)
+        scan['violations_truncated_in_seen_details'] += max(0, len(violations) - 32)
+        for vi, violation in enumerate(violations[:32]):
+            scan['violations_seen'] += 1
+            field = violation.get('field', absent) if isinstance(violation, dict) else absent
+            description = violation.get('description') if isinstance(violation, dict) else None
+            row = {'detail_index': di, 'violation_index': vi, 'category': category(description),
+                   'violation_type': json_type(violation),
+                   'field_type': json_type(field), 'field_length': len(field) if isinstance(field, str) else None,
+                   'description_truncated': isinstance(description, str) and len(description) > 4096}
+            path, parent = None, None
+            if not isinstance(violation, dict):
+                state = 'violation_not_object'
+            elif field is absent or field is None:
+                state = json_type(field)
+            elif not isinstance(field, str):
+                state = 'non_string'
+            elif not field:
+                state = 'empty'
+            elif len(field) > 512:
+                state = 'too_long'
+            else:
+                path, parent, state = public_path(field)
+            row.update(field_state=state, known_parent=parent)
+            if path is not None:
+                row['field'] = path
+                fields.add(path)
+                categorized.add((path, row['category']))
             else:
                 unlisted += 1
-    if fields or unlisted:
+            diagnostics.append(row)
+    scan['incomplete'] = bool(scan['details_truncated_count'] or scan['violations_truncated_in_seen_details']
+                              or scan['detail_shapes'] or json_type(details) not in {'array', 'missing'})
+    safe['bad_request_scan'] = scan
+    if diagnostics:
         safe.update(bad_request_fields=sorted(fields), unlisted_field_violations=unlisted,
-                    bad_request_violations=[{'field': field, 'category': kind} for field, kind in sorted(categorized)])
+                    bad_request_violations=[{'field': field, 'category': kind} for field, kind in sorted(categorized)],
+                    field_violation_diagnostics=diagnostics)
     return safe
 
 

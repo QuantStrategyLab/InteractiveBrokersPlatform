@@ -277,23 +277,26 @@ def test_control_error_retains_only_status_and_approved_field_paths():
     assert len(session.calls) == 1
 
 
-@pytest.mark.parametrize('field', [
-    'job.template.annotations',
-    'job.template.template.containers[0].args[123]',
-    'job.template.template.containers[0].env[12].valueSource.secretKeyRef.version',
-    'job.template.template.vpc_access.network_interfaces[12].subnetwork',
-    'template.template.containers[0].resources.limits',
-    'job.template.template.containers[0].resources.limits[cpu]',
-    'job.annotations.qsl.dev/probe-code-sha256',
-    'job.annotations[qsl.dev/probe-code-sha256]',
+@pytest.mark.parametrize('field,canonical', [
+    ('job.template.annotations', 'job.template.annotations'),
+    ('job.template.template.containers[0].args[123]', 'job.template.template.containers[0].args[123]'),
+    ('template.template.containers[0].resources.limits', 'job.template.template.containers[0].resources.limits'),
+    ('job.template.template.containers[0].resources.limits[cpu]', 'job.template.template.containers[0].resources.limits.cpu'),
+    ('job.template.template.containers[0].resources.limits["cpu"]', 'job.template.template.containers[0].resources.limits.cpu'),
+    ("job.template.template.containers[0].resources.limits['memory']", 'job.template.template.containers[0].resources.limits.memory'),
+    ('job.template.template.service_account', 'job.template.template.serviceAccount'),
+    ('job.template.task_count', 'job.template.taskCount'),
+    ('job.annotations.qsl.dev/probe-code-sha256', 'job.annotations[qsl.dev/probe-code-sha256]'),
+    ('job.annotations["qsl.dev/probe-code-sha256"]', 'job.annotations[qsl.dev/probe-code-sha256]'),
+    ('job.annotations[qsl.dev/probe-code-sha256]', 'job.annotations[qsl.dev/probe-code-sha256]'),
 ])
-def test_control_error_keeps_complete_schema_paths_without_preset_field_list(field):
+def test_control_error_publishes_only_confirmed_schema_paths_and_normalizes_aliases(field, canonical):
     safe = control.control_error_projection({'code': 400, 'status': 'INVALID_ARGUMENT',
         'message': 'Invalid value: synthetic-private-token',
         'details': [{'@type': 'type.googleapis.com/google.rpc.BadRequest', 'fieldViolations': [
             {'field': field, 'description': 'Invalid value: synthetic-private-selector'}]}]})
-    assert safe['bad_request_fields'] == [field]
-    assert safe['bad_request_violations'] == [{'field': field, 'category': 'invalid_value'}]
+    assert safe['bad_request_fields'] == [canonical]
+    assert safe['bad_request_violations'] == [{'field': canonical, 'category': 'invalid_value'}]
     assert safe['unlisted_field_violations'] == 0
     assert 'synthetic-private' not in json.dumps(safe)
 
@@ -328,6 +331,108 @@ def test_control_error_categorizes_server_constraint_without_exporting_request_v
         {'field': 'job.template.annotations', 'category': 'unsupported_field'}]
     assert 'synthetic-private' not in json.dumps(safe).lower()
     assert 'synthetic_private' not in json.dumps(safe).lower()
+
+
+@pytest.mark.parametrize('violation,state,kind,length', [
+    ({}, 'missing', 'missing', None),
+    ({'field': None}, 'null', 'null', None),
+    ({'field': 123}, 'non_string', 'integer', None),
+    ({'field': ''}, 'empty', 'string', 0),
+    ({'field': 'x' * 513}, 'too_long', 'string', 513),
+    ({'field': '/job/template/containers/0/args/3'}, 'syntax_rejected', 'string', 33),
+    ({'field': 'job.template.synthetic_private_token'}, 'unknown_schema', 'string', 36),
+    ({'field': 'job.template[synthetic_private_token]'}, 'unknown_schema', 'string', 37),
+])
+def test_control_error_rejected_field_still_retains_description_category(violation, state, kind, length):
+    violation = {**violation, 'description': 'Name length exceeds maximum: synthetic_private_value'}
+    safe = control.control_error_projection({'code': 400, 'status': 'INVALID_ARGUMENT',
+        'message': 'Request rejected', 'details': [{'@type': 'type.googleapis.com/google.rpc.BadRequest',
+                                                 'fieldViolations': [violation]}]})
+    row = safe['field_violation_diagnostics'][0]
+    assert row['violation_type'] == 'object'
+    assert row['category'] == 'maximum_length_exceeded'
+    assert row['field_state'] == state and row['field_type'] == kind
+    assert row['field_length'] == length
+    assert row['detail_index'] == 0 and row['violation_index'] == 0
+    assert safe['bad_request_fields'] == [] and safe['unlisted_field_violations'] == 1
+    assert 'synthetic_private' not in json.dumps(safe)
+
+
+def test_control_error_preserves_duplicates_and_reports_truncated_scan():
+    violation = {'field': 'job.name', 'description': 'Invalid value: synthetic_private_value'}
+    detail = {'@type': 'type.googleapis.com/google.rpc.BadRequest', 'fieldViolations': [violation] * 33}
+    safe = control.control_error_projection({'code': 400, 'status': 'INVALID_ARGUMENT',
+                                            'details': [detail] * 11})
+    scan = safe['bad_request_scan']
+    assert scan['details_total'] == 11 and scan['details_seen'] == 10
+    assert scan['details_truncated_count'] == 1
+    assert scan['violations_total_in_seen_details'] == 330
+    assert scan['violations_seen'] == 320 and scan['violations_truncated_in_seen_details'] == 10
+    assert scan['incomplete'] is True
+    assert len(safe['field_violation_diagnostics']) == 320
+    assert safe['field_violation_diagnostics'][-1]['detail_index'] == 9
+    assert safe['field_violation_diagnostics'][-1]['violation_index'] == 31
+    assert 'synthetic_private' not in json.dumps(safe)
+
+
+def test_control_error_mixed_rows_keep_rejected_categories_and_same_field_different_constraints():
+    violations = [
+        {'field': 'job.name', 'description': 'Invalid value: synthetic_private_value'},
+        {'field': 'job.name', 'description': 'Name length exceeds maximum: synthetic_private_value'},
+        {'field': '', 'description': 'Name length exceeds maximum: synthetic_private_value'},
+        {'field': 'job.template.synthetic_private_token', 'description': 'Missing field is required'},
+        {'field': 'job.template[synthetic_private_token]', 'description': 'Invalid format: synthetic_private_value'},
+        {'field': 'job.template.template.service_account', 'description': 'Malformed value'},
+    ]
+    safe = control.control_error_projection({'code': 400, 'status': 'INVALID_ARGUMENT',
+        'message': 'Request rejected', 'details': [{'@type': 'type.googleapis.com/google.rpc.BadRequest',
+                                                 'fieldViolations': violations}]})
+    rows = safe['field_violation_diagnostics']
+    assert len(rows) == 6 and [r['violation_index'] for r in rows] == list(range(6))
+    assert [r['category'] for r in rows] == ['invalid_value', 'maximum_length_exceeded',
+        'maximum_length_exceeded', 'required_field', 'invalid_format', 'invalid_format']
+    assert rows[3]['known_parent'] == rows[4]['known_parent'] == 'job.template'
+    assert rows[5]['field'] == 'job.template.template.serviceAccount'
+    assert safe['bad_request_scan']['violations_seen'] == 6 and safe['bad_request_scan']['incomplete'] is False
+    assert 'synthetic_private' not in json.dumps(safe)
+
+
+@pytest.mark.parametrize('value,kind', [(None, 'null'), (False, 'boolean'), (1.5, 'number'),
+                                      ([], 'array'), ({'private': 'synthetic_private_value'}, 'object')])
+def test_control_error_non_object_violation_shape_is_visible_without_value(value, kind):
+    safe = control.control_error_projection({'code': 400, 'status': 'INVALID_ARGUMENT',
+        'details': [{'@type': 'type.googleapis.com/google.rpc.BadRequest', 'fieldViolations': [value]}]})
+    row = safe['field_violation_diagnostics'][0]
+    assert row['violation_type'] == kind
+    if kind == 'object':
+        assert row['field_state'] == 'missing'
+    else:
+        assert row['field_state'] == 'violation_not_object'
+    assert row['field_type'] == 'missing'
+    assert 'synthetic_private' not in json.dumps(safe)
+
+
+@pytest.mark.parametrize('details', [None, {'private': 'synthetic_private_value'},
+    [{'@type': 'type.googleapis.com/google.rpc.BadRequest'}],
+    [{'@type': 'type.googleapis.com/google.rpc.BadRequest', 'fieldViolations': None}],
+    [{'@type': 'type.googleapis.com/google.rpc.BadRequest', 'fieldViolations': {}}],
+    [{'@type': 'synthetic_private_type', 'fieldViolations': []}], [None]])
+def test_control_error_malformed_details_have_shape_and_incomplete_markers(details):
+    safe = control.control_error_projection({'code': 400, 'status': 'INVALID_ARGUMENT', 'details': details})
+    scan = safe['bad_request_scan']
+    assert scan['incomplete'] is True and scan['violations_seen'] == 0
+    assert scan['details_state'] in {'null', 'object', 'array'}
+    assert 'synthetic_private' not in json.dumps(safe)
+
+
+def test_control_error_reports_text_classification_truncation_without_exporting_text():
+    safe = control.control_error_projection({'code': 400, 'status': 'INVALID_ARGUMENT',
+        'message': 'Request rejected ' + 'x' * 4096,
+        'details': [{'@type': 'type.googleapis.com/google.rpc.BadRequest', 'fieldViolations': [
+            {'field': '', 'description': 'Name length exceeds maximum ' + 'x' * 4096}]}]})
+    assert safe['message_truncated'] is True
+    assert safe['field_violation_diagnostics'][0]['description_truncated'] is True
+    assert safe['field_violation_diagnostics'][0]['category'] == 'maximum_length_exceeded'
 
 
 @pytest.mark.parametrize('status,code,sdk', [(404.0, 404, 'NOT_FOUND'), (404, 404.0, 'NOT_FOUND'),
@@ -517,6 +622,36 @@ def test_validation_rejection_stops_without_retry_and_keeps_safe_detail(failure)
     assert report['requests'][-1]['http_status'] == failure
     assert report['requests'][-1]['bad_request_fields'] == ['job.template.template.containers[0].args[3]']
     assert 'synthetic-private-token' not in json.dumps(report)
+
+
+@pytest.mark.parametrize('field,state', [('', 'empty'),
+    ('job.annotations["qsl.dev/probe-code-sha256"]', 'accepted'),
+    ('job.template.synthetic_private_token', 'unknown_schema')])
+def test_control_error_main_report_and_stdout_keep_rejected_constraint_safely(field, state, monkeypatch, tmp_path, capsys):
+    from scripts import deploy_notification_only as deployment
+    class LocalSession(Replies):
+        closed = False
+        def close(self):
+            self.closed = True
+    session = LocalSession((404, {'error': {'code': 404, 'status': 'NOT_FOUND'}}),
+        (400, {'error': {'code': 400, 'status': 'INVALID_ARGUMENT', 'message': 'Request rejected',
+            'details': [{'@type': 'type.googleapis.com/google.rpc.BadRequest', 'fieldViolations': [
+                {'field': field, 'description': 'Name length exceeds maximum: synthetic_private_value'}]}]}}))
+    monkeypatch.setattr(deployment, 'authorized_session', lambda: session)
+    for key, value in admitted('probe-validate-only').items():
+        monkeypatch.setenv(key, value)
+    path = tmp_path / 'safe.json'
+    monkeypatch.setattr('sys.argv', ['check', '--mode', 'probe-validate-only', '--report', str(path)])
+    assert control.main() == 1
+    printed = capsys.readouterr().out
+    saved = json.loads(path.read_text())
+    assert json.loads(printed) == saved
+    row = saved['requests'][-1]['field_violation_diagnostics'][0]
+    assert row['field_state'] == state and row['category'] == 'maximum_length_exceeded'
+    assert 'synthetic_private' not in printed + path.read_text()
+    assert [x[0] for x in session.calls] == ['GET', 'POST'] and session.closed
+    assert session.calls[1][2]['json'] == control.job_body()
+    assert ':run' not in session.calls[1][1]
 
 
 def test_validation_existing_job_or_changed_body_or_pending_stops(monkeypatch):
