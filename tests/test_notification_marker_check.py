@@ -566,13 +566,42 @@ def test_readback_scoped_stdout_text_receipt_is_sanitized():
     assert 'textPayload:"' + control.NONCE + '"' in log_filter
 
 
-def test_readback_scoped_stdout_pagination_still_stops():
+def test_readback_scoped_stdout_empty_page_continues_with_same_filter():
     name = control.JOB + '/executions/existing-one'
-    session = Replies((200, {'entries': [], 'nextPageToken': 'private-next-page'}))
+    receipt = {'schema_version': 1, 'probe_id': control.NONCE, 'status': 'stop',
+               'reason': 'precondition_failed', 'http_status': 412}
+    session = Replies((200, {'entries': [], 'nextPageToken': 'private-next-page'}),
+                      (200, {'entries': [{'jsonPayload': receipt}]}))
+    report = {}
+    control.read_fixed_execution_receipt(session, report, name)
+    assert report['receipt_log_pages'] == 2
+    assert report['probe_receipt']['reason'] == 'precondition_failed'
+    assert len(session.calls) == 2
+    assert session.calls[1][2]['json']['pageToken'] == 'private-next-page'
+    assert session.calls[0][2]['json']['filter'] == session.calls[1][2]['json']['filter']
+    assert 'private-next-page' not in json.dumps(report)
+
+
+def test_readback_scoped_stdout_five_pages_still_stops_without_token_leak():
+    name = control.JOB + '/executions/existing-one'
+    session = Replies(*[(200, {'entries': [], 'nextPageToken': 'private-token-' + str(i)})
+                        for i in range(5)])
     report = {}
     with pytest.raises(control.Stop, match='safe_probe_receipt_page_incomplete'):
         control.read_fixed_execution_receipt(session, report, name)
-    assert 'private-next-page' not in json.dumps(report)
+    assert len(session.calls) == 5
+    assert 'private-token' not in json.dumps(report)
+
+
+def test_readback_scoped_stdout_repeated_token_stops():
+    name = control.JOB + '/executions/existing-one'
+    session = Replies((200, {'entries': [], 'nextPageToken': 'private-token'}),
+                      (200, {'entries': [], 'nextPageToken': 'private-token'}))
+    report = {}
+    with pytest.raises(control.Stop, match='safe_probe_receipt_page_unknown'):
+        control.read_fixed_execution_receipt(session, report, name)
+    assert len(session.calls) == 2
+    assert 'private-token' not in json.dumps(report)
 
 
 @pytest.mark.parametrize('listed', [

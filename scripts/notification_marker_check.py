@@ -433,26 +433,40 @@ def read_fixed_object_metadata(session, report):
 
 def read_fixed_execution_receipt(session, report, name):
     suffix = name.rsplit('/', 1)[1]
-    entries = control_request(session, report, 'POST', 'https://logging.googleapis.com/v2/entries:list', body={
-        'resourceNames': ['projects/' + PROJECT], 'pageSize': 10, 'orderBy': 'timestamp desc',
+    body = {
+        'resourceNames': ['projects/' + PROJECT], 'pageSize': 100, 'orderBy': 'timestamp desc',
         'filter': (f'resource.type="cloud_run_job" AND resource.labels.location="{REGION}" '
                    f'AND resource.labels.job_name="{JOB_ID}" '
                    f'AND labels."run.googleapis.com/execution_name"="{suffix}" '
                    f'AND log_id("run.googleapis.com/stdout") '
-                   f'AND (jsonPayload.probe_id="{NONCE}" OR textPayload:"{NONCE}")')},
-        phase='exact_execution_safe_log_read_only')
-    require(isinstance(entries.get('entries', []), list) and not entries.get('nextPageToken'),
-            'safe_probe_receipt_page_incomplete')
+                   f'AND (jsonPayload.probe_id="{NONCE}" OR textPayload:"{NONCE}")')}
     certificates = []
-    for entry in entries.get('entries', []):
-        value = entry.get('jsonPayload')
-        if not isinstance(value, dict):
-            try:
-                value = json.loads(entry.get('textPayload', ''))
-            except (ValueError, TypeError):
-                continue
-        if isinstance(value, dict) and value.get('probe_id') == NONCE:
-            certificates.append(value)
+    seen_tokens = set()
+    for page in range(5):
+        entries = control_request(session, report, 'POST', 'https://logging.googleapis.com/v2/entries:list',
+                                  body=body, phase='exact_execution_safe_log_read_only')
+        rows = entries.get('entries', [])
+        require(isinstance(rows, list) and len(rows) <= 100 and all(isinstance(x, dict) for x in rows),
+                'safe_probe_receipt_page_unknown')
+        for entry in rows:
+            value = entry.get('jsonPayload')
+            if not isinstance(value, dict):
+                try:
+                    value = json.loads(entry.get('textPayload', ''))
+                except (ValueError, TypeError):
+                    continue
+            if isinstance(value, dict) and value.get('probe_id') == NONCE:
+                certificates.append(value)
+        token = entries.get('nextPageToken')
+        require(token is None or isinstance(token, str), 'safe_probe_receipt_page_unknown')
+        if not token:
+            report['receipt_log_pages'] = page + 1
+            break
+        require(isinstance(token, str) and len(token) <= 8192 and token not in seen_tokens,
+                'safe_probe_receipt_page_unknown')
+        seen_tokens.add(token)
+        require(page < 4, 'safe_probe_receipt_page_incomplete')
+        body = dict(body, pageToken=token)
     require(len(certificates) <= 1, 'safe_probe_receipt_ambiguous')
     report['safe_probe_receipt_found'] = bool(certificates)
     if certificates:
