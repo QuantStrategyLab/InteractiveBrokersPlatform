@@ -201,6 +201,8 @@ def _identity(target=None):
                 matched.append(binding)
         if len(matched) == 1:
             values.update(matched[0])
+            if "DIGEST_ACCOUNT_ALIAS" not in matched[0]:
+                values.pop("DIGEST_ACCOUNT_ALIAS", None)
         elif matched or not matches(configured):
             for key in ("DIGEST_OPAQUE_ACCOUNT_UID", "DIGEST_TARGET_ID", "IBKR_DIGEST_OPAQUE_ACCOUNT_UID", "IBKR_DIGEST_TARGET_ID", "DIGEST_ACCOUNT_ALIAS"):
                 values.pop(key, None)

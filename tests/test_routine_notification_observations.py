@@ -106,6 +106,18 @@ def test_alias_uses_only_an_exact_owner_bound_target_and_never_infers_from_ids(r
     assert account_alias({"DIGEST_OPAQUE_ACCOUNT_UID": "synthetic-account", "account_selector": "synthetic-selector"}) == ""
 
 
+def test_an_exact_binding_without_alias_cannot_inherit_another_targets_global_alias(routing, monkeypatch):
+    monkeypatch.setenv("DIGEST_ACCOUNT_ALIAS", "target-a-alias")
+    target_b = {**TARGET, "service_name": "synthetic-service-b", "account_scope": "synthetic-scope-b"}
+    monkeypatch.setenv("DIGEST_TARGET_BINDINGS_JSON", json.dumps([{
+        "RUNTIME_TARGET_JSON": target_b, "DIGEST_OPAQUE_ACCOUNT_UID": "synthetic-account-b",
+        "DIGEST_TARGET_ID": "synthetic-target-b"}]))
+    identity, values = adapter._identity(target_b)
+    assert identity["opaque_account_uid"] == "synthetic-account-b"
+    assert identity["target_id"] == "synthetic-target-b"
+    assert account_alias(values) == ""
+
+
 def test_real_order_and_urgent_paths_remain_immediate_with_display_observations(routing, monkeypatch):
     monkeypatch.setenv("DIGEST_ACCOUNT_ALIAS", "canonical-demo")
     order = {"status": "filled", "order_id": "synthetic-order", "symbol": "AAA"}
@@ -128,6 +140,20 @@ def test_existing_archive_bridge_carries_the_bound_alias_and_recorded_amount_wit
     assert row["routine_decisions"] == [observation()]
     assert row["order_count"] == 0 and row["fill_count"] is None
     assert payload == before
+
+
+def test_main_report_whitelist_preserves_decision_point_observations_for_the_archive_bridge(strategy_module, monkeypatch):
+    monkeypatch.setenv(adapter.FLAG, "true")
+    execution = dict(execution_status="no_op", no_op_reason="min_notional:DEMO",
+        orders_submitted=[], orders_skipped=[], orders_filled=[], orders_pending=[],
+        notification_routine_decisions=[observation()])
+    before = deepcopy(execution)
+    summary = strategy_module._build_cycle_report_summary(
+        SimpleNamespace(result="OK - no-op", account_facts={}), execution, {}, dry_run=False)
+    assert summary["notification_routine_decisions"] == [observation()]
+    assert summary["notification_digest"]["order_count"] == 0
+    assert summary["orders_submitted_count"] == 0
+    assert execution == before
 
 
 def test_legacy_reports_keep_missing_amounts_unknown_without_reconstructing_a_plan():
