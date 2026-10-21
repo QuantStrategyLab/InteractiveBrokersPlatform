@@ -610,3 +610,214 @@ def test_readback_input_cannot_fall_into_broad_deploy_job():
     assert "notification_readback_only: ${{ inputs.notification_readback_only }}" in wrapper
     assert "INPUT_NOTIFICATION_READBACK_ONLY: ${{ inputs.notification_readback_only }}" in protected
     assert 'mode=--readback-only; else mode=--execute' in protected
+
+
+@pytest.mark.parametrize("readback", ["false", "true"])
+def test_combined_build_dispatch_is_exact_and_cannot_be_readback(monkeypatch, readback):
+    monkeypatch.setattr(release, "COMBINED_SOURCE", "c" * 40)
+    env = dict(admitted_env(), INPUT_SOURCE_COMMIT="c" * 40,
+               INPUT_DEPLOY_IMAGE="true", INPUT_NOTIFICATION_READBACK_ONLY=readback)
+    if readback == "true":
+        with pytest.raises(release.ReleaseError, match="combined_build_cannot_readback"):
+            release.validate_dispatch(env)
+    else:
+        assert release.validate_dispatch(env) == "12345"
+        for key, value in (("INPUT_SOURCE_COMMIT", release.SOURCE),
+                           ("GITHUB_RUN_ATTEMPT", "2"),
+                           ("INPUT_APPROVE_TRAFFIC_SHIFT", "true")):
+            with pytest.raises(release.ReleaseError):
+                release.validate_dispatch(dict(env, **{key: value}))
+
+
+def test_combined_context_copies_only_reviewed_files_and_never_executes(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "safe.py").write_bytes(b"reviewed\n")
+    (source / "not_in_overlay.py").write_text("raise RuntimeError('not for image')")
+    monkeypatch.setattr(release, "COMBINED_FILES", {"safe.py": release.sha(b"reviewed\n")})
+    context = tmp_path / "context"
+    release.build_context(source, context)
+    assert sorted(str(p.relative_to(context)) for p in context.rglob("*") if p.is_file()) == ["Dockerfile", "overlay/safe.py"]
+    assert (context / "Dockerfile").read_text() == f"FROM {release.BASE_IMAGE}\nCOPY --chown=1000:1000 overlay/ /app/\n"
+    with pytest.raises(release.ReleaseError, match="context_already_exists"):
+        release.build_context(source, context)
+
+
+@pytest.mark.parametrize("failure", [None, "pull", "build", "pins", "push", "digest"])
+def test_combined_build_one_attempt_and_no_application_entrypoint(tmp_path, monkeypatch, failure):
+    commands = []
+    digest = "sha256:" + "d" * 64
+    tag = release.REPOSITORY + ":notification-c" + "c" * 39 + "-12345"
+    monkeypatch.setattr(release, "build_context", lambda *_: None)
+    monkeypatch.setattr(release, "COMBINED_SOURCE", "c" * 40)
+
+    def command(args, **kwargs):
+        commands.append(args)
+        assert args[:2] not in (["docker", "run"], ["docker", "start"], ["docker", "exec"])
+        phase = args[1] if args[0] == "docker" else None
+        if failure and phase == failure:
+            raise release.ReleaseError("fixture_failure")
+        if phase == "push":
+            return (tag.rsplit(":", 1)[1] + ": digest: " + digest + " size: 1234\n").encode()
+        if args[:5] == ["gcloud", "artifacts", "docker", "images", "describe"]:
+            return ("sha256:" + "e" * 64 if failure == "digest" else digest).encode()
+        return b""
+
+    def verify(*args):
+        if failure == "pins":
+            raise release.ReleaseError("installed_package_commit_changed")
+        return dict(release.PACKAGES)
+
+    monkeypatch.setattr(release, "run", command)
+    monkeypatch.setattr(release, "verify_built_image", verify)
+    report = {"build_commands": 0, "push_commands": 0, "image_pull_commands": 0}
+    if failure:
+        with pytest.raises(release.ReleaseError):
+            release.build_image(tmp_path, "12345", report)
+    else:
+        assert release.build_image(tmp_path, "12345", report) == release.REPOSITORY + "@" + digest
+        assert report["image_digest"] == digest
+        assert report["installed_commits"] == release.PACKAGES
+        assert report["build_commands"] == report["push_commands"] == report["image_pull_commands"] == 1
+    for phase in ("pull", "build", "push"):
+        assert sum(command[:2] == ["docker", phase] for command in commands) <= 1
+    assert all("--network=none" in command for command in commands if command[:2] == ["docker", "build"])
+    if failure in {"pull", "build", "pins"}:
+        assert not any(command[:2] == ["docker", "push"] for command in commands)
+
+
+@pytest.mark.parametrize("failure", [None, "permission", "unknown", "original-permission", "candidate-exists", "concurrent-service", "risk-binding"])
+def test_combined_release_verifies_before_build_and_keeps_original_routes(monkeypatch, tmp_path, service, original, failure):
+    env = dict(admitted_env(), INPUT_DEPLOY_IMAGE="true", INPUT_SOURCE_COMMIT="c" * 40)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("CLOUD_RUN_SERVICE_TARGETS_JSON", json.dumps([{"service_name": "fixture-service"}]))
+    monkeypatch.setattr(release, "COMBINED_SOURCE", "c" * 40)
+    monkeypatch.setattr(release, "COMBINED_TREE", "b" * 40)
+    monkeypatch.setattr(release, "SERVICE_HASH", release.sha("fixture-service"))
+    monkeypatch.setattr(release, "REVISION_HASH", release.sha("fixture-serving"))
+    monkeypatch.setattr(release, "QUALIFIED_BASELINE", release._digest(release.nonnotification(original)))
+    monkeypatch.setattr(release, "verify_source", lambda *a, **kw: None)
+    monkeypatch.setattr(release, "revision_from_lockfile", lambda *_: release.PACKAGES["us_equity_strategies-0.7.60"])
+    if failure == "risk-binding":
+        monkeypatch.setattr(release, "check", lambda *a, **kw: True)
+    gets, puts, builds, closes = [], [], [], []
+
+    def get(url, **kwargs):
+        gets.append(url)
+        name = url.rsplit("/", 1)[1]
+        if name == "fixture-serving":
+            if failure == "original-permission":
+                return response(403, {"error": {"code": 403, "status": "PERMISSION_DENIED"}})
+            return response(200, copy.deepcopy(original))
+        if not puts:
+            if failure == "permission":
+                return response(403, {"error": {"code": 403, "status": "PERMISSION_DENIED"}})
+            if failure == "unknown":
+                return response(404, {"message": "Cannot find revision [fixture]"})
+            if failure == "candidate-exists":
+                return response(200, {"metadata": {"name": name}, "spec": {}})
+            return response(404, {"error": {"code": 404, "status": "NOT_FOUND"}})
+        result = copy.deepcopy(puts[0]["spec"]["template"])
+        result["status"] = {"conditions": [{"type": "Ready", "status": "True"}]}
+        return response(200, result)
+
+    def put(url, **kwargs):
+        puts.append(copy.deepcopy(kwargs["json"]))
+        return response(200, {})
+
+    def cloud(args):
+        result = copy.deepcopy(service)
+        if puts:
+            result["spec"] = copy.deepcopy(puts[0]["spec"])
+        elif builds and failure == "concurrent-service":
+            result["metadata"]["resourceVersion"] = "new-token"
+        return result
+
+    def build(source, run_id, report):
+        builds.append(run_id)
+        report.update(build_commands=1, push_commands=1, image_pull_commands=1, image_digest=IMAGE.rsplit("@", 1)[1])
+        return IMAGE
+
+    monkeypatch.setattr(release, "authorized_session", lambda: SimpleNamespace(get=get, put=put, close=lambda: closes.append(1)))
+    monkeypatch.setattr(release, "cloud", cloud)
+    monkeypatch.setattr(release, "registry_cost_guard", lambda: None)
+    monkeypatch.setattr(release, "build_image", build)
+    monkeypatch.setattr(release, "run", lambda *a, **kw: pytest.fail("unexpected native command"))
+    report = {}
+    if failure:
+        with pytest.raises(release.ReleaseError):
+            release.release(tmp_path, report)
+        assert not puts
+        assert builds == (["12345"] if failure == "concurrent-service" else [])
+    else:
+        release.release(tmp_path, report)
+        assert builds == ["12345"] and len(puts) == 1
+        assert report["status"] == "PASS_NO_TRAFFIC"
+        assert report["source"] == "c" * 40 and report["source_tree"] == "b" * 40
+        candidate = puts[0]["spec"]["template"]
+        assert candidate["metadata"]["labels"]["commit-sha"] == "c" * 40
+        assert candidate["spec"]["containers"][0]["image"] == IMAGE
+        assert release.nonnotification(candidate) == release.nonnotification(original)
+        assert puts[0]["spec"]["traffic"] == release.routes(service)
+        assert [q["http_status"] for q in report["revision_queries"]] == [200, 404, 404, 200]
+    assert closes == [1]
+    assert "fixture-secret" not in json.dumps(report)
+
+
+@pytest.mark.parametrize("failure", [None, "sha", "tree", "content", "lock", "unfrozen"])
+def test_combined_source_is_full_sha_tree_twenty_hashes_and_original_lock(tmp_path, monkeypatch, failure):
+    source = tmp_path / "source"
+    source.mkdir()
+    contents = {f"module_{index}.py": f"# fixture{index}\n".encode() for index in range(20)}
+    for relative, content in contents.items():
+        (source / relative).write_bytes(content)
+    lock = ('[[package]]\nname = "us-equity-strategies"\nsource = { git = "https://example.invalid/repo#' + release.PACKAGES["us_equity_strategies-0.7.60"] + '" }\n').encode()
+    (source / "uv.lock").write_bytes(lock)
+    monkeypatch.setattr(release, "COMBINED_SOURCE", "c" * 40)
+    monkeypatch.setattr(release, "COMBINED_TREE", "b" * 40 if failure != "unfrozen" else "")
+    monkeypatch.setattr(release, "COMBINED_FILES", {p: release.sha(v) for p, v in contents.items()})
+    monkeypatch.setattr(release, "SOURCE_LOCK_HASH", release.sha(lock))
+    commands = []
+
+    def command(args, **kwargs):
+        commands.append(args)
+        assert args[:4] == ["git", "-C", str(source), "rev-parse"]
+        assert args[-1] in {"HEAD", "HEAD^{tree}"}
+        return (("d" * 40 if failure == "sha" else "c" * 40) if args[-1] == "HEAD" else ("e" * 40 if failure == "tree" else "b" * 40)).encode()
+
+    monkeypatch.setattr(release, "run", command)
+    if failure == "content":
+        (source / "module_19.py").write_text("# not reviewed")
+    if failure == "lock":
+        (source / "uv.lock").write_bytes(lock + b"# changed")
+    if failure:
+        with pytest.raises(release.ReleaseError):
+            release.verify_source(source, combined=True)
+    else:
+        release.verify_source(source, combined=True)
+        assert len(commands) == 2
+    assert not (tmp_path / "notification-context-12345").exists()
+
+
+@pytest.mark.parametrize("mutation", [None, "old-source", "readback", "traffic"])
+def test_reviewed_combined_workflow_gate_matches_exact_helper(tmp_path, mutation):
+    workflow = (ROOT / ".github/workflows/sync-cloud-run-env-protected.yml").read_text()
+    block = workflow.split("      - name: Admit fixed notification dispatch\n", 1)[1].split("\n      - name:", 1)[0]
+    script = "\n".join(line[10:] for line in block.split("        run: |\n", 1)[1].splitlines())
+    env = dict(os.environ, **admitted_env())
+    env.update(INPUT_DEPLOY_IMAGE="true", INPUT_SOURCE_COMMIT=release.COMBINED_SOURCE)
+    if mutation == "old-source":
+        env["INPUT_SOURCE_COMMIT"] = release.SOURCE
+    if mutation == "readback":
+        env["INPUT_NOTIFICATION_READBACK_ONLY"] = "true"
+    if mutation == "traffic":
+        env["INPUT_APPROVE_TRAFFIC_SHIFT"] = "true"
+    code = subprocess.run(["bash", "-c", script], env=env, cwd=tmp_path).returncode
+    if mutation:
+        assert code != 0
+        with pytest.raises(release.ReleaseError):
+            release.validate_dispatch(env)
+    else:
+        assert code == 0
+        assert release.validate_dispatch(env) == "12345"
