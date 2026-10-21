@@ -325,9 +325,23 @@ def verify_readback(before: dict, original: dict, after: dict, revision: dict, e
     require(metadata(after.get("metadata", {}), template=False) == metadata(before.get("metadata", {}), template=False), "service_metadata_changed")
     require({key: value for key, value in after.get("spec", {}).items() if key not in {"template", "traffic"}} ==
             {key: value for key, value in before.get("spec", {}).items() if key not in {"template", "traffic"}}, "service_spec_changed")
+    baseline = nonnotification(original)
+    require(nonnotification(revision) == baseline, "revision_nonnotification_template_changed")
+    ingress_key = "run.googleapis.com/ingress"
+    ingress = baseline["metadata"]["annotations"].get(ingress_key)
+    require(isinstance(ingress, str) and ingress in {"all", "internal", "internal-and-cloud-load-balancing"}, "qualified_ingress_unknown")
+    require(all(item.get("metadata", {}).get("annotations", {}).get(ingress_key) == ingress for item in (before, after)),
+            "service_ingress_baseline_changed")
+    template = after.get("spec", {}).get("template", {})
+    template_projection = nonnotification(template)
+    expected_projection = copy.deepcopy(baseline)
+    # ingress is Service-scoped. The provider omits only this key in RevisionTemplate.
+    # Keep the complete Revision and Service-level ingress checks above intact.
+    if ingress_key not in template_projection["metadata"]["annotations"]:
+        expected_projection["metadata"]["annotations"].pop(ingress_key)
+    require(template_projection == expected_projection, "service_template_nonnotification_changed")
     wanted = expected["spec"]["template"]
-    for actual in (revision, after.get("spec", {}).get("template", {})):
-        require(nonnotification(actual) == nonnotification(original), "revision_nonnotification_template_changed")
+    for actual in (revision, template):
         require(actual["spec"]["containers"][0]["image"] == wanted["spec"]["containers"][0]["image"], "revision_image_mismatch")
         require(all(env_map(actual).get(key) == {"name": key, "value": value} for key, value in ROUTING.items()), "routing_literals_not_bound")
         require(runtime_target(actual) == runtime_target(original), "revision_target_changed")
@@ -470,12 +484,20 @@ def readback_only(source: Path, report: dict) -> None:
                                 "image_matches_qualified": actual["spec"]["containers"][0]["image"] == QUALIFIED_IMAGE,
                                 "target_entry_unchanged": env_map(actual).get("RUNTIME_TARGET_JSON") == env_map(original).get("RUNTIME_TARGET_JSON"),
                                 "routing_literals_match": all(env_map(actual).get(k) == {"name": k, "value": v} for k, v in ROUTING.items())}
-        report.update({"status": "READBACK_ONLY_COMPLETE", "mode": "readback_only", "readback_source_run": READBACK_RUN,
+        report.update({"status": "READBACK_ONLY_PROJECTED", "mode": "readback_only", "readback_source_run": READBACK_RUN,
                        "candidate_revision_sha256": READBACK_REVISION_HASH, "original_nonnotification_sha256": _digest(baseline),
                        "candidate_ready": any(c.get("type") == "Ready" and c.get("status") == "True" for c in revision.get("status", {}).get("conditions", [])),
                        "original_still_receives_100_percent": True, "service_template_is_fixed_candidate": service["spec"]["template"].get("metadata", {}).get("name") == candidate_name,
                        "projection": projected, "service_reads": 1, "revision_reads": 2, "write_operations": 0,
                        "image_digest": QUALIFIED_DIGEST, "actual_loaded_ues": "NOT_ATTESTED"})
+        require(report["candidate_ready"], "fixed_candidate_readiness_not_true")
+        require(report["service_template_is_fixed_candidate"], "service_template_revision_changed")
+        # Current GET snapshot only; ingress is independently bound to the frozen
+        # original Revision above, rather than relying on a self-comparison.
+        verify_readback(service, original, service, revision, expected)
+        report.update({"status": "READBACK_ONLY_VERIFIED_NO_TRAFFIC", "revision_nonnotification_unchanged": True,
+                       "service_ingress_matches_qualified_baseline": True, "service_template_scope_unchanged": True,
+                       "routing_literals": ROUTING, "verification_scope": "qualified_original_revision_and_current_service_snapshot"})
     finally:
         session.close()
 
@@ -509,7 +531,10 @@ def main() -> int:
     finally:
         args.report.write_text(json.dumps(report, sort_keys=True) + "\n")
         print("NOTIFICATION_RESULT_JSON=" + json.dumps(report, sort_keys=True))
-    print("Verified fixed image adoption and zero-traffic revision; production traffic unchanged.")
+    if args.readback_only:
+        print("Verified existing fixed candidate read-only; no cloud writes.")
+    else:
+        print("Verified fixed image adoption and zero-traffic revision; production traffic unchanged.")
     return 0
 
 
