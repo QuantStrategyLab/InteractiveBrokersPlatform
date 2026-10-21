@@ -460,7 +460,7 @@ def test_readback_existing_execution_uses_exact_list_and_safe_counts():
     session = Replies((200, {'name': control.JOB, 'executionCount': 1, 'latestCreatedExecution': {'name': name},
                             'private_extra': 'synthetic-private-value'}),
                       (200, {'executions': [{'name': name, 'job': control.JOB}]}),
-                      (200, {'name': name, 'job': control.JOB, 'taskCount': 1, 'succeededCount': 0,
+                      (200, {'name': name, 'taskCount': 1, 'succeededCount': 0,
                              'failedCount': 1, 'conditions': [{'type': 'Completed', 'state': 'CONDITION_FAILED'}]}),
                       (404, {'error': {'code': 404}}), (200, {'entries': []}))
     report = {}
@@ -468,7 +468,18 @@ def test_readback_existing_execution_uses_exact_list_and_safe_counts():
     assert report['status'] == 'job_observed' and report['execution']['failed_count'] == 1
     assert [method for method, _, _ in session.calls] == ['GET', 'GET', 'GET', 'GET', 'POST']
     assert name in session.calls[2][1] and 'fields=' in session.calls[2][1]
+    assert 'job' not in session.calls[2][1].split('?fields=', 1)[1]
     assert 'synthetic-private' not in json.dumps(report)
+
+
+def test_readback_execution_get_wrong_name_stops_before_object_or_logs():
+    name = control.JOB + '/executions/existing-one'
+    session = Replies((200, {'name': control.JOB, 'executionCount': 1}),
+                      (200, {'executions': [{'name': name}]}),
+                      (200, {'name': control.JOB + '/executions/other', 'job': control.JOB}))
+    with pytest.raises(control.Stop, match='execution_identity_rejected'):
+        control.read_probe(session, {})
+    assert [method for method, _, _ in session.calls] == ['GET', 'GET', 'GET']
 
 
 def test_readback_unusable_latest_pointer_still_uses_exact_job_list():
