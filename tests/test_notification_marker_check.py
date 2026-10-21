@@ -531,6 +531,10 @@ def test_readback_count_one_without_latest_uses_exact_job_and_safe_object_log_pr
     assert '/storage/v1/b/' + probe.BUCKET + '/o/' in session.calls[3][1]
     assert session.calls[4][1].endswith('/entries:list')
     assert 'resource.labels.location="us-central1"' in session.calls[4][2]['json']['filter']
+    assert 'labels.execution_name="one-retained-execution"' in session.calls[4][2]['json']['filter']
+    assert 'run.googleapis.com/execution_name' not in session.calls[4][2]['json']['filter']
+    assert 'timestamp>="2026-10-21T13:15:00Z"' in session.calls[4][2]['json']['filter']
+    assert 'timestamp<="2026-10-21T13:25:00Z"' in session.calls[4][2]['json']['filter']
     assert 'log_id("run.googleapis.com/stdout")' in session.calls[4][2]['json']['filter']
     assert 'jsonPayload.probe_id="' + control.NONCE + '"' in session.calls[4][2]['json']['filter']
     assert 'textPayload:"' + control.NONCE + '"' in session.calls[4][2]['json']['filter']

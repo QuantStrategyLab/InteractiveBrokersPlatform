@@ -437,8 +437,9 @@ def read_fixed_execution_receipt(session, report, name):
         'resourceNames': ['projects/' + PROJECT], 'pageSize': 100, 'orderBy': 'timestamp desc',
         'filter': (f'resource.type="cloud_run_job" AND resource.labels.location="{REGION}" '
                    f'AND resource.labels.job_name="{JOB_ID}" '
-                   f'AND labels."run.googleapis.com/execution_name"="{suffix}" '
+                   f'AND labels.execution_name="{suffix}" '
                    f'AND log_id("run.googleapis.com/stdout") '
+                   f'AND timestamp>="2026-10-21T13:15:00Z" AND timestamp<="2026-10-21T13:25:00Z" '
                    f'AND (jsonPayload.probe_id="{NONCE}" OR textPayload:"{NONCE}")')}
     certificates = []
     seen_tokens = set()
