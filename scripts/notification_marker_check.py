@@ -20,7 +20,7 @@ JOB = f'{PARENT}/jobs/{JOB_ID}'
 API = 'https://run.googleapis.com/v2/'
 NONCE = '3c5b1830-9184-4966-9232-f8f1e290fd18'
 PROBE_SHA = 'ce49359d6d6275a49a74bfbee4e0acccb61ee3f2ade7f796419eb29ed16c9c97'
-ORIGINAL_JOB_BODY_SHA = '0417a4f6a65cef88a2c29b5b113f1f5a935d1a7a364bdb249f73b5be9aa4a1fe'
+JOB_CREATE_BODY_SHA = 'fb60ad7396a7b65164341e00517133d3f5bc45972466eb86525eacee08ea4685'
 IDENTITY = ('platform_id', 'opaque_account_uid', 'target_id', 'strategy_profile')
 SECRET_NAMES = {'token', 'password', 'private_key', 'access_token', 'refresh_token', 'api_key', 'secret', 'client_secret', 'credentials', 'authorization_header'}
 
@@ -130,7 +130,7 @@ def binding_projection(env):
 def job_body():
     code = Path(__file__).with_name('notification_marker_probe.py').read_text()
     require(hashlib.sha256(code.encode()).hexdigest() == PROBE_SHA, 'reviewed_probe_code_hash_mismatch')
-    return {'name': JOB, 'annotations': {'qsl.dev/probe-code-sha256': PROBE_SHA},
+    return {'annotations': {'qsl.dev/probe-code-sha256': PROBE_SHA},
             'template': {'taskCount': 1, 'parallelism': 1, 'template': {'serviceAccount': RUNTIME, 'maxRetries': 0,
                 'timeout': '60s', 'containers': [{'image': IMAGE, 'command': ['/usr/local/bin/python3.12'],
                     'args': ['-I', '-S', '-c', code], 'resources': {'limits': {'cpu': '1', 'memory': '512Mi'}}}]}}}
@@ -375,13 +375,13 @@ def read_probe(session, report):
 
 
 def validate_probe(session, report):
-    """One server validation of the original body; never persist or execute."""
+    """One server validation of the fixed create body; never persist or execute."""
     url = API + JOB + '?fields=name'
     require(control_request(session, report, 'GET', url, missing=True,
                             phase='validation_job_absence') is None, 'job_already_exists_no_validation')
     expected = job_body()
-    require(digest(expected) == ORIGINAL_JOB_BODY_SHA, 'original_job_body_changed')
-    report.update(request_body_sha256=ORIGINAL_JOB_BODY_SHA, validation_attempts=1,
+    require(digest(expected) == JOB_CREATE_BODY_SHA, 'job_create_body_changed')
+    report.update(request_body_sha256=JOB_CREATE_BODY_SHA, validation_attempts=1,
                   execution_submissions=0, actual_delivery='not_attempted', production_mutations=0)
     value = control_request(session, report, 'POST',
         API + PARENT + '/jobs?jobId=' + JOB_ID + '&validateOnly=true', body=expected,

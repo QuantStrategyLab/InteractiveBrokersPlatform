@@ -172,7 +172,7 @@ class Session:
             self.body = copy.deepcopy(json)
             return self.response(200, self.op({'name': control.JOB}))
         if method == 'GET':
-            return self.response(200, {**self.body, 'etag': 'synthetic-etag'})
+            return self.response(200, {**self.body, 'name': control.JOB, 'etag': 'synthetic-etag'})
         if url.endswith(':run'):
             assert json == {'etag': 'synthetic-etag'}
             if self.stale:
@@ -212,6 +212,8 @@ def test_exact_once_control_and_retained_receipt():
     assert report['job_create_attempts'] == report['execution_submit_attempts'] == 1
     assert report['retained_live_generation'] == '12'
     assert not any(method == 'DELETE' for method, _, _ in session.calls)
+    assert 'name' not in session.calls[1][2]
+    assert session.calls[1][1].endswith('/jobs?jobId=' + control.JOB_ID)
     assert control.job_body()['template']['template']['containers'][0].get('env') is None
 
 
@@ -606,9 +608,11 @@ def test_validation_only_posts_same_frozen_body_once_and_never_runs():
     session, report = ValidationSession(), {}
     control.validate_probe(session, report)
     assert report['status'] == 'validated_only_job_absent'
-    assert report['request_body_sha256'] == '0417a4f6a65cef88a2c29b5b113f1f5a935d1a7a364bdb249f73b5be9aa4a1fe'
+    assert report['request_body_sha256'] == control.JOB_CREATE_BODY_SHA == \
+        'fb60ad7396a7b65164341e00517133d3f5bc45972466eb86525eacee08ea4685'
     assert [x[0] for x in session.calls] == ['GET', 'POST', 'GET']
     assert session.calls[1][2] == control.job_body()
+    assert 'name' not in session.calls[1][2]
     assert all(':run' not in x[1] for x in session.calls)
     assert report['execution_submissions'] == 0
 
@@ -665,7 +669,7 @@ def test_validation_existing_job_or_changed_body_or_pending_stops(monkeypatch):
     assert [x[0] for x in pending.calls] == ['GET', 'POST']
     monkeypatch.setattr(control, 'job_body', lambda: {'changed': True})
     changed = ValidationSession()
-    with pytest.raises(control.Stop, match='original_job_body_changed'):
+    with pytest.raises(control.Stop, match='job_create_body_changed'):
         control.validate_probe(changed, {})
     assert [x[0] for x in changed.calls] == ['GET']
 
