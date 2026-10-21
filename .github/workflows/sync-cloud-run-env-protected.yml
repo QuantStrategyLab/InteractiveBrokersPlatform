@@ -1848,13 +1848,16 @@ jobs:
       DIGEST_STORE_TARGET: ${{ vars.DIGEST_STORE_TARGET }}
     steps:
       - name: Require infrastructure variables
+        env:
+          IBKR_GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
         run: |
           set -euo pipefail
-          test "${GITHUB_EVENT_NAME}" = workflow_dispatch
-          test "${GITHUB_REF}" = refs/heads/main
-          test "${INPUT_SOURCE_COMMIT}" = "${GITHUB_SHA}"
-          test "${INPUT_NOTIFICATION_MARKER_MODE}" = binding-read
-          test "${INPUT_APPROVE_MARKER_PROBE}" = false
+          for name in IBKR_GCP_PROJECT_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is required" >&2
+              exit 2
+            fi
+          done
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.sha }}
@@ -1895,13 +1898,18 @@ jobs:
       CLOUDSDK_CORE_LOG_HTTP: "false"
     steps:
       - name: Require infrastructure variables
+        env:
+          IBKR_GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          IBKR_RUNTIME_SERVICE_ACCOUNT: ${{ vars.IBKR_RUNTIME_SERVICE_ACCOUNT }}
         run: |
           set -euo pipefail
-          test "${GCP_PROJECT_ID}" = interactivebrokersquant
-          test "${GCP_DEPLOY_SERVICE_ACCOUNT}" = ibkr-platform-deploy@interactivebrokersquant.iam.gserviceaccount.com
-          test "${GCP_RUNTIME_SERVICE_ACCOUNT}" = ibkr-platform-runtime@interactivebrokersquant.iam.gserviceaccount.com
-          test "${INPUT_NOTIFICATION_MARKER_MODE}" = execute-probe
-          test "${INPUT_APPROVE_MARKER_PROBE}" = true
+          for name in IBKR_GCP_PROJECT_ID IBKR_DEPLOY_SERVICE_ACCOUNT IBKR_RUNTIME_SERVICE_ACCOUNT; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is required" >&2
+              exit 2
+            fi
+          done
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.sha }}
