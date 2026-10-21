@@ -399,11 +399,15 @@ def difference_projection(before: dict, after: dict) -> list[dict]:
                   "command", "args", "serviceAccountName", "containerConcurrency", "timeoutSeconds", "volumes", "items",
                   "emptyDir", "medium", "sizeLimit", "secret", "secretName", "volumeMounts", "mountPath", "readOnly",
                   "startupProbe", "livenessProbe", "httpGet", "path", "port", "tcpSocket", "initialDelaySeconds",
-                  "timeoutSeconds", "periodSeconds", "successThreshold", "failureThreshold", "nodeSelector"}
+                  "periodSeconds", "successThreshold", "failureThreshold", "nodeSelector"}
+    provider_keys = {"run.googleapis.com/execution-environment", "run.googleapis.com/cpu-throttling",
+                     "run.googleapis.com/startup-cpu-boost", "run.googleapis.com/ingress", "run.googleapis.com/ingress-status",
+                     "run.googleapis.com/launch-stage", "run.googleapis.com/sessionAffinity", "run.googleapis.com/minScale",
+                     "run.googleapis.com/maxScale", "autoscaling.knative.dev/minScale", "autoscaling.knative.dev/maxScale",
+                     "client.knative.dev/user-image"}
 
     def segment(key: str, index: int) -> str:
-        provider = re.fullmatch(r"(?:run\.googleapis\.com|autoscaling\.knative\.dev|client\.knative\.dev)/[A-Za-z][A-Za-z0-9_-]{0,64}", key)
-        return key.replace("~", "~0").replace("/", "~1") if key in structural or provider else f"<unlisted-key-{index}>"
+        return key.replace("~", "~0").replace("/", "~1") if key in structural or key in provider_keys else f"<unlisted-key-{index}>"
 
     def walk(left, right, path: str) -> None:
         if not isinstance(left, (dict, list)) and type(left) is type(right) and left == right:
@@ -427,11 +431,9 @@ def difference_projection(before: dict, after: dict) -> list[dict]:
                     walk(left[index], right[index], path + f"/{index}")
         else:
             entry = {"path": path, "change": "changed", "before_type": type(left).__name__, "after_type": type(right).__name__}
-            # These bounded CPU/memory literals are ordinary resource metadata.
-            if re.fullmatch(r"/spec/containers/\d+/resources/limits/(?:cpu|memory)", path):
-                for label, value in (("before", left), ("after", right)):
-                    if isinstance(value, str) and re.fullmatch(r"[0-9]+(?:\.[0-9]+)?(?:m|Ki|Mi|Gi|Ti|K|M|G)?", value):
-                        entry[label + "_resource_literal"] = value
+            if re.fullmatch(r"/spec/containers/\d+/resources/limits/(?:cpu|memory)", path) and isinstance(left, str) and isinstance(right, str):
+                aliases = {"1", "1000m"} if path.endswith("/cpu") else {"512Mi", "536870912"}
+                entry["approved_resource_alias_equivalent"] = left in aliases and right in aliases
             result.append(entry)
 
     walk(before, after, "")

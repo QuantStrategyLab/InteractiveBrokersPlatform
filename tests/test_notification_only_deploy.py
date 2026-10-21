@@ -449,10 +449,20 @@ def test_projection_keeps_runtime_and_secret_material_private():
     projection = release.difference_projection(before, after)
     output = json.dumps(projection)
     assert "PRIVATE_" not in output
-    assert any(d.get("before_resource_literal") == "1" and d.get("after_resource_literal") == "1000m" for d in projection)
+    assert any(d.get("approved_resource_alias_equivalent") is True for d in projection)
+    assert "resource_literal" not in output and '"1000m"' not in output
     assert any(d["path"].endswith("/env/0/value") for d in projection)
     assert release.difference_projection({"spec": {"timeoutSeconds": 1}}, {"spec": {"timeoutSeconds": True}}) == [
         {"path": "/spec/timeoutSeconds", "change": "changed", "before_type": "int", "after_type": "bool"}]
+
+
+@pytest.mark.parametrize("namespace", ["run.googleapis.com", "autoscaling.knative.dev", "client.knative.dev"])
+def test_projection_never_discloses_unknown_provider_keys(namespace):
+    before = {"metadata": {"annotations": {namespace + "/PRIVATE_ACCOUNT_KEY": "PRIVATE_VALUE"}}}
+    after = {"metadata": {"annotations": {namespace + "/PRIVATE_ACCOUNT_KEY": "PRIVATE_NEW_VALUE"}}}
+    result = json.dumps(release.difference_projection(before, after))
+    assert "PRIVATE" not in result
+    assert "unlisted-key" in result
 
 
 @pytest.mark.parametrize("permission_denied", [False, True])
