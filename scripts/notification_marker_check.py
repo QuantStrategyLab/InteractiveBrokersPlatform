@@ -7,6 +7,9 @@ import os
 from pathlib import Path
 import re
 import time
+from urllib.parse import quote
+
+from scripts.notification_marker_probe import BUCKET as MARKER_BUCKET, OBJECT as MARKER_OBJECT
 
 PROJECT = 'interactivebrokersquant'
 REGION = 'us-central1'
@@ -356,10 +359,22 @@ def read_probe(session, report):
     report.update(job_name=JOB, execution_count=count)
     latest = job.get('latestCreatedExecution') or {}
     require(isinstance(latest, dict), 'execution_identity_rejected')
+    residual = not latest and count == 1
+    if residual:
+        # Jobs.get can report an execution count without the latest pointer.
+        # List only this exact Job; never enumerate a project or another Job.
+        fields = 'executions(name,job),nextPageToken'
+        listed = control_request(session, report, 'GET', API + JOB + '/executions?pageSize=2&fields=' + fields,
+                                 phase='exact_job_executions_read_only')
+        rows = listed.get('executions')
+        require(isinstance(rows, list) and len(rows) == 1 and not listed.get('nextPageToken')
+                and isinstance(rows[0], dict), 'execution_list_not_unique')
+        latest = rows[0]
+        report['execution_source'] = 'exact_job_list'
     if latest or count:
         name = latest.get('name', '')
         require(isinstance(name, str) and re.fullmatch(re.escape(JOB) + r'/executions/[a-zA-Z0-9_-]+', name), 'execution_identity_rejected')
-        fields = 'name,job,taskCount,succeededCount,failedCount,cancelledCount,conditions(type,state)'
+        fields = 'name,job,taskCount,succeededCount,failedCount,cancelledCount,conditions(type,state,reason,executionReason)'
         execution = control_request(session, report, 'GET', API + name + '?fields=' + fields, phase='existing_execution_read_only')
         require(execution.get('name') == name and execution.get('job') == JOB, 'execution_identity_rejected')
         observed = {'name': name}
@@ -367,11 +382,79 @@ def read_probe(session, report):
                             ('failedCount', 'failed_count'), ('cancelledCount', 'cancelled_count')):
             value = execution.get(source)
             observed[key] = value if type(value) is int and value >= 0 else None
-        observed['completed_state'] = next((x.get('state') for x in execution.get('conditions', [])
+        conditions = execution.get('conditions', [])
+        require(isinstance(conditions, list), 'execution_conditions_unknown')
+        observed['completed_state'] = next((x.get('state') for x in conditions
             if isinstance(x, dict) and x.get('type') == 'Completed'
             and x.get('state') in {'CONDITION_SUCCEEDED', 'CONDITION_FAILED', 'CONDITION_PENDING'}), 'UNKNOWN')
+        completed = next((x for x in conditions
+            if isinstance(x, dict) and x.get('type') == 'Completed'), {})
+        for source in ('reason', 'executionReason'):
+            value = completed.get(source)
+            if isinstance(value, str) and re.fullmatch('[A-Z_]{1,64}', value):
+                observed[source] = value
         report['execution'] = observed
+        if residual:
+            read_fixed_object_metadata(session, report)
+            read_fixed_execution_receipt(session, report, name)
     report['status'] = 'job_observed'
+
+
+def read_fixed_object_metadata(session, report):
+    """Read metadata only for the approved nonce object; never fetch its body."""
+    url = ('https://storage.googleapis.com/storage/v1/b/' + MARKER_BUCKET + '/o/'
+           + quote(MARKER_OBJECT, safe='') + '?fields=name,generation,size')
+    entry = {'phase': 'fixed_synthetic_object_metadata', 'http_status': None}
+    report.setdefault('requests', []).append(entry)
+    try:
+        response = session.request('GET', url, timeout=10, allow_redirects=False)
+    except Exception:
+        raise Stop('object_metadata_transport_unknown_no_retry') from None
+    status = response.status_code
+    require(type(status) is int and 100 <= status <= 599, 'object_metadata_http_unknown_no_retry')
+    entry['http_status'] = status
+    try:
+        value = response.json()
+    except Exception:
+        raise Stop('object_metadata_payload_unknown_no_retry') from None
+    require(isinstance(value, dict), 'object_metadata_payload_unknown_no_retry')
+    if (status == 404 and isinstance(value.get('error'), dict)
+            and type(value['error'].get('code')) is int and value['error']['code'] == 404):
+        report['synthetic_object'] = {'found': False}
+        return
+    if status == 403:
+        entry['error_category'] = 'permission_denied'
+        raise Stop('object_metadata_permission_denied')
+    require(status == 200 and value.get('name') == MARKER_OBJECT, 'object_metadata_unbound_no_retry')
+    generation = value.get('generation')
+    size = value.get('size')
+    require(isinstance(generation, str) and re.fullmatch('[1-9][0-9]{0,31}', generation)
+            and isinstance(size, str) and size.isdecimal(), 'object_metadata_shape_unknown_no_retry')
+    report['synthetic_object'] = {'found': True, 'generation': generation, 'size_bytes': int(size)}
+
+
+def read_fixed_execution_receipt(session, report, name):
+    suffix = name.rsplit('/', 1)[1]
+    entries = control_request(session, report, 'POST', 'https://logging.googleapis.com/v2/entries:list', body={
+        'resourceNames': ['projects/' + PROJECT], 'pageSize': 10, 'orderBy': 'timestamp desc',
+        'filter': f'resource.type="cloud_run_job" AND resource.labels.location="{REGION}" AND resource.labels.job_name="{JOB_ID}" AND labels."run.googleapis.com/execution_name"="{suffix}"'},
+        phase='exact_execution_safe_log_read_only')
+    require(isinstance(entries.get('entries', []), list) and not entries.get('nextPageToken'),
+            'safe_probe_receipt_page_incomplete')
+    certificates = []
+    for entry in entries.get('entries', []):
+        value = entry.get('jsonPayload')
+        if not isinstance(value, dict):
+            try:
+                value = json.loads(entry.get('textPayload', ''))
+            except (ValueError, TypeError):
+                continue
+        if isinstance(value, dict) and value.get('probe_id') == NONCE:
+            certificates.append(value)
+    require(len(certificates) <= 1, 'safe_probe_receipt_ambiguous')
+    report['safe_probe_receipt_found'] = bool(certificates)
+    if certificates:
+        report['probe_receipt'] = safe_probe_receipt(certificates[0])
 
 
 def validate_probe(session, report, *, sleep=time.sleep, clock=time.monotonic):
