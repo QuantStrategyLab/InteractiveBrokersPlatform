@@ -9,18 +9,45 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
+import tarfile
 import time
 
 from scripts.verify_cloud_run_no_traffic_deploy import _active_traffic, _digest
 from scripts.verify_image_ues_release_binding import check, new_report, revision_from_lockfile
 
 SOURCE = "07a98e1559ec1acf7199f419facfe5c3ad5f124d"
+# Exact P frozen combination; publication/execution requires its independent qualification.
+COMBINED_SOURCE = "8ad644a724dbb9de63287d32b181a49c85e48af6"
+COMBINED_TREE = "8de60a057ed91daba42bc111ee66389511285ef8"
+COMBINED_FILES = {
+    "application/account_new_risk_gate_support.py": "a0c1d19e1a53c1822c7c26266e477e86d793c1fbdb4242fd3aceaf9371b2d16d",
+    "application/execution_service.py": "ee0de41435ec270065cb7b183ed345b273a453ce7436e41a2dd83f6de629c082",
+    "application/rebalance_service.py": "4d0f5c8c507164cebc1093f82fb5d32ab6bf24da67e17126e9099ef37e0090ff",
+    "main.py": "aa332f34fcf39b02be3b39c3750774aaab4e0474164fda9f34d9019e5e1ce50a",
+    "notifications/archive_adapter.py": "a49a506b21de4080d6310737656dade92888211bf79d20cd5405ba7f400eccae",
+    "notifications/digest_snapshot/__init__.py": "4aaf6f490cdd9c4ea2733fd5d705dc43ff6fa8ce39e161d717e7832a46977e78",
+    "notifications/digest_snapshot/digest_candidates.py": "6272c0ca16ee63eecd9bcb25870df7f575d8fac3f487d3ab1ac69cc3831042a0",
+    "notifications/digest_snapshot/digest_routing.py": "60c3f258c4d1a03bc49c7d03b392c02c316541726dfacb0b1d4fae6dbd2e5017",
+    "notifications/digest_snapshot/provenance.json": "3bd6c4d01da3ebc439c9395fde5d16b567a0209331c757d3dfce1a028a43397c",
+    "notifications/digest_snapshot/unified_contract.py": "7ba48d1d7c74e66be8cd3ff983c2117002776e82cda6675a084cfe0dc51aecc0",
+    "notifications/display_names.json": "b453f762fff0186342c4eb2b60e95a24cce56bf988d6cfaeea47afe8b8077b54",
+    "notifications/display_names.py": "20e26298cf48c77431257a4d73d2c9ef5ce0eda2a88323a23852d0119bdacf8f",
+    "notifications/renderers.py": "71039d79ee536efa6f99d04fe06652ce2bd8230a1147fd3d18b2513f2a3b75b8",
+    "notifications/routine_observations.py": "199b3d5991a6676d0fc40155452f394616eea6de5d9ae7c1b9cdaebe8a73d53c",
+    "notifications/telegram.py": "deea6e99c170cea7d8e37c8294d0af7b7adf24d7b63853f54e77f7a7ff914a62",
+    "notifications/unified_adapter.py": "37b3e22e7f2725c353527d45466e2c562b6f6f7297ea0ae68e8a8cd3a318686f",
+    "scripts/daily_dry_run_digest.py": "3fa94cfc70cc10b1081a2083c4563b321b2abefb916a68021f7593919a8cf597",
+    "scripts/emit_unified_digest_candidates.py": "7594dfed24c0d5e0ff3a87de8146ff1dcbcfad92f51abe59e5f61f9b002c7178",
+    "scripts/execution_report_heartbeat.py": "26c8633d6b497ed866da49d2b1098f91f400da560348bea6e420b545b62a930f",
+    "scripts/project_digest_candidates.py": "05ee7e01266c87dd612d4c9162adccbb0999989c42bdf03553b278cf44d5821b"
+}
 PROJECT = "interactivebrokersquant"
 REGION = "us-central1"
 RUN_API = f"https://{REGION}-run.googleapis.com/apis/serving.knative.dev/v1/namespaces/{PROJECT}"
@@ -127,7 +154,7 @@ def authorized_session():
 def read_revision(name: str, report: dict, *, phase: str, session, allow_missing: bool = False) -> dict:
     """Only an HTTP 404 with structured NOT_FOUND may establish absence."""
     require(bool(re.fullmatch(r"[a-z][a-z0-9-]{0,62}", name)), "invalid_revision_name")
-    require(phase in {"original", "candidate_absence", "candidate_readiness"}, "invalid_revision_query_phase")
+    require(phase in {"original", "candidate_absence_before_build", "candidate_absence", "candidate_readiness"}, "invalid_revision_query_phase")
     entry = {"phase": phase, "revision_sha256": sha(name), "http_status": None, "sdk_status": "UNKNOWN", "sdk_code": None, "decision": "stop"}
     report.setdefault("revision_queries", []).append(entry)
     try:
@@ -180,9 +207,13 @@ def validate_dispatch(env: dict[str, str]) -> str:
     require(env.get("GITHUB_EVENT_NAME") == "workflow_dispatch" and env.get("GITHUB_REF") == "refs/heads/main", "trusted_main_dispatch_required")
     require(env.get("GITHUB_RUN_ATTEMPT") == "1", "rerun_not_authorized")
     require(env.get("ENABLE_GITHUB_CLOUD_RUN_DEPLOY") == "true", "repository_deployment_gate_disabled")
-    require(env.get("INPUT_SOURCE_COMMIT") == SOURCE, "fixed_notification_source_required")
+    build = env.get("INPUT_DEPLOY_IMAGE") == "true"
+    expected_source = COMBINED_SOURCE if build else SOURCE
+    require(bool(re.fullmatch(r"[0-9a-f]{40}", expected_source)) and env.get("INPUT_SOURCE_COMMIT") == expected_source, "fixed_notification_source_required")
+    if build:
+        require(env.get("INPUT_NOTIFICATION_READBACK_ONLY", "false") == "false", "combined_build_cannot_readback")
     require(env.get("INPUT_TARGET") == "configured" and not env.get("INPUT_CONFIGURED_SERVICE"), "fixed_private_target_alias_required")
-    require(env.get("INPUT_DEPLOY_IMAGE") == "false", "fixed_image_reuse_required_no_rebuild")
+    require(env.get("INPUT_DEPLOY_IMAGE") in {"true", "false"}, "explicit_fixed_image_mode_required")
     require(all(env.get(key) == "false" for key in ("INPUT_SYNC_ENV", "INPUT_APPROVE_TRAFFIC_SHIFT", "INPUT_APPROVE_SCHEDULER_SYNC")), "broad_mutation_not_authorized")
     require(env.get("GCP_PROJECT_ID") == PROJECT and env.get("GCP_DEPLOY_SERVICE_ACCOUNT") == DEPLOYER and env.get("GCP_RUNTIME_SERVICE_ACCOUNT") == RUNTIME, "original_identity_binding_required")
     run_id = env.get("GITHUB_RUN_ID", "")
@@ -208,14 +239,83 @@ def resolve_service(raw: str) -> str:
     return matches[0]
 
 
-def verify_source(source: Path) -> None:
-    require(run(["git", "-C", str(source), "rev-parse", "HEAD"]).decode().strip() == SOURCE, "source_checkout_mismatch")
-    for relative, expected in SOURCE_FILES.items():
+def verify_source(source: Path, *, combined: bool = False) -> None:
+    expected_source = COMBINED_SOURCE if combined else SOURCE
+    files = COMBINED_FILES if combined else SOURCE_FILES
+    require(run(["git", "-C", str(source), "rev-parse", "HEAD"]).decode().strip() == expected_source, "source_checkout_mismatch")
+    if combined:
+        require(bool(re.fullmatch(r"[0-9a-f]{40}", COMBINED_TREE)) and len(files) == 20, "reviewed_combination_not_frozen")
+        require(run(["git", "-C", str(source), "rev-parse", "HEAD^{tree}"]).decode().strip() == COMBINED_TREE, "source_tree_mismatch")
+    for relative, expected in files.items():
         path = source / relative
         require(path.is_file() and not path.is_symlink() and sha(path.read_bytes()) == expected, "source_file_mismatch")
     require(sha((source / "uv.lock").read_bytes()) == SOURCE_LOCK_HASH, "source_lock_changed")
     require(revision_from_lockfile(source / "uv.lock") == PACKAGES["us_equity_strategies-0.7.60"], "source_ues_pin_changed")
 
+
+
+def build_context(source: Path, destination: Path) -> None:
+    require(not destination.exists(), "context_already_exists")
+    for relative, expected in COMBINED_FILES.items():
+        path = source / relative
+        require(path.is_file() and not path.is_symlink() and sha(path.read_bytes()) == expected, "source_file_mismatch")
+        output = destination / "overlay" / relative
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(path.read_bytes())
+    (destination / "Dockerfile").write_text(f"FROM {BASE_IMAGE}\nCOPY --chown=1000:1000 overlay/ /app/\n")
+
+
+def copy_image_file(container: str, path: str) -> bytes:
+    raw = run(["docker", "cp", f"{container}:{path}", "-"])
+    with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
+        members = archive.getmembers()
+        require(len(members) == 1 and members[0].isfile() and members[0].size < 2_000_000, "unexpected_image_file")
+        return archive.extractfile(members[0]).read()
+
+
+def verify_built_image(source: Path, tag: str) -> dict[str, str]:
+    base_layers = json.loads(run(["docker", "image", "inspect", BASE_IMAGE, "--format", "{{json .RootFS.Layers}} "]))
+    layers = json.loads(run(["docker", "image", "inspect", tag, "--format", "{{json .RootFS.Layers}} "]))
+    require(isinstance(base_layers, list) and bool(base_layers) and layers[:-1] == base_layers and len(layers) == len(base_layers) + 1, "base_layers_changed")
+    container = run(["docker", "create", "--network=none", "--entrypoint=/bin/true", tag]).decode().strip()
+    require(bool(re.fullmatch(r"[0-9a-f]{64}", container)), "invalid_static_container")
+    try:
+        for relative, expected in COMBINED_FILES.items():
+            require(sha(copy_image_file(container, "/app/" + relative)) == expected, "image_source_file_mismatch")
+        installed = {}
+        for dist, expected in PACKAGES.items():
+            prefix = f"/app/.venv/lib/python3.12/site-packages/{dist}.dist-info/"
+            metadata_text = copy_image_file(container, prefix + "METADATA").decode()
+            direct = json.loads(copy_image_file(container, prefix + "direct_url.json"))
+            require(direct.get("vcs_info", {}).get("commit_id") == expected, "installed_package_commit_changed")
+            require("\nVersion: " + dist.rsplit("-", 1)[1] + "\n" in "\n" + metadata_text, "installed_package_version_changed")
+            installed[dist] = expected
+        require(revision_from_lockfile(source / "uv.lock") == PACKAGES["us_equity_strategies-0.7.60"], "source_ues_pin_changed")
+        return installed
+    finally:
+        run(["docker", "rm", container])
+
+
+def build_image(source: Path, run_id: str, report: dict) -> str:
+    # Unique run tag plus attempt=1 admission; never resume an uncertain build/push.
+    tag = f"{REPOSITORY}:notification-{COMBINED_SOURCE}-{run_id}"
+    build_context(source, source.parent / ("notification-context-" + run_id))
+    run(["gcloud", "auth", "configure-docker", f"{REGION}-docker.pkg.dev", "--quiet"])
+    report["image_pull_commands"] = 1
+    run(["docker", "pull", BASE_IMAGE], timeout=180)
+    report["build_commands"] = 1
+    run(["docker", "build", "--network=none", "--tag", tag, str(source.parent / ("notification-context-" + run_id))], timeout=600)
+    report["installed_commits"] = verify_built_image(source, tag)
+    report["push_commands"] = 1
+    output = run(["docker", "push", tag], timeout=180).decode()
+    matches = re.findall(rf"^{re.escape(tag.rsplit(':', 1)[1])}: digest: (sha256:[0-9a-f]{{64}}) size: [0-9]+\s*$", output, re.M)
+    require(len(matches) == 1, "pushed_manifest_digest_unavailable")
+    digest = matches[0]
+    report["image_digest"] = digest
+    image = REPOSITORY + "@" + digest
+    actual = run(["gcloud", "artifacts", "docker", "images", "describe", image, f"--project={PROJECT}", "--format=value(image_summary.digest)", "--quiet"]).decode().strip()
+    require(actual == digest, "pushed_registry_digest_mismatch")
+    return image
 
 def env_map(revision: dict) -> dict[str, dict]:
     entries = revision["spec"]["containers"][0].get("env", [])
@@ -284,7 +384,7 @@ def budget_guard(service: dict, revision: dict) -> None:
 
 
 def registry_cost_guard() -> None:
-    # A new automatic scan alone exceeds this release's USD 0.10 budget.
+    # Automatic scanning is outside the approved cumulative USD1 two-pilot plan.
     # Read repository metadata, never Container Analysis or its denied endpoint.
     state = run(["gcloud", "artifacts", "repositories", "describe", "cloud-run-source-deploy",
                  f"--project={PROJECT}", f"--location={REGION}",
@@ -292,7 +392,7 @@ def registry_cost_guard() -> None:
     require(state == "SCANNING_DISABLED", "automatic_scan_cost_not_covered_or_unknown")
 
 
-def candidate(service: dict, original: dict, image: str, run_id: str) -> dict:
+def candidate(service: dict, original: dict, image: str, run_id: str, *, source_commit: str = SOURCE) -> dict:
     require(image.startswith(REPOSITORY + "@sha256:") and bool(re.fullmatch(r"[0-9a-f]{64}", image.rsplit(":", 1)[1])), "immutable_image_required")
     service_name = service["metadata"]["name"]
     remaining = 63 - len(service_name) - 1
@@ -301,7 +401,7 @@ def candidate(service: dict, original: dict, image: str, run_id: str) -> dict:
     result = {"apiVersion": "serving.knative.dev/v1", "kind": "Service", "metadata": {
         key: copy.deepcopy(service["metadata"][key]) for key in ("name", "namespace", "resourceVersion", "labels", "annotations") if key in service["metadata"]}, "spec": copy.deepcopy(service["spec"])}
     clean = metadata(original.get("metadata", {}), template=False)
-    clean["labels"].update({"commit-sha": SOURCE, "github-run-id": run_id})
+    clean["labels"].update({"commit-sha": source_commit, "github-run-id": run_id})
     clean["name"] = name
     result["metadata"]["annotations"] = {key: value for key, value in result["metadata"].get("annotations", {}).items() if key not in VOLATILE_ANNOTATIONS}
     spec = copy.deepcopy(original["spec"])
@@ -353,7 +453,12 @@ def verify_readback(before: dict, original: dict, after: dict, revision: dict, e
 def release(source: Path, report: dict) -> None:
     require(os.environ.get("INPUT_NOTIFICATION_READBACK_ONLY", "false") == "false", "readback_cannot_execute_release")
     run_id = validate_dispatch(dict(os.environ))
-    verify_source(source)
+    combined = os.environ.get("INPUT_DEPLOY_IMAGE") == "true"
+    if combined:
+        verify_source(source, combined=True)
+    else:
+        verify_source(source)
+    source_commit = COMBINED_SOURCE if combined else SOURCE
     service_name = resolve_service(os.environ.get("CLOUD_RUN_SERVICE_TARGETS_JSON", ""))
     print("::add-mask::" + service_name)
     before = cloud(["run", "services", "describe", service_name])
@@ -369,21 +474,30 @@ def release(source: Path, report: dict) -> None:
         require(baseline == QUALIFIED_BASELINE, "qualified_nonnotification_baseline_changed")
         budget_guard(before, original)
         registry_cost_guard()
-        # Adopt only the already qualified immutable image. No Docker/build/push path.
-        registry_digest = run(["gcloud", "artifacts", "docker", "images", "describe", QUALIFIED_IMAGE, f"--project={PROJECT}", "--format=value(image_summary.digest)", "--quiet"]).decode().strip()
-        require(registry_digest == QUALIFIED_DIGEST, "qualified_registry_digest_mismatch")
-        report.update({"target": ALIAS, "source": SOURCE, "original_target_fingerprint": TARGET_HASH, "original_nonnotification_sha256": baseline,
-                       "image_digest": QUALIFIED_DIGEST, "image_qualification_run": QUALIFICATION_RUN,
-                       "image_evidence_scope": "reused_prior_static_qualification_and_immutable_registry_read",
-                       "prior_installed_commits": PACKAGES, "build_commands": 0, "push_commands": 0})
         binding = new_report()
-        binding["evidence_scope"] = "prior_qualified_image_and_current_original_target"
+        binding["evidence_scope"] = "frozen_source_pins_and_current_original_target"
         require(not check({"image": PACKAGES["us_equity_strategies-0.7.60"], "lockfile": revision_from_lockfile(source / "uv.lock")}, [(ALIAS, target)], report=binding), "original_release_risk_binding_mismatch")
-        report["release_risk_binding"] = binding
+        report.update({"target": ALIAS, "source": source_commit, "original_target_fingerprint": TARGET_HASH,
+                       "original_nonnotification_sha256": baseline, "release_risk_binding": binding})
+        if combined:
+            preflight_name = candidate(before, original, BASE_IMAGE, run_id, source_commit=source_commit)["spec"]["template"]["metadata"]["name"]
+            print("::add-mask::" + preflight_name)
+            require(not read_revision(preflight_name, report, phase="candidate_absence_before_build", session=session, allow_missing=True), "candidate_revision_already_exists")
+            report["source_tree"] = COMBINED_TREE
+            image = build_image(source, run_id, report)
+            report["image_evidence_scope"] = "reviewed_twenty_file_overlay_static_installed_pins_and_immutable_registry_read"
+        else:
+            # Preserve prior qualified-image reuse without a build or Docker pull.
+            registry_digest = run(["gcloud", "artifacts", "docker", "images", "describe", QUALIFIED_IMAGE, f"--project={PROJECT}", "--format=value(image_summary.digest)", "--quiet"]).decode().strip()
+            require(registry_digest == QUALIFIED_DIGEST, "qualified_registry_digest_mismatch")
+            image = QUALIFIED_IMAGE
+            report.update({"image_digest": QUALIFIED_DIGEST, "image_qualification_run": QUALIFICATION_RUN,
+                           "image_evidence_scope": "reused_prior_static_qualification_and_immutable_registry_read",
+                           "prior_installed_commits": PACKAGES, "build_commands": 0, "push_commands": 0})
         fresh = cloud(["run", "services", "describe", service_name])
         require(bool(before.get("metadata", {}).get("resourceVersion")), "service_concurrency_token_required")
         require(fresh.get("metadata", {}).get("resourceVersion") == before.get("metadata", {}).get("resourceVersion") and fresh.get("spec") == before.get("spec") and routes(fresh) == routes(before), "service_changed_during_preflight")
-        body = candidate(before, original, QUALIFIED_IMAGE, run_id)
+        body = candidate(before, original, image, run_id, source_commit=source_commit)
         candidate_name = body["spec"]["template"]["metadata"]["name"]
         print("::add-mask::" + candidate_name)
         require(not read_revision(candidate_name, report, phase="candidate_absence", session=session, allow_missing=True), "candidate_revision_already_exists")

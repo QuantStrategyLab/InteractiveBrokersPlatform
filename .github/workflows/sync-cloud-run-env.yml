@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       notification_only:
-        description: "Reuse the fixed qualified IBKR notification image; requires deploy_image=false and sync/traffic/scheduler=false."
+        description: "Build the fixed reviewed notification overlay (deploy_image=true) or reuse the qualified image (false); sync/traffic/scheduler remain false."
         required: true
         type: boolean
         default: false
