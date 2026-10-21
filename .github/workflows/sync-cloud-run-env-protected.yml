@@ -5,6 +5,12 @@ name: Deploy Cloud Run (protected execution)
 on:
   workflow_call:
     inputs:
+      notification_marker_mode:
+        type: string
+        required: false
+      approve_marker_probe:
+        type: boolean
+        required: false
       notification_only:
         type: boolean
         required: false
@@ -45,6 +51,16 @@ on:
         type: boolean
         required: false
     secrets:
+      DIGEST_TARGET_BINDINGS_JSON:
+        required: false
+      DIGEST_OPAQUE_ACCOUNT_UID:
+        required: false
+      DIGEST_TARGET_ID:
+        required: false
+      IBKR_DIGEST_OPAQUE_ACCOUNT_UID:
+        required: false
+      IBKR_DIGEST_TARGET_ID:
+        required: false
       CLOUD_RUN_SERVICE:
         required: false
       CLOUD_RUN_SERVICES:
@@ -86,7 +102,7 @@ jobs:
   sync-cloud-run-env:
     name: Deploy / Sync Cloud Run
     # Production deployment and environment sync require an explicit operator dispatch.
-    if: github.event_name == 'workflow_dispatch' && inputs.notification_only != true && inputs.notification_readback_only != true
+    if: github.event_name == 'workflow_dispatch' && inputs.notification_only != true && inputs.notification_readback_only != true && (inputs.notification_marker_mode == '' || inputs.notification_marker_mode == 'disabled')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -1694,7 +1710,7 @@ jobs:
 
   notification-only:
     name: Fixed notification overlay / no traffic
-    if: github.event_name == 'workflow_dispatch' && inputs.notification_only == true
+    if: github.event_name == 'workflow_dispatch' && inputs.notification_only == true && (inputs.notification_marker_mode == '' || inputs.notification_marker_mode == 'disabled')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -1803,3 +1819,117 @@ jobs:
                   stream.write(report.read_text())
                   stream.write("```\n")
           PY
+
+  notification-binding-read:
+    name: Read one exact IBKR business binding only
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.notification_marker_mode == 'binding-read'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    env:
+      INPUT_NOTIFICATION_MARKER_MODE: ${{ inputs.notification_marker_mode }}
+      INPUT_APPROVE_MARKER_PROBE: ${{ inputs.approve_marker_probe }}
+      INPUT_TARGET: ${{ inputs.target }}
+      INPUT_CONFIGURED_SERVICE: ${{ inputs.configured_service }}
+      INPUT_SOURCE_COMMIT: ${{ inputs.source_commit }}
+      INPUT_NOTIFICATION_ONLY: ${{ inputs.notification_only }}
+      INPUT_NOTIFICATION_READBACK_ONLY: ${{ inputs.notification_readback_only }}
+      INPUT_DEPLOY_IMAGE: ${{ inputs.deploy_image }}
+      INPUT_SYNC_ENV: ${{ inputs.sync_env }}
+      INPUT_APPROVE_TRAFFIC_SHIFT: ${{ inputs.approve_traffic_shift }}
+      INPUT_APPROVE_SCHEDULER_SYNC: ${{ inputs.approve_scheduler_sync }}
+      RUNTIME_TARGET_JSON: ${{ secrets.RUNTIME_TARGET_JSON }}
+      DIGEST_TARGET_BINDINGS_JSON: ${{ secrets.DIGEST_TARGET_BINDINGS_JSON }}
+      DIGEST_OPAQUE_ACCOUNT_UID: ${{ secrets.DIGEST_OPAQUE_ACCOUNT_UID }}
+      DIGEST_TARGET_ID: ${{ secrets.DIGEST_TARGET_ID }}
+      IBKR_DIGEST_OPAQUE_ACCOUNT_UID: ${{ secrets.IBKR_DIGEST_OPAQUE_ACCOUNT_UID }}
+      IBKR_DIGEST_TARGET_ID: ${{ secrets.IBKR_DIGEST_TARGET_ID }}
+      DIGEST_STORE_TARGET: ${{ vars.DIGEST_STORE_TARGET }}
+    steps:
+      - name: Require infrastructure variables
+        env:
+          IBKR_GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          for name in IBKR_GCP_PROJECT_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is required" >&2
+              exit 2
+            fi
+          done
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Emit safe hashes and runner-private four-field projection
+        run: python3 -m scripts.notification_marker_check --mode binding-read --report "${RUNNER_TEMP}/notification-binding.safe.json" --private-out "${RUNNER_TEMP}/notification-binding.private.json"
+      - name: Preserve anonymous binding receipt only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: notification-binding-${{ github.run_id }}
+          path: ${{ runner.temp }}/notification-binding.safe.json
+          if-no-files-found: error
+
+  notification-marker-probe:
+    name: One retained synthetic marker Job
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.notification_marker_mode == 'execute-probe' && inputs.approve_marker_probe == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      INPUT_NOTIFICATION_MARKER_MODE: ${{ inputs.notification_marker_mode }}
+      INPUT_APPROVE_MARKER_PROBE: ${{ inputs.approve_marker_probe }}
+      INPUT_TARGET: ${{ inputs.target }}
+      INPUT_CONFIGURED_SERVICE: ${{ inputs.configured_service }}
+      INPUT_SOURCE_COMMIT: ${{ inputs.source_commit }}
+      INPUT_NOTIFICATION_ONLY: ${{ inputs.notification_only }}
+      INPUT_NOTIFICATION_READBACK_ONLY: ${{ inputs.notification_readback_only }}
+      INPUT_DEPLOY_IMAGE: ${{ inputs.deploy_image }}
+      INPUT_SYNC_ENV: ${{ inputs.sync_env }}
+      INPUT_APPROVE_TRAFFIC_SHIFT: ${{ inputs.approve_traffic_shift }}
+      INPUT_APPROVE_SCHEDULER_SYNC: ${{ inputs.approve_scheduler_sync }}
+      ENABLE_GITHUB_CLOUD_RUN_DEPLOY: ${{ vars.ENABLE_GITHUB_CLOUD_RUN_DEPLOY }}
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+      CLOUDSDK_CORE_DISABLE_FILE_LOGGING: "true"
+      CLOUDSDK_CORE_LOG_HTTP: "false"
+    steps:
+      - name: Require infrastructure variables
+        env:
+          IBKR_GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          IBKR_RUNTIME_SERVICE_ACCOUNT: ${{ vars.IBKR_RUNTIME_SERVICE_ACCOUNT }}
+        run: |
+          set -euo pipefail
+          for name in IBKR_GCP_PROJECT_ID IBKR_DEPLOY_SERVICE_ACCOUNT IBKR_RUNTIME_SERVICE_ACCOUNT; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is required" >&2
+              exit 2
+            fi
+          done
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Admit exact one-time synthetic scope before authentication
+        run: python3 -c 'import os; from scripts.notification_marker_check import validate_dispatch; validate_dispatch("execute-probe", os.environ)'
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          version: ">= 416.0.0"
+      - name: Create and execute fixed Job once; retain object and Job
+        run: python3 -m scripts.notification_marker_check --mode execute-probe --report "${RUNNER_TEMP}/notification-marker.safe.json"
+      - name: Preserve synthetic receipt only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: notification-marker-${{ github.run_id }}
+          path: ${{ runner.temp }}/notification-marker.safe.json
+          if-no-files-found: error
