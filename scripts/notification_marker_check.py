@@ -20,6 +20,7 @@ JOB = f'{PARENT}/jobs/{JOB_ID}'
 API = 'https://run.googleapis.com/v2/'
 NONCE = '3c5b1830-9184-4966-9232-f8f1e290fd18'
 PROBE_SHA = 'ce49359d6d6275a49a74bfbee4e0acccb61ee3f2ade7f796419eb29ed16c9c97'
+ORIGINAL_JOB_BODY_SHA = '0417a4f6a65cef88a2c29b5b113f1f5a935d1a7a364bdb249f73b5be9aa4a1fe'
 IDENTITY = ('platform_id', 'opaque_account_uid', 'target_id', 'strategy_profile')
 SECRET_NAMES = {'token', 'password', 'private_key', 'access_token', 'refresh_token', 'api_key', 'secret', 'client_secret', 'credentials', 'authorization_header'}
 
@@ -38,7 +39,7 @@ def digest(value):
 
 
 def validate_dispatch(mode, env):
-    require(mode in {'binding-read', 'execute-probe', 'probe-readback'} and env.get('INPUT_NOTIFICATION_MARKER_MODE') == mode, 'mode_not_admitted')
+    require(mode in {'binding-read', 'execute-probe', 'probe-readback', 'probe-validate-only'} and env.get('INPUT_NOTIFICATION_MARKER_MODE') == mode, 'mode_not_admitted')
     for key, value in {'GITHUB_EVENT_NAME': 'workflow_dispatch', 'GITHUB_REF': 'refs/heads/main',
                        'GITHUB_RUN_ATTEMPT': '1', 'INPUT_TARGET': 'configured', 'INPUT_CONFIGURED_SERVICE': '',
                        'INPUT_NOTIFICATION_ONLY': 'false', 'INPUT_NOTIFICATION_READBACK_ONLY': 'false',
@@ -47,7 +48,7 @@ def validate_dispatch(mode, env):
         require(env.get(key, '') == value, 'dispatch_boundary_rejected')
     source = env.get('GITHUB_SHA', '')
     require(re.fullmatch('[a-f0-9]{40}', source) and env.get('INPUT_SOURCE_COMMIT') == source, 'exact_controller_source_required')
-    if mode in {'execute-probe', 'probe-readback'}:
+    if mode in {'execute-probe', 'probe-readback', 'probe-validate-only'}:
         for key, value in {'INPUT_APPROVE_MARKER_PROBE': 'true' if mode == 'execute-probe' else 'false', 'ENABLE_GITHUB_CLOUD_RUN_DEPLOY': 'true',
                            'GCP_PROJECT_ID': PROJECT, 'GCP_DEPLOY_SERVICE_ACCOUNT': DEPLOYER,
                            'GCP_RUNTIME_SERVICE_ACCOUNT': RUNTIME}.items():
@@ -280,6 +281,25 @@ def read_probe(session, report):
     report['status'] = 'job_observed'
 
 
+def validate_probe(session, report):
+    """One server validation of the original body; never persist or execute."""
+    url = API + JOB + '?fields=name'
+    require(control_request(session, report, 'GET', url, missing=True,
+                            phase='validation_job_absence') is None, 'job_already_exists_no_validation')
+    expected = job_body()
+    require(digest(expected) == ORIGINAL_JOB_BODY_SHA, 'original_job_body_changed')
+    report.update(request_body_sha256=ORIGINAL_JOB_BODY_SHA, validation_attempts=1,
+                  execution_submissions=0, actual_delivery='not_attempted', production_mutations=0)
+    value = control_request(session, report, 'POST',
+        API + PARENT + '/jobs?jobId=' + JOB_ID + '&validateOnly=true', body=expected,
+        phase='job_validate_only')
+    report['validation_operation_done'] = value.get('done') if type(value.get('done')) is bool else None
+    require(report['validation_operation_done'] is True, 'validation_completion_unknown_no_poll')
+    require(control_request(session, report, 'GET', url, missing=True,
+                            phase='validation_job_absence_after') is None, 'job_present_after_validation')
+    report.update(status='validated_only_job_absent', job_found=False)
+
+
 def execute_probe(session, report, *, sleep=time.sleep, clock=time.monotonic):
     deadline = clock() + 180
     def request(method, url, **kwargs):
@@ -353,7 +373,7 @@ def execute_probe(session, report, *, sleep=time.sleep, clock=time.monotonic):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--mode', choices=['binding-read', 'execute-probe', 'probe-readback'], required=True)
+    parser.add_argument('--mode', choices=['binding-read', 'execute-probe', 'probe-readback', 'probe-validate-only'], required=True)
     parser.add_argument('--report', type=Path, required=True)
     parser.add_argument('--private-out', type=Path)
     args = parser.parse_args()
@@ -379,6 +399,8 @@ def main():
             try:
                 if args.mode == 'probe-readback':
                     read_probe(session, report)
+                elif args.mode == 'probe-validate-only':
+                    validate_probe(session, report)
                 else:
                     execute_probe(session, report)
             finally:
@@ -390,7 +412,7 @@ def main():
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, sort_keys=True, indent=2) + '\n')
     print(json.dumps(report, sort_keys=True))
-    return 0 if report['status'] in {'binding_verified', 'pass_retained', 'job_absent_verified', 'job_observed'} else 1
+    return 0 if report['status'] in {'binding_verified', 'pass_retained', 'job_absent_verified', 'job_observed', 'validated_only_job_absent'} else 1
 
 
 if __name__ == '__main__':

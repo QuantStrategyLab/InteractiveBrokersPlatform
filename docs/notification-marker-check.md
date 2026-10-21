@@ -72,3 +72,15 @@ field paths from this fixed Job request. Messages, descriptions, unknown paths,
 ErrorInfo metadata, tokens and full responses are not retained. The original
 create400 from run39552761809 remains UNKNOWN: this diagnostic repair cannot
 recover response details already discarded by its earlier source version.
+
+## Validate the original request only
+
+`probe-validate-only` uses the same main/source/identity guards as readback and
+requires `approve_marker_probe=false`. It first confirms the fixed Job is
+absent, then sends exactly the original SHA256-bound body once to jobs.create
+with `validateOnly=true`. That API mode validates without persisting resources.
+It never calls the execution endpoint, polls an operation, selects a new nonce
+or falls back to an actual create. A completed successful validation is followed
+by an exact Job GET to verify absence. Pending, unknown, denied or invalid
+responses stop; safe structured error details remain in the receipt. Explicit
+approval for this validation is separate from permission to create or execute.

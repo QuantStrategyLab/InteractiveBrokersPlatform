@@ -14,6 +14,7 @@ on:
           - binding-read
           - execute-probe
           - probe-readback
+          - probe-validate-only
       approve_marker_probe:
         description: "Separate approval for exactly one retained synthetic Job/object; never cleanup or production changes."
         required: true
