@@ -395,14 +395,8 @@ def read_probe(session, report):
                 observed[source] = value
         report['execution'] = observed
         if residual:
-            errors = []
-            for reader in (read_fixed_object_metadata, lambda s, r: read_fixed_execution_receipt(s, r, name)):
-                try:
-                    reader(session, report)
-                except Stop as error:
-                    errors.append(str(error))
-            if errors:
-                raise Stop('residual_read_incomplete:' + ','.join(errors))
+            read_fixed_object_metadata(session, report)
+            read_fixed_execution_receipt(session, report, name)
     report['status'] = 'job_observed'
 
 
@@ -424,7 +418,8 @@ def read_fixed_object_metadata(session, report):
     except Exception:
         raise Stop('object_metadata_payload_unknown_no_retry') from None
     require(isinstance(value, dict), 'object_metadata_payload_unknown_no_retry')
-    if status == 404 and isinstance(value.get('error'), dict) and value['error'].get('code') == 404:
+    if (status == 404 and isinstance(value.get('error'), dict)
+            and type(value['error'].get('code')) is int and value['error']['code'] == 404):
         report['synthetic_object'] = {'found': False}
         return
     if status == 403:
@@ -442,7 +437,7 @@ def read_fixed_execution_receipt(session, report, name):
     suffix = name.rsplit('/', 1)[1]
     entries = control_request(session, report, 'POST', 'https://logging.googleapis.com/v2/entries:list', body={
         'resourceNames': ['projects/' + PROJECT], 'pageSize': 10, 'orderBy': 'timestamp desc',
-        'filter': f'resource.type="cloud_run_job" AND resource.labels.job_name="{JOB_ID}" AND labels."run.googleapis.com/execution_name"="{suffix}"'},
+        'filter': f'resource.type="cloud_run_job" AND resource.labels.location="{REGION}" AND resource.labels.job_name="{JOB_ID}" AND labels."run.googleapis.com/execution_name"="{suffix}"'},
         phase='exact_execution_safe_log_read_only')
     require(isinstance(entries.get('entries', []), list) and not entries.get('nextPageToken'),
             'safe_probe_receipt_page_incomplete')

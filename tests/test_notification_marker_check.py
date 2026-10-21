@@ -509,6 +509,7 @@ def test_readback_count_one_without_latest_uses_exact_job_and_safe_object_log_pr
     assert control.JOB + '/executions?pageSize=2' in session.calls[1][1]
     assert '/storage/v1/b/' + probe.BUCKET + '/o/' in session.calls[3][1]
     assert session.calls[4][1].endswith('/entries:list')
+    assert 'resource.labels.location="us-central1"' in session.calls[4][2]['json']['filter']
     assert not any(url.endswith(':run') or 'jobId=' in url for _, url, _ in session.calls)
 
 
@@ -550,14 +551,22 @@ def test_readback_object_metadata_denial_is_recorded_without_retry_or_payload():
     session = Replies((200, {'name': control.JOB, 'executionCount': 1}),
                       (200, {'executions': [{'name': name, 'job': control.JOB}]}),
                       (200, {'name': name, 'job': control.JOB, 'conditions': []}),
-                      (403, {'error': {'code': 403, 'message': 'synthetic-private-value'}}),
-                      (200, {'entries': []}))
+                      (403, {'error': {'code': 403, 'message': 'synthetic-private-value'}}))
     report = {}
-    with pytest.raises(control.Stop, match='residual_read_incomplete:object_metadata_permission_denied'):
+    with pytest.raises(control.Stop, match='object_metadata_permission_denied'):
         control.read_probe(session, report)
-    assert report['requests'][-2]['error_category'] == 'permission_denied'
+    assert report['requests'][-1]['error_category'] == 'permission_denied'
     assert 'synthetic-private-value' not in json.dumps(report)
-    assert len(session.calls) == 5
+    assert len(session.calls) == 4
+
+
+@pytest.mark.parametrize('code', [404.0, '404', None])
+def test_readback_object_metadata_untyped_404_is_not_absence(code):
+    session = Replies((404, {'error': {'code': code}}))
+    report = {}
+    with pytest.raises(control.Stop, match='object_metadata_unbound_no_retry'):
+        control.read_fixed_object_metadata(session, report)
+    assert 'synthetic_object' not in report and len(session.calls) == 1
 
 
 def test_readback_requires_approval_false_and_original_identity():
