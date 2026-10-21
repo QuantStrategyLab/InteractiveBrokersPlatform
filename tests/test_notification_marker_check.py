@@ -17,6 +17,10 @@ def fixed_task_listing():
     return (200, {'tasks': [{'name': FIXED_TASK_NAME, 'index': 0}]})
 
 
+def one_task_report():
+    return {'execution': {'task_count': 1}}
+
+
 def admitted(mode='binding-read'):
     return {'GITHUB_EVENT_NAME': 'workflow_dispatch', 'GITHUB_REF': 'refs/heads/main', 'GITHUB_RUN_ATTEMPT': '1',
             'GITHUB_SHA': 'a' * 40, 'INPUT_SOURCE_COMMIT': 'a' * 40, 'INPUT_NOTIFICATION_MARKER_MODE': mode,
@@ -495,7 +499,7 @@ def test_readback_unusable_latest_pointer_still_uses_exact_job_list():
     session = Replies((200, {'name': control.JOB, 'executionCount': 1,
                             'latestCreatedExecution': {'name': 'unusable-reference'}}),
                       (200, {'executions': [{'name': name, 'job': control.JOB}]}),
-                      (200, {'name': name, 'job': control.JOB, 'conditions': []}),
+                      (200, {'name': name, 'job': control.JOB, 'taskCount': 1, 'conditions': []}),
                       (404, {'error': {'code': 404}}), fixed_task_listing(),
                       (200, {'name': FIXED_TASK_NAME, 'job': control.JOB, 'execution': name, 'index': 0}),
                       (200, {'entries': []}))
@@ -565,7 +569,7 @@ def test_readback_exact_object_absence_and_no_receipt_are_explicit():
     name = control.FIXED_EXECUTION
     session = Replies((200, {'name': control.JOB, 'executionCount': 1}),
                       (200, {'executions': [{'name': name, 'job': control.JOB}]}),
-                      (200, {'name': name, 'job': control.JOB, 'failedCount': 1,
+                      (200, {'name': name, 'job': control.JOB, 'taskCount': 1, 'failedCount': 1,
                              'conditions': [{'type': 'Completed', 'state': 'CONDITION_FAILED'}]}),
                       (404, {'error': {'code': 404}}), fixed_task_listing(),
                       (200, {'name': FIXED_TASK_NAME, 'job': control.JOB, 'execution': name, 'index': 0}),
@@ -592,12 +596,33 @@ def test_fixed_task_diagnostics_rejects_other_execution_without_request():
 ])
 def test_fixed_task_diagnostics_rejects_ambiguous_task_list(listed):
     session = Replies((200, listed))
-    report = {}
+    report = one_task_report()
     with pytest.raises(control.Stop, match='fixed_task_list_not_unique'):
         control.read_fixed_task_diagnostics(session, report, control.FIXED_EXECUTION)
     assert len(session.calls) == 1
     assert control.FIXED_EXECUTION + '/tasks?pageSize=2' in session.calls[0][1]
     assert 'private-token' not in json.dumps(report)
+    assert report['task_list_shape']['count'] in (0, 1, 2)
+
+
+def test_fixed_task_diagnostics_accepts_omitted_proto3_zero_only_for_bound_singleton():
+    session = Replies(
+        (200, {'tasks': [{'name': FIXED_TASK_NAME}]}),
+        (200, {'name': FIXED_TASK_NAME, 'conditions': [], 'lastAttemptResult': {}}),
+        (200, {'entries': []}))
+    report = one_task_report()
+    control.read_fixed_task_diagnostics(session, report, control.FIXED_EXECUTION)
+    assert report['task_list_shape'] == {'count': 1, 'has_next_page': False, 'index_state': 'omitted'}
+    assert report['task']['index'] == 0
+    assert len(session.calls) == 3
+
+
+def test_fixed_task_diagnostics_requires_execution_one_task_before_task_get():
+    session = Replies(fixed_task_listing())
+    report = {'execution': {'task_count': None}}
+    with pytest.raises(control.Stop, match='fixed_task_list_not_unique'):
+        control.read_fixed_task_diagnostics(session, report, control.FIXED_EXECUTION)
+    assert len(session.calls) == 1
 
 
 def test_fixed_task_diagnostics_list_permission_denial_stops_without_get():
@@ -614,7 +639,7 @@ def test_fixed_task_diagnostics_list_permission_denial_stops_without_get():
 def test_fixed_task_diagnostics_rejects_foreign_task_name_before_get():
     session = Replies((200, {'tasks': [{'name': control.JOB + '/executions/other/tasks/task0', 'index': 0}]}))
     with pytest.raises(control.Stop, match='fixed_task_identity_rejected'):
-        control.read_fixed_task_diagnostics(session, {}, control.FIXED_EXECUTION)
+        control.read_fixed_task_diagnostics(session, one_task_report(), control.FIXED_EXECUTION)
     assert len(session.calls) == 1
 
 
@@ -623,7 +648,7 @@ def test_fixed_task_diagnostics_rejects_wrong_task_before_logs():
                       (200, {'name': FIXED_TASK_NAME + '-other', 'job': control.JOB,
                              'execution': control.FIXED_EXECUTION, 'index': 0}))
     with pytest.raises(control.Stop, match='fixed_task_identity_rejected'):
-        control.read_fixed_task_diagnostics(session, {}, control.FIXED_EXECUTION)
+        control.read_fixed_task_diagnostics(session, one_task_report(), control.FIXED_EXECUTION)
     assert len(session.calls) == 2 and session.calls[0][0] == 'GET'
     assert FIXED_TASK_NAME in session.calls[1][1]
 
@@ -632,7 +657,7 @@ def test_fixed_task_diagnostics_permission_denial_stops_without_log_query():
     session = Replies(fixed_task_listing(),
                       (403, {'error': {'code': 403, 'status': 'PERMISSION_DENIED',
                                       'message': 'synthetic-private-value'}}))
-    report = {}
+    report = one_task_report()
     with pytest.raises(control.Stop, match='control_request_failed_no_retry'):
         control.read_fixed_task_diagnostics(session, report, control.FIXED_EXECUTION)
     assert len(session.calls) == 2
@@ -656,7 +681,7 @@ def test_fixed_task_diagnostics_only_projects_safe_receipt_and_stderr_categories
              'textPayload': json.dumps(receipt)},
             {'logName': f'projects/{control.PROJECT}/logs/run.googleapis.com%2Fstderr',
              'textPayload': 'HTTP Error 403 synthetic-private-value'}]}))
-    report = {}
+    report = one_task_report()
     control.read_fixed_task_diagnostics(session, report, control.FIXED_EXECUTION)
     assert report['probe_receipt']['reason'] == 'permission_denied'
     assert report['task_logs'] == {'counts': {'stdout': 1, 'stderr': 1},
@@ -679,7 +704,7 @@ def test_fixed_task_diagnostics_log_page_cap_preserves_no_raw_text_or_token():
                'execution': control.FIXED_EXECUTION, 'index': 0}),
         (200, {'entries': [], 'nextPageToken': 'synthetic-private-token-1'}),
         (200, {'entries': [], 'nextPageToken': 'synthetic-private-token-2'}))
-    report = {}
+    report = one_task_report()
     with pytest.raises(control.Stop, match='fixed_task_log_page_incomplete'):
         control.read_fixed_task_diagnostics(session, report, control.FIXED_EXECUTION)
     assert len(session.calls) == 4
