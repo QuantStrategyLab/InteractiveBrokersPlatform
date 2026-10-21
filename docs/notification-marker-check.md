@@ -55,3 +55,20 @@ charges remain unknown. The existing cumulative 1 USD decision limit remains.
 Source integration/CI is not permission to execute the probe. Before any cloud
 execution, record the exact merged controller commit, retained-object scope,
 cost estimate and explicit approval; this source work performs no cloud probe.
+
+## Read back an uncertain create
+
+`probe-readback` requires the original identities and exact main controller
+SHA, all old deployment switches false, and `approve_marker_probe=false`.
+It shares the original WIF path but selects only GET for the fixed nonce Job
+and, if returned, its exact latest execution. Server-side fields exclude env,
+arguments, arbitrary annotations and condition messages. It does not create,
+run, list, delete, clean up or choose another nonce. Missing execution counts
+remain unknown. Only integer HTTP404 plus integer SDK404 and NOT_FOUND prove
+absence; a denial, malformed response or unknown result stops without retry.
+
+Control errors retain the standard SDK status/code and recognized BadRequest
+field paths from this fixed Job request. Messages, descriptions, unknown paths,
+ErrorInfo metadata, tokens and full responses are not retained. The original
+create400 from run39552761809 remains UNKNOWN: this diagnostic repair cannot
+recover response details already discarded by its earlier source version.

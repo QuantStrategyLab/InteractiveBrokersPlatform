@@ -1873,8 +1873,8 @@ jobs:
           if-no-files-found: error
 
   notification-marker-probe:
-    name: One retained synthetic marker Job
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.notification_marker_mode == 'execute-probe' && inputs.approve_marker_probe == true
+    name: Fixed synthetic marker Job control
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && ((inputs.notification_marker_mode == 'execute-probe' && inputs.approve_marker_probe == true) || (inputs.notification_marker_mode == 'probe-readback' && inputs.approve_marker_probe == false))
     runs-on: ubuntu-latest
     timeout-minutes: 6
     permissions:
@@ -1915,7 +1915,7 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
       - name: Admit exact one-time synthetic scope before authentication
-        run: python3 -c 'import os; from scripts.notification_marker_check import validate_dispatch; validate_dispatch("execute-probe", os.environ)'
+        run: python3 -c 'import os; from scripts.notification_marker_check import validate_dispatch; validate_dispatch(os.environ["INPUT_NOTIFICATION_MARKER_MODE"], os.environ)'
       - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -1925,7 +1925,11 @@ jobs:
           project_id: ${{ env.GCP_PROJECT_ID }}
           version: ">= 416.0.0"
       - name: Create and execute fixed Job once; retain object and Job
+        if: inputs.notification_marker_mode == 'execute-probe'
         run: python3 -m scripts.notification_marker_check --mode execute-probe --report "${RUNNER_TEMP}/notification-marker.safe.json"
+      - name: Read fixed nonce Job status only
+        if: inputs.notification_marker_mode == 'probe-readback'
+        run: python3 -m scripts.notification_marker_check --mode probe-readback --report "${RUNNER_TEMP}/notification-marker.safe.json"
       - name: Preserve synthetic receipt only
         if: always()
         uses: actions/upload-artifact@v4

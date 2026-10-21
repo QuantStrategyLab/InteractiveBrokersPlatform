@@ -249,6 +249,89 @@ def test_float_404_is_not_proof_of_absence():
     assert len(session.calls) == 1
 
 
+class Replies:
+    def __init__(self, *values):
+        self.values, self.calls = list(values), []
+    def request(self, method, url, **kwargs):
+        self.calls.append((method, url, kwargs))
+        value = self.values.pop(0)
+        if isinstance(value, Exception):
+            raise value
+        return Session.response(*value)
+
+
+def test_control_error_retains_only_status_and_approved_field_paths():
+    response = {'error': {'code': 400, 'status': 'INVALID_ARGUMENT', 'message': 'synthetic-private-token',
+        'details': [{'@type': 'type.googleapis.com/google.rpc.BadRequest', 'fieldViolations': [
+            {'field': 'job.template.template.containers[0].args[3]', 'description': 'synthetic-private-value'},
+            {'field': 'job.template.template.containers[0].env[0].synthetic-private-selector'}]},
+            {'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'metadata': {'private': 'synthetic-private-value'}}]}}
+    report, session = {}, Replies((400, response))
+    with pytest.raises(control.Stop, match='control_request_failed_no_retry'):
+        control.control_request(session, report, 'POST', control.API + control.PARENT + '/jobs', phase='job_create')
+    entry = report['requests'][0]
+    assert entry['sdk_status'] == 'INVALID_ARGUMENT' and entry['sdk_code'] == 400
+    assert entry['bad_request_fields'] == ['job.template.template.containers[0].args[3]']
+    assert entry['unlisted_field_violations'] == 1
+    assert 'synthetic-private' not in json.dumps(report)
+    assert len(session.calls) == 1
+
+
+@pytest.mark.parametrize('status,code,sdk', [(404.0, 404, 'NOT_FOUND'), (404, 404.0, 'NOT_FOUND'),
+    (404, '404', 'NOT_FOUND'), (403, 403, 'PERMISSION_DENIED'), (404, 404, 'UNKNOWN')])
+def test_readback_denial_or_unproved_absence_stops_after_one_get(status, code, sdk):
+    session, report = Replies((status, {'error': {'code': code, 'status': sdk}})), {}
+    with pytest.raises(control.Stop):
+        control.read_probe(session, report)
+    assert len(session.calls) == 1 and session.calls[0][0] == 'GET'
+    assert 'execution_submit_attempts' not in report
+
+
+def test_readback_verified_absence_never_creates():
+    session, report = Replies((404, {'error': {'code': 404, 'status': 'NOT_FOUND'}})), {}
+    control.read_probe(session, report)
+    assert report['status'] == 'job_absent_verified' and report['job_found'] is False
+    assert len(session.calls) == 1 and session.calls[0][0] == 'GET'
+    assert 'fields=' in session.calls[0][1]
+
+
+def test_readback_existing_execution_reads_only_exact_names_and_safe_counts():
+    name = control.JOB + '/executions/existing-one'
+    session = Replies((200, {'name': control.JOB, 'executionCount': 1, 'latestCreatedExecution': {'name': name},
+                            'private_extra': 'synthetic-private-value'}),
+                      (200, {'name': name, 'job': control.JOB, 'taskCount': 1, 'succeededCount': 0,
+                             'failedCount': 1, 'conditions': [{'type': 'Completed', 'state': 'CONDITION_FAILED'}]}))
+    report = {}
+    control.read_probe(session, report)
+    assert report['status'] == 'job_observed' and report['execution']['failed_count'] == 1
+    assert [method for method, _, _ in session.calls] == ['GET', 'GET']
+    assert name in session.calls[-1][1] and 'fields=' in session.calls[-1][1]
+    assert 'synthetic-private' not in json.dumps(report)
+
+
+def test_readback_foreign_execution_never_follows_or_lists():
+    session = Replies((200, {'name': control.JOB, 'executionCount': 1,
+                            'latestCreatedExecution': {'name': control.JOB + '-other/executions/foreign'}}))
+    with pytest.raises(control.Stop, match='execution_identity_rejected'):
+        control.read_probe(session, {})
+    assert len(session.calls) == 1
+
+
+def test_readback_missing_execution_count_stays_unknown():
+    session, report = Replies((200, {'name': control.JOB})), {}
+    control.read_probe(session, report)
+    assert report['status'] == 'job_observed' and report['execution_count'] is None
+    assert len(session.calls) == 1
+
+
+def test_readback_requires_approval_false_and_original_identity():
+    env = admitted('probe-readback')
+    assert control.validate_dispatch('probe-readback', env) == 'a' * 40
+    env['INPUT_APPROVE_MARKER_PROBE'] = 'true'
+    with pytest.raises(control.Stop):
+        control.validate_dispatch('probe-readback', env)
+
+
 @pytest.mark.parametrize('code', [7, 16, 403, 999, 9.0])
 def test_denied_or_unknown_terminal_operation_never_reads_logs(code):
     class InvalidOperation(Session):
@@ -310,7 +393,7 @@ def test_workflow_isolation_and_no_private_projection_artifact():
     assert 'notification_marker_mode' in (ROOT / '.github/workflows/sync-cloud-run-env.yml').read_text()
 
 
-@pytest.mark.parametrize('mode', ['binding-read', 'execute-probe', 'unknown-mode'])
+@pytest.mark.parametrize('mode', ['binding-read', 'execute-probe', 'probe-readback', 'unknown-mode'])
 def test_isolated_or_unknown_mode_never_starts_lifecycle(mode):
     wrapper = (ROOT / '.github/workflows/sync-cloud-run-env.yml').read_text()
     expression = wrapper.split('run-name: ${{ ', 1)[1].split(' }}', 1)[0]
@@ -329,3 +412,12 @@ def test_isolated_or_unknown_mode_never_starts_lifecycle(mode):
     assert not admitted('workflow_run', '')
     assert admitted('workflow_run', 'Deploy Cloud Run')
     assert admitted('schedule', '') and admitted('workflow_dispatch', '')
+
+
+def test_workflow_readback_step_cannot_select_execute_command():
+    source = (ROOT / '.github/workflows/sync-cloud-run-env-protected.yml').read_text()
+    create = source.split('      - name: Create and execute fixed Job once; retain object and Job\n')[1].split('      - name: Read fixed nonce Job status only\n')[0]
+    read = source.split('      - name: Read fixed nonce Job status only\n')[1].split('      - name: Preserve synthetic receipt only\n')[0]
+    assert "if: inputs.notification_marker_mode == 'execute-probe'" in create
+    assert "if: inputs.notification_marker_mode == 'probe-readback'" in read
+    assert '--mode probe-readback' in read and '--mode execute-probe' not in read

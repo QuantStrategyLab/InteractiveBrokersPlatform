@@ -38,7 +38,7 @@ def digest(value):
 
 
 def validate_dispatch(mode, env):
-    require(mode in {'binding-read', 'execute-probe'} and env.get('INPUT_NOTIFICATION_MARKER_MODE') == mode, 'mode_not_admitted')
+    require(mode in {'binding-read', 'execute-probe', 'probe-readback'} and env.get('INPUT_NOTIFICATION_MARKER_MODE') == mode, 'mode_not_admitted')
     for key, value in {'GITHUB_EVENT_NAME': 'workflow_dispatch', 'GITHUB_REF': 'refs/heads/main',
                        'GITHUB_RUN_ATTEMPT': '1', 'INPUT_TARGET': 'configured', 'INPUT_CONFIGURED_SERVICE': '',
                        'INPUT_NOTIFICATION_ONLY': 'false', 'INPUT_NOTIFICATION_READBACK_ONLY': 'false',
@@ -47,8 +47,8 @@ def validate_dispatch(mode, env):
         require(env.get(key, '') == value, 'dispatch_boundary_rejected')
     source = env.get('GITHUB_SHA', '')
     require(re.fullmatch('[a-f0-9]{40}', source) and env.get('INPUT_SOURCE_COMMIT') == source, 'exact_controller_source_required')
-    if mode == 'execute-probe':
-        for key, value in {'INPUT_APPROVE_MARKER_PROBE': 'true', 'ENABLE_GITHUB_CLOUD_RUN_DEPLOY': 'true',
+    if mode in {'execute-probe', 'probe-readback'}:
+        for key, value in {'INPUT_APPROVE_MARKER_PROBE': 'true' if mode == 'execute-probe' else 'false', 'ENABLE_GITHUB_CLOUD_RUN_DEPLOY': 'true',
                            'GCP_PROJECT_ID': PROJECT, 'GCP_DEPLOY_SERVICE_ACCOUNT': DEPLOYER,
                            'GCP_RUNTIME_SERVICE_ACCOUNT': RUNTIME}.items():
             require(env.get(key) == value, 'probe_authorization_or_identity_rejected')
@@ -183,36 +183,107 @@ def safe_probe_receipt(value):
     return safe
 
 
+def control_error_projection(error):
+    states = {'CANCELLED', 'UNKNOWN', 'INVALID_ARGUMENT', 'DEADLINE_EXCEEDED', 'NOT_FOUND', 'ALREADY_EXISTS',
+              'PERMISSION_DENIED', 'UNAUTHENTICATED', 'RESOURCE_EXHAUSTED', 'FAILED_PRECONDITION', 'ABORTED',
+              'OUT_OF_RANGE', 'UNIMPLEMENTED', 'INTERNAL', 'UNAVAILABLE', 'DATA_LOSS'}
+    code, state = error.get('code'), error.get('status')
+    safe = {'sdk_code': code if type(code) is int and 0 <= code <= 599 else None,
+            'sdk_status': state if isinstance(state, str) and state in states else 'UNKNOWN'}
+    fixed_fields = {'name', 'jobId', 'parent', 'annotations', 'annotations.qsl.dev/probe-code-sha256',
+                    'template', 'template.taskCount', 'template.parallelism', 'template.template',
+                    'template.template.serviceAccount', 'template.template.maxRetries', 'template.template.timeout',
+                    'template.template.containers', 'template.template.containers[0]',
+                    'template.template.containers[0].image', 'template.template.containers[0].command',
+                    'template.template.containers[0].args', 'template.template.containers[0].resources',
+                    'template.template.containers[0].resources.limits.cpu', 'template.template.containers[0].resources.limits.memory'}
+    fields, unlisted = set(), 0
+    details = error.get('details')
+    for detail in details[:10] if isinstance(details, list) else []:
+        if not isinstance(detail, dict) or detail.get('@type') != 'type.googleapis.com/google.rpc.BadRequest':
+            continue
+        violations = detail.get('fieldViolations')
+        for violation in violations[:32] if isinstance(violations, list) else []:
+            field = violation.get('field') if isinstance(violation, dict) else None
+            path = field.removeprefix('job.') if isinstance(field, str) else ''
+            if path in fixed_fields or re.fullmatch(r'template\.template\.containers\[0\]\.(?:args\[[0-3]\]|command\[0\])', path):
+                fields.add(field)
+            else:
+                unlisted += 1
+    if fields or unlisted:
+        safe.update(bad_request_fields=sorted(fields), unlisted_field_violations=unlisted)
+    return safe
+
+
+def control_request(session, report, method, url, *, body=None, missing=False, operation_result=False,
+                    phase, deadline=None, clock=time.monotonic):
+    deadline = clock() + 30 if deadline is None else deadline
+    require(clock() < deadline, 'control_deadline_exceeded_no_retry')
+    entry = {'phase': phase, 'http_status': None, 'sdk_status': 'UNKNOWN', 'sdk_code': None}
+    report.setdefault('requests', []).append(entry)
+    try:
+        response = session.request(method, url, json=body, timeout=min(10, deadline - clock()), allow_redirects=False)
+    except Exception:
+        raise Stop('control_transport_unknown_no_retry') from None
+    require(type(response.status_code) is int and 100 <= response.status_code <= 599, 'control_HTTP_status_unknown_no_retry')
+    entry['http_status'] = response.status_code
+    try:
+        value = response.json()
+    except Exception:
+        raise Stop('control_payload_unknown_no_retry') from None
+    require(isinstance(value, dict), 'control_payload_unknown_no_retry')
+    error = value.get('error', {})
+    require(isinstance(error, dict), 'control_payload_unknown_no_retry')
+    if error:
+        entry.update(control_error_projection(error))
+        if missing and response.status_code == 404 and entry['sdk_code'] == 404 and entry['sdk_status'] == 'NOT_FOUND':
+            return None
+        # Only a bound completed run's failure metadata can be considered later.
+        if operation_result and response.status_code == 200 and value.get('done') is True:
+            return value
+    require(response.status_code == 200 and not error, 'control_request_failed_no_retry')
+    entry['sdk_status'] = 'OK'
+    return value
+
+
+def read_probe(session, report):
+    # Server-side partial responses exclude environment, arguments, secrets,
+    # free-text condition messages and arbitrary annotations.
+    fields = 'name,executionCount,latestCreatedExecution(name)'
+    job = control_request(session, report, 'GET', API + JOB + '?fields=' + fields,
+                          missing=True, phase='job_status_read_only')
+    report.update(job_found=job is not None, actual_delivery='not_attempted', production_mutations=0)
+    if job is None:
+        report['status'] = 'job_absent_verified'
+        return
+    require(job.get('name') == JOB, 'job_identity_rejected')
+    count = job.get('executionCount')
+    require(count is None or type(count) is int and count >= 0, 'execution_count_unknown')
+    report.update(job_name=JOB, execution_count=count)
+    latest = job.get('latestCreatedExecution') or {}
+    require(isinstance(latest, dict), 'execution_identity_rejected')
+    if latest or count:
+        name = latest.get('name', '')
+        require(isinstance(name, str) and re.fullmatch(re.escape(JOB) + r'/executions/[a-zA-Z0-9_-]+', name), 'execution_identity_rejected')
+        fields = 'name,job,taskCount,succeededCount,failedCount,cancelledCount,conditions(type,state)'
+        execution = control_request(session, report, 'GET', API + name + '?fields=' + fields, phase='existing_execution_read_only')
+        require(execution.get('name') == name and execution.get('job') == JOB, 'execution_identity_rejected')
+        observed = {'name': name}
+        for source, key in (('taskCount', 'task_count'), ('succeededCount', 'succeeded_count'),
+                            ('failedCount', 'failed_count'), ('cancelledCount', 'cancelled_count')):
+            value = execution.get(source)
+            observed[key] = value if type(value) is int and value >= 0 else None
+        observed['completed_state'] = next((x.get('state') for x in execution.get('conditions', [])
+            if isinstance(x, dict) and x.get('type') == 'Completed'
+            and x.get('state') in {'CONDITION_SUCCEEDED', 'CONDITION_FAILED', 'CONDITION_PENDING'}), 'UNKNOWN')
+        report['execution'] = observed
+    report['status'] = 'job_observed'
+
+
 def execute_probe(session, report, *, sleep=time.sleep, clock=time.monotonic):
     deadline = clock() + 180
-    def request(method, url, *, body=None, missing=False, operation_result=False, phase):
-        require(clock() < deadline, 'control_deadline_exceeded_no_retry')
-        entry = {'phase': phase, 'http_status': None, 'sdk_status': 'UNKNOWN', 'sdk_code': None}
-        report.setdefault('requests', []).append(entry)
-        try:
-            response = session.request(method, url, json=body, timeout=min(10, deadline - clock()), allow_redirects=False)
-        except Exception:
-            raise Stop('control_transport_unknown_no_retry') from None
-        entry['http_status'] = response.status_code
-        try:
-            value = response.json()
-        except Exception:
-            raise Stop('control_payload_unknown_no_retry') from None
-        error = value.get('error', {}) if isinstance(value, dict) else {}
-        if error:
-            entry['sdk_code'] = error.get('code') if type(error.get('code')) is int else None
-            state = error.get('status')
-            if state in {'NOT_FOUND', 'PERMISSION_DENIED', 'UNAUTHENTICATED', 'FAILED_PRECONDITION', 'ABORTED', 'UNAVAILABLE'}:
-                entry['sdk_status'] = state
-            if missing and response.status_code == 404 and type(error.get('code')) is int and error['code'] == 404 and state == 'NOT_FOUND':
-                return None
-            # A completed run operation can carry a task-failure certificate in
-            # metadata. HTTP denial/transport failure never reaches this branch.
-            if operation_result and response.status_code == 200 and value.get('done') is True:
-                return value
-        require(response.status_code == 200 and isinstance(value, dict) and not error, 'control_request_failed_no_retry')
-        entry['sdk_status'] = 'OK'
-        return value
+    def request(method, url, **kwargs):
+        return control_request(session, report, method, url, deadline=deadline, clock=clock, **kwargs)
     def operation(value, phase, *, failed_execution=False):
         name = value.get('name', '')
         require(re.fullmatch(re.escape(PARENT) + r'/operations/[a-zA-Z0-9_-]+', name), 'operation_identity_rejected')
@@ -282,7 +353,7 @@ def execute_probe(session, report, *, sleep=time.sleep, clock=time.monotonic):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--mode', choices=['binding-read', 'execute-probe'], required=True)
+    parser.add_argument('--mode', choices=['binding-read', 'execute-probe', 'probe-readback'], required=True)
     parser.add_argument('--report', type=Path, required=True)
     parser.add_argument('--private-out', type=Path)
     args = parser.parse_args()
@@ -306,7 +377,10 @@ def main():
             except ReleaseError as error:
                 raise Stop(str(error)) from None
             try:
-                execute_probe(session, report)
+                if args.mode == 'probe-readback':
+                    read_probe(session, report)
+                else:
+                    execute_probe(session, report)
             finally:
                 session.close()
     except Stop as error:
@@ -316,7 +390,7 @@ def main():
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(report, sort_keys=True, indent=2) + '\n')
     print(json.dumps(report, sort_keys=True))
-    return 0 if report['status'] in {'binding_verified', 'pass_retained'} else 1
+    return 0 if report['status'] in {'binding_verified', 'pass_retained', 'job_absent_verified', 'job_observed'} else 1
 
 
 if __name__ == '__main__':
