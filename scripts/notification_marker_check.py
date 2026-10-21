@@ -483,8 +483,22 @@ def read_fixed_task_diagnostics(session, report, name):
                              + '/tasks?pageSize=2&fields=tasks(name,index),nextPageToken',
                              phase='fixed_execution_tasks_read_only')
     rows = listed.get('tasks')
-    require(isinstance(rows, list) and len(rows) == 1 and not listed.get('nextPageToken')
-            and isinstance(rows[0], dict) and type(rows[0].get('index')) is int and rows[0]['index'] == 0,
+    unique = isinstance(rows, list) and len(rows) == 1 and isinstance(rows[0], dict)
+    index = rows[0].get('index') if unique else None
+    index_state = ('omitted' if unique and 'index' not in rows[0] else
+                   'zero_explicit' if type(index) is int and index == 0 else
+                   'nonzero' if type(index) is int else 'invalid')
+    report['task_list_shape'] = {
+        'count': min(len(rows), 2) if isinstance(rows, list) else None,
+        'has_next_page': bool(listed.get('nextPageToken')),
+        'index_state': index_state,
+    }
+    # Proto3 JSON may omit the default scalar value zero. The already bound
+    # Execution and its exact singleton task list must both prove one task.
+    observed_count = report.get('execution', {}).get('task_count')
+    require(unique and not listed.get('nextPageToken')
+            and type(observed_count) is int and observed_count == 1
+            and index_state in {'omitted', 'zero_explicit'},
             'fixed_task_list_not_unique')
     task_name = rows[0].get('name')
     require(isinstance(task_name, str) and re.fullmatch(re.escape(FIXED_TASK_PARENT) + r'[a-zA-Z0-9_-]+', task_name),
@@ -492,7 +506,8 @@ def read_fixed_task_diagnostics(session, report, name):
     fields = 'name,index,retried,conditions(type,state,reason),lastAttemptResult(status(code),exitCode,termSignal)'
     task = control_request(session, report, 'GET', API + task_name + '?fields=' + fields,
                            phase='fixed_task_read_only')
-    require(task.get('name') == task_name and type(task.get('index')) is int and task['index'] == 0,
+    require(task.get('name') == task_name and
+            (('index' not in task) or (type(task.get('index')) is int and task['index'] == 0)),
             'fixed_task_identity_rejected')
     safe = {'name': task_name, 'index': 0}
     retried = task.get('retried')
