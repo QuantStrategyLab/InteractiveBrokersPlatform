@@ -10,6 +10,11 @@ from scripts import notification_marker_check as control
 from scripts import notification_marker_probe as probe
 
 ROOT = Path(__file__).resolve().parents[1]
+FIXED_TASK_NAME = control.FIXED_TASK_PARENT + control.JOB_ID + '-mgqnb-task0'
+
+
+def fixed_task_listing():
+    return (200, {'tasks': [{'name': FIXED_TASK_NAME, 'index': 0}]})
 
 
 def admitted(mode='binding-read'):
@@ -456,17 +461,20 @@ def test_readback_verified_absence_never_creates():
 
 
 def test_readback_existing_execution_uses_exact_list_and_safe_counts():
-    name = control.JOB + '/executions/existing-one'
+    name = control.FIXED_EXECUTION
     session = Replies((200, {'name': control.JOB, 'executionCount': 1, 'latestCreatedExecution': {'name': name},
                             'private_extra': 'synthetic-private-value'}),
                       (200, {'executions': [{'name': name, 'job': control.JOB}]}),
                       (200, {'name': name, 'taskCount': 1, 'succeededCount': 0,
                              'failedCount': 1, 'conditions': [{'type': 'Completed', 'state': 'CONDITION_FAILED'}]}),
-                      (404, {'error': {'code': 404}}), (200, {'entries': []}))
+                      (404, {'error': {'code': 404}}), fixed_task_listing(),
+                      (200, {'name': FIXED_TASK_NAME, 'job': control.JOB,
+                             'execution': name, 'index': 0, 'lastAttemptResult': {'exitCode': 1}}),
+                      (200, {'entries': []}))
     report = {}
     control.read_probe(session, report)
     assert report['status'] == 'job_observed' and report['execution']['failed_count'] == 1
-    assert [method for method, _, _ in session.calls] == ['GET', 'GET', 'GET', 'GET', 'POST']
+    assert [method for method, _, _ in session.calls] == ['GET', 'GET', 'GET', 'GET', 'GET', 'GET', 'POST']
     assert name in session.calls[2][1] and 'fields=' in session.calls[2][1]
     assert 'job' not in session.calls[2][1].split('?fields=', 1)[1]
     assert 'synthetic-private' not in json.dumps(report)
@@ -483,12 +491,14 @@ def test_readback_execution_get_wrong_name_stops_before_object_or_logs():
 
 
 def test_readback_unusable_latest_pointer_still_uses_exact_job_list():
-    name = control.JOB + '/executions/existing-one'
+    name = control.FIXED_EXECUTION
     session = Replies((200, {'name': control.JOB, 'executionCount': 1,
                             'latestCreatedExecution': {'name': 'unusable-reference'}}),
                       (200, {'executions': [{'name': name, 'job': control.JOB}]}),
                       (200, {'name': name, 'job': control.JOB, 'conditions': []}),
-                      (404, {'error': {'code': 404}}), (200, {'entries': []}))
+                      (404, {'error': {'code': 404}}), fixed_task_listing(),
+                      (200, {'name': FIXED_TASK_NAME, 'job': control.JOB, 'execution': name, 'index': 0}),
+                      (200, {'entries': []}))
     report = {}
     control.read_probe(session, report)
     assert report['execution']['name'] == name
@@ -506,7 +516,7 @@ def test_readback_missing_or_multiple_execution_count_stops(count):
 
 
 def test_readback_count_one_without_latest_uses_exact_job_and_safe_object_log_projection():
-    name = control.JOB + '/executions/one-retained-execution'
+    name = control.FIXED_EXECUTION
     session = Replies(
         (200, {'name': control.JOB, 'executionCount': 1}),
         (200, {'executions': [{'name': name, 'job': control.JOB}]}),
@@ -514,9 +524,17 @@ def test_readback_count_one_without_latest_uses_exact_job_and_safe_object_log_pr
                'conditions': [{'type': 'Completed', 'state': 'CONDITION_FAILED',
                                'executionReason': 'NON_ZERO_EXIT_CODE', 'message': 'synthetic-private-value'}]}),
         (200, {'name': probe.OBJECT, 'generation': '42', 'size': '80', 'private': 'synthetic-private-value'}),
-        (200, {'entries': [{'jsonPayload': {'schema_version': 1, 'probe_id': control.NONCE,
-                                            'status': 'stop', 'reason': 'permission_denied', 'http_status': 403,
-                                            'private': 'synthetic-private-value'}}]}),
+        fixed_task_listing(),
+        (200, {'name': FIXED_TASK_NAME, 'job': control.JOB, 'execution': name, 'index': 0,
+               'lastAttemptResult': {'status': {'code': 13, 'message': 'synthetic-private-value'},
+                                     'exitCode': 1}}),
+        (200, {'entries': [
+            {'logName': f'projects/{control.PROJECT}/logs/run.googleapis.com%2Fstdout',
+             'jsonPayload': {'schema_version': 1, 'probe_id': control.NONCE,
+                             'status': 'stop', 'reason': 'permission_denied', 'http_status': 403,
+                             'private': 'synthetic-private-value'}},
+            {'logName': f'projects/{control.PROJECT}/logs/run.googleapis.com%2Fstderr',
+             'textPayload': 'HTTP Error 403 synthetic-private-value'}]}),
     )
     report = {}
     control.read_probe(session, report)
@@ -526,32 +544,146 @@ def test_readback_count_one_without_latest_uses_exact_job_and_safe_object_log_pr
     assert report['synthetic_object'] == {'found': True, 'generation': '42', 'size_bytes': 80}
     assert report['probe_receipt']['reason'] == 'permission_denied'
     assert 'synthetic-private-value' not in json.dumps(report)
-    assert [method for method, _, _ in session.calls] == ['GET', 'GET', 'GET', 'GET', 'POST']
+    assert [method for method, _, _ in session.calls] == ['GET', 'GET', 'GET', 'GET', 'GET', 'GET', 'POST']
     assert control.JOB + '/executions?pageSize=2' in session.calls[1][1]
     assert '/storage/v1/b/' + probe.BUCKET + '/o/' in session.calls[3][1]
-    assert session.calls[4][1].endswith('/entries:list')
-    assert 'resource.labels.location="us-central1"' in session.calls[4][2]['json']['filter']
-    assert 'labels.execution_name="one-retained-execution"' in session.calls[4][2]['json']['filter']
-    assert 'run.googleapis.com/execution_name' not in session.calls[4][2]['json']['filter']
-    assert 'timestamp>="2026-10-21T13:15:00Z"' in session.calls[4][2]['json']['filter']
-    assert 'timestamp<="2026-10-21T13:25:00Z"' in session.calls[4][2]['json']['filter']
-    assert 'log_id("run.googleapis.com/stdout")' in session.calls[4][2]['json']['filter']
-    assert 'jsonPayload.probe_id="' + control.NONCE + '"' in session.calls[4][2]['json']['filter']
-    assert 'textPayload:"' + control.NONCE + '"' in session.calls[4][2]['json']['filter']
+    assert session.calls[6][1].endswith('/entries:list')
+    assert 'resource.labels.location="us-central1"' in session.calls[6][2]['json']['filter']
+    assert 'labels.execution_name="' + name.rsplit('/', 1)[1] + '"' in session.calls[6][2]['json']['filter']
+    assert 'run.googleapis.com/execution_name' not in session.calls[6][2]['json']['filter']
+    assert 'timestamp>="2026-10-21T13:15:00Z"' in session.calls[6][2]['json']['filter']
+    assert 'timestamp<="2026-10-21T13:25:00Z"' in session.calls[6][2]['json']['filter']
+    assert 'log_id("run.googleapis.com/stdout")' in session.calls[6][2]['json']['filter']
+    assert report['task']['last_attempt'] == {'status_code': 13, 'exitCode': 1}
+    assert report['task_logs']['stderr_categories'] == ['permission_denied_hint']
+    assert 'labels.task_index="0"' in session.calls[6][2]['json']['filter']
+    assert 'run.googleapis.com/stderr' in session.calls[6][2]['json']['filter']
     assert not any(url.endswith(':run') or 'jobId=' in url for _, url, _ in session.calls)
 
 
 def test_readback_exact_object_absence_and_no_receipt_are_explicit():
-    name = control.JOB + '/executions/one-retained-execution'
+    name = control.FIXED_EXECUTION
     session = Replies((200, {'name': control.JOB, 'executionCount': 1}),
                       (200, {'executions': [{'name': name, 'job': control.JOB}]}),
                       (200, {'name': name, 'job': control.JOB, 'failedCount': 1,
                              'conditions': [{'type': 'Completed', 'state': 'CONDITION_FAILED'}]}),
-                      (404, {'error': {'code': 404}}), (200, {'entries': []}))
+                      (404, {'error': {'code': 404}}), fixed_task_listing(),
+                      (200, {'name': FIXED_TASK_NAME, 'job': control.JOB, 'execution': name, 'index': 0}),
+                      (200, {'entries': []}))
     report = {}
     control.read_probe(session, report)
     assert report['synthetic_object'] == {'found': False}
     assert report['safe_probe_receipt_found'] is False
+
+
+def test_fixed_task_diagnostics_rejects_other_execution_without_request():
+    session = Replies()
+    with pytest.raises(control.Stop, match='fixed_execution_identity_rejected'):
+        control.read_fixed_task_diagnostics(session, {}, control.JOB + '/executions/other')
+    assert session.calls == []
+
+
+@pytest.mark.parametrize('listed', [
+    {'tasks': []},
+    {'tasks': [{'name': FIXED_TASK_NAME, 'index': 0}], 'nextPageToken': 'private-token'},
+    {'tasks': [{'name': FIXED_TASK_NAME, 'index': 0}, {'name': FIXED_TASK_NAME + '-other', 'index': 1}]},
+    {'tasks': [{'name': FIXED_TASK_NAME, 'index': 1}]},
+    {'tasks': [{'name': FIXED_TASK_NAME, 'index': False}]},
+])
+def test_fixed_task_diagnostics_rejects_ambiguous_task_list(listed):
+    session = Replies((200, listed))
+    report = {}
+    with pytest.raises(control.Stop, match='fixed_task_list_not_unique'):
+        control.read_fixed_task_diagnostics(session, report, control.FIXED_EXECUTION)
+    assert len(session.calls) == 1
+    assert control.FIXED_EXECUTION + '/tasks?pageSize=2' in session.calls[0][1]
+    assert 'private-token' not in json.dumps(report)
+
+
+def test_fixed_task_diagnostics_list_permission_denial_stops_without_get():
+    session = Replies((403, {'error': {'code': 403, 'status': 'PERMISSION_DENIED',
+                                      'message': 'synthetic-private-value'}}))
+    report = {}
+    with pytest.raises(control.Stop, match='control_request_failed_no_retry'):
+        control.read_fixed_task_diagnostics(session, report, control.FIXED_EXECUTION)
+    assert len(session.calls) == 1
+    assert report['requests'][0]['http_status'] == 403
+    assert 'synthetic-private-value' not in json.dumps(report)
+
+
+def test_fixed_task_diagnostics_rejects_foreign_task_name_before_get():
+    session = Replies((200, {'tasks': [{'name': control.JOB + '/executions/other/tasks/task0', 'index': 0}]}))
+    with pytest.raises(control.Stop, match='fixed_task_identity_rejected'):
+        control.read_fixed_task_diagnostics(session, {}, control.FIXED_EXECUTION)
+    assert len(session.calls) == 1
+
+
+def test_fixed_task_diagnostics_rejects_wrong_task_before_logs():
+    session = Replies(fixed_task_listing(),
+                      (200, {'name': FIXED_TASK_NAME + '-other', 'job': control.JOB,
+                             'execution': control.FIXED_EXECUTION, 'index': 0}))
+    with pytest.raises(control.Stop, match='fixed_task_identity_rejected'):
+        control.read_fixed_task_diagnostics(session, {}, control.FIXED_EXECUTION)
+    assert len(session.calls) == 2 and session.calls[0][0] == 'GET'
+    assert FIXED_TASK_NAME in session.calls[1][1]
+
+
+def test_fixed_task_diagnostics_permission_denial_stops_without_log_query():
+    session = Replies(fixed_task_listing(),
+                      (403, {'error': {'code': 403, 'status': 'PERMISSION_DENIED',
+                                      'message': 'synthetic-private-value'}}))
+    report = {}
+    with pytest.raises(control.Stop, match='control_request_failed_no_retry'):
+        control.read_fixed_task_diagnostics(session, report, control.FIXED_EXECUTION)
+    assert len(session.calls) == 2
+    assert report['requests'][1]['http_status'] == 403
+    assert 'synthetic-private-value' not in json.dumps(report)
+
+
+def test_fixed_task_diagnostics_only_projects_safe_receipt_and_stderr_categories():
+    receipt = {'schema_version': 1, 'probe_id': control.NONCE, 'status': 'stop',
+               'reason': 'permission_denied', 'http_status': 403,
+               'private': 'synthetic-private-value'}
+    session = Replies(
+        fixed_task_listing(),
+        (200, {'name': FIXED_TASK_NAME, 'index': 0, 'retried': 0,
+               'conditions': [{'type': 'Completed', 'state': 'CONDITION_FAILED',
+                               'reason': 'NON_ZERO_EXIT_CODE', 'message': 'synthetic-private-value'}],
+               'lastAttemptResult': {'status': {'code': 13, 'message': 'synthetic-private-value'},
+                                     'exitCode': 1}}),
+        (200, {'entries': [
+            {'logName': f'projects/{control.PROJECT}/logs/run.googleapis.com%2Fstdout',
+             'textPayload': json.dumps(receipt)},
+            {'logName': f'projects/{control.PROJECT}/logs/run.googleapis.com%2Fstderr',
+             'textPayload': 'HTTP Error 403 synthetic-private-value'}]}))
+    report = {}
+    control.read_fixed_task_diagnostics(session, report, control.FIXED_EXECUTION)
+    assert report['probe_receipt']['reason'] == 'permission_denied'
+    assert report['task_logs'] == {'counts': {'stdout': 1, 'stderr': 1},
+                                    'stderr_categories': ['permission_denied_hint'],
+                                    'safe_probe_receipt_found': True}
+    assert report['task']['last_attempt'] == {'status_code': 13, 'exitCode': 1}
+    assert 'synthetic-private-value' not in json.dumps(report)
+    assert len(session.calls) == 3
+    assert session.calls[0][0] == 'GET' and session.calls[1][0] == 'GET' and session.calls[2][0] == 'POST'
+    assert 'job' not in session.calls[1][1].split('?fields=', 1)[1]
+    assert 'execution' not in session.calls[1][1].split('?fields=', 1)[1]
+    assert 'labels.execution_name="' + control.FIXED_EXECUTION.rsplit('/', 1)[1] + '"' in session.calls[2][2]['json']['filter']
+    assert 'labels.task_index="0"' in session.calls[2][2]['json']['filter']
+
+
+def test_fixed_task_diagnostics_log_page_cap_preserves_no_raw_text_or_token():
+    session = Replies(
+        fixed_task_listing(),
+        (200, {'name': FIXED_TASK_NAME, 'job': control.JOB,
+               'execution': control.FIXED_EXECUTION, 'index': 0}),
+        (200, {'entries': [], 'nextPageToken': 'synthetic-private-token-1'}),
+        (200, {'entries': [], 'nextPageToken': 'synthetic-private-token-2'}))
+    report = {}
+    with pytest.raises(control.Stop, match='fixed_task_log_page_incomplete'):
+        control.read_fixed_task_diagnostics(session, report, control.FIXED_EXECUTION)
+    assert len(session.calls) == 4
+    assert 'synthetic-private-token' not in json.dumps(report)
 
 
 def test_readback_scoped_stdout_text_receipt_is_sanitized():

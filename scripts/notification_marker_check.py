@@ -20,6 +20,8 @@ IMAGE = f'{REGION}-docker.pkg.dev/{PROJECT}/cloud-run-source-deploy/interactiveb
 JOB_ID = 'ibkr-notification-marker-check-20261021-3c5b1830'
 PARENT = f'projects/{PROJECT}/locations/{REGION}'
 JOB = f'{PARENT}/jobs/{JOB_ID}'
+FIXED_EXECUTION = f'{JOB}/executions/{JOB_ID}-mgqnb'
+FIXED_TASK_PARENT = FIXED_EXECUTION + '/tasks/'
 API = 'https://run.googleapis.com/v2/'
 NONCE = '3c5b1830-9184-4966-9232-f8f1e290fd18'
 PROBE_SHA = 'ce49359d6d6275a49a74bfbee4e0acccb61ee3f2ade7f796419eb29ed16c9c97'
@@ -394,7 +396,7 @@ def read_probe(session, report):
                 observed[source] = value
         report['execution'] = observed
         read_fixed_object_metadata(session, report)
-        read_fixed_execution_receipt(session, report, name)
+        read_fixed_task_diagnostics(session, report, name)
     report['status'] = 'job_observed'
 
 
@@ -472,6 +474,114 @@ def read_fixed_execution_receipt(session, report, name):
     report['safe_probe_receipt_found'] = bool(certificates)
     if certificates:
         report['probe_receipt'] = safe_probe_receipt(certificates[0])
+
+
+def read_fixed_task_diagnostics(session, report, name):
+    """Project only bounded task status and log categories for the one retained Execution."""
+    require(name == FIXED_EXECUTION, 'fixed_execution_identity_rejected')
+    listed = control_request(session, report, 'GET', API + FIXED_EXECUTION
+                             + '/tasks?pageSize=2&fields=tasks(name,index),nextPageToken',
+                             phase='fixed_execution_tasks_read_only')
+    rows = listed.get('tasks')
+    require(isinstance(rows, list) and len(rows) == 1 and not listed.get('nextPageToken')
+            and isinstance(rows[0], dict) and type(rows[0].get('index')) is int and rows[0]['index'] == 0,
+            'fixed_task_list_not_unique')
+    task_name = rows[0].get('name')
+    require(isinstance(task_name, str) and re.fullmatch(re.escape(FIXED_TASK_PARENT) + r'[a-zA-Z0-9_-]+', task_name),
+            'fixed_task_identity_rejected')
+    fields = 'name,index,retried,conditions(type,state,reason),lastAttemptResult(status(code),exitCode,termSignal)'
+    task = control_request(session, report, 'GET', API + task_name + '?fields=' + fields,
+                           phase='fixed_task_read_only')
+    require(task.get('name') == task_name and type(task.get('index')) is int and task['index'] == 0,
+            'fixed_task_identity_rejected')
+    safe = {'name': task_name, 'index': 0}
+    retried = task.get('retried')
+    if type(retried) is int and 0 <= retried <= 10:
+        safe['retried'] = retried
+    conditions = task.get('conditions', [])
+    require(isinstance(conditions, list) and len(conditions) <= 16, 'fixed_task_conditions_unknown')
+    safe['conditions'] = []
+    for row in conditions:
+        require(isinstance(row, dict), 'fixed_task_conditions_unknown')
+        item = {}
+        for key in ('type', 'state', 'reason'):
+            value = row.get(key)
+            if isinstance(value, str) and re.fullmatch('[A-Z_]{1,64}|Completed', value):
+                item[key] = value
+        safe['conditions'].append(item)
+    attempt = task.get('lastAttemptResult', {})
+    require(isinstance(attempt, dict), 'fixed_task_attempt_unknown')
+    result = {}
+    status = attempt.get('status', {})
+    if isinstance(status, dict) and type(status.get('code')) is int and 0 <= status['code'] <= 16:
+        result['status_code'] = status['code']
+    for key in ('exitCode', 'termSignal'):
+        value = attempt.get(key)
+        if type(value) is int and 0 <= value <= 65535:
+            result[key] = value
+    safe['last_attempt'] = result
+    report['task'] = safe
+
+    suffix = name.rsplit('/', 1)[1]
+    body = {'resourceNames': ['projects/' + PROJECT], 'pageSize': 100, 'orderBy': 'timestamp desc',
+            'filter': (f'resource.type="cloud_run_job" AND resource.labels.location="{REGION}" '
+                       f'AND resource.labels.job_name="{JOB_ID}" AND labels.execution_name="{suffix}" '
+                       'AND labels.task_index="0" '
+                       'AND (log_id("run.googleapis.com/stdout") OR log_id("run.googleapis.com/stderr")) '
+                       'AND timestamp>="2026-10-21T13:15:00Z" AND timestamp<="2026-10-21T13:25:00Z"')}
+    counts = {'stdout': 0, 'stderr': 0}
+    categories = set()
+    receipts = []
+    seen_tokens = set()
+    for page in range(2):
+        entries = control_request(session, report, 'POST', 'https://logging.googleapis.com/v2/entries:list',
+                                  body=body, phase='fixed_task_logs_read_only')
+        rows = entries.get('entries', [])
+        require(isinstance(rows, list) and len(rows) <= 100 and all(isinstance(x, dict) for x in rows),
+                'fixed_task_log_page_unknown')
+        for entry in rows:
+            log_name = entry.get('logName', '')
+            stream = next((kind for kind in ('stdout', 'stderr')
+                           if log_name == f'projects/{PROJECT}/logs/run.googleapis.com%2F{kind}'), None)
+            if stream is None:
+                continue
+            counts[stream] += 1
+            payload = entry.get('jsonPayload')
+            raw = entry.get('textPayload')
+            if not isinstance(payload, dict) and isinstance(raw, str) and len(raw) <= 8192:
+                try:
+                    payload = json.loads(raw)
+                except (ValueError, TypeError):
+                    pass
+            if isinstance(payload, dict) and payload.get('probe_id') == NONCE:
+                receipts.append(safe_probe_receipt(payload))
+            if stream == 'stderr' and isinstance(raw, str):
+                sample = raw[:4096].lower()
+                if 'permission denied' in sample or 'http error 403' in sample:
+                    categories.add('permission_denied_hint')
+                elif 'precondition failed' in sample or 'http error 412' in sample:
+                    categories.add('precondition_hint')
+                elif 'timed out' in sample or 'deadline exceeded' in sample:
+                    categories.add('timeout_hint')
+                elif 'traceback' in sample or 'exception' in sample:
+                    categories.add('exception_hint')
+                else:
+                    categories.add('unclassified')
+        token = entries.get('nextPageToken')
+        require(token is None or isinstance(token, str), 'fixed_task_log_page_unknown')
+        if not token:
+            report['task_log_pages'] = page + 1
+            break
+        require(len(token) <= 8192 and token not in seen_tokens and page == 0,
+                'fixed_task_log_page_incomplete')
+        seen_tokens.add(token)
+        body = dict(body, pageToken=token)
+    require(len(receipts) <= 1, 'fixed_task_receipt_ambiguous')
+    report['safe_probe_receipt_found'] = bool(receipts)
+    report['task_logs'] = {'counts': counts, 'stderr_categories': sorted(categories),
+                           'safe_probe_receipt_found': bool(receipts)}
+    if receipts:
+        report['probe_receipt'] = receipts[0]
 
 
 def validate_probe(session, report, *, sleep=time.sleep, clock=time.monotonic):
