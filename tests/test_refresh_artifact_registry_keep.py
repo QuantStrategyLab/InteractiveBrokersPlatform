@@ -38,10 +38,14 @@ def policy_fixture():
 
 
 class FakeGcloud:
-    def __init__(self):
+    def __init__(self, mode=True):
         self.repository = policy_fixture()
+        self.repository["cleanupPolicyDryRun"] = mode
         self.calls = []
         self.fail_on = None
+        self.repository_reads = 0
+        self.fail_read_at = None
+        self.mode_changes = {}
         self.service = {"status": {"traffic": [{"revisionName": "old-serving", "percent": 100}],
                                    "latestReadyRevisionName": "old-serving"}}
         self.revision = {"spec": {"containers": [{"image": IMAGE_REPO + ":old"}]},
@@ -74,13 +78,20 @@ class FakeGcloud:
             if args[3] == "describe":
                 return json.dumps(self.execution)
         if command == ("artifacts", "repositories", "describe"):
+            self.repository_reads += 1
+            if self.repository_reads == self.fail_read_at:
+                raise RuntimeError("simulated readback failure")
+            if self.repository_reads in self.mode_changes:
+                self.repository["cleanupPolicyDryRun"] = self.mode_changes[self.repository_reads]
             return json.dumps(self.repository)
         if command == ("artifacts", "repositories", "set-cleanup-policies"):
             path = next(arg.split("=", 1)[1] for arg in args if arg.startswith("--policy="))
             with open(path, encoding="utf-8") as handle:
                 self.pending = json.load(handle)
-            if "--dry-run" not in args or len(self.pending) != 6:
-                raise AssertionError("Existing dry-run policy set must remain complete")
+            expected = ["artifacts", "repositories", "set-cleanup-policies", REPOSITORY,
+                        f"--project={PROJECT}", f"--location={REGION}", f"--policy={path}", "--quiet"]
+            if args != expected or len(self.pending) != 6:
+                raise AssertionError("Only the complete policy set may be submitted; no mode argument")
             for row in self.pending:
                 source = self.repository["cleanupPolicies"][row["name"]]
                 source["action"] = row["action"]["type"].upper()
@@ -99,23 +110,60 @@ def run(fake, *, candidate=None, rollback=None):
 
 class KeepGuardTests(unittest.TestCase):
     def test_older_than_newest_ten_serving_and_job_are_protected(self):
-        fake = FakeGcloud()
-        required = run(fake)
-        self.assertEqual(required, {"sha256:" + char * 64 for char in "bcde9"})
-        self.assertEqual(fake.repository["cleanupPolicies"][KEEP_ID]["condition"]["versionNamePrefixes"][0],
-                         "sha256:" + "a" * 56)
-        self.assertTrue(fake.repository["cleanupPolicyDryRun"])
-        self.assertEqual(fake.repository["cleanupPolicies"]["keep-newest-ten-per-package"]["mostRecentVersions"],
-                         {"keepCount": 10})
-        self.assertEqual(len(fake.pending), 6)
+        for mode in (True, False):
+            with self.subTest(mode=mode):
+                fake = FakeGcloud(mode)
+                original = copy.deepcopy(fake.repository["cleanupPolicies"])
+                required = run(fake)
+                self.assertEqual(required, {"sha256:" + char * 64 for char in "bcde9"})
+                updated = fake.repository["cleanupPolicies"]
+                self.assertEqual(updated[KEEP_ID]["condition"]["versionNamePrefixes"],
+                                 ["sha256:" + "a" * 56, *sorted(required)])
+                self.assertIs(fake.repository["cleanupPolicyDryRun"], mode)
+                self.assertEqual({k: v for k, v in updated.items() if k != KEEP_ID},
+                                 {k: v for k, v in original.items() if k != KEEP_ID})
+                self.assertEqual(len(fake.pending), 6)
 
     def test_merge_is_idempotent(self):
+        for mode in (True, False):
+            with self.subTest(mode=mode):
+                fake = FakeGcloud(mode)
+                run(fake)
+                fake.calls.clear()
+                fake.pending = None
+                run(fake)
+                self.assertIsNone(fake.pending)
+                self.assertFalse(any(call[:3] == ["artifacts", "repositories", "set-cleanup-policies"]
+                                     for call in fake.calls))
+                self.assertIs(fake.repository["cleanupPolicyDryRun"], mode)
+
+    def test_missing_mode_defaults_to_false(self):
         fake = FakeGcloud()
+        del fake.repository["cleanupPolicyDryRun"]
         run(fake)
-        first = len([call for call in fake.calls if call[:3] == ["artifacts", "repositories", "set-cleanup-policies"]])
+        self.assertNotIn("cleanupPolicyDryRun", fake.repository)
+        self.assertIsNotNone(fake.pending)
+        fake.pending = None
         run(fake)
-        second = len([call for call in fake.calls if call[:3] == ["artifacts", "repositories", "set-cleanup-policies"]])
-        self.assertEqual((first, second), (1, 1))
+        self.assertIsNone(fake.pending)
+
+    def test_missing_and_explicit_false_readback_are_equivalent(self):
+        for initially_missing in (True, False):
+            with self.subTest(initially_missing=initially_missing):
+                class DefaultFalseReadback(FakeGcloud):
+                    def __call__(self, args):
+                        result = super().__call__(args)
+                        if args[:3] == ["artifacts", "repositories", "set-cleanup-policies"]:
+                            if initially_missing:
+                                self.repository["cleanupPolicyDryRun"] = False
+                            else:
+                                del self.repository["cleanupPolicyDryRun"]
+                        return result
+
+                fake = DefaultFalseReadback(False)
+                if initially_missing:
+                    del fake.repository["cleanupPolicyDryRun"]
+                self.assertEqual(run(fake), {"sha256:" + char * 64 for char in "bcde9"})
 
     def test_other_package_in_same_repository_is_protected(self):
         fake = FakeGcloud()
@@ -161,18 +209,47 @@ class KeepGuardTests(unittest.TestCase):
                                      for call in fake.calls))
 
     def test_inventory_api_failure_does_not_update_policy(self):
-        fake = FakeGcloud()
-        fake.fail_on = ("run", "jobs", "list")
-        with self.assertRaises(RuntimeError):
-            run(fake)
-        self.assertFalse(any(call[:3] == ["artifacts", "repositories", "set-cleanup-policies"]
-                             for call in fake.calls))
+        for mode in (True, False):
+            with self.subTest(mode=mode):
+                fake = FakeGcloud(mode)
+                fake.fail_on = ("run", "jobs", "list")
+                with self.assertRaises(RuntimeError):
+                    run(fake)
+                self.assertEqual(fake.calls[-1][:3], ["run", "jobs", "list"])
+                self.assertIsNone(fake.pending)
 
     def test_policy_update_api_failure_stops_before_deploy(self):
-        fake = FakeGcloud()
-        fake.fail_on = ("artifacts", "repositories", "set-cleanup-policies")
-        with self.assertRaises(RuntimeError):
-            run(fake)
+        for mode in (True, False):
+            with self.subTest(mode=mode):
+                fake = FakeGcloud(mode)
+                fake.fail_on = ("artifacts", "repositories", "set-cleanup-policies")
+                with self.assertRaises(RuntimeError):
+                    run(fake)
+                self.assertEqual(tuple(fake.calls[-1][:3]), fake.fail_on)
+                self.assertEqual(fake.repository_reads, 2)
+                self.assertIsNone(fake.pending)
+
+    def test_repository_read_failure_stops_refresh(self):
+        for mode in (True, False):
+            for read in (1, 2, 3):
+                with self.subTest(mode=mode, read=read):
+                    fake = FakeGcloud(mode)
+                    fake.fail_read_at = read
+                    with self.assertRaisesRegex(RuntimeError, "readback failure"):
+                        run(fake)
+                    self.assertEqual(fake.repository_reads, read)
+                    self.assertEqual(fake.calls[-1][:3], ["artifacts", "repositories", "describe"])
+                    self.assertEqual(fake.pending is not None, read == 3)
+
+    def test_fresh_mode_drift_stops_write(self):
+        for mode in (True, False):
+            with self.subTest(mode=mode):
+                fake = FakeGcloud(mode)
+                fake.mode_changes[2] = not mode
+                with self.assertRaisesRegex(ValueError, "Repository changed before KEEP update"):
+                    run(fake)
+                self.assertIsNone(fake.pending)
+                self.assertEqual(fake.repository_reads, 2)
 
     def test_repository_drift_before_update_stops_write(self):
         class DriftingRepository(FakeGcloud):
@@ -185,10 +262,12 @@ class KeepGuardTests(unittest.TestCase):
                         self.repository["updateTime"] = "2026-10-22T00:00:01Z"
                 return super().__call__(args)
 
-        fake = DriftingRepository()
-        with self.assertRaisesRegex(ValueError, "changed"):
-            run(fake)
-        self.assertIsNone(fake.pending)
+        for mode in (True, False):
+            with self.subTest(mode=mode):
+                fake = DriftingRepository(mode)
+                with self.assertRaisesRegex(ValueError, "changed"):
+                    run(fake)
+                self.assertIsNone(fake.pending)
 
     def test_failed_or_drifting_readback_stops_deploy(self):
         class WrongReadback(FakeGcloud):
@@ -198,14 +277,67 @@ class KeepGuardTests(unittest.TestCase):
                     self.repository["cleanupPolicies"][KEEP_ID]["condition"]["versionNamePrefixes"].pop()
                 return result
 
-        with self.assertRaisesRegex(ValueError, "readback"):
-            run(WrongReadback())
+        for mode in (True, False):
+            with self.subTest(mode=mode):
+                fake = WrongReadback(mode)
+                with self.assertRaisesRegex(ValueError, "readback"):
+                    run(fake)
+                self.assertEqual(fake.repository_reads, 3)
 
     def test_repository_mode_change_fails_closed(self):
-        fake = FakeGcloud()
-        fake.repository["cleanupPolicyDryRun"] = False
-        with self.assertRaisesRegex(ValueError, "dry-run"):
-            run(fake)
+        for mode in (True, False):
+            for needs_update in (True, False):
+                with self.subTest(mode=mode, needs_update=needs_update):
+                    fake = FakeGcloud(mode)
+                    if not needs_update:
+                        run(fake)
+                        fake.calls.clear()
+                        fake.pending = None
+                        fake.repository_reads = 0
+                    final_read = 3 if needs_update else 2
+                    fake.mode_changes[final_read] = not mode
+                    with self.assertRaisesRegex(ValueError, "cleanup mode changed"):
+                        run(fake)
+                    self.assertEqual(fake.repository_reads, final_read)
+                    self.assertEqual(fake.pending is not None, needs_update)
+                    self.assertEqual(fake.calls[-1][:3], ["artifacts", "repositories", "describe"])
+
+    def test_invalid_mode_type_fails_closed(self):
+        for value in (None, "true", "false", 0, 1, [], {}):
+            for needs_update in (True, False):
+                for read in ((1, 2, 3) if needs_update else (1, 2)):
+                    with self.subTest(value=value, needs_update=needs_update, read=read):
+                        fake = FakeGcloud()
+                        if not needs_update:
+                            run(fake)
+                            fake.pending = None
+                            fake.calls.clear()
+                            fake.repository_reads = 0
+                        fake.mode_changes[read] = value
+                        with self.assertRaisesRegex(ValueError, "mode must be a boolean"):
+                            run(fake)
+                        self.assertEqual(fake.repository_reads, read)
+                        self.assertEqual(fake.pending is not None, needs_update and read == 3)
+
+    def test_wrong_repository_or_policy_shape_fails_before_write(self):
+        for mode in (True, False):
+            for change in ("identity", "missing_policy", "action", "tag_state", "prefixes"):
+                with self.subTest(mode=mode, change=change):
+                    fake = FakeGcloud(mode)
+                    keep = fake.repository["cleanupPolicies"][KEEP_ID]
+                    if change == "identity":
+                        fake.repository["name"] += "-other"
+                    elif change == "missing_policy":
+                        del fake.repository["cleanupPolicies"]["keep-newest-ten-per-package"]
+                    elif change == "action":
+                        keep["action"] = "DELETE"
+                    elif change == "tag_state":
+                        keep["condition"]["tagState"] = "TAGGED"
+                    else:
+                        keep["condition"]["versionNamePrefixes"] = []
+                    with self.assertRaises(ValueError):
+                        run(fake)
+                    self.assertIsNone(fake.pending)
 
     def test_missing_designated_rollback_fails_before_inventory(self):
         fake = FakeGcloud()

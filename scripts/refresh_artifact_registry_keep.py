@@ -158,8 +158,8 @@ def collect_digests(run: Run, *, project: str, region: str, image_repo: str) -> 
 
 
 def policies(repository: dict[str, Any], expected_name: str) -> dict[str, Any]:
-    if repository.get("name") != expected_name or repository.get("cleanupPolicyDryRun") is not True:
-        raise ValueError("Repository identity or dry-run mode changed")
+    if repository.get("name") != expected_name:
+        raise ValueError("Repository identity changed")
     policy_set = repository.get("cleanupPolicies")
     if not isinstance(policy_set, dict) or len(policy_set) != 6 or KEEP_ID not in policy_set:
         raise ValueError("Expected six cleanup policies are unavailable")
@@ -171,6 +171,13 @@ def policies(repository: dict[str, Any], expected_name: str) -> dict[str, Any]:
             or any(not isinstance(p, str) or not p.startswith("sha256:") for p in prefixes)):
         raise ValueError("Existing KEEP policy shape changed")
     return policy_set
+
+
+def cleanup_mode(repository: dict[str, Any]) -> bool:
+    mode = repository.get("cleanupPolicyDryRun", False)
+    if not isinstance(mode, bool):
+        raise ValueError("Repository cleanup mode must be a boolean")
+    return mode
 
 
 def covers(prefixes: list[str], digest: str) -> bool:
@@ -226,9 +233,11 @@ def refresh(run: Run, *, project: str, region: str, repository_id: str,
                  f"--project={project}", f"--location={region}"]
     before = read_json(run, repo_args)
     current = policies(before, expected_name)
+    before_mode = cleanup_mode(before)
     desired = merged_policies(current, required)
     if desired != current:
         fresh = read_json(run, repo_args)
+        cleanup_mode(fresh)
         if fresh != before:
             raise ValueError("Repository changed before KEEP update")
         with tempfile.TemporaryDirectory() as directory:
@@ -236,9 +245,11 @@ def refresh(run: Run, *, project: str, region: str, repository_id: str,
             policy_file.write_text(json.dumps(cli_policies(desired)), encoding="utf-8")
             run(["artifacts", "repositories", "set-cleanup-policies", repository_id,
                  f"--project={project}", f"--location={region}",
-                 f"--policy={policy_file}", "--dry-run", "--quiet"])
+                 f"--policy={policy_file}", "--quiet"])
     after = read_json(run, repo_args)
     readback = policies(after, expected_name)
+    if cleanup_mode(after) != before_mode:
+        raise ValueError("Repository cleanup mode changed during KEEP refresh")
     if readback != desired or not all(covers(readback[KEEP_ID]["condition"]["versionNamePrefixes"], digest)
                                        for digest in required):
         raise ValueError("KEEP policy readback did not cover every required image")
@@ -260,7 +271,7 @@ def main() -> None:
     protected = refresh(run_gcloud, project=args.project, region=args.region,
                         repository_id=args.repository, image_repo=args.image_repo,
                         candidate=args.candidate, rollback=args.rollback_digest)
-    print(f"Verified KEEP coverage for {len(protected)} immutable images; dry-run unchanged.")
+    print(f"Verified KEEP coverage for {len(protected)} immutable images; mode preserved.")
 
 
 if __name__ == "__main__":
