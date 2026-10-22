@@ -1,0 +1,218 @@
+"""Synthetic repository and Cloud Run inventory for the deploy KEEP guard."""
+
+import copy
+import json
+import unittest
+
+from scripts.refresh_artifact_registry_keep import KEEP_ID, refresh
+
+
+PROJECT = "interactivebrokersquant"
+REGION = "us-central1"
+REPOSITORY = "cloud-run-source-deploy"
+IMAGE_REPO = f"{REGION}-docker.pkg.dev/{PROJECT}/{REPOSITORY}/interactivebrokersplatform/cloud-run"
+
+
+def image(letter: str) -> str:
+    return f"{IMAGE_REPO}@sha256:{letter * 64}"
+
+
+def policy_fixture():
+    keep = {"id": KEEP_ID, "action": "KEEP", "condition": {
+        "tagState": "ANY", "versionNamePrefixes": ["sha256:" + "a" * 56]}}
+    return {
+        "name": f"projects/{PROJECT}/locations/{REGION}/repositories/{REPOSITORY}",
+        "updateTime": "2026-10-22T00:00:00Z",
+        "cleanupPolicyDryRun": True,
+        "cleanupPolicies": {
+            KEEP_ID: keep,
+            "keep-newest-ten-per-package": {"id": "keep-newest-ten-per-package", "action": "KEEP",
+                                            "mostRecentVersions": {"keepCount": 10}},
+            "keep-recent-2-per-package": {"id": "keep-recent-2-per-package", "action": "KEEP",
+                                           "mostRecentVersions": {"keepCount": 2}},
+            **{name: {"id": name, "action": "DELETE", "condition": {
+                "tagState": "UNTAGGED", "olderThan": "604800s"}}
+               for name in ("delete-aged-tagged", "delete-aged-untagged", "delete-untagged-after-14d")},
+        },
+    }
+
+
+class FakeGcloud:
+    def __init__(self):
+        self.repository = policy_fixture()
+        self.calls = []
+        self.fail_on = None
+        self.service = {"status": {"traffic": [{"revisionName": "old-serving", "percent": 100}],
+                                   "latestReadyRevisionName": "old-serving"}}
+        self.revision = {"spec": {"containers": [{"image": IMAGE_REPO + ":old"}]},
+                         "status": {"imageDigest": "sha256:" + "9" * 64}}
+        self.jobs = [{"metadata": {"name": "existing-job"}}]
+        self.job = {"template": {"template": {"containers": [{"image": image("b")}]}}}
+        self.executions = []
+        self.execution = {"spec": {"template": {"spec": {"containers": [{"image": image("f")}]}}},
+                          "status": {"runningCount": 1}}
+        self.pending = None
+
+    def __call__(self, args):
+        self.calls.append(args)
+        command = tuple(args[:3])
+        if command == self.fail_on:
+            raise RuntimeError("simulated API failure")
+        if command == ("run", "services", "list"):
+            return json.dumps([{"metadata": {"name": "old-service"}}])
+        if command == ("run", "services", "describe"):
+            return json.dumps(self.service)
+        if command == ("run", "revisions", "describe"):
+            return json.dumps(self.revision)
+        if command == ("run", "jobs", "list"):
+            return json.dumps(self.jobs)
+        if command == ("run", "jobs", "describe"):
+            return json.dumps(self.job)
+        if command == ("run", "jobs", "executions"):
+            if args[3] == "list":
+                return json.dumps(self.executions)
+            if args[3] == "describe":
+                return json.dumps(self.execution)
+        if command == ("artifacts", "repositories", "describe"):
+            return json.dumps(self.repository)
+        if command == ("artifacts", "repositories", "set-cleanup-policies"):
+            path = next(arg.split("=", 1)[1] for arg in args if arg.startswith("--policy="))
+            with open(path, encoding="utf-8") as handle:
+                self.pending = json.load(handle)
+            if "--dry-run" not in args or len(self.pending) != 6:
+                raise AssertionError("Existing dry-run policy set must remain complete")
+            for row in self.pending:
+                source = self.repository["cleanupPolicies"][row["name"]]
+                source["action"] = row["action"]["type"].upper()
+                if "condition" in row:
+                    source["condition"] = copy.deepcopy(row["condition"])
+                    source["condition"]["tagState"] = source["condition"]["tagState"].upper()
+            return ""
+        raise AssertionError(f"Unexpected command: {args}")
+
+
+def run(fake, *, candidate=None, rollback=None):
+    return refresh(fake, project=PROJECT, region=REGION, repository_id=REPOSITORY,
+                   image_repo=IMAGE_REPO, candidate=candidate or image("c"),
+                   rollback=rollback if rollback is not None else ["sha256:" + c * 64 for c in "de"])
+
+
+class KeepGuardTests(unittest.TestCase):
+    def test_older_than_newest_ten_serving_and_job_are_protected(self):
+        fake = FakeGcloud()
+        required = run(fake)
+        self.assertEqual(required, {"sha256:" + char * 64 for char in "bcde9"})
+        self.assertEqual(fake.repository["cleanupPolicies"][KEEP_ID]["condition"]["versionNamePrefixes"][0],
+                         "sha256:" + "a" * 56)
+        self.assertTrue(fake.repository["cleanupPolicyDryRun"])
+        self.assertEqual(fake.repository["cleanupPolicies"]["keep-newest-ten-per-package"]["mostRecentVersions"],
+                         {"keepCount": 10})
+        self.assertEqual(len(fake.pending), 6)
+
+    def test_merge_is_idempotent(self):
+        fake = FakeGcloud()
+        run(fake)
+        first = len([call for call in fake.calls if call[:3] == ["artifacts", "repositories", "set-cleanup-policies"]])
+        run(fake)
+        second = len([call for call in fake.calls if call[:3] == ["artifacts", "repositories", "set-cleanup-policies"]])
+        self.assertEqual((first, second), (1, 1))
+
+    def test_other_package_in_same_repository_is_protected(self):
+        fake = FakeGcloud()
+        fake.job["template"]["template"]["containers"][0]["image"] = (
+            f"{REGION}-docker.pkg.dev/{PROJECT}/{REPOSITORY}/other-package@sha256:" + "e" * 64)
+        self.assertIn("sha256:" + "e" * 64, run(fake))
+
+    def test_active_execution_retains_old_job_image(self):
+        fake = FakeGcloud()
+        fake.executions = [{"metadata": {"name": "existing-job-run-1"}, "status": {"runningCount": 1}}]
+        self.assertIn("sha256:" + "f" * 64, run(fake))
+
+    def test_multi_container_revision_protects_sidecar(self):
+        fake = FakeGcloud()
+        fake.revision["spec"]["containers"].append({"image": image("f")})
+        self.assertIn("sha256:" + "f" * 64, run(fake))
+
+    def test_unresolved_sidecar_tag_fails_before_policy_write(self):
+        fake = FakeGcloud()
+        fake.revision["spec"]["containers"].append({"image": IMAGE_REPO + ":sidecar"})
+        with self.assertRaisesRegex(ValueError, "immutable"):
+            run(fake)
+        self.assertIsNone(fake.pending)
+
+    def test_malformed_resolved_digest_fails_before_policy_write(self):
+        fake = FakeGcloud()
+        fake.revision["status"]["imageDigest"] = "sha256:" + "g" * 64
+        with self.assertRaisesRegex(ValueError, "invalid"):
+            run(fake)
+        self.assertIsNone(fake.pending)
+
+    def test_missing_traffic_or_tagged_job_fails_before_policy_write(self):
+        for change in ("traffic", "job"):
+            with self.subTest(change=change):
+                fake = FakeGcloud()
+                if change == "traffic":
+                    fake.service["status"]["traffic"] = [{"latestRevision": True, "percent": 100}]
+                else:
+                    fake.job["template"]["template"]["containers"][0]["image"] = IMAGE_REPO + ":latest"
+                with self.assertRaises(ValueError):
+                    run(fake)
+                self.assertFalse(any(call[:3] == ["artifacts", "repositories", "set-cleanup-policies"]
+                                     for call in fake.calls))
+
+    def test_inventory_api_failure_does_not_update_policy(self):
+        fake = FakeGcloud()
+        fake.fail_on = ("run", "jobs", "list")
+        with self.assertRaises(RuntimeError):
+            run(fake)
+        self.assertFalse(any(call[:3] == ["artifacts", "repositories", "set-cleanup-policies"]
+                             for call in fake.calls))
+
+    def test_policy_update_api_failure_stops_before_deploy(self):
+        fake = FakeGcloud()
+        fake.fail_on = ("artifacts", "repositories", "set-cleanup-policies")
+        with self.assertRaises(RuntimeError):
+            run(fake)
+
+    def test_repository_drift_before_update_stops_write(self):
+        class DriftingRepository(FakeGcloud):
+            reads = 0
+
+            def __call__(self, args):
+                if args[:3] == ["artifacts", "repositories", "describe"]:
+                    self.reads += 1
+                    if self.reads == 2:
+                        self.repository["updateTime"] = "2026-10-22T00:00:01Z"
+                return super().__call__(args)
+
+        fake = DriftingRepository()
+        with self.assertRaisesRegex(ValueError, "changed"):
+            run(fake)
+        self.assertIsNone(fake.pending)
+
+    def test_failed_or_drifting_readback_stops_deploy(self):
+        class WrongReadback(FakeGcloud):
+            def __call__(self, args):
+                result = super().__call__(args)
+                if args[:3] == ["artifacts", "repositories", "set-cleanup-policies"]:
+                    self.repository["cleanupPolicies"][KEEP_ID]["condition"]["versionNamePrefixes"].pop()
+                return result
+
+        with self.assertRaisesRegex(ValueError, "readback"):
+            run(WrongReadback())
+
+    def test_repository_mode_change_fails_closed(self):
+        fake = FakeGcloud()
+        fake.repository["cleanupPolicyDryRun"] = False
+        with self.assertRaisesRegex(ValueError, "dry-run"):
+            run(fake)
+
+    def test_missing_designated_rollback_fails_before_inventory(self):
+        fake = FakeGcloud()
+        with self.assertRaisesRegex(ValueError, "rollback"):
+            run(fake, rollback=[])
+        self.assertEqual(fake.calls, [])
+
+
+if __name__ == "__main__":
+    unittest.main()
