@@ -313,12 +313,6 @@ def _kind(execution, *, dry_run=False):
         "outside_execution_window", "outside_monthly_execution_window", "execution_already_recorded"}
     if reason not in known_reasons or status not in {"no_action", "no_op", "completed", "executed", "dry_run", "dry_run_completed"}:
         return "real_error"
-    # Reuse every existing urgent-field exclusion. This copy is notification
-    # evidence only; the execution result and its admission decision are intact.
-    from notifications.digest_snapshot.digest_routing import defer_routine_cycle_to_digest
-    guard = {**execution, "execution_status": "no_action", "no_op_reason": "", "broker_submission_done": False}
-    if not defer_routine_cycle_to_digest(guard, submitted_order_count=0, mode="daily_digest"):
-        return "real_error"
     orders = list(execution.get("orders_submitted") or ()) + list(execution.get("option_orders_submitted") or ())
     if not dry_run and orders:
         if any(not isinstance(order, Mapping) or str(order.get("status") or "").lower() not in {"filled", "completed", "executed"} for order in orders):
@@ -328,6 +322,19 @@ def _kind(execution, *, dry_run=False):
         return "fill"
     if not dry_run and (execution.get("broker_submission_done") or execution.get("orders_submitted_count")):
         return "order_status_unknown"
+    # Reuse every existing urgent-field exclusion. This copy is notification
+    # evidence only; the execution result and its admission decision are intact.
+    from notifications.digest_snapshot.digest_routing import defer_routine_cycle_to_digest
+    guard = {**execution, "execution_status": "no_action", "broker_submission_done": False}
+    if dry_run:
+        # Preview orders are not broker events; urgent/error evidence above
+        # still takes precedence over this routing-only copy.
+        for key in ("orders_submitted", "orders_pending", "orders_filled", "orders_partially_filled",
+                    "option_orders_submitted", "option_orders_pending", "option_orders_filled",
+                    "option_orders_partially_filled", "orders_submitted_count", "option_orders_submitted_count"):
+            guard.pop(key, None)
+    if not defer_routine_cycle_to_digest(guard, submitted_order_count=0, mode="daily_digest"):
+        return "real_error"
     return "routine_cycle"
 
 
