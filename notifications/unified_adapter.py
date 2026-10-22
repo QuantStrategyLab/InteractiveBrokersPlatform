@@ -313,6 +313,19 @@ def _kind(execution, *, dry_run=False):
         "outside_execution_window", "outside_monthly_execution_window", "execution_already_recorded"}
     if reason not in known_reasons or status not in {"no_action", "no_op", "completed", "executed", "dry_run", "dry_run_completed"}:
         return "real_error"
+    raw_reason = str(execution.get("no_op_reason") or "")
+    if ":" in raw_reason:
+        if reason in {"min_notional", "quantity_zero"}:
+            if not re.fullmatch(r"[A-Z0-9.,_-]{1,100}", raw_reason.split(":", 1)[1]):
+                return "real_error"
+        elif reason not in {"outside_execution_window", "outside_monthly_execution_window",
+                            "execution_already_recorded"}:
+            return "real_error"
+    normal_skips = {"min_notional", "quantity_zero", "target_diff_below_threshold",
+                    "rebalance_diff_below_threshold", "below_threshold", "threshold_not_met"}
+    if any(str(skip).partition(":")[0] not in normal_skips
+           for skip in execution.get("skipped_reasons", ()) or ()):
+        return "real_error"
     orders = list(execution.get("orders_submitted") or ()) + list(execution.get("option_orders_submitted") or ())
     if not dry_run and orders:
         if any(not isinstance(order, Mapping) or str(order.get("status") or "").lower() not in {"filled", "completed", "executed"} for order in orders):
@@ -325,7 +338,7 @@ def _kind(execution, *, dry_run=False):
     # Reuse every existing urgent-field exclusion. This copy is notification
     # evidence only; the execution result and its admission decision are intact.
     from notifications.digest_snapshot.digest_routing import defer_routine_cycle_to_digest
-    guard = {**execution, "execution_status": "no_action", "broker_submission_done": False}
+    guard = {**execution, "execution_status": "no_action", "no_op_reason": "", "broker_submission_done": False}
     if dry_run:
         # Preview orders are not broker events; urgent/error evidence above
         # still takes precedence over this routing-only copy.

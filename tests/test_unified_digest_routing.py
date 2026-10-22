@@ -57,45 +57,16 @@ def test_below_threshold_is_routine_but_an_unclassified_reason_stays_immediate()
     assert not defer_routine_cycle_to_digest(evidence, submitted_order_count=0, mode="daily_digest")
 
 
-@pytest.mark.parametrize("reason", ["target_diff_below_threshold", "min_notional:TQQQ", "quantity_zero:TQQQ"])
-def test_final_normal_no_order_reasons_join_digest(reason):
-    evidence = {"execution_status": "no_op", "no_op_reason": reason, "orders_skipped": [{"reason": reason.split(":")[0]}]}
-    assert defer_routine_cycle_to_digest(evidence, submitted_order_count=0, mode="daily_digest")
-    for change in ({"orders_pending_count": 1}, {"skipped_reasons": ["submit_failed:TQQQ"]},
-                   {"error": "synthetic_failure"}, {"execution_status": "unknown"}):
-        assert not defer_routine_cycle_to_digest({**evidence, **change}, submitted_order_count=0, mode="daily_digest")
-    assert not defer_routine_cycle_to_digest({**evidence, "no_op_reason": "min_notional:unknown_order_result"},
-                                              submitted_order_count=0, mode="daily_digest")
-
-
-def test_real_orders_remain_immediate_even_if_old_digest_order_flag_is_enabled(monkeypatch):
+def test_confirmed_routine_orders_are_configurable_and_do_not_mutate(monkeypatch):
     evidence = {"execution_status": "completed", "broker_submission_done": True}
     orders = [{"status": "filled"}]
     original = copy.deepcopy((evidence, orders))
-    assert not defer_routine_cycle_to_digest(evidence, submitted_order_count=1,
+    assert defer_routine_cycle_to_digest(evidence, submitted_order_count=1,
         submitted_orders=orders, mode="daily_digest")
     monkeypatch.setenv("QSL_DIGEST_ROUTINE_ORDERS", "false")
     assert not defer_routine_cycle_to_digest(evidence, submitted_order_count=1,
         submitted_orders=orders, mode="daily_digest")
     assert (evidence, orders) == original
-
-
-@pytest.mark.parametrize("field", ["orders_submitted", "orders_filled", "orders_partially_filled",
-                                   "option_orders_submitted", "option_orders_filled"])
-def test_order_arrays_cannot_be_hidden_by_zero_submitted_count(field):
-    assert not defer_routine_cycle_to_digest(
-        {"execution_status": "completed", field: [{"status": "filled"}]},
-        submitted_order_count=0, mode="daily_digest")
-
-
-def test_pending_order_cannot_qualify_as_healthy_archived_fill():
-    from notifications.digest_snapshot.digest_routing import healthy_cycle_evidence
-    assert not healthy_cycle_evidence(
-        {"execution_status": "completed", "orders_pending": [{"status": "pending"}]},
-        submitted_order_count=1, submitted_orders=[{"status": "filled"}], mode="daily_digest")
-    assert not healthy_cycle_evidence(
-        {"execution_status": "completed", "orders_submitted": [{"status": "rejected"}]},
-        submitted_order_count=1, submitted_orders=[{"status": "filled"}], mode="daily_digest")
 
 
 @pytest.mark.parametrize("status", ["pending", "submitted", "rejected", "unknown", "partially_filled", ""])

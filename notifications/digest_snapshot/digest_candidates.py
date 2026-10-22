@@ -12,13 +12,13 @@ from zoneinfo import ZoneInfo
 
 def cycle_evidence(execution: Mapping, orders: Sequence[Mapping], *, dry_run: bool = False) -> dict:
     """Keep counts derived from actual order responses, never from log lines."""
-    from .digest_routing import healthy_cycle_evidence
+    from .digest_routing import defer_routine_cycle_to_digest
 
     count = len(orders)
     valid = all(isinstance(order, Mapping) and bool(order.get("status")) for order in orders)
     confirmed = valid and all(str(order["status"]).lower() in {"filled", "completed", "executed"} for order in orders)
-    healthy = healthy_cycle_evidence(execution, submitted_order_count=count,
-        submitted_orders=orders, mode="daily_digest")
+    healthy = defer_routine_cycle_to_digest(execution, submitted_order_count=count,
+        submitted_orders=orders, mode="daily_digest", include_orders=True)
     fill_ids = []
     fills_known = confirmed and healthy
     for order in orders:
