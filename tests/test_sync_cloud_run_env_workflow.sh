@@ -211,3 +211,18 @@ grep -Fq '"CRISIS_ALERT_SMTP_PASSWORD"' "$workflow_file"
 grep -Fq '"IB_CLIENT_ID"' "$workflow_file"
 grep -Fq '"IB_GATEWAY_INSTANCE_NAME"' "$workflow_file"
 grep -Fq '"IB_GATEWAY_MODE"' "$workflow_file"
+
+# The source-bound candidate is protected before the first Cloud Run deploy.
+grep -Fq 'IBKR_ARTIFACT_REGISTRY_ROLLBACK_DIGESTS: ${{ vars.IBKR_ARTIFACT_REGISTRY_ROLLBACK_DIGESTS }}' "$workflow_file"
+grep -Fq 'python3 scripts/refresh_artifact_registry_keep.py' "$workflow_file"
+grep -Fq -- '--candidate "${immutable_image}"' "$workflow_file"
+python3 - "$workflow_file" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text()
+assert source.index('python3 scripts/refresh_artifact_registry_keep.py') < source.index('gcloud run deploy "${cloud_run_service}"')
+assert 'gcloud artifacts docker images delete' not in source
+assert 'gcloud run revisions delete' not in source
+assert 'set-cleanup-policies' not in source  # policy updates stay in the tested helper
+PY

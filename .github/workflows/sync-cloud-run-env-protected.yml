@@ -108,6 +108,7 @@ env:
   GCP_RUNTIME_SERVICE_ACCOUNT: ${{ vars.IBKR_RUNTIME_SERVICE_ACCOUNT }}
   GCP_SCHEDULER_SERVICE_ACCOUNT: ${{ vars.IBKR_SCHEDULER_SERVICE_ACCOUNT }}
   GCP_ARTIFACT_REGISTRY_REPOSITORY: cloud-run-source-deploy
+  IBKR_ARTIFACT_REGISTRY_ROLLBACK_DIGESTS: ${{ vars.IBKR_ARTIFACT_REGISTRY_ROLLBACK_DIGESTS }}
 
 jobs:
   sync-cloud-run-env:
@@ -739,6 +740,22 @@ jobs:
             exit 1
           fi
           immutable_image="${image_repo}@${image_digest}"
+          # Protect all existing service/Job references, this candidate, and any
+          # explicitly designated rollback digests before changing Cloud Run.
+          IFS=',' read -r -a rollback_digests <<< "${IBKR_ARTIFACT_REGISTRY_ROLLBACK_DIGESTS:-}"
+          rollback_args=()
+          for digest in "${rollback_digests[@]}"; do
+            if [ -n "${digest}" ]; then
+              rollback_args+=(--rollback-digest "${digest}")
+            fi
+          done
+          python3 scripts/refresh_artifact_registry_keep.py \
+            --project "${GCP_PROJECT_ID}" \
+            --region "${CLOUD_RUN_REGION}" \
+            --repository "${GCP_ARTIFACT_REGISTRY_REPOSITORY}" \
+            --image-repo "${image_repo}" \
+            --candidate "${immutable_image}" \
+            "${rollback_args[@]}"
           echo "image_digest=${image_digest}" >> "${GITHUB_OUTPUT}"
 
           for cloud_run_service in "${target_services[@]}"; do
@@ -1606,118 +1623,8 @@ jobs:
               --quiet
           done
 
-      - name: Prune old Cloud Run revisions
-        if: steps.config.outputs.deploy_enabled == 'true' && env.CLOUD_RUN_CLEANUP_ENABLED == 'true' && (env.WORKFLOW_TARGET != 'configured' || env.INPUT_CONFIGURED_SERVICE == '')
-        env:
-          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
-        run: |
-          set -euo pipefail
-
-          mapfile -t target_services < <(python - <<'PY'
-          import json
-          import os
-
-          raw_plan = os.environ.get("SYNC_PLAN_JSON", "").strip()
-          if raw_plan:
-              plan = json.loads(raw_plan)
-              for target in plan["targets"]:
-                  print(target["service_name"])
-              raise SystemExit(0)
-
-          raw_targets = os.environ.get("CLOUD_RUN_SERVICE_TARGETS_JSON", "").strip()
-          if raw_targets:
-              payload = json.loads(raw_targets)
-              entries = payload.get("targets") if isinstance(payload, dict) else payload
-              for entry in entries:
-                  service = (
-                      entry.get("service")
-                      or entry.get("service_name")
-                      or entry.get("cloud_run_service")
-                  )
-                  runtime_target = entry.get("runtime_target") or entry.get("runtime_target_json")
-                  if not service and isinstance(runtime_target, str):
-                      runtime_target = json.loads(runtime_target)
-                  if not service and isinstance(runtime_target, dict):
-                      service = runtime_target.get("service_name")
-                  service = str(service or "").strip()
-                  if service:
-                      print(service)
-              raise SystemExit(0)
-
-          raw_services = os.environ.get("CLOUD_RUN_SERVICES", "").strip() or os.environ.get("CLOUD_RUN_SERVICE", "").strip()
-          for chunk in raw_services.replace(";", ",").replace("\n", ",").split(","):
-              service = chunk.strip()
-              if service:
-                  print(service)
-          PY
-          )
-
-          for cloud_run_service in "${target_services[@]}"; do
-            keep_revisions="$(
-              gcloud run services describe "${cloud_run_service}" \
-                --region "${CLOUD_RUN_REGION}" \
-                --format=json \
-              | python -c '
-          import json
-          import sys
-          service = json.load(sys.stdin)
-          revisions = {
-              item.get("revisionName")
-              for item in service.get("status", {}).get("traffic", [])
-              if item.get("revisionName") and int(item.get("percent") or 0) > 0
-          }
-          latest_ready = service.get("status", {}).get("latestReadyRevisionName")
-          if latest_ready:
-              revisions.add(latest_ready)
-          for revision in sorted(revisions):
-              print(revision)
-          '
-            )"
-
-            if [ -z "${keep_revisions}" ]; then
-              echo "No active Cloud Run revision found for ${cloud_run_service}; skipping revision prune." >&2
-              continue
-            fi
-
-            mapfile -t revisions_to_delete < <(
-              gcloud run revisions list \
-                --service "${cloud_run_service}" \
-                --region "${CLOUD_RUN_REGION}" \
-                --format='value(metadata.name)' \
-              | grep -Fvx -f <(printf '%s\n' "${keep_revisions}") || true
-            )
-
-            for revision in "${revisions_to_delete[@]}"; do
-              echo "Deleting old Cloud Run revision ${revision} for ${cloud_run_service}."
-              gcloud run revisions delete "${revision}" \
-                --region "${CLOUD_RUN_REGION}" \
-                --quiet 2>&1 || true
-            done
-          done
-
-      - name: Clean up old Cloud Run images
-        if: steps.config.outputs.deploy_enabled == 'true' && env.CLOUD_RUN_CLEANUP_ENABLED == 'true' && (env.WORKFLOW_TARGET != 'configured' || env.INPUT_CONFIGURED_SERVICE == '')
-        run: |
-          set -euo pipefail
-
-          artifact_registry_hostname="${GCP_ARTIFACT_REGISTRY_HOSTNAME:-${CLOUD_RUN_REGION}-docker.pkg.dev}"
-          image_repo="${artifact_registry_hostname}/${GCP_PROJECT_ID}/${GCP_ARTIFACT_REGISTRY_REPOSITORY}/interactivebrokersplatform/cloud-run"
-          old_digests="$(gcloud artifacts docker images list "${image_repo}" \
-            --project="${GCP_PROJECT_ID}" \
-            --include-tags \
-            --format=json \
-            | python -c 'import json,os,sys; keep=os.environ["SOURCE_COMMIT"]; rows=json.load(sys.stdin); print("\n".join(row["version"] for row in rows if not any(keep in tag for tag in (row.get("tags") or []))))')"
-
-          while IFS= read -r digest; do
-            if [ -z "${digest}" ]; then
-              continue
-            fi
-            gcloud artifacts docker images delete "${image_repo}@${digest}" \
-              --project="${GCP_PROJECT_ID}" \
-              --delete-tags \
-              --async \
-              --quiet
-          done <<< "${old_digests}"
+      # Direct image and revision deletion is retired. The native repository
+      # policy remains in dry-run; KEEP coverage is verified before deploy.
 
   notification-only:
     name: Fixed notification overlay / no traffic
