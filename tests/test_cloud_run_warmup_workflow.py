@@ -155,7 +155,7 @@ def test_empty_selector_rejected_for_configured_and_hk_verify_preserves_targets(
     assert github_env == ""
 
 
-def test_single_target_sync_skips_global_cleanup_before_other_service_mutation() -> None:
+def test_single_target_sync_protects_artifacts_before_other_service_mutation() -> None:
     import subprocess
     import textwrap
 
@@ -164,10 +164,15 @@ def test_single_target_sync_skips_global_cleanup_before_other_service_mutation()
     assert "      configured_service:\n" in caller
     assert "INPUT_CONFIGURED_SERVICE: ${{ inputs.configured_service }}" in workflow
     assert "Exact inventory service_name required for configured target." in caller
-    scope_guard = "(env.WORKFLOW_TARGET != 'configured' || env.INPUT_CONFIGURED_SERVICE == '')"
-    for name in ("Prune old Cloud Run revisions", "Clean up old Cloud Run images"):
-        step = workflow.split(f"      - name: {name}\n", 1)[1].split("      - name:", 1)[0]
-        assert scope_guard in step.split("        run:", 1)[0]
+    assert "Prune old Cloud Run revisions" not in workflow
+    assert "Clean up old Cloud Run images" not in workflow
+    assert "IBKR_ARTIFACT_REGISTRY_ROLLBACK_DIGESTS" in workflow
+    protect = workflow.split("python3 scripts/refresh_artifact_registry_keep.py", 1)[1].split(
+        'echo "image_digest=', 1
+    )[0]
+    assert "--candidate" in protect
+    assert '"${rollback_args[@]}"' in protect
+    assert "--rollback-digest" in workflow
     cleanup = workflow.split("          reconcile_args=(", 1)[1].split('          for update in "${scheduler_updates[@]}";', 1)[0]
     assert 'if [ "${WORKFLOW_TARGET:-configured}" != "configured" ] || [ -z "${INPUT_CONFIGURED_SERVICE:-}" ]; then' in cleanup
     script = 'python3() { return 83; }\n' + textwrap.dedent("          reconcile_args=(" + cleanup)
