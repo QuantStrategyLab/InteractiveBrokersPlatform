@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .display_names import display_name
+from quant_platform_kit.common.display_names import display_name
 from quant_platform_kit.common.notification_localization import translator_uses_zh
 
 from quant_platform_kit.common.operational_notification_localization import resolve_operational_notification_locale

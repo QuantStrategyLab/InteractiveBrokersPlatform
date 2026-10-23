@@ -2,14 +2,13 @@
 from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
-import hashlib
 import json
 from types import SimpleNamespace
 
 import pytest
 
 from notifications import unified_adapter as adapter
-from notifications.digest_snapshot.unified_contract import NotificationEvent, CandidatePersistenceError
+from quant_platform_kit.notifications.unified_contract import NotificationEvent, CandidatePersistenceError
 from notifications.events import NotificationPublisher, RenderedNotification
 from scripts.project_digest_candidates import project_notification_events
 
@@ -500,15 +499,6 @@ def test_archive_opt_in_bridges_existing_full_window_producer_without_double_cou
         assert emit(env, now=NOW + timedelta(hours=2, minutes=20), read=read, upload=no_legacy_upload)["uploaded"]
     row = next(iter(routing[1].rows.values()))[1]["runs"][0]
     assert row["cycle_count"] == 1 and row["order_count"] == 0 and row["fill_count"] is None
-
-
-def test_qpk_snapshot_is_byte_identical_to_the_pinned_contract_metadata():
-    from pathlib import Path
-    base = Path(__file__).parents[1] / "notifications/digest_snapshot"
-    provenance = json.loads((base / "provenance.json").read_text())
-    assert provenance["commit"] == "07e24c0c804a9b47316b6ec3c75bb63820d8f421"
-    for name, source in provenance["modules"].items():
-        assert hashlib.sha256((base / name).read_bytes()).hexdigest() == source["sha256"]
 
 
 def test_no_due_heartbeat_is_silent_and_does_not_invent_a_run(routing):

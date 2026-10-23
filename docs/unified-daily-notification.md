@@ -6,12 +6,13 @@ immediate confirmed order notices. Failed, pending, uncertain, risk, persistence
 and authentication outcomes retain immediate alerts. Healthy idle cycles and
 routine plugin observations do not produce individual pushes.
 
-QPK source reference: `4cc5e55251269923771f90cd661bb62a5cfdf0cd` (notification modules only).
-
-The notification-only QPK source snapshot in `notifications/digest_snapshot/` avoids an
-unrelated trading dependency upgrade. Keep these three modules byte-identical
-to the reviewed QPK notification modules. Existing QPK/strategy pins, order
-execution, funding, risk, account enablement and durable report writes are unchanged.
+Shared notification modules are imported directly from the pinned QPK package
+(`db70e1ca647ee29577432233d9dc2ea9e6eb1c4e`): `display_names`,
+`digest_candidates`, `digest_routing` and `unified_contract`. The local
+`notifications/digest_snapshot/digest_archive.py` remains an IBKR-specific
+vendored copy because it adds IBKR archive persistence hooks. Existing
+QPK/strategy pins, order execution, funding, risk, account enablement and
+durable report writes are unchanged.
 
 Before enabling routing, validate the exact active target's private archived
 report, candidate store and QRS receiver. Existing cloud monitor wiring uses

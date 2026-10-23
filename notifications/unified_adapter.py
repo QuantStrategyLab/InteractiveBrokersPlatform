@@ -9,7 +9,7 @@ import re
 import json
 import os
 
-from notifications.digest_snapshot.unified_contract import (
+from quant_platform_kit.notifications.unified_contract import (
     CandidatePersistenceError, IncidentTracker, NotificationEvent,
     effective_notification_mode, route_notification_event, unified_notification_enabled,
 )
@@ -337,7 +337,7 @@ def _kind(execution, *, dry_run=False):
         return "order_status_unknown"
     # Reuse every existing urgent-field exclusion. This copy is notification
     # evidence only; the execution result and its admission decision are intact.
-    from notifications.digest_snapshot.digest_routing import defer_routine_cycle_to_digest
+    from quant_platform_kit.notifications.digest_routing import defer_routine_cycle_to_digest
     guard = {**execution, "execution_status": "no_action", "no_op_reason": "", "broker_submission_done": False}
     if dry_run:
         # Preview orders are not broker events; urgent/error evidence above
@@ -355,8 +355,8 @@ def publish_cycle(publisher, *, notification, execution, attention=False):
     if not enabled():
         return publisher.publish(notification)
     from dataclasses import replace
-    from notifications.digest_snapshot.digest_candidates import summary_evidence
-    from notifications.digest_snapshot.unified_contract import order_identity_digest
+    from quant_platform_kit.notifications.digest_candidates import summary_evidence
+    from quant_platform_kit.notifications.unified_contract import order_identity_digest
     report = _RUN.get() or {}
     dry_run = report.get("dry_run") is True
     kind = _kind(execution, dry_run=dry_run)
@@ -563,7 +563,7 @@ def persist_archived_reports(reports, env, *, now=None):
         )
         if kind in {"order_submitted", "fill"}:
             from dataclasses import replace
-            from notifications.digest_snapshot.unified_contract import order_identity_digest
+            from quant_platform_kit.notifications.unified_contract import order_identity_digest
             orders = list(summary.get("orders_submitted") or ()) + list(summary.get("option_orders_submitted") or ())
             ids = [next((str(order[k]) for k in ("permId", "orderId", "order_id", "execution_id") if order.get(k) is not None), "") for order in orders]
             if ids and all(ids):
