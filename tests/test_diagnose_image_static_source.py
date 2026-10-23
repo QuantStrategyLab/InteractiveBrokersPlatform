@@ -406,22 +406,28 @@ def test_static_pipeline_stops_without_sensitive_error_or_false_match(monkeypatc
 def test_static_and_existing_modes_workflow_truth_table():
     workflow = Path(".github/workflows/account-facts-identity-diagnose.yml").read_text()
     expressions = re.findall(r"if: \$\{\{ (.*?) \}\}", workflow)
-    assert len(expressions) == 5
+    assert len(expressions) == 8
     def value(expression, flags, main):
         expression = expression.replace("github.ref == 'refs/heads/main'", str(main))
         for key, flag in flags.items(): expression = expression.replace("inputs." + key, str(flag))
         expression = expression.replace("&&", " and ").replace("||", " or ").replace("!", " not ")
         assert set(re.findall(r"[A-Za-z_]+", expression)) <= {"True", "False", "and", "or", "not"}
         return eval(expression, {"__builtins__": {}}, {})
-    for flags_tuple in itertools.product((False, True), repeat=3):
-        flags = dict(zip(("serving_source_metadata_only", "registry_source_metadata_only", "static_source_only"), flags_tuple))
+    for flags_tuple in itertools.product((False, True), repeat=4):
+        flags = dict(zip(("serving_source_metadata_only", "registry_source_metadata_only",
+            "static_source_only", "backup_primary_source_state"), flags_tuple))
         for main in (False, True):
             job = value(expressions[0], flags, main)
             assert job is (main and sum(flags_tuple) <= 1)
-            steps = [job and value(x, flags, main) for x in expressions[1:]]
+            preflights = [job and value(x, flags, main) for x in expressions[1:3]]
+            assert sum(preflights) == int(job)
+            steps = [job and value(x, flags, main) for x in expressions[3:]]
             assert sum(steps) == int(job)
             if job:
-                assert steps.index(True) == (0 if not any(flags_tuple) else flags_tuple.index(True) + 1)
+                backup_mode = flags["backup_primary_source_state"]
+                assert preflights.index(True) == int(backup_mode)
+                expected_step = 1 if backup_mode else (0 if not any(flags_tuple) else flags_tuple.index(True) + 2)
+                assert steps.index(True) == expected_step
 
 
 @pytest.mark.parametrize("stage", ["manifest", "config", "layer"])
