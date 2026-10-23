@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts import backup_primary_account_facts_state as backup
 from scripts import diagnose_account_facts_identity as diagnostic
 from scripts import publish_account_facts_from_report as publisher
 
@@ -1302,7 +1303,7 @@ def test_source_metadata_only_workflow_wire_preserves_default_report_mode():
     assert "serving_source_metadata_only:\n" in workflow
     assert "        type: boolean\n        required: true\n        default: false" in workflow
     assert "actions: read" in workflow and "actions: write" not in workflow
-    old_step = "      - name: Read report and service revision equality\n        if: ${{ !inputs.serving_source_metadata_only && !inputs.registry_source_metadata_only && !inputs.static_source_only }}\n        run: python3 -m scripts.diagnose_account_facts_identity\n"
+    old_step = "      - name: Read report and service revision equality\n        if: ${{ !inputs.backup_primary_source_state && !inputs.serving_source_metadata_only && !inputs.registry_source_metadata_only && !inputs.static_source_only }}\n        run: python3 -m scripts.diagnose_account_facts_identity\n"
     assert old_step in workflow
     new_step = workflow.split("      - name: Read serving source metadata without reports or image execution\n", 1)[1].split("\n      - name: Read registry provenance shape without reports or image execution\n", 1)[0]
     assert new_step == ("        if: ${{ inputs.serving_source_metadata_only && !inputs.registry_source_metadata_only && !inputs.static_source_only }}\n"
@@ -1491,8 +1492,135 @@ def test_registry_metadata_modes_are_mutually_exclusive(monkeypatch, capsys):
 def test_registry_metadata_workflow_only_explicit_main_mode_no_token():
     workflow = Path(".github/workflows/account-facts-identity-diagnose.yml").read_text()
     assert "registry_source_metadata_only:\n" in workflow
-    assert "if: ${{ github.ref == 'refs/heads/main' && !(inputs.serving_source_metadata_only && inputs.registry_source_metadata_only) && !(inputs.static_source_only && (inputs.serving_source_metadata_only || inputs.registry_source_metadata_only)) }}" in workflow
+    assert "if: ${{ github.ref == 'refs/heads/main' && !(inputs.serving_source_metadata_only && inputs.registry_source_metadata_only) && !(inputs.static_source_only && (inputs.serving_source_metadata_only || inputs.registry_source_metadata_only)) && !(inputs.backup_primary_source_state && (inputs.serving_source_metadata_only || inputs.registry_source_metadata_only || inputs.static_source_only)) }}" in workflow
     step = workflow.split("      - name: Read registry provenance shape without reports or image execution\n", 1)[1].split("\n      - name: Compare fixed public source files in the exact serving image\n", 1)[0]
     assert step == ("        if: ${{ inputs.registry_source_metadata_only && !inputs.serving_source_metadata_only && !inputs.static_source_only }}\n"
         "        run: python3 -m scripts.diagnose_account_facts_identity --registry-source-metadata-only\n")
     assert "default: true" not in workflow and "schedule:" not in workflow
+
+
+# Primary restoration backups exercise only synthetic tuples and mocked storage.
+
+
+def _backup_case(monkeypatch):
+    expected, report, metadata = _primary_binding_preview_context(monkeypatch)
+    result = _diagnose(report, expected, cloud_run_metadata=metadata)
+    preview = diagnostic._primary_source_binding_preview(report,
+        expected=expected, metadata=metadata, result=result)
+    hashes = {key: preview[key] for key in ("target_id_sha256",
+        "configured_source_binding_id_sha256", "candidate_source_binding_id_sha256")}
+    monkeypatch.setenv("IBKR_PRIMARY_BACKUP_HASHES", json.dumps(hashes))
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
+    return expected, report, metadata, hashes
+
+
+def test_primary_backup_contains_recoverable_tuple_without_financial_report(monkeypatch):
+    expected, report, metadata, hashes = _backup_case(monkeypatch)
+    destination, body = backup.prepare_backup(expected, hashes, now=NOW)
+    saved = json.loads(body)
+    assert saved["old_expected"] == json.loads(json.dumps(expected))
+    assert saved["candidate"]["runtime_revision"] == report["diagnostics"]["runtime_revision"]
+    assert backup.sha(saved["candidate"]["source_binding_id"]) == hashes["candidate_source_binding_id_sha256"]
+    assert saved["comparison_sha256"] == backup.sha(backup.canonical(hashes))
+    assert destination.startswith(expected["expected_report_prefix"] + "/_primary_source_backups/")
+    assert destination.endswith(backup.sha(body) + ".json")
+    assert b"12345.6700" not in body and b"100.00" not in body
+    assert "summary" not in saved and "positions" not in saved
+    assert diagnostic.diagnose_identity(report, expected=expected,
+        source_report_uri=saved["source_report_uri"], now=NOW,
+        cloud_run_metadata=metadata)["projection_passed"] is False
+
+
+@pytest.mark.parametrize("field,value", [
+    ("IBKR_ACCOUNT_FACTS_TARGET", "additional-1"), ("GITHUB_REF", "refs/heads/other"),
+    ("GITHUB_EVENT_NAME", "schedule"), ("IBKR_PRIMARY_BACKUP_HASHES", "{}"),
+    ("IBKR_PRIMARY_BACKUP_HASHES", "invalid-private-marker"),
+    ("IBKR_ACCOUNT_FACTS_RUNTIME_REVISION", "changed-revision"),
+])
+def test_primary_backup_preflight_stops_invalid_scope_before_cloud(monkeypatch, capsys, field, value):
+    _backup_case(monkeypatch)
+    monkeypatch.setenv(field, value)
+    assert backup.main(["--preflight"]) == 1
+    output = capsys.readouterr().out
+    assert PRIVATE not in output and "invalid-private-marker" not in output
+    assert json.loads(output)["status"] == "blocked"
+
+
+def test_primary_backup_preflight_has_no_cloud_calls(monkeypatch, capsys):
+    _backup_case(monkeypatch)
+    assert backup.main(["--preflight"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"status": "preflight_verified"}
+
+
+@pytest.mark.parametrize("failure", ["stale", "split", "identity", "candidate_changed"])
+def test_primary_backup_rejects_unverified_candidate_without_storage(monkeypatch, capsys, failure):
+    _expected, report, metadata, hashes = _backup_case(monkeypatch)
+    if failure == "stale":
+        report["started_at"] = report["finished_at"] = (NOW - timedelta(days=9)).isoformat()
+        report["summary"]["account_facts"]["observed_at"] = report["finished_at"]
+    elif failure == "split":
+        metadata["status"]["traffic"] = [{"revisionName": report["diagnostics"]["runtime_revision"], "percent": 90},
+            {"revisionName": PRIVATE + "-other", "percent": 10}]
+    elif failure == "identity":
+        report["summary"]["account_facts"]["account_ids"] = ["U99999999"]
+    else:
+        hashes["candidate_source_binding_id_sha256"] = "f" * 64
+        monkeypatch.setenv("IBKR_PRIMARY_BACKUP_HASHES", json.dumps(hashes))
+    assert backup.main([], now=NOW) == 1
+    output = capsys.readouterr().out
+    assert PRIVATE not in output
+    assert json.loads(output)["reason"] == "backup_comparison_changed"
+
+
+@pytest.mark.parametrize("upload_outcome", ["success", "nonzero", "timeout"])
+def test_primary_backup_one_create_only_write_then_exact_readback(monkeypatch, capsys, upload_outcome):
+    expected, _report, _metadata, _hashes = _backup_case(monkeypatch)
+    calls = []
+    bodies = []
+    def command(args, **kwargs):
+        calls.append(args)
+        assert "publish" not in " ".join(args)
+        if args[2] == "cp":
+            assert "--if-generation-match=0" in args and args[3] == "-"
+            assert kwargs["timeout"] == 60
+            bodies.append(kwargs["input"])
+            if upload_outcome == "timeout":
+                raise subprocess.TimeoutExpired(args, 60, output=PRIVATE)
+            return subprocess.CompletedProcess(args, 0 if upload_outcome == "success" else 1, b"", PRIVATE.encode())
+        assert args[2] == "cat"
+        return subprocess.CompletedProcess(args, 0, bodies[0], b"")
+    monkeypatch.setattr(backup.subprocess, "run", command)
+    assert backup.main([], now=NOW) == 0
+    assert len(calls) == 2 and calls[0][4] == calls[1][3]
+    assert json.loads(bodies[0])["old_expected"] == json.loads(json.dumps(expected))
+    output = capsys.readouterr().out
+    assert PRIVATE not in output and "gs://" not in output and "12345.6700" not in output
+    result = json.loads(output)
+    assert result["status"] == "backup_verified" and result["publication_authority_granted"] is False
+
+
+@pytest.mark.parametrize("readback", ["wrong", "nonzero", "timeout"])
+def test_primary_backup_uncertain_readback_is_unknown_without_retry(monkeypatch, capsys, readback):
+    _backup_case(monkeypatch)
+    calls = []
+    def command(args, **_kwargs):
+        calls.append(args)
+        if args[2] == "cat" and readback == "timeout":
+            raise subprocess.TimeoutExpired(args, 60, output=PRIVATE)
+        return subprocess.CompletedProcess(args, 1 if readback == "nonzero" else 0, PRIVATE.encode(), b"")
+    monkeypatch.setattr(backup.subprocess, "run", command)
+    assert backup.main([], now=NOW) == 1 and len(calls) == 2
+    output = capsys.readouterr().out
+    assert PRIVATE not in output
+    assert json.loads(output) == {"status": "unknown", "reason": "backup_readback_unknown"}
+
+
+def test_primary_backup_workflow_is_explicit_primary_only_and_preflights_before_auth():
+    workflow = Path(".github/workflows/account-facts-identity-diagnose.yml").read_text()
+    assert "inputs.backup_primary_source_state && fromJSON('[\"primary-live\"]')" in workflow
+    assert "!(inputs.backup_primary_source_state && (inputs.serving_source_metadata_only" in workflow
+    preflight = workflow.index("run: python3 -m scripts.backup_primary_account_facts_state --preflight")
+    assert preflight < workflow.index("uses: google-github-actions/auth@v3")
+    assert "if: ${{ !inputs.backup_primary_source_state && !inputs.serving_source_metadata_only" in workflow
+    assert "schedule:" not in workflow and "actions: write" not in workflow
