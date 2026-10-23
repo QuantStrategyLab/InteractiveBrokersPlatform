@@ -13,6 +13,16 @@ on:
         type: string
         required: false
         default: ''
+      inspect_primary_backup_only:
+        description: Read and verify existing primary backup objects only; never upload or retry
+        type: boolean
+        required: true
+        default: false
+      primary_backup_original_head_sha:
+        description: Exact source SHA of the original uncertain backup run; inspection only
+        type: string
+        required: false
+        default: ''
       serving_source_metadata_only:
         description: Read serving revision and deploy provenance only; no reports, image pull or business request
         type: boolean
@@ -62,6 +72,7 @@ jobs:
       # Existing platform region; not inferred from a report or a public example.
       CLOUD_RUN_REGION: us-central1
       IBKR_PRIMARY_BACKUP_HASHES: ${{ inputs.primary_backup_hashes }}
+      IBKR_PRIMARY_BACKUP_ORIGINAL_HEAD_SHA: ${{ inputs.primary_backup_original_head_sha }}
     steps:
       - name: Require infrastructure variables
         env:
@@ -100,9 +111,9 @@ jobs:
         if: ${{ !inputs.backup_primary_source_state && !inputs.serving_source_metadata_only && !inputs.registry_source_metadata_only && !inputs.static_source_only }}
         run: python3 -m scripts.diagnose_account_facts_identity
 
-      - name: Back up primary source state and verify exact private readback
+      - name: Back up or inspect primary source state and verify exact private readback
         if: ${{ inputs.backup_primary_source_state }}
-        run: python3 -m scripts.backup_primary_account_facts_state
+        run: python3 -m scripts.backup_primary_account_facts_state ${{ inputs.inspect_primary_backup_only && '--inspect-only' || '' }}
 
       - name: Read serving source metadata without reports or image execution
         if: ${{ inputs.serving_source_metadata_only && !inputs.registry_source_metadata_only && !inputs.static_source_only }}
