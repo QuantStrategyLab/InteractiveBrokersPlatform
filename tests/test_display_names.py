@@ -1,16 +1,11 @@
-import importlib.util
 import json
-from pathlib import Path
 from unittest.mock import patch
+
+from quant_platform_kit.common.display_names import display_name
 
 
 def load_resolver():
-    root = Path(__file__).resolve().parents[1]
-    path = root / "notifications/display_names.py"
-    spec = importlib.util.spec_from_file_location("display_names_under_test", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.display_name
+    return display_name
 
 
 def test_display_mapping_and_unknown_names_do_not_rewrite_inputs():

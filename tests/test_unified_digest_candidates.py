@@ -1,7 +1,7 @@
 from copy import deepcopy
 from datetime import datetime, timezone
 import pytest
-from notifications.digest_snapshot.digest_candidates import cycle_evidence, project_reports
+from quant_platform_kit.notifications.digest_candidates import cycle_evidence, project_reports
 
 TARGET = dict(platform_id="synthetic", strategy_profile="core", service_name="test-service",
     account_scope="test-scope", account_selector=["test-selector"], deployment_selector="test-slot", dry_run_only=False)

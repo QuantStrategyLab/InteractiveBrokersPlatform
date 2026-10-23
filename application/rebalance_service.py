@@ -119,7 +119,7 @@ def _should_suppress_noop_notification(
     metadata = signal_metadata if isinstance(signal_metadata, Mapping) else {}
     if unified_enabled():
         return False  # The notification adapter must persist before suppressing.
-    from notifications.digest_snapshot.digest_routing import defer_routine_cycle_to_digest
+    from quant_platform_kit.notifications.digest_routing import defer_routine_cycle_to_digest
     if has_error or any(metadata.get(key) for key in (
         "error", "errors", "fail_reason", "execution_blocked_reason", "plugin_error",
         "persistence_error", "report_persistence_error", "notification_error",
@@ -203,7 +203,7 @@ def _has_notification_attention(signal_metadata, execution_summary=None, *, reas
 def _should_publish_execution_notification(*, config, signal_metadata, execution_summary, trade_logs) -> bool:
     if unified_enabled():
         return True  # Includes quiet/dry-run coverage; delivery is adapter-owned.
-    from notifications.digest_snapshot.digest_routing import defer_routine_cycle_to_digest
+    from quant_platform_kit.notifications.digest_routing import defer_routine_cycle_to_digest
 
     if _has_notification_attention(
         signal_metadata, execution_summary,
@@ -214,7 +214,7 @@ def _should_publish_execution_notification(*, config, signal_metadata, execution
         return False
     has_orders = _has_order_activity(trade_logs=trade_logs, execution_summary=execution_summary)
     evidence = {**(signal_metadata or {}), **(execution_summary or {})}
-    from notifications.digest_snapshot.digest_candidates import summary_evidence
+    from quant_platform_kit.notifications.digest_candidates import summary_evidence
     facts = summary_evidence(evidence)
     confirmed_orders = [{"status": "filled"} for _ in range(facts["order_count"] or 0)] if facts["routine"] else None
     count = (facts["order_count"] if facts["order_count"] is not None else -1) if has_orders else 0

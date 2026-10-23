@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from notifications import unified_adapter as adapter
-from notifications.digest_snapshot.unified_contract import order_identity_digest
+from quant_platform_kit.notifications.unified_contract import order_identity_digest
 from notifications.telegram import send_telegram_message
 from tests.test_unified_notification_adapter import StateStore, event
 

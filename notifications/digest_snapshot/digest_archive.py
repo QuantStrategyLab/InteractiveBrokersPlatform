@@ -12,7 +12,7 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from .digest_candidates import project_reports
+from quant_platform_kit.notifications.digest_candidates import project_reports
 
 _SAFE = re.compile(r"[a-z0-9][a-z0-9_-]{0,40}\Z")
 

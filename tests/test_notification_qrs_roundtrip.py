@@ -12,7 +12,7 @@ import pytest
 
 from notifications import unified_adapter as adapter
 from notifications.digest_snapshot.digest_archive import emit
-from notifications.digest_snapshot.digest_candidates import cycle_evidence
+from quant_platform_kit.notifications.digest_candidates import cycle_evidence
 from tests.test_unified_notification_adapter import (
     NOW, TARGET, CandidateStore, StateStore, event, healthy_receipt_report,
 )
