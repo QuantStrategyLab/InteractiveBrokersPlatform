@@ -29,6 +29,11 @@ ALL_SELECT_COMMANDS = SELECT_COMMANDS + DIGEST_SELECT_COMMANDS
 PUBLISH_COMMANDS = re.findall(
     r"(?m)^      - name: Publish one validated report\n        run: (.+)$", WORKFLOW
 )
+IDENTITY_WORKFLOW = (ROOT / ".github/workflows/account-facts-identity-diagnose.yml").read_text()
+IDENTITY_COMMANDS = re.findall(
+    r"(?m)^        run: (python3 (?:scripts/diagnose_account_facts_identity\.py|-m scripts\.diagnose_account_facts_identity)(?: [^\n]*)?)$",
+    IDENTITY_WORKFLOW,
+)
 
 
 @pytest.fixture
@@ -40,6 +45,7 @@ def cli_workspace(tmp_path):
     for name in (
         "__init__.py", "console_config.py", "configure_account_facts_target.py",
         "publish_account_facts_from_report.py",
+        "diagnose_account_facts_identity.py",
     ):
         shutil.copyfile(ROOT / "scripts" / name, scripts / name)
     (tmp_path / "pyproject.toml").write_text(
@@ -86,8 +92,8 @@ def cli_workspace(tmp_path):
         for index in range(1, 4)
     }
 
-    def run(command, *, target, config=targets):
-        child_env = {**env, "IBKR_ACCOUNT_FACTS_TARGET": target}
+    def run(command, *, target, config=targets, settings=None):
+        child_env = {**env, **(settings or {}), "IBKR_ACCOUNT_FACTS_TARGET": target}
         if config is not None:
             child_env["IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON"] = json.dumps(config)
         result = subprocess.run(
@@ -152,4 +158,38 @@ def test_workflow_publisher_cli_imports_and_fails_closed(cli_workspace, target, 
 
     assert result.returncode == code, result.stderr
     assert result.stdout == f"skipped:{reason}\n"
+    assert not env_path.exists()
+
+
+def test_identity_workflow_has_all_four_diagnostic_entrypoints():
+    assert len(IDENTITY_COMMANDS) == 4
+
+
+@pytest.mark.parametrize("command", IDENTITY_COMMANDS)
+def test_identity_workflow_cli_imports_before_rejecting_missing_configuration(cli_workspace, command):
+    run, env_path, _ = cli_workspace
+    result = run(command, target="primary-live")
+
+    assert result.returncode == 1
+    assert result.stderr == "", "entrypoints must reach their safe diagnostic, not fail during package imports"
+    assert json.loads(result.stdout)["reason"] == "target_config_unavailable"
+    assert not env_path.exists()
+
+
+def test_identity_workflow_preflight_validates_synthetic_target_without_external_calls(cli_workspace):
+    run, env_path, _ = cli_workspace
+    command = next(command for command in IDENTITY_COMMANDS if command.endswith(" --preflight"))
+    result = run(command, target="primary-live", settings={
+        "IBKR_ACCOUNT_FACTS_PROJECT_ID": "example-project",
+        "IBKR_ACCOUNT_FACTS_SERVICE_NAME": "synthetic-service",
+        "IBKR_ACCOUNT_FACTS_RUNTIME_REVISION": "synthetic-revision",
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE": "synthetic-live",
+        "IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR": "synthetic-deployment",
+    })
+
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    body = json.loads(result.stdout)
+    assert body["reason"] == "target_config_valid"
+    assert body["projection_passed"] is None, "preflight must keep real report qualification unknown"
     assert not env_path.exists()
