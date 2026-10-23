@@ -23,6 +23,11 @@ on:
         type: string
         required: false
         default: ''
+      primary_backup_reference_hashes:
+        description: Optional exact failed object/reference SHA256 JSON; prove the protected destination without disclosing it
+        type: string
+        required: false
+        default: ''
       serving_source_metadata_only:
         description: Read serving revision and deploy provenance only; no reports, image pull or business request
         type: boolean
@@ -73,6 +78,7 @@ jobs:
       CLOUD_RUN_REGION: us-central1
       IBKR_PRIMARY_BACKUP_HASHES: ${{ inputs.primary_backup_hashes }}
       IBKR_PRIMARY_BACKUP_ORIGINAL_HEAD_SHA: ${{ inputs.primary_backup_original_head_sha }}
+      IBKR_PRIMARY_BACKUP_REFERENCE_HASHES: ${{ inputs.primary_backup_reference_hashes }}
     steps:
       - name: Require infrastructure variables
         env:

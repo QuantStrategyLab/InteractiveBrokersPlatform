@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 from scripts import diagnose_account_facts_identity as diagnostic
 from scripts import publish_account_facts_from_report as publisher
@@ -138,6 +139,32 @@ def inspect_backup(expected, hashes):
     original_head = os.environ.get("IBKR_PRIMARY_BACKUP_ORIGINAL_HEAD_SHA", "")
     if re.fullmatch(r"[a-f0-9]{40}", original_head) is None:
         raise BackupError("backup_original_head_invalid")
+    destination = None
+    reference_raw = os.environ.get("IBKR_PRIMARY_BACKUP_REFERENCE_HASHES", "")
+    if reference_raw:
+        try:
+            reference = json.loads(reference_raw)
+            if (set(reference) != {"backup_object_sha256", "backup_reference_sha256"}
+                    or any(not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{64}", value)
+                           for value in reference.values())):
+                raise ValueError
+            object_uri = prefix + reference["backup_object_sha256"] + ".json"
+            if sha(object_uri) != reference["backup_reference_sha256"]:
+                raise ValueError
+        except (TypeError, ValueError, AttributeError):
+            raise BackupError("backup_reference_mismatch") from None
+        parsed = urlsplit(object_uri)
+        resource = "projects/_/buckets/" + parsed.netloc + "/objects" + parsed.path
+        parts = resource.split("/")
+        # Hash only complete resource-path boundaries. An IAM administrator may
+        # compare literal prefix conditions without receiving the private path.
+        ancestors = {"/".join(parts[:end]) + suffix for end in range(1, len(parts)) for suffix in ("", "/")}
+        ancestors.add(resource)
+        destination = {"reference_matches": True, **reference,
+            "bucket_sha256": sha(parsed.netloc),
+            "report_prefix_sha256": sha(expected["expected_report_prefix"].rstrip("/")),
+            "backup_prefix_sha256": sha(prefix),
+            "resource_boundary_prefix_sha256": sorted(sha(value) for value in ancestors)}
     try:
         listed = subprocess.run(("gcloud", "storage", "ls", prefix, "--project", project),
             capture_output=True, check=False, timeout=60)
@@ -194,7 +221,8 @@ def inspect_backup(expected, hashes):
         raise BackupError("backup_match_ambiguous")
     return {"status": "backup_verified" if matches else "backup_absent", "inspection_only": True,
         "comparison_sha256": sha(canonical(hashes)), "matched_backups": len(matches),
-        **(matches[0] if matches else {}), "publication_authority_granted": False}
+        **(matches[0] if matches else {}), **({"destination_evidence": destination} if destination else {}),
+        "publication_authority_granted": False}
 
 
 def main(argv=None, *, now=None):
@@ -202,6 +230,8 @@ def main(argv=None, *, now=None):
     try:
         if args not in ([], ["--preflight"], ["--inspect-only"]):
             raise BackupError("arguments_invalid")
+        if os.environ.get("IBKR_PRIMARY_BACKUP_REFERENCE_HASHES") and not args:
+            raise BackupError("backup_reference_inspection_required")
         expected, hashes = resolve_context()
         if args == ["--preflight"]:
             result = {"status": "preflight_verified"}

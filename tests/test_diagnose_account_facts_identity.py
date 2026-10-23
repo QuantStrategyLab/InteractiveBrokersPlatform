@@ -1682,3 +1682,44 @@ def test_primary_backup_inspection_missing_original_head_stops_before_io(monkeyp
     monkeypatch.delenv("IBKR_PRIMARY_BACKUP_ORIGINAL_HEAD_SHA", raising=False)
     assert backup.main(["--inspect-only"]) == 1
     assert json.loads(capsys.readouterr().out)["reason"] == "backup_original_head_invalid"
+
+
+@pytest.mark.parametrize("failure", [None, "reference", "object", "malformed"])
+def test_primary_backup_destination_proof_stays_private_and_read_only(monkeypatch, capsys, failure):
+    expected, _report, _metadata, hashes = _backup_case(monkeypatch)
+    uri, body = backup.prepare_backup(expected, hashes, now=NOW)
+    reference = {"backup_object_sha256": backup.sha(body), "backup_reference_sha256": backup.sha(uri)}
+    if failure == "reference": reference["backup_reference_sha256"] = "0" * 64
+    if failure == "object": reference["backup_object_sha256"] = "1" * 64
+    monkeypatch.setenv("IBKR_PRIMARY_BACKUP_REFERENCE_HASHES", "malformed" if failure == "malformed" else json.dumps(reference))
+    monkeypatch.setenv("IBKR_PRIMARY_BACKUP_ORIGINAL_HEAD_SHA", SHA)
+    calls = []
+    def command(args, **_kwargs):
+        calls.append(args)
+        assert args[2] == "ls"
+        return subprocess.CompletedProcess(args, 1, b"", b"matched no objects")
+    monkeypatch.setattr(backup.subprocess, "run", command)
+    code = backup.main(["--inspect-only"])
+    output = capsys.readouterr().out
+    assert PRIVATE not in output and "gs://" not in output and "U00000001" not in output
+    result = json.loads(output)
+    if failure:
+        assert code == 1 and result["reason"] == "backup_reference_mismatch" and calls == []
+    else:
+        assert code == 0 and result["status"] == "backup_absent" and len(calls) == 1
+        proof = result["destination_evidence"]
+        assert proof["reference_matches"] is True
+        assert proof["backup_object_sha256"] == backup.sha(body)
+        assert proof["bucket_sha256"] == backup.sha(PRIVATE)
+        assert proof["backup_prefix_sha256"] == backup.sha(expected["expected_report_prefix"] + "/_primary_source_backups/")
+        resource_prefix = "projects/_/buckets/" + PRIVATE + "/objects/reports/"
+        assert backup.sha(resource_prefix) in proof["resource_boundary_prefix_sha256"]
+        assert backup.sha("projects/_/buckets/another/objects/reports/") not in proof["resource_boundary_prefix_sha256"]
+        assert result["comparison_sha256"] == backup.sha(backup.canonical(hashes))
+
+
+def test_primary_backup_destination_proof_cannot_enable_upload(monkeypatch, capsys):
+    _backup_case(monkeypatch)
+    monkeypatch.setenv("IBKR_PRIMARY_BACKUP_REFERENCE_HASHES", "nonempty")
+    assert backup.main([]) == 1
+    assert json.loads(capsys.readouterr().out)["reason"] == "backup_reference_inspection_required"
