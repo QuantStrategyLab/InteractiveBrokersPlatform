@@ -526,6 +526,19 @@ jobs:
               handle.write(json.dumps(plan) + "\n__SYNC_PLAN_JSON__\n")
           PY
 
+      - name: Verify runtime target baselines before deployment writes
+        if: steps.config.outputs.enabled == 'true'
+        env:
+          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
+          CHECK_DEPLOYED_TARGET: ${{ steps.config.outputs.deploy_enabled }}
+        run: |
+          set -euo pipefail
+          baseline_args=()
+          if [ "${CHECK_DEPLOYED_TARGET}" = "true" ]; then
+            baseline_args+=(--check-deployed --project="${GCP_PROJECT_ID}" --region="${CLOUD_RUN_REGION}")
+          fi
+          PYTHONPATH=. uv run --no-sync python scripts/verify_runtime_target_baseline.py "${baseline_args[@]}"
+
       - name: Validate env sync inputs
         if: steps.config.outputs.env_sync_enabled == 'true'
         env:
