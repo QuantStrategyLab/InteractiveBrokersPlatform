@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -106,6 +107,123 @@ def _diagnose(report, expected, **kwargs):
         source_report_uri=expected["expected_report_prefix"] + "/2026-10/20261013T115958Z.json",
         now=NOW, source_sha=SHA, **kwargs,
     )
+
+
+def _primary_binding_preview_context(monkeypatch, *, target="primary-live"):
+    _environment(monkeypatch, target=target)
+    expected = diagnostic.resolve_expected()
+    report = _report(expected)
+    revision = PRIVATE + "-serving-revision"
+    report["diagnostics"]["runtime_revision"] = revision
+    report["runtime_release_receipt"]["runtime_revision"] = revision
+    metadata = _metadata(expected)
+    metadata["status"].update({
+        "latestReadyRevisionName": revision,
+        "latestCreatedRevisionName": revision,
+        "traffic": [{"revisionName": revision, "percent": 100}],
+    })
+    uri = expected["expected_report_prefix"] + "/2026-10/20261013T115958Z.json"
+    monkeypatch.setattr(publisher, "_latest_report_uri", lambda **_kwargs: uri)
+    monkeypatch.setattr(publisher, "_load_gcs_report", lambda *_args, **_kwargs: report)
+    monkeypatch.setattr(diagnostic, "_read_cloud_run_metadata", lambda _expected: metadata)
+    return expected, report, metadata
+
+
+def test_primary_binding_preview_has_only_hashes_and_preserves_revision_rejection(monkeypatch, capsys):
+    expected, report, _metadata_row = _primary_binding_preview_context(monkeypatch)
+    original_expected = dict(expected)
+    assert diagnostic.main([], now=NOW) == 1
+    body = json.loads(capsys.readouterr().out)
+    assert body["projection_passed"] is False
+    assert body["reason"] == "runtime_target_mismatch"
+    assert body["mismatched_fields"] == ["runtime_revision"]
+    preview = body["source_binding_preview"]
+    assert preview["status"] == "comparison_only"
+    assert preview["slot"] == "primary-live"
+    assert preview["difference_fields"] == ["runtime_revision"]
+    assert preview["publication_authority_granted"] is False
+    configured = publisher._bound_source_id(
+        project_id=expected["expected_project_id"], service_name=expected["expected_service_name"],
+        runtime_revision=expected["expected_runtime_revision"], account_scope=expected["expected_account_scope"],
+        account_selector=tuple(expected["expected_account_selector"]),
+        deployment_selector=expected["expected_deployment_selector"],
+    )
+    observed = publisher._bound_source_id(
+        project_id=expected["expected_project_id"], service_name=expected["expected_service_name"],
+        runtime_revision=report["diagnostics"]["runtime_revision"], account_scope=expected["expected_account_scope"],
+        account_selector=tuple(expected["expected_account_selector"]),
+        deployment_selector=expected["expected_deployment_selector"],
+    )
+    def sha(value):
+        return hashlib.sha256(value.encode()).hexdigest()
+    assert preview["target_id_sha256"] == sha(expected["target_id"])
+    assert preview["configured_source_binding_id_sha256"] == sha(configured)
+    assert preview["candidate_source_binding_id_sha256"] == sha(observed)
+    assert preview["configured_source_binding_id_sha256"] != preview["candidate_source_binding_id_sha256"]
+    assert preview["report_runtime_revision_sha256"] == preview["serving_runtime_revision_sha256"]
+    assert all(len(value) == 64 and all(char in "0123456789abcdef" for char in value)
+               for key, value in preview.items() if key.endswith("_sha256"))
+    serialized = json.dumps(body)
+    assert PRIVATE not in serialized and "U00000001" not in serialized
+    assert configured not in serialized and observed not in serialized
+    assert "12345.6700" not in serialized
+    assert expected == original_expected
+    assert diagnostic.os.environ["IBKR_ACCOUNT_FACTS_RUNTIME_REVISION"] == expected["expected_runtime_revision"]
+
+
+@pytest.mark.parametrize("failure", ["stale", "source", "account", "currency", "receipt", "split", "missing_traffic"])
+def test_primary_binding_preview_requires_existing_verified_scope_and_fresh_serving_report(monkeypatch, capsys, failure):
+    _expected, report, metadata = _primary_binding_preview_context(monkeypatch)
+    if failure == "stale":
+        report["summary"]["account_facts"]["observed_at"] = (NOW - timedelta(hours=37)).isoformat()
+        report["started_at"] = (NOW - timedelta(hours=38)).isoformat()
+    elif failure == "source":
+        report["service_name"] = PRIVATE + "-foreign-service"
+    elif failure == "account":
+        report["summary"]["account_facts"]["account_ids"] = ["U00000002"]
+    elif failure == "currency":
+        report["summary"]["account_facts"]["currency"] = "EUR"
+    elif failure == "receipt":
+        report["runtime_release_receipt"]["runtime_revision"] = PRIVATE + "-foreign-revision"
+    elif failure == "split":
+        metadata["status"]["traffic"] = [
+            {"revisionName": report["diagnostics"]["runtime_revision"], "percent": 50},
+            {"revisionName": PRIVATE + "-other", "percent": 50},
+        ]
+    else:
+        metadata["status"].pop("traffic")
+    assert diagnostic.main([], now=NOW) == 1
+    body = json.loads(capsys.readouterr().out)
+    assert "source_binding_preview" not in body
+    assert PRIVATE not in json.dumps(body)
+
+
+@pytest.mark.parametrize("target", ["additional-1", "additional-2", "additional-3"])
+def test_primary_binding_preview_does_not_expand_to_other_slots(monkeypatch, capsys, target):
+    _primary_binding_preview_context(monkeypatch, target=target)
+    assert diagnostic.main([], now=NOW) == 1
+    assert "source_binding_preview" not in json.loads(capsys.readouterr().out)
+
+
+def test_primary_binding_preview_does_not_use_ready_or_created_as_serving_fallback(monkeypatch, capsys):
+    _expected, _report_row, metadata = _primary_binding_preview_context(monkeypatch)
+    metadata["status"]["latestReadyRevisionName"] = PRIVATE + "-new-tag-only"
+    metadata["status"]["latestCreatedRevisionName"] = PRIVATE + "-new-tag-only"
+    assert diagnostic.main([], now=NOW) == 1
+    body = json.loads(capsys.readouterr().out)
+    preview = body["source_binding_preview"]
+    assert preview["report_runtime_revision_sha256"] == preview["serving_runtime_revision_sha256"]
+    assert body["revision_equalities"]["report_equals_ready"] is False
+
+
+def test_primary_binding_preview_preserves_original_legacy_receipt_contract(monkeypatch, capsys):
+    _expected, report, _metadata_row = _primary_binding_preview_context(monkeypatch)
+    report.pop("runtime_release_receipt")
+    assert diagnostic.main([], now=NOW) == 1
+    body = json.loads(capsys.readouterr().out)
+    assert body["source_binding_preview"]["status"] == "comparison_only"
+    assert body["revision_equalities"]["receipt_equals_report"] is None
+    assert body["projection_passed"] is False
 
 
 @pytest.mark.parametrize("target", ["primary-live", "additional-1", "additional-2", "additional-3"])

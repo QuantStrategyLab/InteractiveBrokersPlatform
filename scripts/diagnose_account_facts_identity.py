@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -324,6 +325,55 @@ def _report_stop_reason(report: object, stages: Mapping[str, str]) -> str:
     except Exception:
         pass  # Malformed optional context cannot change the original guard.
     return "unknown"
+
+
+def _primary_source_binding_preview(report, *, expected, metadata, result):
+    """Hash the configured and observed tuples for comparison, never adoption.
+
+    Only the original non-revision predicates and the actual sole serving
+    revision establish this context. No expected value or guard is replaced.
+    Source IDs are hashed a second time before leaving the protected runner.
+    """
+    try:
+        if (
+            result["freshness_status"] != "fresh"
+            or result["cloud_run_metadata_status"] != "read"
+            or result["serving_traffic"]["report_is_only_serving_revision"] is not True
+            or any(result["account_facts_stages"][key] != "verified"
+                   for key in _ACCOUNT_FACTS_STAGES if key != "positions")
+        ):
+            return None
+        observed = publisher._exact_text(report["diagnostics"]["runtime_revision"])
+        configured = publisher._exact_text(expected["expected_runtime_revision"])
+        serving = {publisher._exact_text(row.get("revisionName"))
+                   for row in metadata["status"]["traffic"] if row.get("percent", 0) > 0}
+        if not observed or not configured or serving != {observed}:
+            return None
+        identity = {field: expected[f"expected_{field}"] for field in (
+            "project_id", "service_name", "account_scope", "account_selector", "deployment_selector",
+        )}
+        configured_id = publisher._bound_source_id(**identity, runtime_revision=configured)
+        candidate_id = publisher._bound_source_id(**identity, runtime_revision=observed)
+
+        def sha(value):
+            return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+        return {
+            "schema_version": "ibkr.primary_source_binding_preview.v1",
+            "slot": "primary-live", "status": "comparison_only",
+            "target_id_sha256": sha(expected["target_id"]),
+            "configured_runtime_revision_sha256": sha(configured),
+            "report_runtime_revision_sha256": sha(observed),
+            "serving_runtime_revision_sha256": sha(next(iter(serving))),
+            "configured_source_binding_id_sha256": sha(configured_id),
+            "candidate_source_binding_id_sha256": sha(candidate_id),
+            "difference_fields": ["runtime_revision"] if configured != observed else [],
+            "publication_authority_granted": False,
+        }
+    except Exception:
+        # An optional comparison can neither alter the original CLI outcome nor
+        # expose a malformed value/provider exception.
+        return None
 
 
 def diagnose_identity(
@@ -688,6 +738,10 @@ def main(argv: Sequence[str] | None = None, *, now: datetime | None = None) -> i
         metadata = _read_cloud_run_metadata(expected)
         result = diagnose_identity(report, expected=expected, source_report_uri=uri,
             now=current, cloud_run_metadata=metadata, source_sha=source_sha)
+        if os.environ.get("IBKR_ACCOUNT_FACTS_TARGET") == publisher.IBKR_ACCOUNT_FACTS_PRIMARY_TARGET:
+            preview = _primary_source_binding_preview(report, expected=expected, metadata=metadata, result=result)
+            if preview is not None:
+                result["source_binding_preview"] = preview
     except publisher._ProjectionError as exc:
         result = _result(source_sha=source_sha, reason=exc.reason)
     except Exception:
