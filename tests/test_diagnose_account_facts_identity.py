@@ -1613,7 +1613,10 @@ def test_primary_backup_uncertain_readback_is_unknown_without_retry(monkeypatch,
     assert backup.main([], now=NOW) == 1 and len(calls) == 2
     output = capsys.readouterr().out
     assert PRIVATE not in output
-    assert json.loads(output) == {"status": "unknown", "reason": "backup_readback_unknown"}
+    result = json.loads(output)
+    assert result["status"] == "unknown" and result["reason"] == "backup_readback_unknown"
+    assert result["backup_reference_sha256"] and result["backup_object_sha256"]
+    assert result["readback"]["failure_category"] == ("timeout" if readback == "timeout" else "content_mismatch" if readback == "wrong" else "command_failed")
 
 
 def test_primary_backup_workflow_is_explicit_primary_only_and_preflights_before_auth():
@@ -1624,3 +1627,58 @@ def test_primary_backup_workflow_is_explicit_primary_only_and_preflights_before_
     assert preflight < workflow.index("uses: google-github-actions/auth@v3")
     assert "if: ${{ !inputs.backup_primary_source_state && !inputs.serving_source_metadata_only" in workflow
     assert "schedule:" not in workflow and "actions: write" not in workflow
+
+
+@pytest.mark.parametrize("case", ["valid", "absent", "other_head", "other_comparison", "tampered",
+    "permission", "read_permission", "command", "timeout", "mismatched_name", "outside_prefix"])
+def test_primary_backup_inspection_only_pins_original_run_without_writes(monkeypatch, capsys, case):
+    expected, _report, _metadata, hashes = _backup_case(monkeypatch)
+    uri, body = backup.prepare_backup(expected, hashes, now=NOW)
+    monkeypatch.setenv("IBKR_PRIMARY_BACKUP_ORIGINAL_HEAD_SHA", SHA)
+    if case in {"other_head", "other_comparison", "tampered"}:
+        saved = json.loads(body)
+        if case == "other_head": saved["source_sha"] = "b" * 40
+        elif case == "other_comparison": saved["comparison_sha256"] = "f" * 64
+        else: saved["old_expected"]["expected_runtime_revision"] = PRIVATE + "-wrong"
+        body = backup.canonical(saved)
+        uri = expected["expected_report_prefix"] + "/_primary_source_backups/" + backup.sha(body) + ".json"
+    if case == "mismatched_name": uri = uri.rsplit("/", 1)[0] + "/" + "0" * 64 + ".json"
+    if case == "outside_prefix": uri = "gs://" + PRIVATE + "/outside/" + "0" * 64 + ".json"
+    calls = []
+    def command(args, **_kwargs):
+        calls.append(args)
+        assert args[:2] == ("gcloud", "storage") and args[2] in {"ls", "cat"}
+        assert "cp" not in args
+        if case == "timeout": raise subprocess.TimeoutExpired(PRIVATE, 60, output=PRIVATE)
+        if args[2] == "ls":
+            if case == "absent": return subprocess.CompletedProcess(args, 1, b"", b"matched no objects: " + PRIVATE.encode())
+            if case == "permission": return subprocess.CompletedProcess(args, 1, b"", b"403 permission denied: " + PRIVATE.encode())
+            if case == "command": return subprocess.CompletedProcess(args, 2, b"", b"usage: unrecognized arguments " + PRIVATE.encode())
+            return subprocess.CompletedProcess(args, 0, (uri + "\n").encode(), b"")
+        if case == "read_permission": return subprocess.CompletedProcess(args, 1, b"", b"403 " + PRIVATE.encode())
+        return subprocess.CompletedProcess(args, 0, body, b"")
+    monkeypatch.setattr(backup.subprocess, "run", command)
+    code = backup.main(["--inspect-only"], now=NOW)
+    output = capsys.readouterr().out
+    assert PRIVATE not in output and "gs://" not in output and "U00000001" not in output
+    result = json.loads(output)
+    assert result["inspection_only"] is True and result["original_head_sha"] == SHA
+    assert result["comparison_sha256"] == backup.sha(backup.canonical(hashes))
+    if case == "valid":
+        assert code == 0 and result["status"] == "backup_verified" and result["matched_backups"] == 1
+        assert result["backup_object_sha256"] == backup.sha(body)
+    elif case in {"absent", "other_head", "other_comparison"}:
+        assert code == 0 and result["status"] == "backup_absent" and result["matched_backups"] == 0
+    else:
+        assert code == 1 and result["status"] == "blocked"
+        if case in {"permission", "read_permission"}: assert result["failure_category"] == "permission_denied"
+        if case == "command": assert result["exit_code"] == 2 and result["failure_category"] == "invalid_argument"
+        if case == "timeout": assert result["failure_category"] == "timeout"
+    assert len(calls) <= 2
+
+
+def test_primary_backup_inspection_missing_original_head_stops_before_io(monkeypatch, capsys):
+    _backup_case(monkeypatch)
+    monkeypatch.delenv("IBKR_PRIMARY_BACKUP_ORIGINAL_HEAD_SHA", raising=False)
+    assert backup.main(["--inspect-only"]) == 1
+    assert json.loads(capsys.readouterr().out)["reason"] == "backup_original_head_invalid"
