@@ -172,4 +172,4 @@ jobs:
         if: ${{ inputs.static_source_only && !inputs.serving_source_metadata_only && !inputs.registry_source_metadata_only }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/diagnose_image_static_source.py --static-source-only
+        run: python3 -m scripts.diagnose_image_static_source --static-source-only

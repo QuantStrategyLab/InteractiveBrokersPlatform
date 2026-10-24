@@ -34,6 +34,10 @@ IDENTITY_COMMANDS = re.findall(
     r"(?m)^        run: (python3 (?:scripts/diagnose_account_facts_identity\.py|-m scripts\.diagnose_account_facts_identity)(?: [^\n]*)?)$",
     IDENTITY_WORKFLOW,
 )
+STATIC_COMMAND = re.search(
+    r"(?m)^        run: (python3 [^\n]*diagnose_image_static_source[^\n]*)$",
+    IDENTITY_WORKFLOW,
+).group(1)
 
 
 @pytest.fixture
@@ -46,6 +50,7 @@ def cli_workspace(tmp_path):
         "__init__.py", "console_config.py", "configure_account_facts_target.py",
         "publish_account_facts_from_report.py",
         "diagnose_account_facts_identity.py",
+        "diagnose_serving_image_identity.py", "diagnose_image_static_source.py",
     ):
         shutil.copyfile(ROOT / "scripts" / name, scripts / name)
     (tmp_path / "pyproject.toml").write_text(
@@ -163,6 +168,16 @@ def test_workflow_publisher_cli_imports_and_fails_closed(cli_workspace, target, 
 
 def test_identity_workflow_has_all_four_diagnostic_entrypoints():
     assert len(IDENTITY_COMMANDS) == 4
+
+
+def test_static_workflow_cli_imports_before_rejecting_missing_configuration(cli_workspace):
+    run, env_path, _ = cli_workspace
+    result = run(STATIC_COMMAND, target="primary-live")
+
+    assert result.returncode == 1
+    assert result.stderr == "", "static inspection must reach its safe result without import errors"
+    assert json.loads(result.stdout)["reason"] == "target_config_unavailable"
+    assert not env_path.exists()
 
 
 @pytest.mark.parametrize("command", IDENTITY_COMMANDS)
