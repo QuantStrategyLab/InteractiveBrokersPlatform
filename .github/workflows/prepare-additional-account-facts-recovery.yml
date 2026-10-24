@@ -36,6 +36,16 @@ jobs:
       ACCOUNT_FACTS_RECOVERY_PUBLIC_KEYS_JSON: ${{ secrets.ACCOUNT_FACTS_RECOVERY_PUBLIC_KEYS_JSON }}
       CLOUD_RUN_REGION: ${{ secrets.ACCOUNT_FACTS_RECOVERY_CLOUD_REGION }}
     steps:
+      - name: Require infrastructure variables
+        env:
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${IBKR_DEPLOY_SERVICE_ACCOUNT:-}" ]]; then
+            echo "::error::IBKR_DEPLOY_SERVICE_ACCOUNT is required" >&2
+            exit 2
+          fi
       - uses: actions/checkout@v6
       - uses: google-github-actions/auth@v3
         with:
