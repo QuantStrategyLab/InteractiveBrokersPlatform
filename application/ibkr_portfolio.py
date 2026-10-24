@@ -128,6 +128,59 @@ def _broker_net_liquidation_evidence(
     return sum(float(row["value"]) for row in canonical_rows), source_digest
 
 
+def _report_positions_from_cache(ib: Any, account_ids: tuple[str, ...], raw_positions: tuple[Any, ...]):
+    """Optional reporting only; IB.portfolio reads the current session's cache."""
+    try:
+        if len(account_ids) != 1 or not ib.isConnected():
+            return None
+        account = account_ids[0]
+        expected = {}
+        for item in raw_positions:
+            contract = item.contract
+            if item.account != account or contract.secType != "STK" or item.position == 0:
+                continue
+            con_id = contract.conId
+            quantity = _as_float(item.position)
+            currency = str(contract.currency or "").strip().upper()
+            if (type(con_id) is not int or con_id <= 0 or con_id in expected or not currency
+                    or not isinstance(contract.symbol, str)
+                    or quantity is None or not math.isfinite(quantity) or isinstance(item.position, bool)):
+                return None
+            expected[con_id] = (str(contract.symbol).strip().upper(), quantity, currency)
+        if not expected or len(expected) > 64:
+            return None
+        rows = {}
+        for item in ib.portfolio(account):
+            contract = item.contract
+            if item.account != account or contract.secType != "STK" or item.position == 0:
+                continue
+            con_id = contract.conId
+            quantity = _as_float(item.position)
+            currency = str(contract.currency or "").strip().upper()
+            identity = (str(contract.symbol).strip().upper(), quantity, currency)
+            value = _as_float(item.marketValue)
+            price = _as_float(item.marketPrice)
+            if (type(con_id) is not int or con_id not in expected or con_id in rows or expected[con_id] != identity
+                    or not isinstance(contract.symbol, str)
+                    or isinstance(item.position, bool) or isinstance(item.marketValue, bool)
+                    or isinstance(item.marketPrice, bool) or value is None or not math.isfinite(value)
+                    or price is None or not math.isfinite(price) or price <= 0):
+                return None
+            row = {"account_id": account, "security_type": "STK", "symbol": identity[0],
+                "quantity": quantity, "market_value": value, "currency": currency}
+            raw_cost = getattr(item, "averageCost", None)
+            cost = _as_float(raw_cost)
+            if not isinstance(raw_cost, bool) and cost is not None and math.isfinite(cost):
+                row["avg_cost"] = cost
+            rows[con_id] = row
+        if set(rows) == set(expected):
+            return tuple(rows[key] for key in sorted(rows))
+    except Exception:
+        # An optional report cannot change strategy valuation or execution.
+        pass
+    return None
+
+
 def fetch_portfolio_snapshot(
     ib: Any,
     *,
@@ -153,7 +206,8 @@ def fetch_portfolio_snapshot(
 
     positions = []
     option_positions = []
-    for raw_position in ib.positions():
+    raw_positions = tuple(ib.positions())
+    for raw_position in raw_positions:
         account_id = str(getattr(raw_position, "account", "") or "").strip() or None
         if not _matches_account(account_id, selected_account_ids):
             continue
@@ -299,6 +353,11 @@ def fetch_portfolio_snapshot(
                 metadata["market_currency_cash"] = aligned_cash
                 total_equity = nlv
                 buying_power = aligned_cash
+
+    report_positions = _report_positions_from_cache(ib, selected_account_ids, raw_positions)
+    if report_positions is not None:
+        metadata["broker_reported_positions"] = report_positions
+        metadata["broker_reported_positions_source"] = "ibkr_portfolio_cache"
 
     return PortfolioSnapshot(
         as_of=datetime.now(timezone.utc),

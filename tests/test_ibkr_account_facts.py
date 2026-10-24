@@ -121,3 +121,29 @@ def test_usd_net_assets_require_matching_explicit_usd_net_liquidation():
         broker_net_liquidation=100,
     ))
     assert missing["net_assets"] is None
+
+
+
+def test_positions_never_fall_back_to_legacy_cost_snapshot():
+    snapshot = _snapshot(observed_at=datetime(2026, 9, 30, 12, tzinfo=timezone.utc),
+        cash_balances=({"account_id": "DU123", "currency": "USD", "CashBalance": 100},))
+    snapshot.positions = (SimpleNamespace(symbol="SYNTHETIC", quantity=2, market_value=20,
+        average_cost=10, currency="USD"),)
+    facts = build_ibkr_account_facts(snapshot)
+    assert facts["cash"] and "broker_reported_positions" not in facts
+
+
+def test_positions_require_native_source_account_and_security_type():
+    snapshot = _snapshot(observed_at=datetime(2026, 9, 30, 12, tzinfo=timezone.utc),
+        cash_balances=({"account_id": "DU123", "currency": "USD", "CashBalance": 100},))
+    row = {"account_id": "DU123", "security_type": "STK", "symbol": "SYNTHETIC", "quantity": 2,
+        "market_value": 250, "currency": "USD"}
+    snapshot.metadata["broker_reported_positions"] = (row,)
+    assert "broker_reported_positions" not in build_ibkr_account_facts(snapshot)
+    snapshot.metadata["broker_reported_positions_source"] = "ibkr_portfolio_cache"
+    assert build_ibkr_account_facts(snapshot)["broker_reported_positions"][0]["market_value"] == "250"
+    for field, wrong in (("account_id", "DU999"), ("security_type", "FUT"), ("market_value", float("nan"))):
+        original = row[field]
+        row[field] = wrong
+        assert "broker_reported_positions" not in build_ibkr_account_facts(snapshot)
+        row[field] = original

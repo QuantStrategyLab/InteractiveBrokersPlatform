@@ -37,6 +37,44 @@ def _verified_usd_net_assets(rows: tuple[Mapping[str, Any], ...], metadata: Mapp
     return None
 
 
+def _report_positions(metadata: Mapping[str, Any], account_id: str):
+    """Use only native reporting fields; legacy strategy marks are cost based."""
+    if metadata.get("broker_reported_positions_source") != "ibkr_portfolio_cache":
+        return None
+    raw = metadata.get("broker_reported_positions")
+    if not isinstance(raw, (tuple, list)) or not raw or len(raw) > 64:
+        return None
+    rows, seen = [], set()
+    try:
+        for item in raw:
+            if not isinstance(item, Mapping) or item.get("account_id") != account_id or item.get("security_type") != "STK":
+                return None
+            symbol, currency = item.get("symbol"), item.get("currency")
+            if (not isinstance(symbol, str) or not re.fullmatch(r"[A-Z0-9][A-Z0-9./ -]{0,31}", symbol)
+                    or symbol in seen or not isinstance(currency, str) or not re.fullmatch(r"[A-Z]{3}", currency)):
+                return None
+            row = {"symbol": symbol, "currency": currency}
+            for key in ("quantity", "market_value", "avg_cost"):
+                if key == "avg_cost" and key not in item:
+                    continue
+                value = item.get(key)
+                text = None if isinstance(value, bool) else _finite_decimal_text(value)
+                if text is None:
+                    return None
+                amount = Decimal(text).quantize(Decimal("0.00000001")).normalize()
+                if key == "quantity" and amount == 0:
+                    return None
+                text = format(Decimal(0) if amount == 0 else amount, "f")
+                if len(text.replace("-", "").replace(".", "")) > 15:
+                    return None
+                row[key] = text
+            rows.append(row)
+            seen.add(symbol)
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    return sorted(rows, key=lambda row: row["symbol"])
+
+
 def build_ibkr_account_facts(snapshot: Any) -> dict[str, Any]:
     """Project verified facts already present in one portfolio snapshot."""
     metadata = getattr(snapshot, "metadata", None)
@@ -93,7 +131,7 @@ def build_ibkr_account_facts(snapshot: Any) -> dict[str, Any]:
 
     net_assets = _verified_usd_net_assets(rows, metadata)
 
-    return {
+    facts = {
         "schema_version": "ibkr_account_snapshot.v1",
         "account_ids": [account_id],
         # This currency labels net_assets (IBKR USD NetLiquidation), not cash.
@@ -104,3 +142,8 @@ def build_ibkr_account_facts(snapshot: Any) -> dict[str, Any]:
         "cash_semantics": "IBKR accountValues cash balance; source tag retained; not available funds",
         "cash": cash,
     }
+    positions = _report_positions(metadata, account_id)
+    if positions is not None:
+        facts["broker_reported_positions"] = positions
+        facts["broker_reported_positions_scope"] = "stocks_only"
+    return facts

@@ -350,3 +350,159 @@ def test_fetch_portfolio_snapshot_allows_explicit_zero_cash_balance():
 
     assert snapshot.total_equity == 0.0
     assert snapshot.metadata["market_currency_cash"] == 0.0
+
+
+
+class ReportingCacheIB:
+    def __init__(self):
+        self.calls = []
+        self.connected = True
+        self.raw = [SimpleNamespace(account="DU123", position=2, avgCost=10,
+            contract=SimpleNamespace(conId=101, symbol="SYNTHETIC", secType="STK", currency="USD"))]
+        self.cached = [SimpleNamespace(account="DU123", position=2, marketValue=250, marketPrice=125,
+            averageCost=10, contract=SimpleNamespace(conId=101, symbol="SYNTHETIC", secType="STK", currency="USD"))]
+
+    def reqPositions(self):
+        self.calls.append("reqPositions")
+
+    def positions(self):
+        self.calls.append("positions")
+        return self.raw
+
+    def accountValues(self):
+        self.calls.append("accountValues")
+        return [SimpleNamespace(account="DU123", currency="USD", tag=tag, value=value)
+            for tag, value in (("NetLiquidation", 1000), ("CashBalance", 100), ("AvailableFunds", 100))]
+
+    def isConnected(self):
+        return self.connected
+
+    def portfolio(self, account):
+        assert account == "DU123"
+        self.calls.append("portfolio_cache")
+        return self.cached
+
+    def __getattr__(self, name):
+        if name.startswith("req") or name in {"placeOrder", "connect", "qualifyContracts"}:
+            self.calls.append("forbidden:" + name)
+            raise AssertionError("reporting must not add a broker request")
+        raise AttributeError(name)
+
+
+def _reporting_snapshot(ib, *, cash_only_execution=False):
+    return fetch_portfolio_snapshot(ib, account_ids=("DU123",), wait_seconds=0, cash_only_execution=cash_only_execution)
+
+
+def test_native_report_cache_keeps_strategy_values_and_uses_broker_market_value():
+    from application.account_facts import build_ibkr_account_facts
+    ib = ReportingCacheIB()
+    snapshot = _reporting_snapshot(ib)
+    assert (snapshot.total_equity, snapshot.buying_power) == (1000, 100)
+    assert snapshot.positions[0].market_value == 20, "original strategy valuation is unchanged"
+    assert snapshot.metadata["market_currency_cash"] == 100
+    assert ib.calls == ["reqPositions", "positions", "accountValues", "portfolio_cache"]
+    facts = build_ibkr_account_facts(snapshot)
+    assert facts["broker_reported_positions"] == [{"symbol": "SYNTHETIC", "quantity": "2",
+        "market_value": "250", "currency": "USD", "avg_cost": "10"}]
+    assert facts["broker_reported_positions_scope"] == "stocks_only"
+    assert facts["observed_at"] == snapshot.as_of.isoformat().replace("+00:00", "Z")
+    assert len(ib.calls) == 4, "the builder reuses the existing observation"
+
+
+@pytest.mark.parametrize("failure", ["missing", "error", "disconnected", "wrong_account", "wrong_type",
+    "quantity", "currency", "contract", "duplicate", "extra", "unmarked", "nan", "boolean", "raw_currency"])
+def test_report_cache_failure_only_omits_optional_reporting(failure):
+    from application.account_facts import build_ibkr_account_facts
+    ib = ReportingCacheIB()
+    if failure == "missing":
+        ib.cached = []
+    elif failure == "error":
+        def unavailable(_account):
+            raise RuntimeError("private-provider-error")
+        ib.portfolio = unavailable
+    elif failure == "disconnected":
+        ib.connected = False
+    elif failure == "wrong_account":
+        ib.cached[0].account = "DU999"
+    elif failure == "wrong_type":
+        ib.cached[0].contract.secType = "FUT"
+    elif failure == "quantity":
+        ib.cached[0].position = 3
+    elif failure == "currency":
+        ib.cached[0].contract.currency = "EUR"
+    elif failure == "contract":
+        ib.cached[0].contract.conId = 102
+    elif failure == "duplicate":
+        ib.cached *= 2
+    elif failure == "extra":
+        ib.cached.append(SimpleNamespace(account="DU123", position=1, marketValue=5, marketPrice=5,
+            contract=SimpleNamespace(conId=102, symbol="OTHER", secType="STK", currency="USD")))
+    elif failure == "unmarked":
+        ib.cached[0].marketPrice = 0
+    elif failure == "nan":
+        ib.cached[0].marketValue = float("nan")
+    elif failure == "boolean":
+        ib.cached[0].marketValue = True
+    else:
+        ib.raw[0].contract.currency = ""
+    snapshot = _reporting_snapshot(ib)
+    assert snapshot.positions[0].market_value == 20
+    assert (snapshot.total_equity, snapshot.buying_power) == (1000, 100)
+    assert snapshot.metadata["market_currency_cash"] == 100
+    assert "broker_reported_positions" not in snapshot.metadata
+    facts = build_ibkr_account_facts(snapshot)
+    assert facts["cash"] and "broker_reported_positions" not in facts
+    assert all(call in {"reqPositions", "positions", "accountValues", "portfolio_cache"} for call in ib.calls)
+
+
+def test_reporting_excludes_futures_without_changing_legacy_strategy_positions():
+    from application.account_facts import build_ibkr_account_facts
+    ib = ReportingCacheIB()
+    future = SimpleNamespace(account="DU123", position=1, avgCost=50,
+        contract=SimpleNamespace(conId=202, symbol="SYNTHETICFUT", secType="FUT", currency="USD"))
+    ib.raw.append(future)
+    ib.cached.append(SimpleNamespace(account="DU123", position=1, marketValue=500, marketPrice=500,
+        averageCost=50, contract=future.contract))
+    snapshot = _reporting_snapshot(ib)
+    assert len(snapshot.positions) == 2, "existing strategy snapshot behavior is unchanged"
+    facts = build_ibkr_account_facts(snapshot)
+    assert [row["symbol"] for row in facts["broker_reported_positions"]] == ["SYNTHETIC"]
+    assert facts["broker_reported_positions_scope"] == "stocks_only"
+
+
+def test_report_cache_preserves_native_short_values_without_repricing():
+    from application.account_facts import build_ibkr_account_facts
+    ib = ReportingCacheIB()
+    ib.raw[0].position = ib.cached[0].position = -2
+    ib.cached[0].marketValue = -250
+    del ib.cached[0].averageCost
+    snapshot = _reporting_snapshot(ib)
+    facts = build_ibkr_account_facts(snapshot)
+    row = facts["broker_reported_positions"][0]
+    assert row["quantity"] == "-2" and row["market_value"] == "-250"
+    assert "avg_cost" not in row, "no cost is invented from the legacy strategy snapshot"
+
+
+
+@pytest.mark.parametrize("cash_only_execution", [False, True])
+def test_report_metadata_does_not_change_any_existing_strategy_snapshot_field(monkeypatch, cash_only_execution):
+    helper = ibkr_portfolio._report_positions_from_cache
+    monkeypatch.setattr(ibkr_portfolio, "_report_positions_from_cache", lambda *_args: None)
+    original = _reporting_snapshot(ReportingCacheIB(), cash_only_execution=cash_only_execution)
+    monkeypatch.setattr(ibkr_portfolio, "_report_positions_from_cache", helper)
+    reported = _reporting_snapshot(ReportingCacheIB(), cash_only_execution=cash_only_execution)
+    assert reported.positions == original.positions
+    assert reported.total_equity == original.total_equity
+    assert reported.buying_power == original.buying_power
+    reporting_keys = {"broker_reported_positions", "broker_reported_positions_source"}
+    assert {k: v for k, v in reported.metadata.items() if k not in reporting_keys} == original.metadata
+
+
+def test_tiny_native_position_is_not_published_as_zero_quantity():
+    from application.account_facts import build_ibkr_account_facts
+    ib = ReportingCacheIB()
+    ib.raw[0].position = ib.cached[0].position = 1e-9
+    ib.cached[0].marketValue = 125e-9
+    snapshot = _reporting_snapshot(ib)
+    assert snapshot.positions[0].quantity == 1e-9
+    assert "broker_reported_positions" not in build_ibkr_account_facts(snapshot)
