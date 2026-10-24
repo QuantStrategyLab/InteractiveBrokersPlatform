@@ -3,6 +3,16 @@ name: Diagnose Account Facts Identity
 on:
   workflow_dispatch:
     inputs:
+      prepare_primary_recovery_secrets:
+        description: Seal exactly two primary recovery Secret values with the supplied destination GitHub public keys; no configuration write
+        type: boolean
+        required: true
+        default: false
+      primary_recovery_public_keys:
+        description: Exact existing IBKR repo and QRS environment GitHub public-key responses; encryption only
+        type: string
+        required: false
+        default: ''
       backup_primary_source_state:
         description: Back up verified primary source state to existing private storage; no config change or sync
         type: boolean
@@ -79,6 +89,10 @@ jobs:
       IBKR_PRIMARY_BACKUP_HASHES: ${{ inputs.primary_backup_hashes }}
       IBKR_PRIMARY_BACKUP_ORIGINAL_HEAD_SHA: ${{ inputs.primary_backup_original_head_sha }}
       IBKR_PRIMARY_BACKUP_REFERENCE_HASHES: ${{ inputs.primary_backup_reference_hashes }}
+      IBKR_PRIMARY_BACKUP_ENABLED: ${{ inputs.backup_primary_source_state }}
+      IBKR_PRIMARY_BACKUP_INSPECT_ONLY: ${{ inputs.inspect_primary_backup_only }}
+      IBKR_PRIMARY_RECOVERY_PUBLIC_KEYS: ${{ inputs.primary_recovery_public_keys }}
+      IBKR_PRIMARY_RECOVERY_MODE: ${{ inputs.prepare_primary_recovery_secrets }}
     steps:
       - name: Require infrastructure variables
         env:
@@ -86,6 +100,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [ "$IBKR_PRIMARY_RECOVERY_MODE" = "true" ] && [ "$IBKR_PRIMARY_BACKUP_ENABLED" != "true" ]; then
+            echo "status=blocked reason=recovery_requires_primary_backup_mode"
+            exit 2
+          fi
           for name in IBKR_DEPLOY_SERVICE_ACCOUNT; do
             if [[ -z "${!name:-}" ]]; then
               echo "::error::$name is required" >&2
@@ -102,7 +120,11 @@ jobs:
 
       - name: Validate primary backup comparison before cloud authentication
         if: ${{ inputs.backup_primary_source_state }}
-        run: python3 -m scripts.backup_primary_account_facts_state --preflight
+        run: |
+          python3 -m scripts.backup_primary_account_facts_state --preflight
+          if [ "$IBKR_PRIMARY_RECOVERY_MODE" = "true" ]; then
+            python3 -m scripts.backup_primary_account_facts_state --recovery-preflight
+          fi
 
       - name: Authenticate with the existing identity
         uses: google-github-actions/auth@v3
@@ -119,7 +141,22 @@ jobs:
 
       - name: Back up or inspect primary source state and verify exact private readback
         if: ${{ inputs.backup_primary_source_state }}
-        run: python3 -m scripts.backup_primary_account_facts_state ${{ inputs.inspect_primary_backup_only && '--inspect-only' || '' }}
+        run: |
+          if [ "$IBKR_PRIMARY_RECOVERY_MODE" = "true" ]; then
+            # Recovery-tool dependency only; no application/lockfile change.
+            python3 -m pip install --disable-pip-version-check --quiet --target "$RUNNER_TEMP/primary-seal-python" PyNaCl==1.5.0
+            PYTHONPATH="$RUNNER_TEMP/primary-seal-python:$GITHUB_WORKSPACE" python3 -m scripts.backup_primary_account_facts_state --prepare-recovery-secrets
+          else
+            python3 -m scripts.backup_primary_account_facts_state ${{ inputs.inspect_primary_backup_only && '--inspect-only' || '' }}
+          fi
+
+      - name: Preserve only the standard GitHub sealed recovery values
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: primary-recovery-sealed-secrets
+          path: ${{ runner.temp }}/primary-recovery-secrets.json
+          if-no-files-found: ignore
+          retention-days: 1
 
       - name: Read serving source metadata without reports or image execution
         if: ${{ inputs.serving_source_metadata_only && !inputs.registry_source_metadata_only && !inputs.static_source_only }}
