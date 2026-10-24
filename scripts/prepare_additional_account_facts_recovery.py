@@ -17,6 +17,14 @@ from scripts import publish_account_facts_from_report as publisher
 from scripts.backup_primary_account_facts_state import _seal_secret
 
 
+class RecoveryError(ValueError):
+    """Only fixed categories and explicitly safe details may leave this helper."""
+
+    def __init__(self, reason, **details):
+        super().__init__(reason)
+        self.details = details
+
+
 def canonical(value):
     return json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode()
 
@@ -28,7 +36,7 @@ def sha(value):
 def prepare(report, metadata, *, expected, raw_targets, slot, expected_revision_hash, uri, now):
     """Keep all identity fields and other slots intact; verify the real serving report."""
     if slot not in publisher.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS:
-        raise ValueError("slot_invalid")
+        raise RecoveryError("slot_invalid")
     configs = publisher._additional_target_configs(raw_targets)
     # Reuse the duplicate-identity and immutable report projection contracts.
     publisher._reject_primary_target_duplicates(configs)
@@ -36,10 +44,10 @@ def prepare(report, metadata, *, expected, raw_targets, slot, expected_revision_
     serving = {row.get("revisionName") for row in rows if row.get("percent", 0) > 0}
     if (len(serving) != 1 or sum(row.get("percent", 0) for row in rows) != 100
             or metadata.get("metadata", {}).get("name") != expected["expected_service_name"]):
-        raise ValueError("serving_revision_unresolved")
+        raise RecoveryError("serving_revision_unresolved")
     revision = next(iter(serving))
     if not isinstance(revision, str) or sha(revision) != expected_revision_hash:
-        raise ValueError("serving_revision_changed")
+        raise RecoveryError("serving_revision_changed", serving_revision_sha256=sha(revision) if isinstance(revision, str) else None)
     selected = configs[slot]
     identity = {key: expected[f"expected_{key}"] for key in (
         "project_id", "service_name", "account_scope", "account_selector", "deployment_selector",
@@ -48,16 +56,21 @@ def prepare(report, metadata, *, expected, raw_targets, slot, expected_revision_
             or selected["target_id"] != expected["target_id"]
             or selected["report_prefix"] != expected["expected_report_prefix"]
             or selected["runtime_revision"] != expected["expected_runtime_revision"]):
-        raise ValueError("configured_identity_changed")
+        raise RecoveryError("configured_identity_changed")
     if revision == selected["runtime_revision"]:
-        raise ValueError("revision_update_not_required")
+        raise RecoveryError("revision_update_not_required")
     candidate = {**expected, "expected_runtime_revision": revision}
     result = diagnostic.diagnose_identity(report, expected=candidate, source_report_uri=uri,
                                           now=now, cloud_run_metadata=metadata)
     if (result["projection_passed"] is not True or result["freshness_status"] != "fresh"
             or result["serving_traffic"]["report_is_only_serving_revision"] is not True
-            or result["revision_equalities"]["receipt_equals_report"] is not True):
-        raise ValueError("fresh_serving_report_not_verified")
+            # The deployed legacy reporter omits the optional release receipt.
+            # Keep the publisher's existing provenance checks; a supplied
+            # contradictory receipt still cannot authorize a source update.
+            or result["revision_equalities"]["receipt_equals_report"] is False):
+        raise RecoveryError("fresh_serving_report_not_verified", projection_reason=result["reason"],
+            freshness_status=result["freshness_status"], account_facts_stages=result["account_facts_stages"],
+            revision_equalities=result["revision_equalities"], serving_traffic=result["serving_traffic"])
     original = json.loads(raw_targets)
     updated = copy.deepcopy(original)
     updated[slot]["runtime_revision"] = revision
@@ -75,12 +88,12 @@ def seal_values(original, updated, rotation, keys):
     # Keys come only from the existing repository's protected configuration.
     # Dispatch inputs cannot choose a recipient or a different cloud identity.
     if not isinstance(keys, dict) or set(keys) != {"publisher", "receiver"}:
-        raise ValueError("recovery_keys_invalid")
+        raise RecoveryError("recovery_keys_invalid")
     for key in keys.values():
         if (not isinstance(key, dict) or set(key) != {"key", "key_id"}
                 or not isinstance(key["key_id"], str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", key["key_id"])
                 or len(base64.b64decode(key["key"], validate=True)) != 32):
-            raise ValueError("recovery_keys_invalid")
+            raise RecoveryError("recovery_keys_invalid")
     result = []
     for destination, purpose, name, value in (
         ("publisher", "restore", "IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON", original),
@@ -99,7 +112,7 @@ def main():
     stage = "context"
     try:
         if os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch" or os.environ.get("GITHUB_REF") != "refs/heads/main":
-            raise ValueError("manual_main_required")
+            raise RecoveryError("manual_main_required")
         slot = os.environ.get("IBKR_ACCOUNT_FACTS_TARGET", "")
         expected = diagnostic.resolve_expected()
         now = datetime.now(timezone.utc)
@@ -118,7 +131,7 @@ def main():
         stage = "serving_readback"
         after = diagnostic._read_cloud_run_metadata(expected)
         if metadata["status"]["traffic"] != after["status"]["traffic"]:
-            raise ValueError("serving_changed_during_read")
+            raise RecoveryError("serving_changed_during_read")
         payload = {"schema_version": "ibkr.additional_source_recovery.v1", "slot": slot,
             "target_id_sha256": sha(expected["target_id"]),
             "previous_source_binding_id_sha256": sha(rotation["previous_source_binding_id"]),
@@ -135,6 +148,9 @@ def main():
             "sealed_artifact_sha256": sha(canonical(payload)), "secret_count": len(values),
             "remote_configuration_writes": False, "plaintext_exported": False}))
         return 0
+    except RecoveryError as exc:
+        print(json.dumps({"status": "blocked", "reason": str(exc), "stage": stage, **exc.details}))
+        return 1
     except Exception:
         # Neither provider exceptions nor private config/report bodies leave the runner.
         print(f"status=blocked reason=additional_source_recovery_not_verified stage={stage}")
