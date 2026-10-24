@@ -140,3 +140,61 @@ def test_sync_plan_rejects_stale_baseline_before_serializing_target():
             status_rows={"tqqq_growth_income": {"eligible": True, "enabled": True}},
         )
     assert target == before
+
+
+def selection_plan(monkeypatch, *, selected="unit-service", stale_selected=False):
+    from scripts import build_cloud_run_env_sync_plan as planner
+
+    good = frozen_target()
+    stale = frozen_target()
+    stale["strategy_release"]["strategy_revision"] = "b" * 40
+    entries = [
+        {"service_name": "unit-service", "runtime_target": stale if stale_selected else good},
+        {"service_name": "sibling-service", "runtime_target": stale},
+    ]
+    monkeypatch.setattr(planner, "_load_platform_config", lambda env: {})
+    monkeypatch.setattr(planner, "get_platform_profile_status_matrix", lambda: [])
+
+    def validate_target(**kwargs):
+        entry = kwargs["target"]
+        verify_target_continuity(entry["runtime_target"])
+        return {"service_name": entry["service_name"]}
+
+    monkeypatch.setattr(planner, "_build_target_plan", validate_target)
+    env = {"WORKFLOW_TARGET": "configured", "CLOUD_RUN_SERVICE_TARGETS_JSON": json.dumps(entries)}
+    if selected is not None:
+        env["INPUT_CONFIGURED_SERVICE"] = selected
+    return planner, env
+
+
+def test_single_service_plan_does_not_admit_or_validate_unselected_sibling(monkeypatch):
+    planner, env = selection_plan(monkeypatch)
+    assert planner.build_sync_plan(env)["targets"] == [{"service_name": "unit-service"}]
+
+
+def test_single_service_plan_keeps_selected_continuity_validation(monkeypatch):
+    planner, env = selection_plan(monkeypatch, stale_selected=True)
+    with pytest.raises(ValueError, match="continuity"):
+        planner.build_sync_plan(env)
+
+
+def test_unselected_plan_still_validates_entire_inventory(monkeypatch):
+    planner, env = selection_plan(monkeypatch, selected=None)
+    with pytest.raises(ValueError, match="continuity"):
+        planner.build_sync_plan(env)
+
+
+@pytest.mark.parametrize("case", ["missing", "duplicate", "legacy"])
+def test_single_service_selection_requires_one_inventory_match(monkeypatch, case):
+    planner, env = selection_plan(monkeypatch)
+    if case == "missing":
+        env["INPUT_CONFIGURED_SERVICE"] = "missing-service"
+    elif case == "duplicate":
+        entries = json.loads(env["CLOUD_RUN_SERVICE_TARGETS_JSON"])
+        entries.append(entries[0])
+        env["CLOUD_RUN_SERVICE_TARGETS_JSON"] = json.dumps(entries)
+    else:
+        env.pop("CLOUD_RUN_SERVICE_TARGETS_JSON")
+        env["CLOUD_RUN_SERVICE"] = "unit-service"
+    with pytest.raises(ValueError, match="configured_service"):
+        planner.build_sync_plan(env)

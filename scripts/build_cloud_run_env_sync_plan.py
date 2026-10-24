@@ -327,6 +327,25 @@ def _load_platform_config(env: Mapping[str, str]) -> dict:
 def build_sync_plan(env: Mapping[str, str] = os.environ) -> dict[str, object]:
     platform_config = _load_platform_config(env)
     target_entries, defaults, per_service_mode = _load_target_entries(env)
+    selected = str(env.get("INPUT_CONFIGURED_SERVICE") or "").strip()
+    if selected and env.get("WORKFLOW_TARGET", "configured") == "configured":
+        if not per_service_mode:
+            raise ValueError("configured_service requires an exact private inventory service_name")
+        # Select the intended service before admission. Sibling continuity
+        # failures must not block this service or broaden its deployment scope.
+        matches = []
+        for entry in target_entries:
+            name = _first_non_empty(*(
+                _target_field(entry, defaults, key)
+                for key in ("service", "service_name", "cloud_run_service")
+            ))
+            if name is None:
+                name = _resolve_runtime_target(entry, defaults, env, per_service_mode).get("service_name")
+            if name == selected:
+                matches.append(entry)
+        if len(matches) != 1:
+            raise ValueError("configured_service must match exactly one inventory target")
+        target_entries = matches
     status_rows = {
         str(row["canonical_profile"]): {
             **row,
