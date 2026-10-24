@@ -491,3 +491,28 @@ def test_preflight_workflow_is_manual_main_configuration_only_with_exact_report_
     for unsafe in ("schedule:", "workflow_run:", "id-token:", "google-github-actions/auth", "gcloud",
                    "upload-artifact", "TELEGRAM", "CLOUDFLARE", "publish_once", "PUBLISH_ENABLED"):
         assert unsafe not in workflow
+
+
+def test_daily_history_override_is_account_scoped_and_published_once(monkeypatch, capsys):
+    configure(monkeypatch)
+    monkeypatch.setenv("IBKR_NATIVE_RETURN_DATE", "2026-01-31")
+    session = FlexSession(xml().replace(b"20260101", b"20260131"))
+    opener = Opener()
+    monkeypatch.setattr(cli.requests, "Session", lambda: session)
+    monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
+    assert cli.main() == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "published"
+    assert len(opener.calls) == 1
+    assert opener.calls[0][0].full_url == cli.SYNC_URL + "?historical=true"
+    assert session.calls[0][1]["params"]["fd"] == "20260131"
+    assert session.calls[0][1]["params"]["td"] == "20260131"
+
+
+def test_provider_ignoring_date_override_never_publishes(monkeypatch, capsys):
+    configure(monkeypatch)
+    monkeypatch.setenv("IBKR_NATIVE_RETURN_DATE", "2026-01-15")
+    session = FlexSession(xml())
+    monkeypatch.setattr(cli.requests, "Session", lambda: session)
+    monkeypatch.setattr(cli, "build_opener", lambda *_args: pytest.fail("must not publish mismatched period"))
+    assert cli.main() == 1
+    assert json.loads(capsys.readouterr().out)["status"] == "historical_period_mismatch"

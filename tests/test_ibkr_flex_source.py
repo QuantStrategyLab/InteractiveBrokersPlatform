@@ -107,3 +107,18 @@ def test_collect_rejects_unscoped_report_without_generating():
     with pytest.raises(source.FlexSourceError, match="account scope"):
         source.import_activity_flex_ledger_from_request(request, expected_account_ids=("DU0000004",), session=session)
     assert [name for name, _ in session.calls] == ["SendRequest", "GetStatement"]
+
+
+def test_optional_date_override_preserves_token_and_single_generation():
+    session = Session(SEND)
+    source.request_activity_flex_report(token=TOKEN, query_id="12345", session=session,
+        from_date="2026-01-19", to_date="2026-01-19")
+    assert session.calls == [("SendRequest", {"t": TOKEN, "q": "12345", "v": "3", "fd": "20260119", "td": "20260119"})]
+
+
+@pytest.mark.parametrize("start,end", [("2026-02-30", "2026-03-01"), ("2026-01-20", "2026-01-19"), (None, "2026-01-19"), ("2026-01-19", None), ("2024-01-01", "2026-01-01")])
+def test_bad_date_override_is_rejected_before_io(start, end):
+    session = Session()
+    with pytest.raises(source.FlexSourceError):
+        source.request_activity_flex_report(token=TOKEN, query_id="12345", session=session, from_date=start, to_date=end)
+    assert session.calls == []

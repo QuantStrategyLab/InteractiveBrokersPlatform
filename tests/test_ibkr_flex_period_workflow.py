@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-def test_manual_flex_publisher_cannot_run_from_schedule_branch_or_rerun():
+def test_flex_publisher_requires_explicit_manual_or_readonly_schedule_enablement():
     workflow = Path(".github/workflows/publish-ibkr-flex-period-return.yml").read_text()
     assert "workflow_dispatch:" in workflow and "default: false" in workflow
     assert "inputs.publish_once" in workflow
@@ -9,7 +9,10 @@ def test_manual_flex_publisher_cannot_run_from_schedule_branch_or_rerun():
     assert "github.ref == 'refs/heads/main'" in workflow and "github.run_attempt == 1" in workflow
     assert "github.repository == 'QuantStrategyLab/InteractiveBrokersPlatform'" in workflow
     assert "cancel-in-progress: false" in workflow
-    for unsafe in ("schedule:", "workflow_run:", "id-token:", "google-github-actions/auth", "gcloud", "upload-artifact", "TELEGRAM", "heartbeat", "Gateway", "scheduler"):
+    assert 'cron: "40 22 * * 1-5"' in workflow
+    assert "github.event_name == 'schedule' && vars.IBKR_PERIOD_RETURN_AUTO_SYNC_ENABLED == 'true'" in workflow
+    assert "github.event_name == 'workflow_dispatch' && inputs.publish_once" in workflow
+    for unsafe in ( "workflow_run:", "id-token:", "google-github-actions/auth", "gcloud", "upload-artifact", "TELEGRAM", "heartbeat", "Gateway", "scheduler"):
         assert unsafe not in workflow
 
 

@@ -9,7 +9,7 @@ import re
 import sys
 import time
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 from urllib.error import HTTPError
 from urllib.request import ProxyHandler, Request, build_opener
@@ -18,6 +18,7 @@ import requests
 
 from application.ibkr_flex_source import (
     FlexReportPending, FlexSourceError, import_activity_flex_ledger, import_activity_flex_ledger_from_request,
+    request_activity_flex_report,
 )
 from application.ibkr_period_return import (
     _ACCOUNT as _PERIOD_ACCOUNT,
@@ -78,6 +79,15 @@ def _config(env: Mapping[str, str]) -> dict[str, Any]:
         or any(config["sync_token"] == env.get(key) for key in _TOKEN_ALIASES)
     ):
         raise PeriodReturnError("configuration_invalid")
+    historical_date = env.get("IBKR_NATIVE_RETURN_DATE") or None
+    if historical_date is not None:
+        try:
+            parsed = date.fromisoformat(historical_date)
+            if parsed.isoformat() != historical_date or not 0 <= (datetime.now(timezone.utc).date() - parsed).days <= 365:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise PeriodReturnError("historical_date_invalid") from None
+        config["report_date"] = historical_date
     config["allowed_report_account_ids"] = _configured_report_accounts(env, config["expected_account_ids"])
     return config
 
@@ -178,9 +188,9 @@ def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def publish_period_return(payload: Mapping[str, Any], *, sync_token: str, expected_account_key: str) -> str:
+def publish_period_return(payload: Mapping[str, Any], *, sync_token: str, expected_account_key: str, historical: bool = False) -> str:
     """One POST. A lost/invalid ACK is unknown, never success or an automatic retry."""
-    request = Request(SYNC_URL, data=json.dumps(payload, separators=(",", ":")).encode(),
+    request = Request(SYNC_URL + ("?historical=true" if historical else ""), data=json.dumps(payload, separators=(",", ":")).encode(),
         headers={"Authorization": f"Bearer {sync_token}", "Content-Type": "application/json",
             "User-Agent": "QSL-IBKR-PeriodReturn/1.0"}, method="POST")
     try:
@@ -212,6 +222,11 @@ def _collect_configured_ledger(config, session):
     accounts = tuple(config["expected_account_ids"])
     allowed = config.get("allowed_report_account_ids")
     try:
+        if config.get("report_date"):
+            request = request_activity_flex_report(token=config["flex_token"], query_id=config["query_id"],
+                session=session, from_date=config["report_date"], to_date=config["report_date"])
+            return import_activity_flex_ledger_from_request(request, expected_account_ids=accounts,
+                session=session, allowed_report_account_ids=allowed)
         return import_activity_flex_ledger(token=config["flex_token"], query_id=config["query_id"],
                                           expected_account_ids=accounts, session=session, allowed_report_account_ids=allowed)
     except FlexReportPending as pending:
@@ -272,7 +287,11 @@ def main(argv: Sequence[str] = ()) -> int:
                 except Exception:
                     status = "projection_rejected"
                 else:
-                    status = publish_period_return(payload, sync_token=config["sync_token"], expected_account_key=config["account_key"])
+                    if config.get("report_date") and payload["period"] != {"from": config["report_date"], "to": config["report_date"]}:
+                        status = "historical_period_mismatch"
+                    else:
+                        kwargs = {"historical": True} if config.get("report_date") else {}
+                        status = publish_period_return(payload, sync_token=config["sync_token"], expected_account_key=config["account_key"], **kwargs)
     print(json.dumps({"status": status, **diagnostics}, sort_keys=True))
     return 0 if status in {"published", "unchanged"} else 2 if status in {"disabled", "configuration_incomplete"} else 1
 
