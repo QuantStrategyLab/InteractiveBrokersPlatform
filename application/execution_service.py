@@ -259,7 +259,7 @@ def _serialize_quote_snapshot(snapshot, *, symbol: str | None = None) -> dict:
 
 
 def check_order_submitted(report, *, translator):
-    """Check if order was accepted. DAY orders auto-expire at close if not filled."""
+    """Describe the broker report; a pending result is not fill confirmation."""
     order_id = report.broker_order_id
     status = report.status
 
@@ -289,7 +289,7 @@ def check_order_submitted(report, *, translator):
             ),
         )
     if status in {"PendingSubmit", "ApiPending", "ApiPendingSubmit", "Submitted", "PreSubmitted"}:
-        return True, f"✅ {translator('submitted', order_id=order_id, status=status)}"
+        return True, f"⏳ {translator('submitted', order_id=order_id, status=status)}"
     return False, f"❌ {translator('failed', reason=status)}"
 
 
