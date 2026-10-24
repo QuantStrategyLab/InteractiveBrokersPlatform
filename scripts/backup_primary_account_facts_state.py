@@ -272,30 +272,56 @@ def prepare_recovery_secrets(expected, hashes, *, now):
     # No credential or plaintext config is exported. The approved client supplies
     # the two destination public keys; only GitHub can decrypt the sealed values.
     keys, reference = recovery_public_keys()
-    inspected = inspect_backup(expected, hashes)
-    if (inspected.get("status") != "backup_verified"
-            or any(inspected.get(k) != v for k, v in reference.items())):
-        raise BackupError("recovery_exact_backup_not_verified")
     uri = expected["expected_report_prefix"].rstrip("/") + "/_primary_source_backups/" + reference["backup_object_sha256"] + ".json"
+    if sha(uri) != reference["backup_reference_sha256"]:
+        raise BackupError("backup_reference_mismatch")
     read = subprocess.run(("gcloud", "storage", "cat", uri, "--project", expected["expected_project_id"]),
         capture_output=True, check=False, timeout=60)
-    if read.returncode or sha(read.stdout) != reference["backup_object_sha256"]:
+    if read.returncode or len(read.stdout) > 64 * 1024 or sha(read.stdout) != reference["backup_object_sha256"]:
         raise BackupError("recovery_exact_backup_not_verified")
     saved = json.loads(read.stdout)
-    _, current_body = prepare_backup(expected, hashes, now=now)
-    current = json.loads(current_body)
-    if canonical(saved["candidate"]) != canonical(current["candidate"]):
-        raise BackupError("recovery_candidate_changed")
     identity = {field: expected[f"expected_{field}"] for field in (
         "project_id", "service_name", "account_scope", "account_selector", "deployment_selector",
     )}
+    configured = {**identity, "runtime_revision": expected["expected_runtime_revision"],
+        "source_binding_id": publisher._bound_source_id(**identity,
+            runtime_revision=expected["expected_runtime_revision"])}
+    # An earlier immutable backup may already contain the exact current tuple
+    # as its adopted candidate. That tuple remains a complete restore point for
+    # a same-account revision upgrade; no new storage write or IAM is needed.
+    restores_current = canonical(saved.get("candidate")) == canonical(configured)
+    inspection_expected, inspection_hashes = expected, hashes
+    if restores_current:
+        previous = saved.get("old_expected")
+        previous_hashes = saved.get("comparison_hashes")
+        if (not isinstance(previous, dict) or set(previous) != set(expected)
+                or any(canonical(previous[key]) != canonical(value)
+                    for key, value in expected.items() if key != "expected_runtime_revision")
+                or not isinstance(previous_hashes, dict) or set(previous_hashes) != set(hashes)
+                or previous_hashes["target_id_sha256"] != hashes["target_id_sha256"]
+                or previous_hashes["candidate_source_binding_id_sha256"] != hashes["configured_source_binding_id_sha256"]
+                or previous_hashes["configured_source_binding_id_sha256"] != sha(
+                    publisher._bound_source_id(**identity, runtime_revision=previous["expected_runtime_revision"]))):
+            raise BackupError("recovery_restore_point_mismatch")
+        inspection_expected, inspection_hashes = previous, previous_hashes
+    inspected = inspect_backup(inspection_expected, inspection_hashes)
+    if (inspected.get("status") != "backup_verified"
+            or any(inspected.get(k) != v for k, v in reference.items())):
+        raise BackupError("recovery_exact_backup_not_verified")
+    # Re-read the live report and serving revision against this upgrade's exact
+    # hashes. The restore point never substitutes for fresh candidate evidence.
+    _, current_body = prepare_backup(expected, hashes, now=now)
+    current = json.loads(current_body)
+    if not restores_current and canonical(saved["candidate"]) != canonical(current["candidate"]):
+        raise BackupError("recovery_candidate_changed")
+    candidate = current["candidate"]
     rotation = {"target_id": expected["target_id"],
         "previous_source_binding_id": publisher._bound_source_id(**identity,
             runtime_revision=expected["expected_runtime_revision"]),
-        "next_source_binding_id": saved["candidate"]["source_binding_id"]}
+        "next_source_binding_id": candidate["source_binding_id"]}
     secrets = []
     values = (("ibkr", "QuantStrategyLab/InteractiveBrokersPlatform", None,
-               "IBKR_ACCOUNT_FACTS_RUNTIME_REVISION", saved["candidate"]["runtime_revision"].encode()),
+               "IBKR_ACCOUNT_FACTS_RUNTIME_REVISION", candidate["runtime_revision"].encode()),
               ("qrs", "QuantStrategyLab/QuantRuntimeSettings", "runtime-strategy-switch",
                "IBKR_ACCOUNT_FACTS_SOURCE_ROTATION_JSON", canonical(rotation)))
     for key_name, repository, environment, name, value in values:
@@ -307,7 +333,7 @@ def prepare_recovery_secrets(expected, hashes, *, now):
             "encrypted_value": base64.b64encode(encrypted).decode("ascii")})
     payload = {"schema_version": "ibkr.primary_recovery_sealed_secrets.v1",
         "comparison_sha256": sha(canonical(hashes)), **reference,
-        "expected_runtime_revision_sha256": sha(saved["candidate"]["runtime_revision"]),
+        "expected_runtime_revision_sha256": sha(candidate["runtime_revision"]),
         "report_name": current["source_report_uri"].rsplit("/", 1)[-1], "secrets": secrets}
     output = Path(os.environ["RUNNER_TEMP"]) / "primary-recovery-secrets.json"
     body = canonical(payload)
