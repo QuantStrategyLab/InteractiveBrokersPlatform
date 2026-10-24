@@ -720,3 +720,69 @@ def test_same_descriptor_relative_redirect_is_classified_and_not_followed():
     assert meta["redirect_followed"] is meta["authorization_forwarded"] is False
     assert calls == ["https://us-central1-docker.pkg.dev" + path]
     assert PRIVATE not in json.dumps(meta) and registry.digest not in json.dumps(meta)
+
+
+@pytest.mark.parametrize("tampered", [False, True])
+def test_layer_relative_download_stays_on_registry_and_verifies_content(tampered):
+    registry, _, opener, manifest = _registry([_tar([])])
+    descriptor = manifest["layers"][0]
+    raw = opener.blobs["blobs/" + descriptor["digest"]]
+    destination = "https://us-central1-docker.pkg.dev/artifacts-downloads/synthetic?signature=" + PRIVATE
+    calls = []
+
+    def download(request, timeout):
+        calls.append(request)
+        assert timeout <= 45
+        assert request.get_header("Authorization") == registry.authorization
+        if len(calls) == 1:
+            headers = Message(); headers["Location"] = destination.removeprefix("https://us-central1-docker.pkg.dev")
+            raise urllib.error.HTTPError(request.full_url, 302, PRIVATE, headers, io.BytesIO())
+        assert request.full_url == destination
+        return _Response(b"tampered" if tampered else raw)
+
+    opener.open = download
+    if tampered:
+        with pytest.raises(static.StaticError, match="content_digest_mismatch"):
+            registry.fetch("blobs", descriptor["digest"], descriptor["size"], 1024 * 1024, stage="layer")
+    else:
+        with registry.fetch("blobs", descriptor["digest"], descriptor["size"], 1024 * 1024, stage="layer") as handle:
+            assert handle.read() == raw
+    assert len(calls) == 2
+    assert all(request.get_method() == "GET" for request in calls)
+    assert registry.redirect_metadata["redirect_followed"] is True
+    assert registry.redirect_metadata["authorization_forwarded"] is True
+    assert PRIVATE not in json.dumps(registry.redirect_metadata)
+
+
+@pytest.mark.parametrize("location", [
+    "https://storage.googleapis.com/synthetic", "//us-central1-docker.pkg.dev/synthetic",
+    "/\\external.invalid/synthetic", "/synthetic#fragment", "/synthetic\nheader", "",
+])
+def test_layer_unsafe_redirect_never_receives_credentials(location):
+    registry, _, opener, manifest = _registry([_tar([])])
+    descriptor = manifest["layers"][0]
+    calls = []
+    def blocked(request, timeout):
+        calls.append(request)
+        headers = Message(); headers["Location"] = location
+        raise urllib.error.HTTPError(request.full_url, 302, PRIVATE, headers, io.BytesIO())
+    opener.open = blocked
+    with pytest.raises(static.StaticError, match="registry_redirect_blocked"):
+        registry.fetch("blobs", descriptor["digest"], descriptor["size"], 1024 * 1024, stage="layer")
+    assert len(calls) == 1
+
+
+def test_layer_relative_redirect_has_only_one_manual_hop():
+    registry, _, opener, manifest = _registry([_tar([])])
+    descriptor = manifest["layers"][0]
+    calls = []
+    def redirect(request, timeout):
+        calls.append(request)
+        headers = Message(); headers["Location"] = "/artifacts-downloads/synthetic?signature=" + PRIVATE
+        raise urllib.error.HTTPError(request.full_url, 302, PRIVATE, headers, io.BytesIO())
+    opener.open = redirect
+    with pytest.raises(static.StaticError, match="registry_redirect_blocked") as error:
+        registry.fetch("blobs", descriptor["digest"], descriptor["size"], 1024 * 1024, stage="layer")
+    assert len(calls) == 2
+    assert error.value.redirect_metadata["redirect_followed"] is True
+    assert PRIVATE not in json.dumps(error.value.redirect_metadata)
