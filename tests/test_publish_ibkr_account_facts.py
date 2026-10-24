@@ -1056,12 +1056,22 @@ def _publisher_job_environment(target: str = "primary-live") -> dict[str, str]:
             value = placeholders[source_name, name]
         elif raw_value == "${{ matrix.target }}":
             value = target
+        elif raw_value == "${{ matrix.target == 'primary-live' && 'true' || 'false' }}":
+            value = "true" if target == "primary-live" else "false"
         elif "matrix.target == 'additional-1'" in raw_value and "secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON" in raw_value:
             value = json.dumps(_additional_targets()) if target.startswith("additional-") else ""
         else:
             value = raw_value.strip("'\"")
         environment[key] = value
     return environment
+
+
+@pytest.mark.parametrize("target", ["primary-live", "additional-1", "additional-2", "additional-3"])
+def test_workflow_publishes_broker_positions_only_for_primary(target):
+    environment = _publisher_job_environment(target)
+    assert environment["IBKR_ACCOUNT_FACTS_INCLUDE_POSITIONS"] == (
+        "true" if target == "primary-live" else "false"
+    )
 
 
 def test_workflow_exports_publisher_project_and_main_runs_with_only_exported_env():
