@@ -9,7 +9,7 @@ def test_flex_publisher_requires_explicit_manual_or_readonly_schedule_enablement
     assert "github.ref == 'refs/heads/main'" in workflow and "github.run_attempt == 1" in workflow
     assert "github.repository == 'QuantStrategyLab/InteractiveBrokersPlatform'" in workflow
     assert "cancel-in-progress: false" in workflow
-    assert 'cron: "40 22 * * 1-5"' in workflow
+    assert 'cron: "40 12 * * 2-6"' in workflow
     assert "github.event_name == 'schedule' && vars.IBKR_PERIOD_RETURN_AUTO_SYNC_ENABLED == 'true'" in workflow
     assert "github.event_name == 'workflow_dispatch' && inputs.publish_once" in workflow
     for unsafe in ( "workflow_run:", "id-token:", "google-github-actions/auth", "gcloud", "upload-artifact", "TELEGRAM", "heartbeat", "Gateway", "scheduler"):
