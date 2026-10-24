@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 import json
 import re
+import traceback
 
 from application.cycle_result import StrategyCycleResult
 from application.account_facts import build_ibkr_account_facts
@@ -897,6 +898,7 @@ def _record_execution_marker(
     signal_metadata: dict,
     trade_logs,
     execution_summary,
+    send_notification: Callable[[str], object] | None = None,
 ) -> None:
     store = getattr(config, "execution_state_store", None)
     if not store or not marker_key:
@@ -917,9 +919,17 @@ def _record_execution_marker(
         )
     except Exception as exc:
         print(
-            f"Execution marker write failed\nMarker: {marker_key}\n{type(exc).__name__}: {exc}",
+            f"Execution marker write failed\nMarker: {marker_key}\n{traceback.format_exc()}",
             flush=True,
         )
+        if send_notification is not None:
+            try:
+                send_notification(
+                    "IBKR execution marker write failed\n"
+                    f"Marker: {marker_key}\n{type(exc).__name__}: {exc}"
+                )
+            except Exception:
+                print("execution_marker_alert_failed", flush=True)
 
 
 def run_strategy_core(
@@ -1345,6 +1355,7 @@ def run_strategy_core(
                 signal_metadata=signal_metadata,
                 trade_logs=trade_logs,
                 execution_summary=execution_summary,
+                send_notification=runtime.notifications.send_text,
             )
         record = build_reconciliation_record(
             strategy_profile=signal_metadata.get("strategy_profile"),
