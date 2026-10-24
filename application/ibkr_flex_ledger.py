@@ -138,11 +138,19 @@ def _iso_date(value: Any) -> str | None:
     return None
 
 
-def _statement(root: ElementTree.Element) -> ElementTree.Element:
-    statements = root.findall("./FlexStatements/FlexStatement")
+def _statement(root: ElementTree.Element, expected: Collection[str]) -> ElementTree.Element:
+    expected = {account.strip() for account in expected}
+    statements = [s for s in root.findall("./FlexStatements/FlexStatement") if s.get("accountId", "").strip() in expected]
     if len(statements) != 1:
         raise FlexSourceError("IBKR Flex ledger requires exactly one statement account")
-    return statements[0]
+    statement = statements[0]
+    account_id = statement.get("accountId", "").strip()
+    financial_rows = {"AccountInformation", "EquitySummaryByReportDateInBase", "StatementOfFundsLine", "ConversionRate", "ChangeInNAV"}
+    if any(row.get("accountId", "").strip() not in {"", account_id} for row in statement.iter() if row.tag in financial_rows):
+        error = FlexSourceError("IBKR Flex statement row account scope mismatch", endpoint="GetStatement", category="scope")
+        error.safe_diagnostic["nested_account_mismatch"] = True
+        raise error
+    return statement
 
 
 def _single_currency_total(
@@ -159,16 +167,18 @@ def _single_currency_total(
 
 
 def build_flex_ledger(
-    report: FlexReport, *, expected_account_ids: Collection[str]
+    report: FlexReport, *, expected_account_ids: Collection[str],
+    allowed_report_account_ids: Collection[str] | None = None,
 ) -> dict[str, Any]:
     """Project a verified Activity Flex report into minimal ledger facts."""
 
-    verify_report_accounts(report, expected_account_ids=expected_account_ids)
+    verify_report_accounts(report, expected_account_ids=expected_account_ids,
+                           allowed_report_account_ids=allowed_report_account_ids)
     root = ElementTree.fromstring(report.content)
     report_type = (root.get("type") or "").strip() or None
     if report_type is not None and report_type != "AF":
         raise FlexSourceError("IBKR Flex ledger requires an XML Activity report", endpoint="GetStatement", category="format")
-    statement = _statement(root)
+    statement = _statement(root, expected_account_ids)
 
     account_id = (statement.get("accountId") or "").strip()
     information = statement.find("AccountInformation")

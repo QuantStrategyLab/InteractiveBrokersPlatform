@@ -1,5 +1,6 @@
 import json
 import hashlib
+import os
 from datetime import datetime, timezone
 from urllib.error import HTTPError
 
@@ -231,6 +232,58 @@ def test_explicit_same_reference_collection_to_projection_and_single_ack(monkeyp
     assert capsys.readouterr().out == ""
 
 
+def test_report_scope_preflight_uses_only_existing_protected_account_configuration(monkeypatch, capsys):
+    from tests.test_diagnose_account_facts_identity import _environment
+
+    configure(monkeypatch)
+    settings, additional = _environment(monkeypatch)
+    monkeypatch.setenv("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", settings["IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON"])
+    config = cli._config(os.environ)
+    approved = set(config["allowed_report_account_ids"])
+    assert approved == set(json.loads(settings["IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON"])) | {
+        row["account_selector"][0] for row in additional.values()}
+    assert cli.main(("--preflight",)) == 0
+    output = capsys.readouterr().out
+    assert json.loads(output)["approved_report_account_count"] == len(approved)
+    assert not any(account in output for account in approved)
+
+
+def test_partial_protected_report_scope_fails_before_broker_access(monkeypatch, capsys):
+    configure(monkeypatch)
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", '["DU0000000"]')
+    monkeypatch.delenv("IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON", raising=False)
+    monkeypatch.setattr(cli.requests, "Session", lambda: pytest.fail("invalid scope reached broker"))
+    assert cli.main() == 2
+    assert json.loads(capsys.readouterr().out)["status"] == "configuration_incomplete"
+
+
+@pytest.mark.parametrize("pending", [False, True])
+def test_approved_multiaccount_source_publishes_only_target_and_keeps_one_request(monkeypatch, capsys, pending):
+    from tests.test_diagnose_account_facts_identity import _environment
+    from xml.etree import ElementTree
+    import time
+
+    configure(monkeypatch)
+    settings, additional = _environment(monkeypatch)
+    expected = json.loads(settings["IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON"])
+    monkeypatch.setenv("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", json.dumps(expected))
+    root = ElementTree.fromstring(xml(account=expected[0]))
+    other = next(iter(additional.values()))["account_selector"][0]
+    root.find("FlexStatements").insert(0, ElementTree.fromstring(xml(account=other, twr="80")).find("./FlexStatements/FlexStatement"))
+    report = ElementTree.tostring(root)
+    session = FlexSession(b"<FlexStatementResponse><ErrorCode>1019</ErrorCode></FlexStatementResponse>" if pending else report)
+    monkeypatch.setattr(cli.requests, "Session", lambda: session)
+    monkeypatch.setattr(time, "sleep", lambda _delay: setattr(session, "report", report))
+    opener = Opener()
+    monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
+    assert cli.main() == 0
+    assert json.loads(capsys.readouterr().out) == {"status": "published"}
+    assert len(opener.calls) == 1
+    payload = json.loads(opener.calls[0][0].data)
+    assert payload["account_ids"] == expected and payload["value"] == "0.0125"
+    assert sum(url.endswith("/SendRequest") for url, _ in session.calls) == 1
+
+
 @pytest.mark.parametrize("report", [xml(twr=None), xml(account="DU0000004"), xml(currency="")])
 def test_no_native_or_wrong_scope_or_currency_has_zero_post(monkeypatch, capsys, report):
     configure(monkeypatch)
@@ -419,7 +472,7 @@ def test_preflight_original_validator_failure_is_fixed_and_never_echoes_exceptio
     assert "private-validator-error-body" not in output.out and output.err == ""
 
 
-def test_preflight_workflow_is_manual_main_configuration_only_with_exact_original_secrets():
+def test_preflight_workflow_is_manual_main_configuration_only_with_exact_report_secrets():
     from pathlib import Path
     import re
 
@@ -430,7 +483,9 @@ def test_preflight_workflow_is_manual_main_configuration_only_with_exact_origina
     assert "uv sync --frozen --no-dev" in workflow
     assert "astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78" in workflow
     assert workflow.count("python -m scripts.publish_ibkr_flex_period_return --preflight") == 1
-    assert set(re.findall(r"secrets\.([A-Z0-9_]+)", workflow)) == set(_PREFLIGHT_FIELDS)
+    assert set(re.findall(r"secrets\.([A-Z0-9_]+)", workflow)) == set(_PREFLIGHT_FIELDS) | {
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", "IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON",
+    }
     assert set(re.findall(r"vars\.([A-Z0-9_]+)", workflow)) == {"QSL_CONSOLE_BASE_URL"}
     assert "GITHUB_SHA: ${{ github.sha }}" in workflow
     for unsafe in ("schedule:", "workflow_run:", "id-token:", "google-github-actions/auth", "gcloud",

@@ -39,6 +39,37 @@ def _statement(
     )
 
 
+def test_selects_only_target_statement_from_explicitly_approved_report_scope():
+    other = "DU0000001"
+    report = _wrap(
+        _statement('<AccountInformation currency="USD"/><ChangeInNAV fromDate="20260101" toDate="20260131" twr="80"/>', account=other),
+        _statement('<AccountInformation currency="USD"/><ChangeInNAV fromDate="20260101" toDate="20260131" twr="3.25"/>'),
+    )
+    ledger = build_flex_ledger(report, expected_account_ids=(ACCOUNT,), allowed_report_account_ids=(ACCOUNT, other))
+    assert ledger["native_returns"]["twr"] == "3.25"
+    assert ledger["account_ids"] == [ACCOUNT]
+    with pytest.raises(FlexSourceError):
+        build_flex_ledger(report, expected_account_ids=(ACCOUNT,))
+
+
+@pytest.mark.parametrize("actual", [("DU0000001",), (ACCOUNT, "DU0000099"), (ACCOUNT, ACCOUNT)])
+def test_approved_report_scope_still_rejects_missing_unknown_or_duplicate_accounts(actual):
+    report = _wrap(*(_statement('<AccountInformation currency="USD"/>', account=a) for a in actual))
+    with pytest.raises(FlexSourceError) as caught:
+        build_flex_ledger(report, expected_account_ids=(ACCOUNT,), allowed_report_account_ids=(ACCOUNT, "DU0000001"))
+    diagnostic = caught.value.safe_diagnostic
+    assert diagnostic["reported_account_count"] == len(actual)
+    assert diagnostic["target_accounts_present"] == (ACCOUNT in actual)
+    assert not any(account in json.dumps(diagnostic) for account in actual)
+
+
+def test_selected_statement_rejects_a_row_owned_by_another_account():
+    report = _wrap(_statement('<AccountInformation currency="USD"/><StmtFunds><StatementOfFundsLine accountId="DU0000001" currency="USD" amount="99" activityCode="DEP"/></StmtFunds>'))
+    with pytest.raises(FlexSourceError) as caught:
+        build_flex_ledger(report, expected_account_ids=(ACCOUNT,), allowed_report_account_ids=(ACCOUNT, "DU0000001"))
+    assert caught.value.safe_diagnostic["nested_account_mismatch"] is True
+
+
 def test_extracts_period_valuation_flows_fees_and_native_twr():
     report = _wrap(_statement(
         f'<AccountInformation accountId="{ACCOUNT}" currency="USD"/>'
