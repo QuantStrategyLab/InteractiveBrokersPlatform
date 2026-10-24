@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       publish_once:
-        description: "Explicitly authorize one configured Flex generation/collection and one QRS publish."
+        description: "One configured Flex generation, bounded collection of the same pending handle, and one QRS publish."
         type: boolean
         required: false
         default: false

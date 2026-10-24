@@ -1,4 +1,5 @@
 import json
+import hashlib
 from datetime import datetime, timezone
 from urllib.error import HTTPError
 
@@ -152,15 +153,56 @@ def test_flex_failure_has_safe_stdout_and_zero_post(monkeypatch, capsys):
 
 
 def test_generation_pending_has_zero_post_and_no_replacement_request(monkeypatch, capsys):
+    import time
+
     configure(monkeypatch)
     pending_xml = b"<FlexStatementResponse><Status>Fail</Status><ErrorCode>1019</ErrorCode><ErrorMessage>synthetic-private-token</ErrorMessage></FlexStatementResponse>"
     session = FlexSession(pending_xml)
     monkeypatch.setattr(cli.requests, "Session", lambda: session)
+    monkeypatch.setattr(time, "sleep", lambda _delay: None)
     monkeypatch.setattr(cli, "build_opener", lambda *_args: pytest.fail("pending source posted"))
     assert cli.main() == 1
     assert capsys.readouterr().out == '{"status": "flex_pending"}\n'
-    assert len(session.calls) == 2 and session.closed
-    assert session.calls[1][1]["params"]["q"] == "98765"
+    assert len(session.calls) == 7 and session.closed
+    assert sum(url.endswith("/SendRequest") for url, _ in session.calls) == 1
+    assert all(kw["params"]["q"] == "98765" for _, kw in session.calls[1:])
+
+
+def test_pending_generation_completes_in_same_run_without_second_generation(monkeypatch, capsys):
+    import time
+
+    configure(monkeypatch)
+    session = FlexSession(b"<FlexStatementResponse><ErrorCode>1019</ErrorCode></FlexStatementResponse>")
+    monkeypatch.setattr(cli.requests, "Session", lambda: session)
+    waits = []
+    def generated(delay):
+        waits.append(delay)
+        session.report = xml()
+    monkeypatch.setattr(time, "sleep", generated)
+    opener = Opener()
+    monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
+    assert cli.main() == 0
+    assert json.loads(capsys.readouterr().out) == {"status": "published"}
+    assert waits == [3]
+    assert len(opener.calls) == 1
+    assert sum(url.endswith("/SendRequest") for url, _ in session.calls) == 1
+    statements = [kw["params"] for url, kw in session.calls if url.endswith("/GetStatement")]
+    assert len(statements) == 2 and statements[0] == statements[1]
+
+
+def test_nonpending_error_after_generation_wait_is_not_retried(monkeypatch, capsys):
+    import time
+
+    configure(monkeypatch)
+    session = FlexSession(b"<FlexStatementResponse><ErrorCode>1019</ErrorCode></FlexStatementResponse>")
+    monkeypatch.setattr(cli.requests, "Session", lambda: session)
+    def rejected(_delay):
+        session.report = b"<FlexStatementResponse><ErrorCode>1012</ErrorCode></FlexStatementResponse>"
+    monkeypatch.setattr(time, "sleep", rejected)
+    monkeypatch.setattr(cli, "build_opener", lambda *_args: pytest.fail("failed report must not publish"))
+    assert cli.main() == 1
+    assert capsys.readouterr().out == '{"status": "flex_import_failed"}\n'
+    assert len(session.calls) == 3
 
 
 def test_explicit_same_reference_collection_to_projection_and_single_ack(monkeypatch, capsys):
@@ -277,6 +319,10 @@ def test_preflight_reuses_original_config_without_flex_or_publish_even_when_enab
         "schema_version": "ibkr.flex_configuration_preflight.v1",
         "source_sha": _PREFLIGHT_SOURCE_SHA, "status": "configuration_shape_valid",
         "fields": dict.fromkeys(_PREFLIGHT_FIELDS, "configuration_shape_valid"),
+        "binding_fingerprints": {
+            f"{name}_sha256": hashlib.sha256(values[f"IBKR_PERIOD_RETURN_{name.upper()}"].encode()).hexdigest()
+            for name in ("target_id", "source_binding_id")
+        },
     }
     assert calls == [True] and output.err == ""
     assert not any(value in output.out for key, value in values.items()

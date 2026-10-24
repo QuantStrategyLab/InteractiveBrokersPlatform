@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import sys
+import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any
@@ -14,7 +16,9 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 import requests
 
-from application.ibkr_flex_source import FlexReportPending, import_activity_flex_ledger
+from application.ibkr_flex_source import (
+    FlexReportPending, import_activity_flex_ledger, import_activity_flex_ledger_from_request,
+)
 from application.ibkr_period_return import (
     _ACCOUNT as _PERIOD_ACCOUNT,
     _BINDING as _PERIOD_BINDING,
@@ -79,11 +83,17 @@ def _config(env: Mapping[str, str]) -> dict[str, Any]:
 
 def _preflight_result(env: Mapping[str, str], *, status: str, fields: Mapping[str, str]) -> dict[str, Any]:
     source_sha = env.get("GITHUB_SHA")
-    return {
+    result = {
         "schema_version": "ibkr.flex_configuration_preflight.v1",
         "source_sha": source_sha if isinstance(source_sha, str) and re.fullmatch(r"[a-fA-F0-9]{40}", source_sha) else None,
         "status": status, "fields": dict(fields),
     }
+    if status == "configuration_shape_valid":
+        result["binding_fingerprints"] = {
+            f"{name}_sha256": hashlib.sha256(env[f"IBKR_PERIOD_RETURN_{name.upper()}"].encode()).hexdigest()
+            for name in ("target_id", "source_binding_id")
+        }
+    return result
 
 
 def _configuration_preflight(env: Mapping[str, str]) -> dict[str, Any]:
@@ -175,6 +185,25 @@ def publish_period_return(payload: Mapping[str, Any], *, sync_token: str, expect
         return "sync_unknown"
 
 
+def _collect_configured_ledger(config, session):
+    """Generate once; only a provider-declared 1019 may re-read that handle."""
+    accounts = tuple(config["expected_account_ids"])
+    try:
+        return import_activity_flex_ledger(token=config["flex_token"], query_id=config["query_id"],
+                                          expected_account_ids=accounts, session=session)
+    except FlexReportPending as pending:
+        request = pending.request
+    # IBKR report generation is asynchronous. Do not drop the private handle
+    # on an ordinary "generating" response or replace it with SendRequest.
+    for _ in range(5):
+        time.sleep(3)
+        try:
+            return import_activity_flex_ledger_from_request(request, expected_account_ids=accounts, session=session)
+        except FlexReportPending:
+            continue
+    raise FlexReportPending(request)
+
+
 def main(argv: Sequence[str] = ()) -> int:
     if tuple(argv) == ("--preflight",):
         result = _configuration_preflight(os.environ)
@@ -194,8 +223,7 @@ def main(argv: Sequence[str] = ()) -> int:
             try:
                 with requests.Session() as session:
                     session.trust_env = False
-                    ledger = import_activity_flex_ledger(token=config["flex_token"], query_id=config["query_id"],
-                        expected_account_ids=tuple(config["expected_account_ids"]), session=session)
+                    ledger = _collect_configured_ledger(config, session)
             except FlexReportPending:
                 # The CLI has no approved cross-process private handle store.
                 # Stop; rerunning it would generate a different request.
