@@ -1831,3 +1831,63 @@ def test_recovery_sealing_preserves_exact_backup_and_live_guards(monkeypatch, tm
     assert result["reason"] == {"reference": "backup_reference_mismatch", "stale": "backup_comparison_changed",
         "split": "backup_comparison_changed", "candidate_changed": "recovery_candidate_changed"}[failure]
     assert not (tmp_path / "primary-recovery-secrets.json").exists()
+
+
+@pytest.mark.parametrize("value,kind", [([], "is_list"), ({}, "is_object"), ("private-value", "is_string"),
+    (None, "is_null"), (12345, None)])
+def test_positions_source_evidence_has_only_fixed_paths_and_boolean_types(value, kind):
+    report = {"summary": {"account_facts": {"broker_reported_positions": value},
+        "broker_snapshot": {"positions": value}}, PRIVATE: PRIVATE}
+    evidence = diagnostic._positions_source_evidence(report)
+    for path in ("summary.account_facts.broker_reported_positions", "summary.broker_snapshot.positions"):
+        assert evidence[path]["present"] is True
+        for key in ("is_list", "is_object", "is_string", "is_null"):
+            assert evidence[path][key] is (key == kind)
+    assert evidence["summary.account_facts.broker_reported_positions_scope"] == dict.fromkeys(
+        ("present", "is_list", "is_object", "is_string", "is_null"), False)
+    assert all(type(flag) is bool for fields in evidence.values() for flag in fields.values())
+    serialized = json.dumps(evidence)
+    assert PRIVATE not in serialized and "private-value" not in serialized and "12345" not in serialized
+
+
+def test_positions_source_evidence_does_not_search_weights_or_order_intents():
+    report = {"summary": {"target_weights": {"positions": [PRIVATE]}},
+        "orders": [{"broker_snapshot": {"positions": [PRIVATE]}}],
+        "target_positions": {"positions": [PRIVATE]}}
+    evidence = diagnostic._positions_source_evidence(report)
+    assert not any(flags["present"] for flags in evidence.values())
+    assert PRIVATE not in json.dumps(evidence)
+
+
+@pytest.mark.parametrize("failure", [None, "stale", "source", "account", "revision", "metadata"])
+def test_positions_source_evidence_reuses_original_cli_acceptance_without_extra_reads(monkeypatch, capsys, failure):
+    _environment(monkeypatch)
+    expected = diagnostic.resolve_expected()
+    report, metadata = _report(expected), _metadata(expected)
+    if failure == "stale":
+        report["started_at"] = report["finished_at"] = (NOW - timedelta(days=9)).isoformat()
+        report["summary"]["account_facts"]["observed_at"] = report["finished_at"]
+    elif failure == "source":
+        report["service_name"] = PRIVATE + "-other"
+    elif failure == "account":
+        report["summary"]["account_facts"]["account_ids"] = ["U00000002"]
+    elif failure == "revision":
+        report["diagnostics"]["runtime_revision"] = PRIVATE + "-other"
+    elif failure == "metadata":
+        metadata = None
+    calls = []
+    monkeypatch.setattr(publisher, "_latest_report_uri", lambda **_kw: expected["expected_report_prefix"] + "/r.json")
+    def read_report(*_args, **_kwargs):
+        calls.append("report")
+        return report
+    def read_metadata(*_args, **_kwargs):
+        calls.append("metadata")
+        return metadata
+    monkeypatch.setattr(publisher, "_load_gcs_report", read_report)
+    monkeypatch.setattr(diagnostic, "_read_cloud_run_metadata", read_metadata)
+    assert diagnostic.main([], now=NOW) == (0 if failure is None else 1)
+    result = json.loads(capsys.readouterr().out)
+    assert ("positions_source_evidence" in result) is (failure is None)
+    assert calls == ["report", "metadata"]
+    assert PRIVATE not in json.dumps(result) and "12345.6700" not in json.dumps(result)
+    assert result["account_facts_stages"].keys() == dict.fromkeys(_STAGES).keys()
