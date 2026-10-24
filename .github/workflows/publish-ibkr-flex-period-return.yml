@@ -1,8 +1,10 @@
 name: Publish IBKR Flex Native Period Return
 
 on:
+  # Activity Flex covers completed days. Tue-Sat UTC includes Friday after close,
+  # unlike a Mon-Fri evening run which can miss the final session of the week.
   schedule:
-    - cron: "40 22 * * 1-5"
+    - cron: "40 12 * * 2-6"
   workflow_dispatch:
     inputs:
       publish_once:
