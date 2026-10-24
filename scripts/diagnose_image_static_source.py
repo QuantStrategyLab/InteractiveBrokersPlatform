@@ -271,6 +271,27 @@ def _json(raw):
         raise StaticError("static_metadata_invalid") from None
 
 
+def _relative_registry_download(request_uri, location):
+    """Resolve only one path-absolute reference within the authenticated registry origin."""
+    base = _request_reference(request_uri)
+    if (base is None or not isinstance(location, str) or len(location) > 8192
+        or not location.isascii() or not location.startswith("/") or location.startswith("//")
+        or "\\" in location or re.search(r"[\x00-\x20\x7f]", location)):
+        return None
+    try:
+        ref = urllib.parse.urlsplit(location)
+        destination = urllib.parse.urljoin(request_uri, location)
+        resolved = urllib.parse.urlsplit(destination)
+        if (ref.scheme or ref.netloc or ref.fragment or resolved.scheme != "https"
+            or resolved.hostname != base.hostname or resolved.port not in {None, 443}
+            or resolved.username is not None or resolved.password is not None
+            or destination == request_uri):
+            return None
+    except ValueError:
+        return None
+    return destination
+
+
 class Registry:
     def __init__(self, immutable, token, budget, *, opener=None):
         host, repository, digest = image._image_parts(immutable)
@@ -282,6 +303,40 @@ class Registry:
         self.digest, self.budget = digest, budget
         self.authorization = "Basic " + base64.b64encode(("oauth2accesstoken:" + token).encode()).decode()
         self.opener = opener if opener is not None else urllib.request.build_opener(NoRedirect())
+        self.redirect_metadata = _redirect_result()
+
+    def _open(self, request, stage):
+        try:
+            return self.opener.open(request, timeout=45)
+        except urllib.error.HTTPError as exc:
+            metadata = _redirect_metadata(stage, exc.code, exc.headers, request.full_url)
+            destination = None
+            if (stage == "layer" and metadata["http_status"] is not None
+                and metadata["location_single_value"] is True):
+                try:
+                    location = exc.headers.get("Location")
+                    destination = _relative_registry_download(request.full_url, location)
+                except Exception:
+                    pass
+            if destination is None:
+                raise
+            exc.close()
+            # NoRedirect remains in force: only this same-origin GET hop is allowed.
+            # The response still has to match the original OCI digest and size.
+            metadata.update(redirect_followed=True, authorization_forwarded=True,
+                            destination_class="same_registry_origin",
+                            location_https_default_443=True,
+                            location_has_query="?" in destination,
+                            location_validation_reason="accepted_same_origin_relative")
+            self.redirect_metadata = metadata
+            redirected = urllib.request.Request(destination, headers=dict(request.header_items()), method="GET")
+            try:
+                self.budget.check()
+                return self.opener.open(redirected, timeout=45)
+            except urllib.error.HTTPError as second:
+                reason = "registry_redirect_blocked" if 300 <= second.code < 400 else "registry_read_failed"
+                second.close()
+                raise StaticError(reason, redirect_metadata=metadata) from None
 
     def fetch(self, kind, digest, size, limit, *, memory=False, stage=None):
         if (kind not in {"manifests", "blobs"} or not isinstance(digest, str) or not _SHA256.fullmatch(digest)
@@ -295,7 +350,7 @@ class Registry:
             "Accept": ", ".join(sorted(_MANIFEST | _INDEX))})
         sha, received = hashlib.sha256(), 0
         try:
-            with self.opener.open(request, timeout=45) as response:
+            with self._open(request, stage) as response:
                 while chunk := response.read(64 * 1024):
                     received += len(chunk)
                     self.budget.download(len(chunk))
@@ -644,7 +699,11 @@ def diagnose(expected):
         token = _command(("gcloud", "auth", "print-access-token", "--quiet"), budget, "registry_auth_unavailable").strip()
         if not token or len(token) > 8192 or not re.fullmatch(r"[A-Za-z0-9._-]+", token):
             raise StaticError("registry_auth_unavailable")
-        files = read_image(Registry(immutable, token, budget), budget)
+        registry = Registry(immutable, token, budget)
+        try:
+            files = read_image(registry, budget)
+        finally:
+            result["redirect_metadata"] = getattr(registry, "redirect_metadata", _redirect_result())
         result["image_content_status"] = "verified"
         result["selected_files"] = {alias: files.get("app/" + path) == candidate_files[path]
                                     if "app/" + path in files else None for alias, path in SOURCE_FILES.items()}
