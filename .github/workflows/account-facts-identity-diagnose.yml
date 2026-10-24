@@ -100,7 +100,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "$IBKR_PRIMARY_RECOVERY_MODE" = "true" ] && [ "$IBKR_PRIMARY_BACKUP_ENABLED" != "true" ]; then
+          if [ "${IBKR_PRIMARY_RECOVERY_MODE:-false}" = "true" ] && [ "${IBKR_PRIMARY_BACKUP_ENABLED:-false}" != "true" ]; then
             echo "status=blocked reason=recovery_requires_primary_backup_mode"
             exit 2
           fi
