@@ -17,7 +17,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 import requests
 
 from application.ibkr_flex_source import (
-    FlexReportPending, import_activity_flex_ledger, import_activity_flex_ledger_from_request,
+    FlexReportPending, FlexSourceError, import_activity_flex_ledger, import_activity_flex_ledger_from_request,
 )
 from application.ibkr_period_return import (
     _ACCOUNT as _PERIOD_ACCOUNT,
@@ -205,6 +205,7 @@ def _collect_configured_ledger(config, session):
 
 
 def main(argv: Sequence[str] = ()) -> int:
+    diagnostics = {}
     if tuple(argv) == ("--preflight",):
         result = _configuration_preflight(os.environ)
         print(json.dumps(result, sort_keys=True))
@@ -228,8 +229,16 @@ def main(argv: Sequence[str] = ()) -> int:
                 # The CLI has no approved cross-process private handle store.
                 # Stop; rerunning it would generate a different request.
                 status = "flex_pending"
-            except Exception:
+            except FlexSourceError as exc:
                 status = "flex_import_failed"
+                diagnostics = exc.safe_diagnostic
+            except Exception as exc:
+                status = "flex_import_failed"
+                name = type(exc).__name__
+                diagnostics = {"source_failure_kind": "runtime", "exception_type": name if name in {
+                    "ImportError", "ModuleNotFoundError", "AttributeError", "KeyError",
+                    "TypeError", "ValueError", "RuntimeError",
+                } else "other"}
             else:
                 try:
                     payload = build_ibkr_period_return(ledger, observed_at=datetime.now(timezone.utc),
@@ -240,7 +249,7 @@ def main(argv: Sequence[str] = ()) -> int:
                     status = "projection_rejected"
                 else:
                     status = publish_period_return(payload, sync_token=config["sync_token"], expected_account_key=config["account_key"])
-    print(json.dumps({"status": status}, sort_keys=True))
+    print(json.dumps({"status": status, **diagnostics}, sort_keys=True))
     return 0 if status in {"published", "unchanged"} else 2 if status in {"disabled", "configuration_incomplete"} else 1
 
 

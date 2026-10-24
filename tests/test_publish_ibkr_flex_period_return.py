@@ -149,7 +149,9 @@ def test_flex_failure_has_safe_stdout_and_zero_post(monkeypatch, capsys):
     monkeypatch.setattr(cli.requests, "Session", fail)
     monkeypatch.setattr(cli, "build_opener", lambda *_args: pytest.fail("failed source posted"))
     assert cli.main() == 1
-    assert capsys.readouterr().out == '{"status": "flex_import_failed"}\n'
+    output = capsys.readouterr().out
+    assert json.loads(output) == {"status": "flex_import_failed", "source_failure_kind": "runtime", "exception_type": "RuntimeError"}
+    assert "synthetic-private" not in output and "DU0000000" not in output
 
 
 def test_generation_pending_has_zero_post_and_no_replacement_request(monkeypatch, capsys):
@@ -201,7 +203,8 @@ def test_nonpending_error_after_generation_wait_is_not_retried(monkeypatch, caps
     monkeypatch.setattr(time, "sleep", rejected)
     monkeypatch.setattr(cli, "build_opener", lambda *_args: pytest.fail("failed report must not publish"))
     assert cli.main() == 1
-    assert capsys.readouterr().out == '{"status": "flex_import_failed"}\n'
+    assert json.loads(capsys.readouterr().out) == {"status": "flex_import_failed", "source_endpoint": "GetStatement",
+                                                "source_failure_kind": "provider", "provider_error_code": "1012"}
     assert len(session.calls) == 3
 
 

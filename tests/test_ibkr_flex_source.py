@@ -88,6 +88,19 @@ def test_send_rejection_does_not_produce_handle_or_collect():
     assert [name for name, _ in session.calls] == ["SendRequest"]
 
 
+@pytest.mark.parametrize("code,expected", [("1017", "1017"), (TOKEN, None), ("999999", None)])
+def test_provider_failure_has_only_fixed_diagnostic_fields(code, expected):
+    response = f"<FlexStatementResponse><Status>Fail</Status><ErrorCode>{code}</ErrorCode><ErrorMessage>{TOKEN}</ErrorMessage></FlexStatementResponse>".encode()
+    session = Session(response)
+    with pytest.raises(source.FlexSourceError) as caught:
+        source.request_activity_flex_report(token=TOKEN, query_id="12345", session=session)
+    diagnostic = caught.value.safe_diagnostic
+    assert diagnostic == {"source_endpoint": "SendRequest", "source_failure_kind": "provider",
+                          **({"provider_error_code": expected} if expected else {})}
+    assert TOKEN not in str(diagnostic) and REFERENCE not in str(diagnostic)
+    assert len(session.calls) == 1
+
+
 def test_collect_rejects_unscoped_report_without_generating():
     session = Session(SEND, XML)
     request = source.request_activity_flex_report(token=TOKEN, query_id="12345", session=session)

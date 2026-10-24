@@ -24,6 +24,18 @@ _USER_AGENT = "InteractiveBrokersPlatform/1.0"
 class FlexSourceError(ValueError):
     """A broker statement could not be safely obtained or identified."""
 
+    def __init__(self, message, *, endpoint=None, category=None, code=None, http_status=None):
+        super().__init__(message)
+        self.safe_diagnostic = {}
+        if endpoint in {"SendRequest", "GetStatement"}:
+            self.safe_diagnostic["source_endpoint"] = endpoint
+        if category in {"http", "transport", "xml", "provider", "size", "scope", "format"}:
+            self.safe_diagnostic["source_failure_kind"] = category
+        if isinstance(code, str) and re.fullmatch(r"1[0-9]{3}", code):
+            self.safe_diagnostic["provider_error_code"] = code
+        if type(http_status) is int and 100 <= http_status <= 599:
+            self.safe_diagnostic["http_status"] = http_status
+
 
 @dataclass(frozen=True)
 class FlexReport:
@@ -58,27 +70,28 @@ def _read_response(session: requests.Session, endpoint: str, params: dict[str, s
             stream=True,
         ) as response:
             if response.status_code != 200:
-                raise FlexSourceError(f"IBKR Flex {endpoint} returned HTTP {response.status_code}")
+                raise FlexSourceError(f"IBKR Flex {endpoint} returned HTTP {response.status_code}",
+                                      endpoint=endpoint, category="http", http_status=response.status_code)
             chunks: list[bytes] = []
             size = 0
             for chunk in response.iter_content(chunk_size=64 * 1024):
                 size += len(chunk)
                 if size > _MAX_RESPONSE_BYTES:
-                    raise FlexSourceError("IBKR Flex response exceeds the private verifier limit")
+                    raise FlexSourceError("IBKR Flex response exceeds the private verifier limit", endpoint=endpoint, category="size")
                 chunks.append(chunk)
     except requests.RequestException:
         # requests exceptions can contain the query URL, including the token.
-        raise FlexSourceError(f"IBKR Flex {endpoint} request failed") from None
+        raise FlexSourceError(f"IBKR Flex {endpoint} request failed", endpoint=endpoint, category="transport") from None
     return b"".join(chunks)
 
 
 def _xml_root(body: bytes, *, endpoint: str) -> ElementTree.Element:
     if not body or b"<!DOCTYPE" in body.upper() or b"<!ENTITY" in body.upper():
-        raise FlexSourceError(f"IBKR Flex {endpoint} returned unsupported XML")
+        raise FlexSourceError(f"IBKR Flex {endpoint} returned unsupported XML", endpoint=endpoint, category="xml")
     try:
         return ElementTree.fromstring(body)
     except ElementTree.ParseError:
-        raise FlexSourceError(f"IBKR Flex {endpoint} returned invalid XML") from None
+        raise FlexSourceError(f"IBKR Flex {endpoint} returned invalid XML", endpoint=endpoint, category="xml") from None
 
 
 def request_activity_flex_report(
@@ -97,7 +110,8 @@ def request_activity_flex_report(
             endpoint="SendRequest",
         )
         if send.tag != "FlexStatementResponse" or send.findtext("Status") != "Success":
-            raise FlexSourceError("IBKR Flex report generation was rejected")
+            raise FlexSourceError("IBKR Flex report generation was rejected", endpoint="SendRequest",
+                                  category="provider", code=send.findtext("ErrorCode"))
         reference = send.findtext("ReferenceCode") or ""
         if not re.fullmatch(r"[0-9]+", reference):
             raise FlexSourceError("IBKR Flex returned no valid reference code")
@@ -126,9 +140,10 @@ def collect_activity_flex_xml(
         if report.tag == "FlexStatementResponse":
             if report.findtext("ErrorCode") == "1019":
                 raise FlexReportPending(request)
-            raise FlexSourceError("IBKR Flex report retrieval was rejected")
+            raise FlexSourceError("IBKR Flex report retrieval was rejected", endpoint="GetStatement",
+                                  category="provider", code=report.findtext("ErrorCode"))
         if report.tag != "FlexQueryResponse":
-            raise FlexSourceError("IBKR Flex query must return an XML Activity report")
+            raise FlexSourceError("IBKR Flex query must return an XML Activity report", endpoint="GetStatement", category="xml")
         return FlexReport(content_sha256=hashlib.sha256(body).hexdigest(), content=body)
     finally:
         if session is None:
@@ -160,7 +175,7 @@ def verify_report_accounts(report: FlexReport, *, expected_account_ids: Collecti
     statements = root.findall("./FlexStatements/FlexStatement")
     actual = [statement.get("accountId", "").strip() for statement in statements]
     if not actual or any(not account for account in actual) or set(actual) != expected or len(actual) != len(set(actual)):
-        raise FlexSourceError("IBKR Flex report account scope does not match the target")
+        raise FlexSourceError("IBKR Flex report account scope does not match the target", endpoint="GetStatement", category="scope")
 
 
 def import_activity_flex_ledger(

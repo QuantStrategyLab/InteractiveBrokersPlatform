@@ -167,7 +167,7 @@ def build_flex_ledger(
     root = ElementTree.fromstring(report.content)
     report_type = (root.get("type") or "").strip() or None
     if report_type is not None and report_type != "AF":
-        raise FlexSourceError("IBKR Flex ledger requires an XML Activity report")
+        raise FlexSourceError("IBKR Flex ledger requires an XML Activity report", endpoint="GetStatement", category="format")
     statement = _statement(root)
 
     account_id = (statement.get("accountId") or "").strip()
