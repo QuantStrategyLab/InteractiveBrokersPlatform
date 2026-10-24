@@ -1,0 +1,71 @@
+name: Read Primary TQQQ Account Facts
+
+# Manual, single-account diagnosis of existing private reports only.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: primary-account-facts-readonly
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      IBKR_ACCOUNT_FACTS_TARGET: primary-live
+      IBKR_ACCOUNT_FACTS_PROJECT_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID }}
+      IBKR_ACCOUNT_FACTS_REPORT_PREFIX: ${{ secrets.IBKR_ACCOUNT_FACTS_REPORT_PREFIX }}
+      IBKR_ACCOUNT_FACTS_TARGET_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_TARGET_ID }}
+      IBKR_ACCOUNT_FACTS_SERVICE_NAME: ${{ secrets.IBKR_ACCOUNT_FACTS_SERVICE_NAME }}
+      IBKR_ACCOUNT_FACTS_RUNTIME_REVISION: ${{ secrets.IBKR_ACCOUNT_FACTS_RUNTIME_REVISION }}
+      IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE }}
+      IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON }}
+      IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR: ${{ secrets.IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR }}
+      CLOUD_RUN_REGION: us-central1
+    steps:
+      - name: Require infrastructure variables
+        env:
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${IBKR_DEPLOY_SERVICE_ACCOUNT:-}" ]]; then
+            echo "::error::IBKR_DEPLOY_SERVICE_ACCOUNT is required" >&2
+            exit 2
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Verify the existing primary scope before cloud authentication
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import PurePosixPath
+          from urllib.parse import urlsplit
+          from scripts.diagnose_account_facts_identity import resolve_expected
+
+          expected = resolve_expected()
+          parts = PurePosixPath(urlsplit(expected["expected_report_prefix"]).path).parts
+          if "tqqq_growth_income" not in parts:
+              raise SystemExit("status=blocked reason=primary_profile_mismatch")
+          print("status=preflight_verified scope=primary_tqqq")
+          PY
+
+      - name: Authenticate with the existing read identity
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
+          service_account: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up existing read commands
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Read the existing report and service identity without publishing
+        run: python3 -m scripts.diagnose_account_facts_identity
