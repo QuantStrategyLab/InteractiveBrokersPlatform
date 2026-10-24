@@ -702,6 +702,31 @@ def diagnose_registry_source_metadata(expected: Mapping[str, Any], *, source_sha
     return result
 
 
+def _positions_source_evidence(report: Mapping[str, Any]) -> dict[str, Any]:
+    """Fixed candidate paths and boolean types only; never project an inventory."""
+    paths = [("summary", "account_facts", key) for key in (
+        "broker_reported_positions", "broker_reported_positions_scope")]
+    for base in ((), ("summary",), ("summary", "account_facts")):
+        paths.extend((*base, key) for key in ("positions", "stock_positions", "current_positions"))
+    for base in ((), ("summary",)):
+        for key in ("broker_snapshot", "portfolio_snapshot", "account_snapshot", "snapshot_before", "snapshot_after"):
+            paths.extend(((*base, key), (*base, key, "positions")))
+    evidence = {}
+    for path in paths:
+        value, present = report, True
+        for key in path:
+            if not isinstance(value, Mapping) or key not in value:
+                present = False
+                break
+            value = value[key]
+        evidence[".".join(path)] = {"present": present,
+            "is_list": present and isinstance(value, list),
+            "is_object": present and isinstance(value, Mapping),
+            "is_string": present and isinstance(value, str),
+            "is_null": present and value is None}
+    return evidence
+
+
 def main(argv: Sequence[str] | None = None, *, now: datetime | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     source_sha = os.environ.get("GITHUB_SHA")
@@ -747,13 +772,16 @@ def main(argv: Sequence[str] | None = None, *, now: datetime | None = None) -> i
     except Exception:
         # No exception type, subprocess stderr, URI, or private values are emitted.
         result = _result(source_sha=source_sha, reason="diagnostic_error")
-    print(json.dumps(result, sort_keys=True))
-    return 0 if (
+    passed = (
         result["projection_passed"] is True and result["freshness_status"] == "fresh"
         and result["cloud_run_metadata_status"] == "read"
         and result["revision_equalities"]["configured_equals_ready"] is True
         and result["revision_equalities"]["report_equals_ready"] is True
-    ) else 1
+    )
+    if passed:
+        result["positions_source_evidence"] = _positions_source_evidence(report)
+    print(json.dumps(result, sort_keys=True))
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":
