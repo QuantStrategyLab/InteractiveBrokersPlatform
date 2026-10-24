@@ -158,6 +158,7 @@ _SOFT_ORDER_SKIP_REASONS = frozenset(
         "pending_sell_release",
         "negative_cash",
         "insufficient_buying_power",
+        "small_account_below_recommended_equity",
     }
 )
 _HARD_ORDER_SKIP_STATUS = frozenset(
@@ -313,6 +314,30 @@ def _build_order_batch_lines(execution_summary, *, translator) -> list[str]:
     return lines
 
 
+def _duplicates_pending_order_summary(text, execution_summary, *, translator) -> bool:
+    """Hide only an exact pending stock detail from the compact batch summary."""
+    for order in execution_summary.get("orders_pending") or ():
+        symbol = str(order.get("symbol") or "").strip().upper()
+        order_id = order.get("broker_order_id")
+        status = str(order.get("status") or "")
+        quantity = order.get("quantity")
+        if (not symbol or not order_id or not quantity
+                or status not in {"PendingSubmit", "ApiPending", "ApiPendingSubmit", "Submitted", "PreSubmitted"}):
+            continue
+        suffix = "⏳ " + translator("submitted", order_id=order_id, status=status)
+        if not text.endswith(suffix):
+            continue
+        prefix = text[:-len(suffix)].strip()
+        side = str(order.get("side") or "").strip().lower()
+        if side == "sell" and prefix == translator("market_sell", symbol=symbol, qty=format_quantity(quantity)):
+            return True
+        if side == "buy":
+            start = translator("limit_buy", symbol=symbol, qty=format_quantity(quantity), price="")
+            if prefix.startswith(start) and re.fullmatch(r"\d+(?:\.\d+)?", prefix[len(start):]):
+                return True
+    return False
+
+
 def _build_notification_trade_lines(
     trade_logs,
     *,
@@ -361,9 +386,14 @@ def _build_notification_trade_lines(
         text = _localize_notification_text(str(raw_line).strip(), translator=translator)
         if not text:
             continue
+        if _duplicates_pending_order_summary(text, execution_summary, translator=translator):
+            continue
         if text.startswith(("目标差异 ", "target_diff ", "DRY_RUN buy ", "DRY_RUN sell ")):
             continue
-        if text.startswith(("ℹ️", "📏")):
+        small_account_prefix = translator(
+            "buy_deferred_small_account", portfolio_equity="", min_recommended_equity="",
+        ).split("$", 1)[0]
+        if text.startswith(("ℹ️", "📏")) and not text.startswith(small_account_prefix):
             continue
         if text.startswith(("🧪 dry-run估价:", "🧪 dry-run pricing:")):
             continue
