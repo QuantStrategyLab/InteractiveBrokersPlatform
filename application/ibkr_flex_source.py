@@ -11,6 +11,7 @@ import hashlib
 import re
 from collections.abc import Collection
 from dataclasses import dataclass, field
+from datetime import date
 from xml.etree import ElementTree
 
 import requests
@@ -96,17 +97,27 @@ def _xml_root(body: bytes, *, endpoint: str) -> ElementTree.Element:
 
 def request_activity_flex_report(
     *, token: str, query_id: str, session: requests.Session | None = None,
+    from_date: str | None = None, to_date: str | None = None,
 ) -> FlexReportRequest:
     """SendRequest exactly once and retain its private reference in memory."""
 
     if not token or not re.fullmatch(r"[0-9]+", query_id):
         raise FlexSourceError("IBKR Flex token and numeric query ID are required")
+    params = {"t": token, "q": query_id, "v": "3"}
+    if from_date is not None or to_date is not None:
+        try:
+            start_date, end_date = date.fromisoformat(from_date), date.fromisoformat(to_date)
+            if start_date.isoformat() != from_date or end_date.isoformat() != to_date or not 0 <= (end_date - start_date).days <= 365:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise FlexSourceError("IBKR Flex date range is invalid") from None
+        params.update(fd=start_date.strftime("%Y%m%d"), td=end_date.strftime("%Y%m%d"))
     client = session or requests.Session()
     if session is None:
         client.trust_env = False
     try:
         send = _xml_root(
-            _read_response(client, "SendRequest", {"t": token, "q": query_id, "v": "3"}),
+            _read_response(client, "SendRequest", params),
             endpoint="SendRequest",
         )
         if send.tag != "FlexStatementResponse" or send.findtext("Status") != "Success":
