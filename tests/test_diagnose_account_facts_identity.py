@@ -1809,6 +1809,70 @@ def test_recovery_rejects_an_unapproved_encryption_recipient(monkeypatch, tmp_pa
     assert calls == [] and not (tmp_path / "primary-recovery-secrets.json").exists()
 
 
+@pytest.mark.parametrize("failure", [None, "restore_scope", "restore_prefix", "backup_hash", "original_head", "stale", "split"])
+def test_recovery_reuses_exact_current_tuple_in_existing_backup(monkeypatch, tmp_path, capsys, failure):
+    expected, report, metadata, old_hashes, calls = _recovery_case(monkeypatch, tmp_path)
+    current_revision = report["diagnostics"]["runtime_revision"]
+    expected["expected_runtime_revision"] = current_revision
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_RUNTIME_REVISION", current_revision)
+    next_revision = current_revision + "-native-cache"
+    report["diagnostics"]["runtime_revision"] = next_revision
+    report["runtime_release_receipt"]["runtime_revision"] = next_revision
+    metadata["status"].update({"latestReadyRevisionName": next_revision,
+        "latestCreatedRevisionName": next_revision,
+        "traffic": [{"revisionName": next_revision, "percent": 100}]})
+    result = _diagnose(report, expected, cloud_run_metadata=metadata)
+    preview = diagnostic._primary_source_binding_preview(report,
+        expected=expected, metadata=metadata, result=result)
+    hashes = {key: preview[key] for key in old_hashes}
+    monkeypatch.setenv("IBKR_PRIMARY_BACKUP_HASHES", json.dumps(hashes))
+    if failure in {"restore_scope", "restore_prefix", "backup_hash"}:
+        original_storage = backup.subprocess.run
+        body = original_storage(("gcloud", "storage", "cat")).stdout
+        saved = json.loads(body)
+        if failure == "restore_scope":
+            saved["old_expected"]["expected_account_selector"] = [PRIVATE + "-other"]
+        elif failure == "restore_prefix":
+            saved["old_expected"]["expected_report_prefix"] += "/other"
+        body = backup.canonical(saved)
+        uri = expected["expected_report_prefix"] + "/_primary_source_backups/" + backup.sha(body) + ".json"
+        monkeypatch.setenv("IBKR_PRIMARY_BACKUP_REFERENCE_HASHES", json.dumps({
+            "backup_object_sha256": backup.sha(body), "backup_reference_sha256": backup.sha(uri)}))
+        if failure == "backup_hash":
+            body += b" "
+        def changed_storage(args, **kwargs):
+            calls.append(args)
+            assert args[:3] in (("gcloud", "storage", "ls"), ("gcloud", "storage", "cat"))
+            return SimpleNamespace(returncode=0, stdout=(uri + "\n").encode() if args[2] == "ls" else body, stderr=b"")
+        monkeypatch.setattr(backup.subprocess, "run", changed_storage)
+    elif failure == "original_head":
+        monkeypatch.setenv("IBKR_PRIMARY_BACKUP_ORIGINAL_HEAD_SHA", "b" * 40)
+    elif failure == "stale":
+        report["started_at"] = report["finished_at"] = (NOW - timedelta(days=9)).isoformat()
+        report["summary"]["account_facts"]["observed_at"] = report["finished_at"]
+    elif failure == "split":
+        metadata["status"]["traffic"] = [{"revisionName": next_revision, "percent": 90},
+            {"revisionName": PRIVATE + "-other", "percent": 10}]
+    sealed = []
+    monkeypatch.setattr(backup, "_seal_secret", lambda _key, value: sealed.append(value) or b"synthetic-ciphertext")
+    code = backup.main(["--prepare-recovery-secrets"], now=NOW)
+    output = capsys.readouterr().out
+    assert PRIVATE not in output
+    if failure:
+        assert code == 1 and json.loads(output)["status"] == "blocked"
+        assert sealed == [] and not (tmp_path / "primary-recovery-secrets.json").exists()
+        assert all(args[:3] in (("gcloud", "storage", "ls"), ("gcloud", "storage", "cat")) for args in calls)
+        return
+    assert code == 0
+    assert json.loads(output)["expected_runtime_revision_sha256"] == backup.sha(next_revision)
+    assert sealed[0].decode() == next_revision
+    rotation = json.loads(sealed[1])
+    assert backup.sha(rotation["previous_source_binding_id"]) == hashes["configured_source_binding_id_sha256"]
+    assert backup.sha(rotation["next_source_binding_id"]) == hashes["candidate_source_binding_id_sha256"]
+    assert hashes["configured_source_binding_id_sha256"] == old_hashes["candidate_source_binding_id_sha256"]
+    assert all(args[:3] in (("gcloud", "storage", "ls"), ("gcloud", "storage", "cat")) for args in calls)
+
+
 @pytest.mark.parametrize("failure", ["reference", "stale", "split", "candidate_changed"])
 def test_recovery_sealing_preserves_exact_backup_and_live_guards(monkeypatch, tmp_path, capsys, failure):
     _expected, report, metadata, _hashes, _calls = _recovery_case(monkeypatch, tmp_path)
