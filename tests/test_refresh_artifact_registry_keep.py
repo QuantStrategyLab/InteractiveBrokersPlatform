@@ -93,6 +93,8 @@ class FakeGcloud:
             if args != expected or len(self.pending) != 6:
                 raise AssertionError("Only the complete policy set may be submitted; no mode argument")
             for row in self.pending:
+                if any(len(prefix) > 64 for prefix in row.get("condition", {}).get("versionNamePrefixes", [])):
+                    raise ValueError("invalid prefix longer than 64 characters")
                 source = self.repository["cleanupPolicies"][row["name"]]
                 source["action"] = row["action"]["type"].upper()
                 if "condition" in row:
@@ -109,6 +111,17 @@ def run(fake, *, candidate=None, rollback=None):
 
 
 class KeepGuardTests(unittest.TestCase):
+    def test_api_length_limit_keeps_every_full_required_digest_covered(self):
+        fake = FakeGcloud()
+        original = copy.deepcopy(fake.repository["cleanupPolicies"])
+        required = run(fake)
+        prefixes = fake.repository["cleanupPolicies"][KEEP_ID]["condition"]["versionNamePrefixes"]
+        self.assertTrue(all(len(prefix) <= 64 for prefix in prefixes))
+        self.assertTrue(all(any(digest.startswith(prefix) for prefix in prefixes) for digest in required))
+        self.assertTrue(all(prefix in prefixes for prefix in original[KEEP_ID]["condition"]["versionNamePrefixes"]))
+        self.assertEqual({k: v for k, v in fake.repository["cleanupPolicies"].items() if k != KEEP_ID},
+                         {k: v for k, v in original.items() if k != KEEP_ID})
+
     def test_older_than_newest_ten_serving_and_job_are_protected(self):
         for mode in (True, False):
             with self.subTest(mode=mode):
@@ -118,7 +131,7 @@ class KeepGuardTests(unittest.TestCase):
                 self.assertEqual(required, {"sha256:" + char * 64 for char in "bcde9"})
                 updated = fake.repository["cleanupPolicies"]
                 self.assertEqual(updated[KEEP_ID]["condition"]["versionNamePrefixes"],
-                                 ["sha256:" + "a" * 56, *sorted(required)])
+                                 ["sha256:" + "a" * 56, *(digest[:64] for digest in sorted(required))])
                 self.assertIs(fake.repository["cleanupPolicyDryRun"], mode)
                 self.assertEqual({k: v for k, v in updated.items() if k != KEEP_ID},
                                  {k: v for k, v in original.items() if k != KEEP_ID})

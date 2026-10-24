@@ -191,7 +191,10 @@ def merged_policies(current: dict[str, Any], required: set[str]) -> dict[str, An
         if not SHA.fullmatch(digest):
             raise ValueError("Required image digest is invalid")
         if not covers(prefixes, digest):
-            prefixes.append(digest)
+            # Artifact Registry limits each versionNamePrefix to 64 characters.
+            # Keep the longest valid prefix (sha256: plus 57 hex digits); the
+            # readback still checks coverage against the complete image digest.
+            prefixes.append(digest[:64])
     return merged
 
 
