@@ -1741,6 +1741,7 @@ def _recovery_case(monkeypatch, tmp_path):
     monkeypatch.setenv("IBKR_PRIMARY_BACKUP_ENABLED", "true")
     monkeypatch.setenv("IBKR_PRIMARY_BACKUP_INSPECT_ONLY", "false")
     key = base64.b64encode(b"k" * 32).decode()
+    monkeypatch.setattr(backup, "RECOVERY_PUBLIC_KEY_HASHES", {"ibkr": backup.sha(b"k" * 32), "qrs": backup.sha(b"k" * 32)})
     monkeypatch.setenv("IBKR_PRIMARY_RECOVERY_PUBLIC_KEYS", json.dumps({
         "ibkr": {"key_id": "123", "key": key}, "qrs": {"key_id": "456", "key": key}}))
     monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
@@ -1798,6 +1799,14 @@ def test_recovery_seals_only_exact_two_configuration_values(monkeypatch, tmp_pat
     assert backup.sha(rotation["next_source_binding_id"]) == hashes["candidate_source_binding_id_sha256"]
     assert all(args[2] != "cp" for args in calls)
     assert result["sealed_artifact_sha256"] == backup.sha(artifact)
+
+
+def test_recovery_rejects_an_unapproved_encryption_recipient(monkeypatch, tmp_path, capsys):
+    *_, calls = _recovery_case(monkeypatch, tmp_path)
+    monkeypatch.setattr(backup, "RECOVERY_PUBLIC_KEY_HASHES", {"ibkr": "0" * 64, "qrs": "0" * 64})
+    assert backup.main(["--recovery-preflight"], now=NOW) == 1
+    assert json.loads(capsys.readouterr().out)["reason"] == "recovery_inputs_invalid"
+    assert calls == [] and not (tmp_path / "primary-recovery-secrets.json").exists()
 
 
 @pytest.mark.parametrize("failure", ["reference", "stale", "split", "candidate_changed"])

@@ -17,6 +17,14 @@ from scripts import diagnose_account_facts_identity as diagnostic
 from scripts import publish_account_facts_from_report as publisher
 
 
+# Public-key fingerprints for this exact, one-account recovery. A changed key
+# must be verified again; dispatch input alone cannot select a new recipient.
+RECOVERY_PUBLIC_KEY_HASHES = {
+    "ibkr": "f21851de000673249e719140928423425306dc796823602d437311136739cfab",
+    "qrs": "33299c19153c537d0850dad3e2b1f5ee639d7927c70c3f71b18a1230a6340bb4",
+}
+
+
 class BackupError(ValueError):
     def __init__(self, reason, **details):
         super().__init__(reason)
@@ -235,11 +243,12 @@ def recovery_public_keys():
         keys = json.loads(os.environ.get("IBKR_PRIMARY_RECOVERY_PUBLIC_KEYS", ""))
         if not isinstance(keys, dict) or set(keys) != {"ibkr", "qrs"}:
             raise ValueError
-        for value in keys.values():
+        for label, value in keys.items():
             if (not isinstance(value, dict) or set(value) != {"key", "key_id"}
                     or not isinstance(value["key_id"], str)
                     or re.fullmatch(r"[0-9]+", value["key_id"]) is None
-                    or len(base64.b64decode(value["key"], validate=True)) != 32):
+                    or len(base64.b64decode(value["key"], validate=True)) != 32
+                    or sha(base64.b64decode(value["key"])) != RECOVERY_PUBLIC_KEY_HASHES[label]):
                 raise ValueError
         reference = json.loads(os.environ.get("IBKR_PRIMARY_BACKUP_REFERENCE_HASHES", ""))
         if (set(reference) != {"backup_object_sha256", "backup_reference_sha256"}
