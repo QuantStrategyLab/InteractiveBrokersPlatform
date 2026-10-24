@@ -1,0 +1,64 @@
+name: Prepare additional account-facts source recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Existing protected account slot; no account identity accepted as input
+        type: choice
+        required: true
+        options: [additional-1, additional-2, additional-3]
+      serving_revision_sha256:
+        description: Exact reviewed serving revision SHA256
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: account-facts-source-recovery
+  cancel-in-progress: false
+
+jobs:
+  seal:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      IBKR_ACCOUNT_FACTS_TARGET: ${{ inputs.target }}
+      EXPECTED_SERVING_REVISION_SHA256: ${{ inputs.serving_revision_sha256 }}
+      IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}
+      IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON }}
+      IBKR_ACCOUNT_FACTS_TARGET_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_TARGET_ID }}
+      IBKR_ACCOUNT_FACTS_REPORT_PREFIX: ${{ secrets.IBKR_ACCOUNT_FACTS_REPORT_PREFIX }}
+      ACCOUNT_FACTS_RECOVERY_PUBLIC_KEYS_JSON: ${{ secrets.ACCOUNT_FACTS_RECOVERY_PUBLIC_KEYS_JSON }}
+      CLOUD_RUN_REGION: ${{ secrets.ACCOUNT_FACTS_RECOVERY_CLOUD_REGION }}
+    steps:
+      - name: Require infrastructure variables
+        env:
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${IBKR_DEPLOY_SERVICE_ACCOUNT:-}" ]]; then
+            echo "::error::IBKR_DEPLOY_SERVICE_ACCOUNT is required" >&2
+            exit 2
+          fi
+      - uses: actions/checkout@v6
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.ACCOUNT_FACTS_RECOVERY_WIF_PROVIDER }}
+          service_account: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Install encryption tool only
+        run: python3 -m pip install --disable-pip-version-check --quiet --target "$RUNNER_TEMP/seal-python" PyNaCl==1.5.0
+      - name: Verify existing report and seal configuration and restore values
+        run: PYTHONPATH="$RUNNER_TEMP/seal-python:$GITHUB_WORKSPACE" python3 -m scripts.prepare_additional_account_facts_recovery
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: additional-recovery-sealed
+          path: ${{ runner.temp }}/additional-recovery-sealed.json
+          if-no-files-found: error
+          retention-days: 1
