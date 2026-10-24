@@ -26,7 +26,7 @@ from application.ibkr_period_return import (
     _TARGET as _PERIOD_TARGET,
     PeriodReturnError, build_ibkr_period_return, validate_period_return_scope,
 )
-from scripts.publish_account_facts_from_report import _NoRedirect
+from scripts.publish_account_facts_from_report import _NoRedirect, _additional_target_configs, _selector
 
 
 from scripts.console_config import console_base_url
@@ -78,7 +78,25 @@ def _config(env: Mapping[str, str]) -> dict[str, Any]:
         or any(config["sync_token"] == env.get(key) for key in _TOKEN_ALIASES)
     ):
         raise PeriodReturnError("configuration_invalid")
+    config["allowed_report_account_ids"] = _configured_report_accounts(env, config["expected_account_ids"])
     return config
+
+
+def _configured_report_accounts(env, expected):
+    raw = env.get("IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON")
+    primary = env.get("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON")
+    if not raw and not primary:
+        return None  # Standalone callers retain exact single-account scope.
+    try:
+        primary_ids = _selector(json.loads(primary))
+        configs = _additional_target_configs(raw)
+        allowed = (*primary_ids, *(c["account_selector"][0] for c in configs.values()))
+        if (len(primary_ids) != 1 or len(allowed) != len(configs) + 1 or len(set(allowed)) != len(allowed)
+                or any(not _PERIOD_ACCOUNT.fullmatch(a) for a in allowed) or not set(expected) <= set(allowed)):
+            raise ValueError
+    except Exception:
+        raise PeriodReturnError("report_account_scope_invalid") from None
+    return allowed
 
 
 def _preflight_result(env: Mapping[str, str], *, status: str, fields: Mapping[str, str]) -> dict[str, Any]:
@@ -93,6 +111,8 @@ def _preflight_result(env: Mapping[str, str], *, status: str, fields: Mapping[st
             f"{name}_sha256": hashlib.sha256(env[f"IBKR_PERIOD_RETURN_{name.upper()}"].encode()).hexdigest()
             for name in ("target_id", "source_binding_id")
         }
+        if env.get("IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON"):
+            result["approved_report_account_count"] = len(json.loads(env["IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON"])) + 1
     return result
 
 
@@ -140,8 +160,10 @@ def _configuration_preflight(env: Mapping[str, str]) -> dict[str, Any]:
         fields[name] = "invalid"
     try:
         _config(env)
-    except Exception:
+    except Exception as exc:
         status = "missing" if "missing" in fields.values() else "invalid"
+        if isinstance(exc, PeriodReturnError) and str(exc) == "report_account_scope_invalid":
+            fields["approved_report_account_scope"] = "invalid"
     else:
         status = "configuration_shape_valid"
     return _preflight_result(env, status=status, fields=fields)
@@ -188,9 +210,10 @@ def publish_period_return(payload: Mapping[str, Any], *, sync_token: str, expect
 def _collect_configured_ledger(config, session):
     """Generate once; only a provider-declared 1019 may re-read that handle."""
     accounts = tuple(config["expected_account_ids"])
+    allowed = config.get("allowed_report_account_ids")
     try:
         return import_activity_flex_ledger(token=config["flex_token"], query_id=config["query_id"],
-                                          expected_account_ids=accounts, session=session)
+                                          expected_account_ids=accounts, session=session, allowed_report_account_ids=allowed)
     except FlexReportPending as pending:
         request = pending.request
     # IBKR report generation is asynchronous. Do not drop the private handle
@@ -198,7 +221,8 @@ def _collect_configured_ledger(config, session):
     for _ in range(5):
         time.sleep(3)
         try:
-            return import_activity_flex_ledger_from_request(request, expected_account_ids=accounts, session=session)
+            return import_activity_flex_ledger_from_request(request, expected_account_ids=accounts, session=session,
+                                                         allowed_report_account_ids=allowed)
         except FlexReportPending:
             continue
     raise FlexReportPending(request)

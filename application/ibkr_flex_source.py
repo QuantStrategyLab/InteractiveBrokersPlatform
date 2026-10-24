@@ -163,8 +163,9 @@ def fetch_activity_flex_xml(*, token: str, query_id: str, session: requests.Sess
             client.close()
 
 
-def verify_report_accounts(report: FlexReport, *, expected_account_ids: Collection[str]) -> None:
-    """Reject missing, extra, or unscoped statement accounts before private use."""
+def verify_report_accounts(report: FlexReport, *, expected_account_ids: Collection[str],
+                           allowed_report_account_ids: Collection[str] | None = None) -> None:
+    """Verify report scope and intended targets; extra accounts need explicit approval."""
 
     expected = {account.strip() for account in expected_account_ids if account.strip()}
     if not expected or len(expected) != len(expected_account_ids):
@@ -174,8 +175,18 @@ def verify_report_accounts(report: FlexReport, *, expected_account_ids: Collecti
         raise FlexSourceError("IBKR Flex report is not an XML Activity report")
     statements = root.findall("./FlexStatements/FlexStatement")
     actual = [statement.get("accountId", "").strip() for statement in statements]
-    if not actual or any(not account for account in actual) or set(actual) != expected or len(actual) != len(set(actual)):
-        raise FlexSourceError("IBKR Flex report account scope does not match the target", endpoint="GetStatement", category="scope")
+    allowed = expected if allowed_report_account_ids is None else {a.strip() for a in allowed_report_account_ids if a.strip()}
+    valid_allowed = bool(allowed) and expected <= allowed and (
+        allowed_report_account_ids is None or len(allowed) == len(allowed_report_account_ids))
+    if (not valid_allowed or not actual or any(not account for account in actual)
+            or not expected <= set(actual) or not set(actual) <= allowed or len(actual) != len(set(actual))):
+        error = FlexSourceError("IBKR Flex report account scope does not match the target", endpoint="GetStatement", category="scope")
+        targets = [s for s in statements if s.get("accountId", "").strip() in expected]
+        error.safe_diagnostic.update(reported_account_count=len(actual), target_accounts_present=expected <= set(actual),
+                                     reported_unique_account_count=len(set(actual)), target_statement_count=len(targets),
+                                     target_period_count=len({(s.get("fromDate"), s.get("toDate")) for s in targets}),
+                                     unknown_account_count=len(set(actual) - allowed))
+        raise error
 
 
 def import_activity_flex_ledger(
@@ -184,6 +195,7 @@ def import_activity_flex_ledger(
     query_id: str,
     expected_account_ids: Collection[str],
     session: requests.Session | None = None,
+    allowed_report_account_ids: Collection[str] | None = None,
 ) -> dict[str, object]:
     """Fetch one report and parse its account-scoped ledger in memory.
 
@@ -197,18 +209,21 @@ def import_activity_flex_ledger(
     # boundary and the pure parser can continue importing FlexReport.
     from application.ibkr_flex_ledger import build_flex_ledger
 
-    return build_flex_ledger(report, expected_account_ids=expected_account_ids)
+    return build_flex_ledger(report, expected_account_ids=expected_account_ids,
+                            allowed_report_account_ids=allowed_report_account_ids)
 
 
 def import_activity_flex_ledger_from_request(
     request: FlexReportRequest, *, expected_account_ids: Collection[str],
     session: requests.Session | None = None,
+    allowed_report_account_ids: Collection[str] | None = None,
 ) -> dict[str, object]:
     """Explicitly collect the original handle once and verify its account scope."""
     report = collect_activity_flex_xml(request, session=session)
     from application.ibkr_flex_ledger import build_flex_ledger
 
-    return build_flex_ledger(report, expected_account_ids=expected_account_ids)
+    return build_flex_ledger(report, expected_account_ids=expected_account_ids,
+                            allowed_report_account_ids=allowed_report_account_ids)
 
 
 def diagnose_activity_flex_ledger(
