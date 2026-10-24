@@ -13,6 +13,7 @@ from application.runtime_broker_adapters import build_runtime_broker_adapters
 from quant_platform_kit.common.execution_state import ExecutionMarkerStore
 
 from application.rebalance_service import (
+    _record_execution_marker,
     _resolve_reconciliation_mode,
     _should_suppress_noop_notification,
     _should_record_execution_marker,
@@ -222,6 +223,57 @@ def test_execution_marker_preserves_legacy_trade_log_fallback_with_minimal_summa
         execution_summary={"adapter_metadata": {"source": "legacy"}},
         config=config,
     )
+
+
+def test_execution_marker_write_failure_is_alerted_and_logged(capsys):
+    store = Mock(spec=("record_marker",))
+    store.record_marker.side_effect = PermissionError("synthetic marker failure")
+    config = IBKRRebalanceConfig(
+        translator=_build_test_translator(),
+        separator="---",
+        execution_dedup_enabled=True,
+        execution_state_store=store,
+    )
+    alerts = []
+
+    _record_execution_marker(
+        config=config,
+        marker_key="synthetic-marker-key",
+        signal_metadata={"trade_date": "2026-04-01", "effective_date": "2026-04-02"},
+        trade_logs=("order submitted",),
+        execution_summary={"action_done": True},
+        send_notification=alerts.append,
+    )
+
+    assert alerts
+    assert "IBKR execution marker write failed" in alerts[0]
+    assert "synthetic-marker-key" in alerts[0]
+    assert "PermissionError: synthetic marker failure" in alerts[0]
+    output = capsys.readouterr().out
+    assert "Execution marker write failed" in output
+    assert "Traceback (most recent call last)" in output
+
+
+def test_execution_marker_alert_failure_does_not_escape(capsys):
+    store = Mock(spec=("record_marker",))
+    store.record_marker.side_effect = PermissionError("synthetic marker failure")
+    config = IBKRRebalanceConfig(
+        translator=_build_test_translator(),
+        separator="---",
+        execution_dedup_enabled=True,
+        execution_state_store=store,
+    )
+
+    _record_execution_marker(
+        config=config,
+        marker_key="synthetic-marker-key",
+        signal_metadata={"trade_date": "2026-04-01"},
+        trade_logs=("order submitted",),
+        execution_summary={"action_done": True},
+        send_notification=Mock(side_effect=RuntimeError("synthetic alert failure")),
+    )
+
+    assert "execution_marker_alert_failed" in capsys.readouterr().out
 
 
 def test_build_dashboard_localizes_strategy_details():

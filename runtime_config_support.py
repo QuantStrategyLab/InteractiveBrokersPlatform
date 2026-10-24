@@ -27,31 +27,10 @@ from quant_platform_kit.common.runtime_target import (
     resolve_runtime_target_from_env,
 )
 from quant_platform_kit.common.live_continuity import runtime_target_permits_standard_execution
-try:
-    from quant_platform_kit.common.broker_costs import (
-        BrokerCostProfile,
-        minimum_economic_order_notional_usd,
-    )
-except ImportError:  # pragma: no cover - compatibility with older pinned shared wheels
-    @dataclass(frozen=True)
-    class BrokerCostProfile:
-        fixed_order_fee_usd: float = 0.0
-        minimum_order_fee_usd: float = 0.0
-        max_fixed_fee_bps: float = 100.0
-        explicit_min_order_notional_usd: float = 0.0
-
-    def minimum_economic_order_notional_usd(profile: BrokerCostProfile | None) -> float:
-        if profile is None:
-            return 0.0
-        explicit_floor = max(0.0, float(profile.explicit_min_order_notional_usd or 0.0))
-        fee_floor = max(
-            max(0.0, float(profile.fixed_order_fee_usd or 0.0)),
-            max(0.0, float(profile.minimum_order_fee_usd or 0.0)),
-        )
-        max_fee_bps = max(0.0, float(profile.max_fixed_fee_bps or 0.0))
-        if fee_floor <= 0.0 or max_fee_bps <= 0.0:
-            return explicit_floor
-        return max(explicit_floor, fee_floor / (max_fee_bps / 10_000.0))
+from quant_platform_kit.common.broker_costs import (
+    BrokerCostProfile,
+    minimum_economic_order_notional_usd,
+)
 from strategy_registry import (
     IBKR_PLATFORM,
     STRATEGY_CATALOG,
