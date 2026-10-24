@@ -222,7 +222,7 @@ def test_static_workflow_explicit_main_mode_is_exclusive_without_docker():
     step = workflow.split("      - name: Compare fixed public source files in the exact serving image\n", 1)[1]
     assert step == ("        if: ${{ inputs.static_source_only && !inputs.serving_source_metadata_only && !inputs.registry_source_metadata_only }}\n"
                     "        env:\n          GH_TOKEN: ${{ github.token }}\n"
-                    "        run: python3 scripts/diagnose_image_static_source.py --static-source-only\n")
+                    "        run: python3 -m scripts.diagnose_image_static_source --static-source-only\n")
     assert "!inputs.static_source_only" in workflow and "!(inputs.static_source_only &&" in workflow
     assert "docker " not in step and "default: true" not in workflow
 
