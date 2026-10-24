@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
 import os
 import re
@@ -10,9 +11,18 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
+from pathlib import Path
 
 from scripts import diagnose_account_facts_identity as diagnostic
 from scripts import publish_account_facts_from_report as publisher
+
+
+# Public-key fingerprints for this exact, one-account recovery. A changed key
+# must be verified again; dispatch input alone cannot select a new recipient.
+RECOVERY_PUBLIC_KEY_HASHES = {
+    "ibkr": "f21851de000673249e719140928423425306dc796823602d437311136739cfab",
+    "qrs": "33299c19153c537d0850dad3e2b1f5ee639d7927c70c3f71b18a1230a6340bb4",
+}
 
 
 class BackupError(ValueError):
@@ -225,15 +235,106 @@ def inspect_backup(expected, hashes):
         "publication_authority_granted": False}
 
 
+def recovery_public_keys():
+    try:
+        if (os.environ.get("IBKR_PRIMARY_BACKUP_ENABLED") != "true"
+                or os.environ.get("IBKR_PRIMARY_BACKUP_INSPECT_ONLY") == "true"):
+            raise ValueError
+        keys = json.loads(os.environ.get("IBKR_PRIMARY_RECOVERY_PUBLIC_KEYS", ""))
+        if not isinstance(keys, dict) or set(keys) != {"ibkr", "qrs"}:
+            raise ValueError
+        for label, value in keys.items():
+            if (not isinstance(value, dict) or set(value) != {"key", "key_id"}
+                    or not isinstance(value["key_id"], str)
+                    or re.fullmatch(r"[0-9]+", value["key_id"]) is None
+                    or len(base64.b64decode(value["key"], validate=True)) != 32
+                    or sha(base64.b64decode(value["key"])) != RECOVERY_PUBLIC_KEY_HASHES[label]):
+                raise ValueError
+        reference = json.loads(os.environ.get("IBKR_PRIMARY_BACKUP_REFERENCE_HASHES", ""))
+        if (set(reference) != {"backup_object_sha256", "backup_reference_sha256"}
+                or any(not isinstance(v, str) or re.fullmatch(r"[a-f0-9]{64}", v) is None
+                       for v in reference.values())
+                or re.fullmatch(r"[a-f0-9]{40}", os.environ.get("IBKR_PRIMARY_BACKUP_ORIGINAL_HEAD_SHA", "")) is None):
+            raise ValueError
+    except Exception:
+        raise BackupError("recovery_inputs_invalid") from None
+    return keys, reference
+
+
+def _seal_secret(key, value):
+    from nacl import encoding, public
+
+    public_key = public.PublicKey(key.encode(), encoding.Base64Encoder())
+    return public.SealedBox(public_key).encrypt(value)
+
+
+def prepare_recovery_secrets(expected, hashes, *, now):
+    # No credential or plaintext config is exported. The approved client supplies
+    # the two destination public keys; only GitHub can decrypt the sealed values.
+    keys, reference = recovery_public_keys()
+    inspected = inspect_backup(expected, hashes)
+    if (inspected.get("status") != "backup_verified"
+            or any(inspected.get(k) != v for k, v in reference.items())):
+        raise BackupError("recovery_exact_backup_not_verified")
+    uri = expected["expected_report_prefix"].rstrip("/") + "/_primary_source_backups/" + reference["backup_object_sha256"] + ".json"
+    read = subprocess.run(("gcloud", "storage", "cat", uri, "--project", expected["expected_project_id"]),
+        capture_output=True, check=False, timeout=60)
+    if read.returncode or sha(read.stdout) != reference["backup_object_sha256"]:
+        raise BackupError("recovery_exact_backup_not_verified")
+    saved = json.loads(read.stdout)
+    _, current_body = prepare_backup(expected, hashes, now=now)
+    current = json.loads(current_body)
+    if canonical(saved["candidate"]) != canonical(current["candidate"]):
+        raise BackupError("recovery_candidate_changed")
+    identity = {field: expected[f"expected_{field}"] for field in (
+        "project_id", "service_name", "account_scope", "account_selector", "deployment_selector",
+    )}
+    rotation = {"target_id": expected["target_id"],
+        "previous_source_binding_id": publisher._bound_source_id(**identity,
+            runtime_revision=expected["expected_runtime_revision"]),
+        "next_source_binding_id": saved["candidate"]["source_binding_id"]}
+    secrets = []
+    values = (("ibkr", "QuantStrategyLab/InteractiveBrokersPlatform", None,
+               "IBKR_ACCOUNT_FACTS_RUNTIME_REVISION", saved["candidate"]["runtime_revision"].encode()),
+              ("qrs", "QuantStrategyLab/QuantRuntimeSettings", "runtime-strategy-switch",
+               "IBKR_ACCOUNT_FACTS_SOURCE_ROTATION_JSON", canonical(rotation)))
+    for key_name, repository, environment, name, value in values:
+        key = keys[key_name]
+        encrypted = _seal_secret(key["key"], value)
+        secrets.append({"repository": repository, "environment": environment,
+            "name": name, "key_id": key["key_id"],
+            "public_key_sha256": sha(base64.b64decode(key["key"])),
+            "encrypted_value": base64.b64encode(encrypted).decode("ascii")})
+    payload = {"schema_version": "ibkr.primary_recovery_sealed_secrets.v1",
+        "comparison_sha256": sha(canonical(hashes)), **reference,
+        "expected_runtime_revision_sha256": sha(saved["candidate"]["runtime_revision"]),
+        "report_name": current["source_report_uri"].rsplit("/", 1)[-1], "secrets": secrets}
+    output = Path(os.environ["RUNNER_TEMP"]) / "primary-recovery-secrets.json"
+    body = canonical(payload)
+    with output.open("xb") as handle:
+        os.chmod(output, 0o600)
+        handle.write(body)
+    return {"status": "recovery_secrets_sealed", "comparison_sha256": payload["comparison_sha256"],
+        "sealed_artifact_sha256": sha(body), "expected_runtime_revision_sha256": payload["expected_runtime_revision_sha256"],
+        "secret_count": 2, "plaintext_exported": False, "remote_configuration_writes": False,
+        "publication_authority_granted": False}
+
+
 def main(argv=None, *, now=None):
     args = list(sys.argv[1:] if argv is None else argv)
     try:
-        if args not in ([], ["--preflight"], ["--inspect-only"]):
+        if args not in ([], ["--preflight"], ["--inspect-only"],
+                ["--recovery-preflight"], ["--prepare-recovery-secrets"]):
             raise BackupError("arguments_invalid")
         if os.environ.get("IBKR_PRIMARY_BACKUP_REFERENCE_HASHES") and not args:
             raise BackupError("backup_reference_inspection_required")
         expected, hashes = resolve_context()
-        if args == ["--preflight"]:
+        if args == ["--recovery-preflight"]:
+            recovery_public_keys()
+            result = {"status": "recovery_preflight_verified"}
+        elif args == ["--prepare-recovery-secrets"]:
+            result = prepare_recovery_secrets(expected, hashes, now=now or datetime.now(timezone.utc))
+        elif args == ["--preflight"]:
             result = {"status": "preflight_verified"}
         elif args == ["--inspect-only"]:
             result = inspect_backup(expected, hashes)
@@ -254,7 +355,8 @@ def main(argv=None, *, now=None):
         if "hashes" in locals():
             result["comparison_sha256"] = sha(canonical(hashes))
     print(json.dumps(result, sort_keys=True))
-    return 0 if result["status"] in {"preflight_verified", "backup_verified", "backup_absent"} else 1
+    return 0 if result["status"] in {"preflight_verified", "backup_verified", "backup_absent",
+        "recovery_preflight_verified", "recovery_secrets_sealed"} else 1
 
 
 if __name__ == "__main__":

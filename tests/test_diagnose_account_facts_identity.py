@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -505,7 +507,10 @@ def test_workflow_is_main_manual_only_and_has_no_write_or_notification_channel()
     assert "schedule:" not in workflow
     assert "SYNC_TOKEN" not in workflow
     assert "TELEGRAM" not in workflow
-    assert "upload-artifact" not in workflow
+    assert workflow.count("uses: actions/upload-artifact@") == 1
+    artifact = workflow.split("      - name: Preserve only the standard GitHub sealed recovery values\n", 1)[1].split("\n      - name:", 1)[0]
+    assert "path: ${{ runner.temp }}/primary-recovery-secrets.json" in artifact
+    assert "if-no-files-found: ignore" in artifact and "retention-days: 1" in artifact
     assert "contents: read" in workflow
     assert workflow.index("scripts.diagnose_account_facts_identity --preflight") < workflow.index("google-github-actions/auth")
     assert all(target in workflow for target in ("primary-live", "additional-1", "additional-2", "additional-3"))
@@ -1623,7 +1628,7 @@ def test_primary_backup_workflow_is_explicit_primary_only_and_preflights_before_
     workflow = Path(".github/workflows/account-facts-identity-diagnose.yml").read_text()
     assert "inputs.backup_primary_source_state && fromJSON('[\"primary-live\"]')" in workflow
     assert "!(inputs.backup_primary_source_state && (inputs.serving_source_metadata_only" in workflow
-    preflight = workflow.index("run: python3 -m scripts.backup_primary_account_facts_state --preflight")
+    preflight = workflow.index("python3 -m scripts.backup_primary_account_facts_state --preflight")
     assert preflight < workflow.index("uses: google-github-actions/auth@v3")
     assert "if: ${{ !inputs.backup_primary_source_state && !inputs.serving_source_metadata_only" in workflow
     assert "schedule:" not in workflow and "actions: write" not in workflow
@@ -1723,3 +1728,106 @@ def test_primary_backup_destination_proof_cannot_enable_upload(monkeypatch, caps
     monkeypatch.setenv("IBKR_PRIMARY_BACKUP_REFERENCE_HASHES", "nonempty")
     assert backup.main([]) == 1
     assert json.loads(capsys.readouterr().out)["reason"] == "backup_reference_inspection_required"
+
+
+def _recovery_case(monkeypatch, tmp_path):
+    import base64
+    expected, report, metadata, hashes = _backup_case(monkeypatch)
+    monkeypatch.setenv("GITHUB_SHA", "a" * 40)
+    uri, body = backup.prepare_backup(expected, hashes, now=NOW)
+    reference = {"backup_object_sha256": backup.sha(body), "backup_reference_sha256": backup.sha(uri)}
+    monkeypatch.setenv("IBKR_PRIMARY_BACKUP_REFERENCE_HASHES", json.dumps(reference))
+    monkeypatch.setenv("IBKR_PRIMARY_BACKUP_ORIGINAL_HEAD_SHA", "a" * 40)
+    monkeypatch.setenv("IBKR_PRIMARY_BACKUP_ENABLED", "true")
+    monkeypatch.setenv("IBKR_PRIMARY_BACKUP_INSPECT_ONLY", "false")
+    key = base64.b64encode(b"k" * 32).decode()
+    monkeypatch.setattr(backup, "RECOVERY_PUBLIC_KEY_HASHES", {"ibkr": backup.sha(b"k" * 32), "qrs": backup.sha(b"k" * 32)})
+    monkeypatch.setenv("IBKR_PRIMARY_RECOVERY_PUBLIC_KEYS", json.dumps({
+        "ibkr": {"key_id": "123", "key": key}, "qrs": {"key_id": "456", "key": key}}))
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    calls = []
+    def storage(args, **kwargs):
+        calls.append(args)
+        assert args[:3] in (("gcloud", "storage", "ls"), ("gcloud", "storage", "cat"))
+        value = (uri + "\n").encode() if args[2] == "ls" else body
+        return SimpleNamespace(returncode=0, stdout=value, stderr=b"")
+    monkeypatch.setattr(backup.subprocess, "run", storage)
+    return expected, report, metadata, hashes, calls
+
+
+@pytest.mark.parametrize("field,value", [
+    ("IBKR_PRIMARY_BACKUP_ENABLED", "false"),
+    ("IBKR_PRIMARY_BACKUP_INSPECT_ONLY", "true"),
+    ("IBKR_PRIMARY_RECOVERY_PUBLIC_KEYS", "{}"),
+    ("IBKR_PRIMARY_BACKUP_REFERENCE_HASHES", "{}"),
+    ("IBKR_PRIMARY_BACKUP_ORIGINAL_HEAD_SHA", ""),
+])
+def test_recovery_preflight_rejects_invalid_mode_without_cloud(monkeypatch, tmp_path, capsys, field, value):
+    *_, calls = _recovery_case(monkeypatch, tmp_path)
+    monkeypatch.setenv(field, value)
+    assert backup.main(["--recovery-preflight"], now=NOW) == 1
+    assert json.loads(capsys.readouterr().out)["reason"] == "recovery_inputs_invalid"
+    assert calls == []
+
+
+def test_recovery_seals_only_exact_two_configuration_values(monkeypatch, tmp_path, capsys):
+    expected, report, _metadata, hashes, calls = _recovery_case(monkeypatch, tmp_path)
+    values = []
+    def seal(key, value):
+        values.append(value)
+        return b"synthetic-ciphertext-" + backup.sha(value).encode()
+    monkeypatch.setattr(backup, "_seal_secret", seal)
+    assert backup.main(["--prepare-recovery-secrets"], now=NOW) == 0
+    output = capsys.readouterr().out
+    assert PRIVATE not in output and "synthetic-ciphertext" not in output
+    result = json.loads(output)
+    assert result["status"] == "recovery_secrets_sealed"
+    assert result["secret_count"] == 2 and result["remote_configuration_writes"] is False
+    artifact = (tmp_path / "primary-recovery-secrets.json").read_bytes()
+    payload = json.loads(artifact)
+    assert PRIVATE.encode() not in artifact and b"12345.6700" not in artifact
+    assert payload["comparison_sha256"] == backup.sha(backup.canonical(hashes))
+    assert payload["secrets"][0]["name"] == "IBKR_ACCOUNT_FACTS_RUNTIME_REVISION"
+    assert payload["secrets"][0]["repository"] == "QuantStrategyLab/InteractiveBrokersPlatform"
+    assert payload["secrets"][1]["environment"] == "runtime-strategy-switch"
+    assert payload["secrets"][1]["name"] == "IBKR_ACCOUNT_FACTS_SOURCE_ROTATION_JSON"
+    assert values[0].decode() == report["diagnostics"]["runtime_revision"]
+    rotation = json.loads(values[1])
+    assert set(rotation) == {"target_id", "previous_source_binding_id", "next_source_binding_id"}
+    assert rotation["target_id"] == expected["target_id"]
+    assert backup.sha(rotation["previous_source_binding_id"]) == hashes["configured_source_binding_id_sha256"]
+    assert backup.sha(rotation["next_source_binding_id"]) == hashes["candidate_source_binding_id_sha256"]
+    assert all(args[2] != "cp" for args in calls)
+    assert result["sealed_artifact_sha256"] == backup.sha(artifact)
+
+
+def test_recovery_rejects_an_unapproved_encryption_recipient(monkeypatch, tmp_path, capsys):
+    *_, calls = _recovery_case(monkeypatch, tmp_path)
+    monkeypatch.setattr(backup, "RECOVERY_PUBLIC_KEY_HASHES", {"ibkr": "0" * 64, "qrs": "0" * 64})
+    assert backup.main(["--recovery-preflight"], now=NOW) == 1
+    assert json.loads(capsys.readouterr().out)["reason"] == "recovery_inputs_invalid"
+    assert calls == [] and not (tmp_path / "primary-recovery-secrets.json").exists()
+
+
+@pytest.mark.parametrize("failure", ["reference", "stale", "split", "candidate_changed"])
+def test_recovery_sealing_preserves_exact_backup_and_live_guards(monkeypatch, tmp_path, capsys, failure):
+    _expected, report, metadata, _hashes, _calls = _recovery_case(monkeypatch, tmp_path)
+    if failure == "reference":
+        ref = json.loads(os.environ["IBKR_PRIMARY_BACKUP_REFERENCE_HASHES"])
+        ref["backup_object_sha256"] = "f" * 64
+        monkeypatch.setenv("IBKR_PRIMARY_BACKUP_REFERENCE_HASHES", json.dumps(ref))
+    elif failure == "stale":
+        report["started_at"] = report["finished_at"] = (NOW - timedelta(days=9)).isoformat()
+        report["summary"]["account_facts"]["observed_at"] = report["finished_at"]
+    elif failure == "split":
+        metadata["status"]["traffic"] = [{"revisionName": report["diagnostics"]["runtime_revision"], "percent": 90},
+            {"revisionName": PRIVATE + "-other", "percent": 10}]
+    else:
+        monkeypatch.setattr(backup, "prepare_backup", lambda *_args, **_kwargs: ("unused", backup.canonical({"candidate": {}})))
+    monkeypatch.setattr(backup, "_seal_secret", lambda *_: pytest.fail("guard must stop before sealing"))
+    assert backup.main(["--prepare-recovery-secrets"], now=NOW) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "blocked"
+    assert result["reason"] == {"reference": "backup_reference_mismatch", "stale": "backup_comparison_changed",
+        "split": "backup_comparison_changed", "candidate_changed": "recovery_candidate_changed"}[failure]
+    assert not (tmp_path / "primary-recovery-secrets.json").exists()
