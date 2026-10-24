@@ -36,6 +36,23 @@ def test_updates_only_selected_revision_and_retains_exact_restore(case):
     assert rotation["previous_source_binding_id"] != rotation["next_source_binding_id"]
 
 
+def test_failed_report_returns_fixed_diagnostic_fields_without_private_data(case):
+    case["report"]["summary"]["account_facts"]["account_ids"] = ["U00000999"]
+    with pytest.raises(recovery.RecoveryError) as raised:
+        recovery.prepare(**case)
+    details = raised.value.details
+    assert details["projection_reason"] == "account_identity_mismatch"
+    assert details["account_facts_stages"]["account_identity"] != "verified"
+    assert PRIVATE not in json.dumps(details) and "U00000999" not in json.dumps(details)
+
+
+def test_legacy_report_without_optional_receipt_uses_existing_provenance_guards(case):
+    case["report"].pop("runtime_release_receipt")
+    original, updated, rotation = recovery.prepare(**case)
+    assert updated["additional-2"]["runtime_revision"] != original["additional-2"]["runtime_revision"]
+    assert rotation["next_source_binding_id"] != rotation["previous_source_binding_id"]
+
+
 @pytest.mark.parametrize("change", ["slot", "hash", "split", "metadata_service", "report_revision",
                                     "receipt", "account", "scope", "stale", "configured", "duplicate"])
 def test_rejects_changed_identity_stale_or_nonserving_evidence(case, change):
