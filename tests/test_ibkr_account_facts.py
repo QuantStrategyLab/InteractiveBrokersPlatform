@@ -4,6 +4,25 @@ from types import SimpleNamespace
 from application.account_facts import build_ibkr_account_facts
 
 
+def test_confirmed_empty_inventory_is_not_lost_or_inferred_from_unknown():
+    snapshot = _snapshot(
+        observed_at=datetime(2026, 9, 30, 12, tzinfo=timezone.utc),
+        cash_balances=({"account_id": "DU123", "currency": "USD", "CashBalance": 10},),
+        broker_stock_positions_empty=True,
+    )
+    snapshot.positions = ()
+    facts = build_ibkr_account_facts(snapshot)
+    assert facts["broker_reported_positions"] == []
+    assert facts["broker_reported_positions_complete"] is True
+    assert facts["broker_reported_positions_scope"] == "stocks_only"
+    for flag in (None, False, "true"):
+        snapshot.metadata["broker_stock_positions_empty"] = flag
+        assert "broker_reported_positions" not in build_ibkr_account_facts(snapshot)
+    snapshot.metadata["broker_stock_positions_empty"] = True
+    snapshot.positions = None
+    assert "broker_reported_positions" not in build_ibkr_account_facts(snapshot)
+
+
 def _snapshot(*, observed_at=None, account_ids=("DU123",), cash_balances=(), **metadata):
     return SimpleNamespace(
         as_of=observed_at,

@@ -28,6 +28,28 @@ class SnapshotIB:
         return self._account_values
 
 
+def test_only_completed_empty_native_query_can_confirm_empty_stock_inventory():
+    class CompletedEmptyIB(SnapshotIB):
+        def reqPositions(self):
+            return []
+
+    def snapshot(ib):
+        return fetch_portfolio_snapshot(ib, account_ids=("DU123",), wait_seconds=0)
+
+    values = _usd_account_values("DU123", 10, 10)
+    confirmed = snapshot(CompletedEmptyIB([], [], values))
+    assert confirmed.metadata.get("broker_stock_positions_empty") is True
+    unknown = snapshot(SnapshotIB([], [], values))
+    assert unknown.metadata.get("broker_stock_positions_empty") is not True
+
+    class FailedQueryIB(CompletedEmptyIB):
+        def reqPositions(self):
+            raise TimeoutError("synthetic query did not complete")
+
+    with pytest.raises(TimeoutError):
+        snapshot(FailedQueryIB([], [], values))
+
+
 def _stock_position(account, symbol, con_id, quantity, average_cost, currency="USD"):
     return SimpleNamespace(
         account=account,

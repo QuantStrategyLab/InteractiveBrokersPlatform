@@ -63,13 +63,16 @@ def build_broker_reported_positions(snapshot: Any) -> list[dict[str, Any]] | Non
     """Project STK positions the broker already returned; None means omit.
 
     IBKR snapshots only carry ``secType=STK`` rows (options live in metadata),
-    so the scope label is ``stocks_only``. Empty or malformed sets return None
-    so an unknown inventory is never written as an empty list.
+    so the scope label is ``stocks_only``. An empty set requires the explicit
+    completed broker-query evidence; unknown or malformed inventories are omitted.
     """
     try:
         positions = getattr(snapshot, "positions", None)
-        if not isinstance(positions, (tuple, list)) or not positions:
+        if not isinstance(positions, (tuple, list)):
             return None
+        if not positions:
+            metadata = getattr(snapshot, "metadata", None)
+            return [] if isinstance(metadata, Mapping) and metadata.get("broker_stock_positions_empty") is True else None
         if len(positions) > _MAX_POSITIONS:
             return None
         rows: list[dict[str, Any]] = []
@@ -174,7 +177,9 @@ def build_ibkr_account_facts(snapshot: Any) -> dict[str, Any]:
     }
     # Optional, fail-soft: omitted entirely when unknown or malformed.
     positions = build_broker_reported_positions(snapshot)
-    if positions:
+    if positions is not None:
         facts["broker_reported_positions"] = positions
         facts["broker_reported_positions_scope"] = POSITIONS_SCOPE
+        if not positions:
+            facts["broker_reported_positions_complete"] = True
     return facts
