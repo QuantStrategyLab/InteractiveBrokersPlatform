@@ -198,3 +198,106 @@ def test_single_service_selection_requires_one_inventory_match(monkeypatch, case
         env["CLOUD_RUN_SERVICE"] = "unit-service"
     with pytest.raises(ValueError, match="configured_service"):
         planner.build_sync_plan(env)
+
+
+def image_only_fixture(monkeypatch):
+    from scripts import build_cloud_run_env_sync_plan as planner
+    from scripts import verify_deployed_runtime_target_admission as admission
+
+    serving = frozen_target()
+    serving["scheduler"] = {"precheck_time": "0 8 * * 1-5"}
+    serving["live_continuity"]["baseline_target_sha256"] = runtime_target_fingerprint(serving)
+    desired = copy.deepcopy(serving)
+    desired["scheduler"]["precheck_time"] = "5 8 * * 1-5"
+    container = {"env": [
+        {"name": "RUNTIME_TARGET_JSON", "value": json.dumps(serving)},
+        {"name": "STRATEGY_PROFILE", "value": "tqqq_growth_income"},
+        {"name": "IBKR_DRY_RUN_ONLY", "value": "false"},
+    ]}
+    service = {"metadata": {"name": "unit-service"},
+        "spec": {"template": {"spec": {"containers": [copy.deepcopy(container)]}}},
+        "status": {"traffic": [{"revisionName": "unit-service-current", "percent": 100}]}}
+    revision = {"metadata": {"name": "unit-service-current"},
+        "spec": {"containers": [copy.deepcopy(container)]}}
+    calls = []
+
+    def describe(**kwargs):
+        calls.append(("service-read", kwargs["service"]))
+        return copy.deepcopy(service)
+
+    def run(command):
+        calls.append(tuple(command))
+        assert command[:4] == ["gcloud", "run", "revisions", "describe"]
+        assert command[4] == "unit-service-current"
+        return json.dumps(revision)
+
+    monkeypatch.setattr(admission, "_describe_service", describe)
+    monkeypatch.setattr(admission, "_run", run)
+    monkeypatch.setattr(planner, "_load_platform_config", lambda env: {})
+    monkeypatch.setattr(planner, "get_platform_profile_status_matrix", lambda: [
+        {"canonical_profile": "tqqq_growth_income", "eligible": True, "enabled": True},
+    ])
+    env = {
+        "WORKFLOW_TARGET": "configured", "INPUT_CONFIGURED_SERVICE": "unit-service",
+        "INPUT_DEPLOY_IMAGE": "true", "INPUT_SYNC_ENV": "false",
+        "INPUT_APPROVE_TRAFFIC_SHIFT": "false", "INPUT_APPROVE_SCHEDULER_SYNC": "false",
+        "GCP_PROJECT_ID": "unit-project", "CLOUD_RUN_REGION": "unit-region",
+        "CLOUD_RUN_SERVICE_TARGETS_JSON": json.dumps([
+            {"service_name": "unit-service", "runtime_target": desired},
+        ]),
+    }
+    return planner, env, service, revision, serving, calls
+
+
+def test_image_only_staging_preserves_serving_baseline_without_rebasing_desired(monkeypatch):
+    planner, env, service, revision, serving, calls = image_only_fixture(monkeypatch)
+    before = copy.deepcopy((env, service, revision))
+    plan = planner.build_sync_plan(env)
+    assert plan["mode"] == "per_service"
+    assert len(plan["targets"]) == 1
+    assert plan["targets"][0]["service_name"] == "unit-service"
+    assert json.loads(plan["targets"][0]["env"]["RUNTIME_TARGET_JSON"]) == serving
+    assert (env, service, revision) == before
+    assert calls and all("update" not in call and "update-traffic" not in call for call in calls)
+
+
+@pytest.mark.parametrize("flag", [
+    "INPUT_DEPLOY_IMAGE", "INPUT_SYNC_ENV", "INPUT_APPROVE_TRAFFIC_SHIFT",
+    "INPUT_APPROVE_SCHEDULER_SYNC",
+])
+def test_other_deployment_modes_still_reject_stale_desired_baseline(monkeypatch, flag):
+    planner, env, _, _, _, calls = image_only_fixture(monkeypatch)
+    env[flag] = "false" if flag == "INPUT_DEPLOY_IMAGE" else "true"
+    with pytest.raises(ValueError, match="continuity"):
+        planner.build_sync_plan(env)
+    assert calls == []
+
+
+@pytest.mark.parametrize("case", ["split_traffic", "template_drift", "stale_serving"])
+def test_image_only_staging_rejects_unverified_incumbent(monkeypatch, case):
+    planner, env, service, revision, _, _ = image_only_fixture(monkeypatch)
+    if case == "split_traffic":
+        service["status"]["traffic"] = [
+            {"revisionName": "unit-service-current", "percent": 50},
+            {"revisionName": "unit-service-other", "percent": 50},
+        ]
+    elif case == "template_drift":
+        service["spec"]["template"]["spec"]["containers"][0]["env"].append(
+            {"name": "IBKR_FORCE_RUN", "value": "true"},
+        )
+    else:
+        for container in [service["spec"]["template"]["spec"]["containers"][0], revision["spec"]["containers"][0]]:
+            target = json.loads(container["env"][0]["value"])
+            target["strategy_release"]["strategy_revision"] = "b" * 40
+            container["env"][0]["value"] = json.dumps(target)
+    with pytest.raises(ValueError):
+        planner.build_sync_plan(env)
+
+
+def test_image_only_staging_retains_current_strategy_eligibility(monkeypatch):
+    planner, env, _, _, _, _ = image_only_fixture(monkeypatch)
+    monkeypatch.setattr(planner, "get_platform_profile_status_matrix", lambda: [
+        {"canonical_profile": "tqqq_growth_income", "eligible": False, "enabled": True},
+    ])
+    with pytest.raises(ValueError):
+        planner.build_sync_plan(env)
