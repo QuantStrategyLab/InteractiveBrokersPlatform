@@ -7,7 +7,6 @@ import hashlib
 import os
 import re
 import sys
-import time
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime, timezone
 from typing import Any
@@ -17,7 +16,8 @@ from urllib.request import ProxyHandler, Request, build_opener
 import requests
 
 from application.ibkr_flex_source import (
-    FlexReportPending, FlexSourceError, import_activity_flex_ledger, import_activity_flex_ledger_from_request,
+    FlexReportPending, FlexSourceError, collect_pending_activity_flex_ledger,
+    import_activity_flex_ledger, import_activity_flex_ledger_from_request,
     request_activity_flex_report,
 )
 from application.ibkr_period_return import (
@@ -233,14 +233,8 @@ def _collect_configured_ledger(config, session):
         request = pending.request
     # IBKR report generation is asynchronous. Do not drop the private handle
     # on an ordinary "generating" response or replace it with SendRequest.
-    for _ in range(5):
-        time.sleep(3)
-        try:
-            return import_activity_flex_ledger_from_request(request, expected_account_ids=accounts, session=session,
-                                                         allowed_report_account_ids=allowed)
-        except FlexReportPending:
-            continue
-    raise FlexReportPending(request)
+    return collect_pending_activity_flex_ledger(request, expected_account_ids=accounts,
+        session=session, allowed_report_account_ids=allowed)
 
 
 def main(argv: Sequence[str] = ()) -> int:

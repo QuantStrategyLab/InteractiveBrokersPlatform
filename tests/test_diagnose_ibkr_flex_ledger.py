@@ -11,6 +11,8 @@ def _set_input(monkeypatch, *, enabled="true"):
     monkeypatch.setenv("IBKR_FLEX_TOKEN", "synthetic-token")
     monkeypatch.setenv("IBKR_FLEX_QUERY_ID", "12345")
     monkeypatch.setenv("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", '["DU0000000"]')
+    monkeypatch.delenv("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", raising=False)
+    monkeypatch.delenv("IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON", raising=False)
 
 
 def test_cli_is_disabled_by_default_and_does_not_fetch(monkeypatch, capsys):

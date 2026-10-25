@@ -964,7 +964,7 @@ def claim_cycle(tmp_path, monkeypatch, strategy_module):
     }
     ib = SimpleNamespace(
         isConnected=lambda: True, disconnect=lambda: None,
-        openTrades=lambda: [], fills=lambda: [],
+        openTrades=lambda: [], reqAllOpenOrders=lambda: [], fills=lambda: [],
         accountValues=lambda: [SimpleNamespace(tag="CashBalance", currency="USD", value="1000", account="DU00000003")],
     )
     config = IBKRRebalanceConfig(

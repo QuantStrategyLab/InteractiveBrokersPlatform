@@ -27,6 +27,10 @@ from application.account_new_risk_gate_support import (
 )
 from application.paper_execution_admission import evaluate_ibkr_paper_execution_admission
 from application.execution_kernel_adapter import consult_t1_live_submit
+from application.broker_reconciliation import (
+    IBKRReconciliationReadError,
+    load_read_only_open_trades,
+)
 from quant_platform_kit.common.cash_sweep import should_sell_cash_sweep_to_fund_whole_share_buy
 from quant_platform_kit.common.small_account_compatibility import (
     apply_small_account_cash_compatibility,
@@ -303,17 +307,10 @@ class _PendingOrderObservation:
 
 
 def _iter_open_orders(ib) -> list[Any]:
-    open_trades = getattr(ib, "openTrades", None)
-    if callable(open_trades):
-        rows = open_trades()
-    else:
-        open_orders = getattr(ib, "openOrders", None)
-        if not callable(open_orders):
-            raise _PendingOrdersUnavailableError("open-order enumeration unavailable")
-        rows = open_orders()
-    if rows is None:
-        raise _PendingOrdersUnavailableError("open-order snapshot unavailable")
-    return list(rows)
+    try:
+        return list(load_read_only_open_trades(ib))
+    except IBKRReconciliationReadError:
+        raise _PendingOrdersUnavailableError("all-client open-order snapshot unavailable") from None
 
 
 def _extract_open_order_symbol(order_like: Any) -> str | None:
@@ -378,6 +375,12 @@ def _observe_pending_orders(ib, symbols: set[str], *, account_ids=None) -> _Pend
             raise _PendingOrdersUnavailableError("open-order symbol unavailable")
         if symbol in symbols:
             pending.append(symbol)
+        else:
+            # Another security in the same account can still consume cash or
+            # collateral. This snapshot does not establish its remaining cost,
+            # fees or whether a cash tag already nets that obligation. Reuse
+            # the BUY gate instead of guessing an amount and deducting twice.
+            cash_risk_unknown = True
     return _PendingOrderObservation(tuple(sorted(dict.fromkeys(pending))), cash_risk_unknown)
 
 
@@ -1802,6 +1805,20 @@ def execute_rebalance(
             has_buy_plan = True
             break
         quantity_zero_symbols.append(symbol)
+
+    if pending_observation.cash_risk_unknown and has_buy_plan and not has_sell_plan:
+        # No qualified reduction will be submitted. Reject before taking the
+        # daily execution lock, so a later complete observation can be checked
+        # normally without clearing any execution or reconciliation marker.
+        reason = "account_new_risk_gate"
+        execution_summary["execution_status"] = "blocked"
+        execution_summary["no_op_reason"] = reason
+        execution_summary["account_new_risk_buy_blocked"] = True
+        execution_summary["account_new_risk_block_reason"] = reason
+        execution_summary["account_new_risk_reason_codes"] = list(account_new_risk_reason_codes)
+        execution_summary["skipped_reasons"].append(reason)
+        trade_logs.append(translator("buy_deferred", detail="[Account new-risk gate] PENDING_ORDER_CASH_RISK_UNKNOWN"))
+        return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
 
     if not has_sell_plan and not has_buy_plan:
         reason = "target_diff_below_threshold"

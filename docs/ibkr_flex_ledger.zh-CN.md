@@ -15,7 +15,7 @@ code，不含账户标识、估值、费用、出入金金额或 TWR 数值。�
 `IBKR_FLEX_DIAGNOSTIC_ENABLED=true` 才会尝试一次 fetch。启用时需由获批云端 Secret/受保护
 配置注入 `IBKR_FLEX_TOKEN`、`IBKR_FLEX_QUERY_ID` 和
 `IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON`；未启用或缺项时不联网，只输出固定缺项状态。异常也只
-输出固定错误码，不打印 SDK 异常正文。此任务未配置 Flex Secret/Query/账户范围，也未创建或
+输出固定错误码，不打印 SDK 异常正文。本模块不配置 Flex Secret/Query/账户范围，也不自动
 调用 workflow；禁止把 Gateway 凭据当 Flex token。诊断脚本 stdout 仅是脱敏状态报告。
 
 ## 输入与账户合同
@@ -33,13 +33,50 @@ safe_status = diagnose_activity_flex_ledger(
 期间收益，不是策略归因；若页面要显示期间收益，消费者合同必须区分券商原生TWR和本地计算
 收益，不能用净值差额或入金代替。
 
-`ledger` 是私有完整账本；需要写入时只能由获批云端调用者使用现有私有报告位置。当前没有
-已批准的 Flex 专用持久化目标或云端 workflow，本地实现不会新建存储、打印完整账本或模拟
-真实导入。
+`ledger` 是私有完整账本；需要写入时只能由获批云端调用者使用现有私有报告位置。该模块
+不自行选择持久化目标，不会新建存储、打印完整账本或模拟真实导入。具体的只读与发布
+调用入口见下文；它们的准备不等于已经运行或获得了账户数据资格。
+
+### 独立只读诊断与同请求领取
+
+继续使用原 `scripts.diagnose_ibkr_flex_ledger`，不经过期间收益发布器，也不要求 QRS
+target、source binding 或同步令牌。无参数调用保持原来的一次生成、一次领取；默认
+`IBKR_FLEX_DIAGNOSTIC_ENABLED` 未精确设为 `true` 时仍不请求。
+
+- `--preflight` 只核本进程的三项 Flex 配置、唯一目标、可选的两项受保护范围配置及预期期间；不创建 HTTP
+  session、不生成报表、不发布。成功只表示形状合格，不证明凭据、报表范围或金融事实有效。
+- `--read-once` 仍须显式开启上述诊断开关。只生成一次请求，若 GetStatement 返回1019，
+  使用原 handle 每隔3秒最多再领取5次；其他错误立即结束。publisher 与诊断复用同一小收集
+  函数，发布器原来的有限领取和一次 POST 行为保持。耗尽后只给 `pending`，不存私有 handle、
+  不重新生成，也不能靠重跑替换尚未确认的请求。
+- `IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON` 必须含一个原生账户。未提供账户事实的 primary
+  selector 和 additional targets 两项配置时保持 exact-only；若只提供一项、配置无效、
+  账户重复或唯一目标不等于 primary，均在 HTTP 前拒绝。两项既有受保护配置都完整有效时，
+  才向 source 显式透传 primary 与三项 additional 的批准集合，仍只解析 primary。
+  纯校验提取到 `application.account_facts_target_config`，原 facts publisher 保留函数与
+  异常 facade；诊断不导入发布器、QRS 地址或同步令牌。未知、重复或未批准报表账户继续
+  拒绝，不能从报表反推授权、改变 Query、换凭据或自动放宽。
+- 如提供 `IBKR_FLEX_EXPECTED_PERIOD_FROM` / `IBKR_FLEX_EXPECTED_PERIOD_TO`，两者必须
+  同时为规范 ISO 日期且起点不晚于终点，返回的报告期间必须精确匹配。它们只用于核对，
+  不修改 Query、不向 SendRequest 添加日期、不推断今天或昨日为批准窗口。未提供时保留
+  报告自身期间。未知命令参数、坏范围或坏期间均在请求前拒绝，输出不回显输入内容。
+
+`.github/workflows/diagnose-ibkr-flex-readonly.yml` 只准备手动入口：仅本仓 main、
+第一次运行且明确 `read_once=true` 才执行，默认 false；沿用三项既有 Flex Secrets 及
+原 `IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON` / `IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON`
+两项已有 Secrets，仅在 preflight/read 步骤注入，安装阶段没有凭据。先 preflight，再调用
+原 CLI。与发布器使用同一 concurrency group，避免同一 Query 的这两条
+入口并行；没有发布步骤、QRS 令牌、云身份、券商下单、调度或原始 artifact。本工程包不
+dispatch，不修改任何实际开关或 Secrets。
+
+stdout 仍为固定 `ibkr_flex_diagnostic.v1`。`available` 仅表示目标报表有合格原生期间
+TWR，不是账户收费计划、当前已交收资金、证券/碎股权限、全部资金义务或配置资格通过。
+原始 XML、金额、账户、token、ReferenceCode 和异常正文均不输出；此处没有补出风险数字。
 
 `build_flex_ledger` 先复用 `ibkr_flex_source.verify_report_accounts` 复核账户范围，
-再解析。任何账户缺失、多余、重复或整个报表不含唯一 `FlexStatement` 都会抛
-`FlexSourceError`，不返回部分事实。`type` 存在但不是 `AF` 时同样拒绝。
+再解析。目标账户必须恰有一份 `FlexStatement`，其他报表账户必须在显式允许集合内；
+账户缺失、未准入、多余或重复时抛 `FlexSourceError`，不返回部分事实。
+`type` 存在但不是 `AF` 时同样拒绝。
 
 本合同针对**独立 USD 账户**：`currency` 只有在报表自身的基础币种（
 `AccountInformation.currency`）就是 USD 时才声明为 `"USD"`，否则为 `None` 并记
@@ -75,8 +112,9 @@ PYTHONPATH=. python -m scripts.publish_ibkr_flex_period_return
 | `IBKR_ACCOUNT_FACTS_SYNC_TOKEN` | 复用已有 IBKR 私有同步令牌；不得等同 Flex 或其他来源/控制令牌 |
 
 目标、绑定、scope、账户与回执 key 必须来自独立受保护配置，不能从导入报表反推授权。
-全部配置有效后才调用已有 `import_activity_flex_ledger`：一次 SendRequest、一次 GetStatement，
-没有自动重试或等待轮询。未启用或缺配置时不发 Flex HTTP；无合格原生 TWR 时不发同步 POST。
+全部配置有效后才调用已有 `import_activity_flex_ledger`：一次 SendRequest，普通路径一次
+GetStatement；只有1019才进入上述同 handle 的有限领取。其他错误不重试，未启用或缺配置时
+不发 Flex HTTP；无合格原生 TWR 时不发同步 POST。
 
 ### 生成中与显式领取
 
@@ -94,8 +132,10 @@ IBKR [GetStatement 合同](https://www.interactivebrokers.com/docs/web-api/api-r
 
 已有 `fetch_activity_flex_xml` / importer 仍保持一次生成、一次领取的调用合同；1019 的安全
 异常现在保留原句柄，批准调用者可在同一进程捕获并保留它。不要打印字段、序列化句柄或把它
-写入日志、artifact、命令参数。发布 CLI 在 1019 输出固定 `flex_pending`、退出 1，零 POST；
-诊断 CLI 输出 `pending/flex_generation_pending`。两者都不等待、不再次领取、不重新生成。
+写入日志、artifact、命令参数。底层 fetch/importer 和无参数诊断遇 1019 即返回 pending；
+发布 CLI 与显式 `--read-once` 诊断才复用上述同 handle 有限领取。用尽后发布 CLI 输出
+固定 `flex_pending`、退出 1、零 POST，诊断输出 `pending/flex_generation_pending`。
+这些路径都不重新生成请求或自动跨进程重跑。
 
 ### 手动云端入口与尚未满足条件
 

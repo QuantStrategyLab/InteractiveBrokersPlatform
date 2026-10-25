@@ -5,9 +5,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
+from collections.abc import Sequence
 from datetime import date
 from typing import Any
 
+from application.account_facts_target_config import account_selector, parse_additional_target_configs
 from application.ibkr_flex_source import FlexReportPending, diagnose_activity_flex_ledger
 
 
@@ -16,6 +19,8 @@ _ENABLE_ENV = "IBKR_FLEX_DIAGNOSTIC_ENABLED"
 _TOKEN_ENV = "IBKR_FLEX_TOKEN"
 _QUERY_ID_ENV = "IBKR_FLEX_QUERY_ID"
 _ACCOUNT_SCOPE_ENV = "IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON"
+_PERIOD_FROM_ENV = "IBKR_FLEX_EXPECTED_PERIOD_FROM"
+_PERIOD_TO_ENV = "IBKR_FLEX_EXPECTED_PERIOD_TO"
 _SAFE_MISSING_CODES = frozenset({
     "native_twr_unavailable",
     "return_method_not_wired",
@@ -54,16 +59,46 @@ def _expected_account_ids() -> tuple[str, ...] | None:
         return None
     try:
         value = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
+    except (ValueError, TypeError, RecursionError):
         return None
     if (
         not isinstance(value, list)
-        or not value
-        or any(not isinstance(item, str) or not item or item != item.strip() for item in value)
-        or len(value) != len(set(value))
+        or len(value) != 1
+        or not isinstance(value[0], str)
+        or re.fullmatch(r"(?:U|DU)[0-9]+", value[0]) is None
     ):
         return None
     return tuple(value)
+
+
+def _expected_period() -> dict[str, str] | None:
+    start, end = os.environ.get(_PERIOD_FROM_ENV), os.environ.get(_PERIOD_TO_ENV)
+    if start in (None, "") and end in (None, ""):
+        return None
+    try:
+        first, last = date.fromisoformat(start), date.fromisoformat(end)
+        if first.isoformat() != start or last.isoformat() != end or first > last:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise ValueError("expected_period_invalid") from None
+    return {"from": start, "to": end}
+
+
+def _approved_report_accounts(expected: tuple[str, ...] | None) -> tuple[str, ...] | None:
+    """Use only complete protected configuration; absent configuration is exact-only."""
+    primary_raw = os.environ.get("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON")
+    additional_raw = os.environ.get("IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON")
+    if not primary_raw and not additional_raw:
+        return None
+    if not primary_raw or not additional_raw:
+        raise ValueError("approved_report_scope_invalid")
+    primary = account_selector(json.loads(primary_raw))
+    configs = parse_additional_target_configs(additional_raw)
+    allowed = (*primary, *(config["account_selector"][0] for config in configs.values()))
+    if (len(primary) != 1 or primary != expected or len(allowed) != len(set(allowed))
+            or any(re.fullmatch(r"(?:U|DU)[0-9]+", account) is None for account in allowed)):
+        raise ValueError("approved_report_scope_invalid")
+    return allowed
 
 
 def _validated_report(value: object) -> dict[str, Any]:
@@ -103,6 +138,9 @@ def _validated_report(value: object) -> dict[str, Any]:
     method = raw_method if raw_method == "native_ibkr_twr" else None
     raw_status = value.get("status")
     status = raw_status if raw_status in {"available", "incomplete"} else "error"
+    if status == "available" and (method is None or currency is None
+            or safe_from is None or safe_to is None or safe_from > safe_to):
+        return _empty_report(status="error", missing=["flex_diagnostic_result_invalid"])
     return {
         "schema_version": _SCHEMA_VERSION,
         "status": status,
@@ -117,8 +155,12 @@ def _validated_report(value: object) -> dict[str, Any]:
     }
 
 
-def main() -> int:
-    if os.environ.get(_ENABLE_ENV) != "true":
+def main(argv: Sequence[str] = ()) -> int:
+    args = tuple(argv)
+    if args not in ((), ("--preflight",), ("--read-once",)):
+        print(json.dumps(_empty_report(status="incomplete", missing=["arguments_invalid"]), sort_keys=True))
+        return 2
+    if args != ("--preflight",) and os.environ.get(_ENABLE_ENV) != "true":
         print(json.dumps(_empty_report(status="disabled", missing=["flex_import_not_enabled"]), sort_keys=True))
         return 2
 
@@ -128,21 +170,40 @@ def main() -> int:
     account_ids = _expected_account_ids()
     if not token:
         missing.append("flex_token_missing")
+    elif token != token.strip() or any(ord(char) < 0x20 or ord(char) == 0x7f for char in token):
+        missing.append("flex_token_invalid")
     if not re.fullmatch(r"[0-9]+", query_id):
         missing.append("flex_query_id_missing_or_invalid")
     if account_ids is None:
         missing.append("expected_account_scope_missing_or_invalid")
+    try:
+        expected_period = _expected_period()
+    except ValueError:
+        missing.append("expected_period_invalid")
+    try:
+        allowed_accounts = _approved_report_accounts(account_ids)
+    except (ValueError, TypeError, RecursionError):
+        missing.append("approved_report_scope_invalid")
     if missing:
         print(json.dumps(_empty_report(status="incomplete", missing=missing), sort_keys=True))
         return 2
+    if args == ("--preflight",):
+        print(json.dumps(_empty_report(status="configuration_shape_valid", missing=[]), sort_keys=True))
+        return 0
 
     try:
+        kwargs = {"collect_pending": True} if args == ("--read-once",) else {}
+        if allowed_accounts is not None:
+            kwargs["allowed_report_account_ids"] = allowed_accounts
         result = diagnose_activity_flex_ledger(
             token=token,
             query_id=query_id,
             expected_account_ids=account_ids,
+            **kwargs,
         )
         report = _validated_report(result)
+        if expected_period is not None and report["period"] != expected_period:
+            report = _empty_report(status="error", missing=["expected_period_mismatch"])
     except FlexReportPending:
         report = _empty_report(status="pending", missing=["flex_generation_pending"])
         print(json.dumps(report, sort_keys=True))
@@ -159,4 +220,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import time
 from collections.abc import Collection
 from dataclasses import dataclass, field
 from datetime import date
@@ -237,21 +238,55 @@ def import_activity_flex_ledger_from_request(
                             allowed_report_account_ids=allowed_report_account_ids)
 
 
+def collect_pending_activity_flex_ledger(
+    request: FlexReportRequest, *, expected_account_ids: Collection[str],
+    session: requests.Session | None = None,
+    allowed_report_account_ids: Collection[str] | None = None,
+) -> dict[str, object]:
+    """Collect an already-pending handle at most five more times, on 1019 only.
+
+    This never generates a replacement or persists the private handle. A caller
+    may enter here only after GetStatement declared this request pending.
+    """
+    for _ in range(5):
+        time.sleep(3)
+        try:
+            return import_activity_flex_ledger_from_request(request,
+                expected_account_ids=expected_account_ids, session=session,
+                allowed_report_account_ids=allowed_report_account_ids)
+        except FlexReportPending as pending:
+            if pending.request != request:
+                raise FlexSourceError("IBKR Flex pending handle changed") from None
+    raise FlexReportPending(request)
+
+
 def diagnose_activity_flex_ledger(
     *,
     token: str,
     query_id: str,
     expected_account_ids: Collection[str],
     session: requests.Session | None = None,
+    allowed_report_account_ids: Collection[str] | None = None,
+    collect_pending: bool = False,
 ) -> dict[str, object]:
-    """Import once and return only the redacted Flex status report."""
+    """Read one target and return fixed status; bounded collection is opt-in."""
 
-    ledger = import_activity_flex_ledger(
-        token=token,
-        query_id=query_id,
-        expected_account_ids=expected_account_ids,
-        session=session,
-    )
+    expected = tuple(expected_account_ids)
+    allowed = tuple(allowed_report_account_ids) if allowed_report_account_ids is not None else expected
+    if (len(expected) != 1 or any(not isinstance(a, str) or not re.fullmatch(r"(?:U|DU)[0-9]+", a)
+            for a in (*expected, *allowed)) or not allowed or len(set(allowed)) != len(allowed)
+            or not set(expected) <= set(allowed) or type(collect_pending) is not bool):
+        raise FlexSourceError("IBKR Flex diagnostic account scope is invalid")
+    try:
+        ledger = import_activity_flex_ledger(token=token, query_id=query_id,
+            expected_account_ids=expected, session=session,
+            allowed_report_account_ids=allowed_report_account_ids)
+    except FlexReportPending as pending:
+        if not collect_pending:
+            raise
+        ledger = collect_pending_activity_flex_ledger(pending.request,
+            expected_account_ids=expected, session=session,
+            allowed_report_account_ids=allowed_report_account_ids)
     from application.ibkr_flex_ledger import build_flex_ledger_diagnostic
 
     return build_flex_ledger_diagnostic(ledger)

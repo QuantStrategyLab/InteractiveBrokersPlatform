@@ -472,3 +472,293 @@ def test_account_fee_features_are_not_approximated_by_fixed_bps(tmp_path, field)
     assert 'UNSUPPORTED_FEE_RULE' in out['gaps'], out
     assert not list(tmp_path.rglob('*.json'))
     assert_unarmed(out)
+
+
+def cash_policy_fixture(ratio=.1, floor=5., strategy_ratio=0.):
+    args = fixture()
+    runtime, _, p, _, _, _ = args
+    runtime.runtime_settings.reserved_cash_ratio = ratio
+    runtime.runtime_settings.reserved_cash_floor_usd = floor
+    runtime.merged_runtime_config['execution_cash_reserve_ratio'] = strategy_ratio
+    runtime.runtime_settings.runtime_target = replace(runtime.runtime_settings.runtime_target,
+        strategy_release=replace(runtime.runtime_settings.runtime_target.strategy_release,
+            config_sha256=digest(runtime.merged_runtime_config)))
+    runtime = replace(runtime, cash_reserve_ratio=max(ratio, strategy_ratio), cash_reserve_floor_usd=floor)
+    p['account_contract'].pop('reserved_cash')  # Derived by the existing cash bridge.
+    p['account_contract']['other_cash_obligations'] = '3'
+    p['cash_evidence']['reservations'] = [dict(id='separate-obligation', kind='OTHER', amount='3')]
+    evidence = {key: deepcopy(p['cash_evidence'][key]) for key in (
+        'synthetic', 'account_id', 'scope_ref', 'currency', 'source', 'source_version',
+        'observed_at', 'available_at', 'max_age_seconds', 'valid_from', 'valid_until')}
+    evidence.update(read_status='RESOLVED', config_sha256=digest(runtime.merged_runtime_config),
+        resolved_cash_policy=dict(cash_only=True, reserved_cash_ratio=ratio, reserved_cash_floor_usd=floor),
+        reservation_id='account-cash-policy')
+    return (runtime, *args[1:]), evidence
+
+
+def seed_cash_policy(root, args, evidence):
+    initialized = call(root, args, 'initialize', initialization=args[-1], cash_policy_evidence=evidence)
+    assert initialized['readback_verified'], initialized
+    return (*args[:4], initialized['next_binding'], args[-1])
+
+
+@pytest.mark.parametrize('mode', ['simple', 'advanced'])
+@pytest.mark.parametrize('level', ['conservative', 'balanced', 'growth'])
+@pytest.mark.parametrize(('ratio', 'floor', 'strategy_ratio', 'expected'), [
+    (.1, 0., 0., 10.), (0., 10., 0., 10.), (.1, 5., 0., 10.),
+    (.05, 10., 0., 10.), (.1, 10., 0., 10.), (0., 0., 0., 0.), (.02, 0., .1, 10.),
+])
+def test_cash_policy_generates_one_reserve_for_all_levels_modes_and_preflight(
+        tmp_path, mode, level, ratio, floor, strategy_ratio, expected):
+    args, evidence = cash_policy_fixture(ratio, floor, strategy_ratio)
+    original = deepcopy(args[2])
+    args = seed_cash_policy(tmp_path, args, evidence)
+    request = request_fixture(mode); request['level'] = level
+    saved = call(tmp_path, args, request=request, event_id='cash-policy', cash_policy_evidence=evidence)
+    assert saved['status'] == 'SETTINGS_DRAFT_PERSISTED', saved
+    preview = saved['cash_policy_preview']
+    assert float(preview['required_reserve_usd']) == expected
+    assert preview['spendable_cash'] == 99 - expected - 3
+    assert preview['source_attestation_only'] is True
+    quantity = saved['preview']['allocation_preview']['requested_preview']['quantity_preview']
+    for scenario in quantity['scenarios']:
+        assert scenario['spendable_cash'] == 99 - expected - 3
+        assert scenario['gross_buy_plus_fees'] <= scenario['spendable_cash']
+        assert scenario['sale_proceeds_used_for_funding'] is False
+    args = (*args[:4], saved['next_binding'], args[-1])
+    read = call(tmp_path, args, 'preflight', request=request, cash_policy_evidence=evidence,
+        expected_artifact_sha256=saved['artifact_receipt']['artifact_sha256'],
+        consumption_cutoff_utc='2000-01-04T12:01:30Z')
+    assert read['status'] == 'READY_OFFLINE_SETTINGS_PREFLIGHT', read
+    assert read['cash_policy_preview'] == preview
+    assert args[2] == original
+    assert_unarmed(saved); assert_unarmed(read)
+
+
+def test_prepared_packet_and_explicit_same_reserve_are_idempotent_not_added(tmp_path):
+    from application.tqqq_offline_risk import _cash_policy_packet
+    args, evidence = cash_policy_fixture()
+    p = args[2]
+    p['account_contract']['reserved_cash'] = '10'
+    p['cash_evidence']['reservations'].append(dict(id=evidence['reservation_id'], kind='RESERVE', amount='10'))
+    prepared, first = _cash_policy_packet(args[0], args[1], p, evidence)
+    repeated, second = _cash_policy_packet(args[0], args[1], prepared, evidence)
+    assert first == second and prepared == repeated
+    assert len(repeated['cash_evidence']['reservations']) == 2
+    assert repeated['account_contract']['reserved_cash'] == '10'
+    assert repeated['account_contract']['settled_cash'] == '99'
+    assert first['spendable_cash'] == 86.
+    args = seed_cash_policy(tmp_path, (args[0], args[1], prepared, *args[3:]), evidence)
+    saved = call(tmp_path, args, event_id='once', cash_policy_evidence=evidence)
+    assert saved['status'] == 'SETTINGS_DRAFT_PERSISTED', saved
+
+
+def test_advanced_cash_ratio_constraint_does_not_deduct_the_reserve_again(tmp_path):
+    args, evidence = cash_policy_fixture()
+    args = seed_cash_policy(tmp_path, args, evidence)
+    request = request_fixture('advanced', cash_floor_ratio=.9)
+    saved = call(tmp_path, args, request=request, event_id='advanced-cash', cash_policy_evidence=evidence)
+    assert saved['status'] == 'SETTINGS_DRAFT_PERSISTED', saved
+    assert saved['cash_policy_preview']['spendable_cash'] == 86.
+    rows = saved['preview']['allocation_preview']['requested_preview']['quantity_preview']['scenarios']
+    for row in rows:
+        assert row['spendable_cash'] == 86.
+        assert sum(row['post_fee_security_weights'].values()) <= .1
+    assert_unarmed(saved)
+
+
+@pytest.mark.parametrize('change', ['read_failed', 'unknown', 'missing_floor', 'policy', 'config',
+    'account', 'currency', 'stale', 'real', 'boolean', 'reservation_id', 'same_amount_other_id',
+    'conflicting_amount', 'contract_zero', 'duplicate', 'other_collision', 'not_disjoint', 'pending'])
+def test_cash_policy_source_or_overlap_gaps_never_write_or_override(tmp_path, change):
+    args, evidence = cash_policy_fixture()
+    p = args[2]
+    if change in ('read_failed', 'unknown'): evidence['read_status'] = change.upper()
+    elif change == 'missing_floor': evidence['resolved_cash_policy'].pop('reserved_cash_floor_usd')
+    elif change == 'policy': evidence['resolved_cash_policy']['reserved_cash_ratio'] = .2
+    elif change == 'config': evidence['config_sha256'] = 'f' * 64
+    elif change == 'account': evidence['account_id'] = 'OTHER'
+    elif change == 'currency': evidence['currency'] = 'HKD'
+    elif change == 'stale': evidence['observed_at'] = '1999-01-01T00:00:00Z'
+    elif change == 'real': evidence['synthetic'] = False
+    elif change == 'boolean': evidence['resolved_cash_policy']['reserved_cash_floor_usd'] = True
+    elif change == 'reservation_id': evidence['reservation_id'] = ''
+    elif change in ('same_amount_other_id', 'conflicting_amount', 'duplicate', 'other_collision'):
+        p['cash_evidence']['reservations'].append(dict(
+            id='unmapped-reserve' if change == 'same_amount_other_id' else evidence['reservation_id'],
+            kind='OTHER' if change == 'other_collision' else 'RESERVE',
+            amount='9' if change == 'conflicting_amount' else '10'))
+        if change == 'duplicate': p['cash_evidence']['reservations'].append(deepcopy(p['cash_evidence']['reservations'][-1]))
+    elif change == 'contract_zero': p['account_contract']['reserved_cash'] = '0'
+    elif change == 'not_disjoint': p['cash_evidence']['reservations_disjoint'] = False
+    elif change == 'pending': p['cash_evidence']['pending_state'] = 'UNKNOWN'
+    before = deepcopy(p)
+    out = call(tmp_path, args, 'initialize', initialization=args[-1], cash_policy_evidence=evidence)
+    assert out['gaps'], out
+    assert out['draft_settings'] is None and not out['readback_verified']
+    assert not list(tmp_path.rglob('*.json'))
+    assert p == before
+    assert_unarmed(out)
+
+
+def test_cash_policy_insufficient_cash_is_a_gap_not_a_forced_sale(tmp_path):
+    args, evidence = cash_policy_fixture(0., 100.)
+    out = call(tmp_path, args, 'initialize', initialization=args[-1], cash_policy_evidence=evidence)
+    assert 'CASH_CONTRACT_INCONSISTENT' in out['gaps'], out
+    assert out['cash_policy_preview']['spendable_cash'] is None
+    assert not list(tmp_path.rglob('*.json'))
+    assert_unarmed(out)
+
+
+def test_cash_preview_remains_diagnostic_when_risk_policy_is_missing(tmp_path):
+    args, evidence = cash_policy_fixture()
+    args[0].runtime_settings.trusted_runtime_risk_policy = None
+    out = call(tmp_path, args, 'initialize', initialization=args[-1], cash_policy_evidence=evidence)
+    assert out['gaps'] == ['TQQQ_EVENT_POLICY_MISSING'], out
+    assert out['cash_policy_preview']['status'] == 'READY_SYNTHETIC_CASH_POLICY_PREVIEW'
+    assert out['cash_policy_preview']['spendable_cash'] == 86.
+    assert not list(tmp_path.rglob('*.json'))
+    assert_unarmed(out)
+
+
+def test_expired_cash_policy_evidence_cannot_refresh_a_saved_preview(tmp_path):
+    args, evidence = cash_policy_fixture()
+    evidence['max_age_seconds'] = 60
+    args = seed_cash_policy(tmp_path, args, evidence)
+    saved = call(tmp_path, args, event_id='cash-policy', cash_policy_evidence=evidence)
+    assert saved['status'] == 'SETTINGS_DRAFT_PERSISTED', saved
+    args = (*args[:4], saved['next_binding'], args[-1])
+    before = {str(f): f.read_bytes() for f in tmp_path.rglob('*.json')}
+    read = call(tmp_path, args, 'preflight', cash_policy_evidence=evidence,
+        expected_artifact_sha256=saved['artifact_receipt']['artifact_sha256'],
+        consumption_cutoff_utc='2000-01-04T12:01:30Z')
+    assert read['gaps'] and read['draft_settings'] is None
+    assert before == {str(f): f.read_bytes() for f in tmp_path.rglob('*.json')}
+    assert_unarmed(read)
+
+
+def test_cash_policy_fingerprint_binds_floor_even_when_ratio_dominates(tmp_path):
+    args, evidence = cash_policy_fixture(.1, 5.)
+    args = seed_cash_policy(tmp_path, args, evidence)
+    saved = call(tmp_path, args, event_id='cash-policy', cash_policy_evidence=evidence)
+    assert saved['status'] == 'SETTINGS_DRAFT_PERSISTED', saved
+    args[0].runtime_settings.reserved_cash_floor_usd = 6.
+    args = (replace(args[0], cash_reserve_floor_usd=6.), *args[1:4], saved['next_binding'], args[-1])
+    evidence['resolved_cash_policy']['reserved_cash_floor_usd'] = 6.
+    read = call(tmp_path, args, 'preflight', cash_policy_evidence=evidence,
+        expected_artifact_sha256=saved['artifact_receipt']['artifact_sha256'],
+        consumption_cutoff_utc='2000-01-04T12:01:30Z')
+    assert read['gaps'] and read['draft_settings'] is None
+    assert_unarmed(read)
+
+
+def test_embedded_cash_policy_is_revalidated_when_optional_argument_is_omitted(tmp_path):
+    from application.tqqq_offline_risk import _cash_policy_packet
+    args, evidence = cash_policy_fixture(.1, 5.)
+    prepared, _ = _cash_policy_packet(args[0], args[1], args[2], evidence)
+    args = (args[0], args[1], prepared, *args[3:])
+    args = seed_cash_policy(tmp_path, args, evidence)
+    saved = call(tmp_path, args, event_id='cash-policy', cash_policy_evidence=evidence)
+    assert saved['status'] == 'SETTINGS_DRAFT_PERSISTED', saved
+    args = (*args[:4], saved['next_binding'], args[-1])
+    unchanged = call(tmp_path, args, 'preflight',
+        expected_artifact_sha256=saved['artifact_receipt']['artifact_sha256'],
+        consumption_cutoff_utc='2000-01-04T12:01:30Z')
+    assert unchanged['status'] == 'READY_OFFLINE_SETTINGS_PREFLIGHT', unchanged
+    args[0].runtime_settings.reserved_cash_floor_usd = 6.
+    args = (replace(args[0], cash_reserve_floor_usd=6.), *args[1:4], saved['next_binding'], args[-1])
+    before = {str(f): f.read_bytes() for f in tmp_path.rglob('*.json')}
+    read = call(tmp_path, args, 'preflight',
+        expected_artifact_sha256=saved['artifact_receipt']['artifact_sha256'],
+        consumption_cutoff_utc='2000-01-04T12:01:30Z')
+    assert read['gaps'] and read['draft_settings'] is None
+    assert before == {str(f): f.read_bytes() for f in tmp_path.rglob('*.json')}
+    assert_unarmed(read)
+
+
+def test_cash_policy_helper_number_semantics_match_reserve_admission(tmp_path):
+    # 100 * .07 is 7.000000000000001 in the deployed float helper. The
+    # projection and admission must not use subtly different reserve formulae.
+    args, evidence = cash_policy_fixture(.07, 0.)
+    args = seed_cash_policy(tmp_path, args, evidence)
+    saved = call(tmp_path, args, event_id='fractional-reserve', cash_policy_evidence=evidence)
+    assert saved['status'] == 'SETTINGS_DRAFT_PERSISTED', saved
+    assert float(saved['cash_policy_preview']['required_reserve_usd']) == 100 * .07
+
+
+def test_future_cash_metadata_does_not_increase_current_spendable_cash(tmp_path):
+    args, evidence = cash_policy_fixture()
+    args[1].metadata.update(planned_deposit='1000', outside_bank_cash='1000')
+    args[2]['cash_evidence']['projected_sale_proceeds'] = '1000'
+    args = seed_cash_policy(tmp_path, args, evidence)
+    saved = call(tmp_path, args, event_id='not-arrived', cash_policy_evidence=evidence)
+    assert saved['status'] == 'SETTINGS_DRAFT_PERSISTED', saved
+    assert saved['cash_policy_preview']['settled_cash'] == '99'
+    assert saved['cash_policy_preview']['spendable_cash'] == 86.
+
+
+def test_confirmed_deposit_updates_cash_once_without_pnl_or_peak_reset(tmp_path):
+    from quant_platform_kit.strategy_lifecycle.live_equity import (
+        cash_flow_adjusted_return, extract_external_cash_flow,
+    )
+    args, evidence = cash_policy_fixture()
+    # Explicit artificial capital reference, frozen BEFORE initialization;
+    # neither an emergency-cash deduction nor an automatic real risk policy.
+    args[2]['account_contract']['protected_capital_basis'] = '200'
+    risk = args[2]['risk_inputs']
+    risk['curve'] = replace(risk['curve'], protected_capital=200.)
+    args[0].runtime_settings.runtime_target = replace(args[0].runtime_settings.runtime_target,
+        strategy_release=replace(args[0].runtime_settings.runtime_target.strategy_release,
+            risk_policy_sha256=digest(dict(event_policy=args[3]['policy'], funding_inputs_sha256=_hash(risk)))))
+    args = seed_cash_policy(tmp_path, args, evidence)
+    first = call(tmp_path, args, event_id='before-deposit', cash_policy_evidence=evidence)
+    assert first['status'] == 'SETTINGS_DRAFT_PERSISTED', first
+    p, c, b = move_observation(args[2], args[3], first['next_binding'])
+    metadata = deepcopy(args[1].metadata)
+    metadata['broker_net_liquidation'] = 120.
+    metadata['cash_balances'][0].update(CashBalance='119', SettledCash='119', NetLiquidation='120')
+    snapshot = replace(args[1], total_equity=120., metadata=metadata,
+        as_of=datetime(2000, 1, 4, 12, 0, 30, tzinfo=timezone.utc))
+    p['facts'] = build_ibkr_account_facts(snapshot)
+    p['account_contract']['settled_cash'] = '119'
+    for row in p['cash_evidence']['account_values']: row['value'] = '119'
+    c['observations'].update(account_snapshot_sha256=digest(p['facts']), session_net_external_flow=20.,
+        flow_adjusted_nav_index=100., retained_nav_index_peak=100.)
+    evidence = dict(evidence, observed_at='2000-01-04T12:00:30Z', available_at='2000-01-04T12:00:30Z')
+    arrived = (args[0], snapshot, p, c, b, args[-1])
+    saved = call(tmp_path, arrived, event_id='deposit-observed', cash_policy_evidence=evidence)
+    assert saved['status'] == 'SETTINGS_DRAFT_PERSISTED', saved
+    preview = saved['cash_policy_preview']
+    assert float(preview['required_reserve_usd']) == 12.
+    assert preview['spendable_cash'] == 119 - 12 - 3
+    assert saved['preview']['requested_events']['metrics']['daily_loss_ratio'] == 0.
+    journal = PortfolioEventJournal(tmp_path / 'journal', offline_root=tmp_path)
+    chain = journal.load_chain(b['identity'])
+    assert chain[-1]['state']['session_start_nav'] == 100.
+    assert chain[-1]['state']['session_net_external_flow'] == 20.
+    assert chain[-1]['state']['risk_state']['nav_peak'] == 100.
+    replay = call(tmp_path, arrived, event_id='deposit-observed', cash_policy_evidence=evidence)
+    assert replay['readback_verified'] and replay['draft_settings'] is None
+    assert journal.load_chain(b['identity']) == chain
+    flow = extract_external_cash_flow({'net_external_cash_flow': 20.})
+    # This existing helper has an END-OF-PERIOD convention only.
+    assert cash_flow_adjusted_return(100., 120., net_external_cash_flow=flow) == 0.
+    assert extract_external_cash_flow({}) is None
+    assert cash_flow_adjusted_return(100., 120., net_external_cash_flow=None) is None
+    assert_unarmed(saved); assert_unarmed(replay)
+
+
+def test_generated_cash_reserve_preserves_open_state_and_reduction_path(tmp_path):
+    args, evidence = cash_policy_fixture()
+    opened = fixture(opened=True)
+    args = (*args[:3], *opened[3:])
+    args = seed_cash_policy(tmp_path, args, evidence)
+    saved = call(tmp_path, args, event_id='open-cash-policy', cash_policy_evidence=evidence)
+    assert saved['status'] == 'SETTINGS_DRAFT_PERSISTED', saved
+    assert saved['breaker_state'] == 'OPEN' and saved['new_risk_prohibited']
+    assert all(value == 0. for value in saved['draft_settings']['security_target_weights'].values())
+    args = (*args[:4], saved['next_binding'], args[-1])
+    read = call(tmp_path, args, 'read', cash_policy_evidence=evidence)
+    assert read['readback_verified'] and read['breaker_state'] == 'OPEN'
+    assert read['draft_settings'] is None
+    assert_unarmed(saved); assert_unarmed(read)

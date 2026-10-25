@@ -42,8 +42,8 @@ STATIC_COMMAND = re.search(
 
 @pytest.fixture
 def cli_workspace(tmp_path):
-    # Only these stdlib-only modules are copied; no installed project can hide a
-    # missing package root, and no application/broker code is loaded.
+    # Copy only the stdlib-only CLIs and their pure configuration dependency;
+    # no installed project can hide missing files or load broker/runtime code.
     scripts = tmp_path / "scripts"
     scripts.mkdir()
     for name in (
@@ -53,6 +53,10 @@ def cli_workspace(tmp_path):
         "diagnose_serving_image_identity.py", "diagnose_image_static_source.py",
     ):
         shutil.copyfile(ROOT / "scripts" / name, scripts / name)
+    application = tmp_path / "application"
+    application.mkdir()
+    for name in ("__init__.py", "account_facts_target_config.py"):
+        shutil.copyfile(ROOT / "application" / name, application / name)
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "synthetic-account-facts-cli"\nversion = "0.0.0"\n'
         'requires-python = ">=3.11"\n[tool.uv]\npackage = false\n'

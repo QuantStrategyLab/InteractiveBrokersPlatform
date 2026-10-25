@@ -16,6 +16,8 @@ class FakeIB:
         self.symbol = symbol
         if mode != "missing_api":
             self.openTrades = lambda: self._rows(mode)
+        if mode not in {"missing_api", "missing_all_api"}:
+            self.reqAllOpenOrders = lambda: self._rows(mode)
 
     def _rows(self, mode):
         if mode == "read_error":
@@ -48,23 +50,25 @@ def execute(monkeypatch, tmp_path):
     submitted, claims = [], []
 
     def call(mode="empty", *, profile="soxl_soxx_trend_income", reducing=False,
-             claim=True, unknown_pending=False):
+             claim=True, unknown_pending=False, additional_buy=False):
         symbol = "TQQQ" if profile == "tqqq_growth_income" else "SOXL"
         today = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
         targets = {symbol: .1}
+        if additional_buy:
+            targets["VOO"] = .1
         metadata = {
             "trade_date": today, "effective_date": today,
             "risk_gate": "APPROVE", "risk_flags": ("risk_gate:passed",),
             "account_new_risk_snapshot": {"observation_status": "COMPLETE",
                 "reconciliation_status": "VERIFIED", "circuit_breaker_state": "CLOSED",
                 "production_drift_status": "healthy"},
-            "allocation": {"target_mode": "weight", "strategy_symbols": (symbol,),
-                "risk_symbols": (symbol,), "income_symbols": (), "safe_haven_symbols": (),
+            "allocation": {"target_mode": "weight", "strategy_symbols": tuple(targets),
+                "risk_symbols": tuple(targets), "income_symbols": (), "safe_haven_symbols": (),
                 "targets": targets},
             "risk_authority": {"strategy_profile": profile, "account_ids": ("DU00000003",),
                 "trade_date": today, "signal_date": None, "effective_date": today,
                 "snapshot_as_of": None, "portfolio_equity": 1000.,
-                "targets": targets, "max_target_values": {symbol: 100.}},
+                "targets": targets, "max_target_values": {s: 100. for s in targets}},
         }
         account = {"equity": 1000., "buying_power": 1000.}
         if unknown_pending:
@@ -105,7 +109,7 @@ PROFILES = ["soxl_soxx_trend_income", "tqqq_growth_income"]
 
 
 @pytest.mark.parametrize("profile", PROFILES)
-@pytest.mark.parametrize("mode", ["missing_api", "null_snapshot", "missing_account", "missing_symbol"])
+@pytest.mark.parametrize("mode", ["missing_api", "missing_all_api", "null_snapshot", "missing_account", "missing_symbol"])
 def test_incomplete_pending_read_cannot_reach_submission(execute, profile, mode):
     _, summary = execute(mode, profile=profile)
     assert execute.submitted == []
@@ -187,7 +191,7 @@ def test_disjoint_cash_uncertainty_still_blocks_new_buy(execute, profile):
 
 
 @pytest.mark.parametrize("profile", PROFILES)
-@pytest.mark.parametrize("mode", ["missing_api", "null_snapshot", "missing_account", "missing_symbol"])
+@pytest.mark.parametrize("mode", ["missing_api", "missing_all_api", "null_snapshot", "missing_account", "missing_symbol"])
 def test_unqualified_reduction_stays_blocked(execute, profile, mode):
     _, summary = execute(mode, profile=profile, reducing=True)
     assert execute.submitted == [] and execute.claims == []
@@ -202,3 +206,136 @@ def test_disjoint_row_does_not_hide_later_related_pending(execute, monkeypatch):
     _, summary = execute("mixed", reducing=True)
     assert execute.submitted == [] and execute.claims == []
     assert summary["no_op_reason"] == "pending_orders_detected:SOXL"
+
+
+def _external_order(*, status="Submitted", account="DU00000003", action="BUY"):
+    return NS(
+        contract=NS(symbol="MSFT", secType="STK", currency="USD"),
+        order=NS(account=account, action=action, totalQuantity=20, lmtPrice=50),
+        orderStatus=NS(status=status, filled=5, remaining=15),
+    )
+
+
+@pytest.mark.parametrize("profile", PROFILES)
+@pytest.mark.parametrize("status", ["Submitted", "PendingCancel", "PartiallyFilled", "Unknown"])
+def test_same_account_external_pending_cannot_spend_shared_cash(execute, monkeypatch, profile, status):
+    monkeypatch.setattr(FakeIB, "_rows", lambda self, mode: [_external_order(status=status)])
+    _, summary = execute("external", profile=profile)
+    assert execute.submitted == [] and execute.claims == []
+    assert summary["pending_order_cash_risk_unknown"] is True
+    assert summary["account_new_risk_buy_blocked"] is True
+    assert "PENDING_ORDER_CASH_RISK_UNKNOWN" in summary["account_new_risk_reason_codes"]
+    assert summary["lock_path"] is None
+
+
+@pytest.mark.parametrize("profile", PROFILES)
+@pytest.mark.parametrize("status", ["Submitted", "PendingCancel", "PartiallyFilled", "Unknown"])
+def test_same_account_external_pending_preserves_qualified_reduction(execute, monkeypatch, profile, status):
+    monkeypatch.setattr(FakeIB, "_rows", lambda self, mode: [_external_order(status=status)])
+    _, summary = execute("external", profile=profile, reducing=True)
+    assert [(i.side, i.quantity) for i in execute.submitted] == [("sell", 1)]
+    assert len(execute.claims) == 1 and summary["lock_path"]
+    assert summary["pending_order_cash_risk_unknown"] is True
+
+
+@pytest.mark.parametrize("profile", PROFILES)
+def test_same_account_external_sell_is_not_spendable_proceeds(execute, monkeypatch, profile):
+    monkeypatch.setattr(FakeIB, "_rows", lambda self, mode: [_external_order(action="SELL")])
+    _, summary = execute("external", profile=profile)
+    assert execute.submitted == [] and execute.claims == []
+    assert summary["account_new_risk_buy_blocked"] is True
+
+
+@pytest.mark.parametrize("profile", PROFILES)
+def test_external_pending_preserves_sell_without_reinvesting_proceeds(execute, monkeypatch, profile):
+    monkeypatch.setattr(FakeIB, "_rows", lambda self, mode: [_external_order()])
+    _, summary = execute("external", profile=profile, reducing=True, additional_buy=True)
+    assert [(i.side, i.quantity) for i in execute.submitted] == [("sell", 1)]
+    assert len(execute.claims) == 1
+    assert summary["account_new_risk_buy_blocked"] is True
+    assert {"symbol": "VOO", "side": "buy", "reason": "account_new_risk_gate"} in summary["orders_skipped"]
+
+
+@pytest.mark.parametrize("profile", PROFILES)
+def test_other_account_external_pending_does_not_reserve_this_accounts_cash(execute, monkeypatch, profile):
+    monkeypatch.setattr(FakeIB, "_rows", lambda self, mode: [_external_order(account="DU00000004")])
+    _, summary = execute("external", profile=profile)
+    assert [(i.side, i.quantity) for i in execute.submitted] == [("buy", 1)]
+    assert "pending_order_cash_risk_unknown" not in summary
+
+
+@pytest.mark.parametrize("profile", PROFILES)
+@pytest.mark.parametrize("status", ["Cancelled", "ApiCancelled", "Inactive", "Filled"])
+def test_terminal_external_order_does_not_withhold_cash_or_add_proceeds(execute, monkeypatch, profile, status):
+    monkeypatch.setattr(FakeIB, "_rows", lambda self, mode: [_external_order(status=status)])
+    _, summary = execute("external", profile=profile)
+    assert [(i.side, i.quantity) for i in execute.submitted] == [("buy", 1)]
+    assert "pending_order_cash_risk_unknown" not in summary
+
+
+def test_external_cash_block_does_not_take_execution_lock_before_fresh_retry(execute, monkeypatch):
+    rows = [_external_order()]
+    monkeypatch.setattr(FakeIB, "_rows", lambda self, mode: rows)
+    _, blocked = execute("external")
+    _, repeated = execute("external")
+    assert execute.submitted == [] and execute.claims == []
+    assert blocked["lock_path"] is None and repeated["lock_path"] is None
+    rows.clear()  # New complete observation, not a guessed cancellation or cash release.
+    _, complete = execute()
+    assert [(i.side, i.quantity) for i in execute.submitted] == [("buy", 1)]
+    assert complete["lock_path"] and len(execute.claims) == 1
+
+
+def test_same_account_external_row_does_not_hide_related_pending(execute, monkeypatch):
+    related = FakeIB("pending", "SOXL")._rows("pending")
+    monkeypatch.setattr(FakeIB, "_rows", lambda self, mode: [_external_order(), *related])
+    _, summary = execute("external", reducing=True)
+    assert execute.submitted == [] and execute.claims == []
+    assert summary["no_op_reason"] == "pending_orders_detected:SOXL"
+
+
+@pytest.mark.parametrize("profile", PROFILES)
+def test_all_client_snapshot_finds_order_absent_from_local_cache(execute, monkeypatch, profile):
+    calls = []
+
+    def all_orders(self):
+        calls.append(True)
+        return [_external_order()]
+
+    monkeypatch.setattr(FakeIB, "__init__", lambda self, mode, symbol: setattr(self, "symbol", symbol))
+    monkeypatch.setattr(FakeIB, "openTrades", lambda self: [], raising=False)
+    monkeypatch.setattr(FakeIB, "reqAllOpenOrders", all_orders, raising=False)
+    _, summary = execute(profile=profile)
+    assert calls == [True]
+    assert execute.submitted == [] and execute.claims == []
+    assert summary["pending_order_cash_risk_unknown"] is True
+    assert summary["lock_path"] is None
+
+
+@pytest.mark.parametrize("reducing", [False, True])
+@pytest.mark.parametrize("mode", ["null", "error", "timeout"])
+def test_all_client_failure_cannot_fall_back_to_empty_cache(execute, monkeypatch, reducing, mode):
+    def all_orders(self):
+        if mode == "null":
+            return None
+        if mode == "timeout":
+            raise TimeoutError("synthetic private diagnostic")
+        raise RuntimeError("synthetic private diagnostic")
+
+    monkeypatch.setattr(FakeIB, "__init__", lambda self, mode, symbol: setattr(self, "symbol", symbol))
+    monkeypatch.setattr(FakeIB, "openTrades", lambda self: [], raising=False)
+    monkeypatch.setattr(FakeIB, "reqAllOpenOrders", all_orders, raising=False)
+    logs, summary = execute(reducing=reducing)
+    assert execute.submitted == [] and execute.claims == []
+    assert summary["no_op_reason"] == "pending_orders_unavailable"
+    assert summary["lock_path"] is None
+    assert "synthetic private diagnostic" not in str((logs, summary))
+
+
+def test_all_client_snapshot_retains_unconfirmed_cached_order(execute, monkeypatch):
+    monkeypatch.setattr(FakeIB, "__init__", lambda self, mode, symbol: setattr(self, "symbol", symbol))
+    monkeypatch.setattr(FakeIB, "openTrades", lambda self: [_external_order()], raising=False)
+    monkeypatch.setattr(FakeIB, "reqAllOpenOrders", lambda self: [], raising=False)
+    _, summary = execute()
+    assert execute.submitted == [] and execute.claims == []
+    assert summary["pending_order_cash_risk_unknown"] is True
