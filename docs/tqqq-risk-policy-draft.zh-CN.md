@@ -65,6 +65,22 @@ f(C) = (1 + C / C0)^(-p)
 可用时间、冻结时间和账户合同决策截止须有序，完整输入随原草稿保存并在消费时复核；
 `reference_qualified=false` 明确保留真实来源与金融适用性缺口。
 
+同一入口也接受显式 `schema_version="qsl.security_drawdown_reference.v1"` 的证券参照，
+使用 `returns` 而非 `net_returns`。其 `wealth_scope=SECURITY_BENCHMARK_REFERENCE`、
+`return_basis=PROVIDER_ADJUSTED_CLOSE_RATIO`、
+`distribution_treatment=PROVIDER_SPLIT_DIVIDEND_ADJUSTED`，
+`cost_treatment=ACCOUNT_TRADING_COSTS_EXCLUDED`，资金流及现金收益均为 `NOT_AN_ACCOUNT`；
+证券来源不绑定某个账户。账户选择仍由其自身的 `account_risk_benchmark`、账户scope及截止绑定。
+参照与账户须币种、日历一致，并分别声明 `valuation_sampling=DAILY_CLOSE`，不能将日收盘参照
+用于盘中采样路径。旧账户净参照及策略/当前比较路径的净财富要求保持原合同。
+
+这是如实保留提供商调整价格口径的离线代理，未独立证明其分红再投资算法或账户交易成本，
+不会改名为账户净全收益。结果保留原口径、`account_costs_included=false`、
+`reference_qualified=false`、`enforcement_eligible=false`；可作假设规则的计算与草稿读回，
+不能据此启用真实阈值。提供商调整说明见 [Alpaca historical bars](https://docs.alpaca.markets/us/reference/stockbars)。
+今天冻结一个历史参照与重建历史可知数据是不同问题；本接口不要求补造当年的PIT，
+但其时点声明不能充当历史预测或策略采用证据。接口不指定个人证券、年份或阈值。
+
 这是待校准的回撤政策提案。原资本曲线用于两交易日 CVaR 不构成它用于最大回撤的金融资格；
 接口明确拒绝将 CVaR 或止损距离标成回撤预算。政策、曲线、独立三档参数、源摘要和比较绑定均进入
 本预览的输入哈希；哈希仍不证明来源真实或批准有效。缺少动态政策时显示未定，不从候选推参数。

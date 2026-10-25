@@ -95,6 +95,14 @@ ISO 日日期且必须早于冻结截止日，不接受当前未完成日或未�
 参照符号须与 `strategy_context.account_risk_benchmark` 的事先选择相同，并绑定同一账户范围、
 币种、频率、成本、现金收益与外部资金流口径；其角色为账户风险参照净财富。
 
+也可明确提供 `schema_version="qsl.security_drawdown_reference.v1"`，将上述`net_returns`
+替换为`returns`。该类型是独立证券的提供商调整收盘价代理，`context`不含账户scope；
+其分红、成本及资金流字段必须按`tqqq-risk-policy-draft.zh-CN.md`的证券口径声明。
+源和账户均须`valuation_sampling=DAILY_CLOSE`，币种与日历匹配，账户侧仍为费用后净财富。
+两类来源不通过改标签互换，证券代理不会声称包含账户交易成本或盘中采样。
+原保存及预检直接绑定该完整对象，无新存储或生产消费入口；两模式、三档均保持
+`enforcement_eligible=false`、`reference_qualified=false`和`relative_risk_enforced=false`。
+
 账户风险参照与策略的无杠杆标的映射分别声明，不自动互相替代。公共接口不预设参照证券、
 年份或百分比，不以个人配置产生全局默认。它复用 QPK 计算参照路径的最大回撤，
 不接受用单个年度收益代替回撤。动态政策的 `account_max_drawdown_fraction` 可为 null，
