@@ -54,7 +54,29 @@ def as_security_reference(reference):
 def security_reference_inputs():
     packet, reference = reference_inputs()
     packet["strategy_context"]["valuation_sampling"] = "DAILY_CLOSE"
+    packet["benchmark_context"]["valuation_sampling"] = "DAILY_CLOSE"
     return packet, as_security_reference(reference)
+
+
+@pytest.mark.parametrize("sampling", [None, "INTRADAY", True, "missing"])
+def test_account_reference_cannot_ignore_its_explicit_sampling_difference(sampling):
+    packet, reference = reference_inputs()
+    for key in ("strategy_context", "benchmark_context"):
+        packet[key]["valuation_sampling"] = "DAILY_CLOSE"
+    if sampling != "missing":
+        reference["context"]["valuation_sampling"] = sampling
+    with pytest.raises(RelativeRiskPreviewError, match="^ACCOUNT_REFERENCE_SAMPLING_MISMATCH$"):
+        preview_relative_risk(**packet, account_drawdown_reference=reference)
+
+
+def test_explicit_daily_close_account_reference_remains_usable_as_a_preview():
+    packet, reference = reference_inputs()
+    for context in (packet["strategy_context"], packet["benchmark_context"], reference["context"]):
+        context["valuation_sampling"] = "DAILY_CLOSE"
+    out = preview_relative_risk(**packet, account_drawdown_reference=reference)
+    assert out["valuation_sampling"] == "DAILY_CLOSE"
+    assert out["drawdown_rule_previews"]["benchmark_anchored_account"]["limit_fraction"] == pytest.approx(.17)
+    assert_unarmed(out)
 
 
 @requires_shared_reference

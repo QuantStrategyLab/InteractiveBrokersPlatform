@@ -91,6 +91,40 @@ def test_auxiliary_volatility_and_tail_keep_their_units_and_no_policy_role():
     assert_unarmed(out)
 
 
+def test_explicit_daily_close_is_retained_without_inferring_it_for_legacy_inputs():
+    packet = inputs()
+    legacy = preview_relative_risk(**packet)
+    assert legacy.get("valuation_sampling") is None
+    for key in ("strategy_context", "benchmark_context"):
+        packet[key]["valuation_sampling"] = "DAILY_CLOSE"
+    explicit = preview_relative_risk(**packet)
+    assert explicit["valuation_sampling"] == "DAILY_CLOSE"
+    assert explicit["input_sha256"] != legacy["input_sha256"]
+    assert explicit["max_drawdown_loss_fraction"] == legacy["max_drawdown_loss_fraction"]
+    assert_unarmed(explicit)
+
+
+@pytest.mark.parametrize("strategy,benchmark", [
+    ("DAILY_CLOSE", "INTRADAY"), ("INTRADAY", "DAILY_CLOSE"),
+    ("INTRADAY", "INTRADAY"), ("DAILY_CLOSE", None), (None, "DAILY_CLOSE"),
+    (None, None), (True, True),
+])
+def test_explicit_sampling_must_be_supported_and_match_on_both_paths(strategy, benchmark):
+    packet = inputs()
+    packet["strategy_context"]["valuation_sampling"] = strategy
+    packet["benchmark_context"]["valuation_sampling"] = benchmark
+    with pytest.raises(RelativeRiskPreviewError, match="^COMPARISON_SAMPLING_MISMATCH$"):
+        preview_relative_risk(**packet)
+
+
+@pytest.mark.parametrize("leg", ["strategy_context", "benchmark_context"])
+def test_one_sided_sampling_declaration_cannot_certify_the_other_path(leg):
+    packet = inputs()
+    packet[leg]["valuation_sampling"] = "DAILY_CLOSE"
+    with pytest.raises(RelativeRiskPreviewError, match="^COMPARISON_SAMPLING_MISMATCH$"):
+        preview_relative_risk(**packet)
+
+
 @pytest.mark.parametrize("leg", ["strategy_returns", "benchmark_returns"])
 @pytest.mark.parametrize("kind", ["missing_date", "duplicate", "leading_nan", "middle_nan", "inf",
     "bankruptcy", "below_bankruptcy", "boolean", "complex", "unsorted", "intraday", "timezone"])
