@@ -63,9 +63,9 @@ class Cloud:
         if args[1:4] == ["run", "services", "update-traffic"]:
             rows = self.state["service"]["status"]["traffic"]
             if any(arg.startswith("--update-tags=") for arg in args):
-                rows.append(dict(revisionName=CANDIDATE, percent=0, tag="cash-read-123", url="https://cash-read-123---synthetic.run.app"))
+                rows.append(dict(revisionName=CANDIDATE, percent=0, tag="c3f", url="https://c3f---synthetic.run.app"))
             else:
-                rows[:] = [row for row in rows if row.get("tag") != "cash-read-123"]
+                rows[:] = [row for row in rows if row.get("tag") != "c3f"]
             return "{}"
         if args[1:4] == ["scheduler", "jobs", "list"]:
             return json.dumps(self.jobs)
@@ -74,7 +74,7 @@ class Cloud:
         if args[1:4] == ["scheduler", "jobs", "create"]:
             self.jobs.append(dict(name="ibkr-cash-read-123", state="ENABLED", schedule="03 01 30 09 *",
                 timeZone="Etc/UTC", attemptDeadline="300s", retryConfig={}, httpTarget=dict(
-                uri="https://cash-read-123---synthetic.run.app/probe", httpMethod="POST",
+                uri="https://c3f---synthetic.run.app/probe", httpMethod="POST",
                 oidcToken=dict(serviceAccountEmail="synthetic-caller", audience="https://synthetic.run.app"))))
             if self.failure == "create_unknown":
                 raise pilot.ReleaseError("scheduler_create_unknown")
@@ -167,6 +167,16 @@ def test_zero_traffic_retired_candidate_does_not_replace_service_ready_identity(
     revision["status"]["conditions"] = [{"type": "Ready", "status": "True", "reason": "Retired"},
         {"type": "Active", "status": "False", "reason": "Retired"}]
     assert observer.admit(expected, state, revision, COMMIT) == CANDIDATE
+
+
+def test_realistic_run_identifier_fits_combined_tag_limit_without_collision():
+    run_id = "40218930896"
+    tag = observer.traffic_tag(run_id, "s" * 38)
+    assert len(tag) == 8 and int(tag[1:], 36) == int(run_id)
+    assert len(tag) + 38 == 46
+    with pytest.raises(pilot.ReleaseError, match="candidate_tag_length_unsupported"):
+        observer.traffic_tag(run_id, "s" * 39)
+    assert tag != observer.traffic_tag(str(int(run_id) + 1), "s" * 38)
 
 
 @pytest.mark.parametrize("key,value", [("GITHUB_RUN_ATTEMPT", "2"), ("GITHUB_REF", "refs/heads/other"),
