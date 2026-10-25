@@ -1056,8 +1056,8 @@ def _publisher_job_environment(target: str = "primary-live") -> dict[str, str]:
             value = placeholders[source_name, name]
         elif raw_value == "${{ matrix.target }}":
             value = target
-        elif raw_value == "${{ matrix.target == 'primary-live' && 'true' || 'false' }}":
-            value = "true" if target == "primary-live" else "false"
+        elif raw_value == "${{ (matrix.target == 'primary-live' || matrix.target == 'additional-2' || matrix.target == 'additional-3') && 'true' || 'false' }}":
+            value = "true" if target in {"primary-live", "additional-2", "additional-3"} else "false"
         elif "matrix.target == 'additional-1'" in raw_value and "secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON" in raw_value:
             value = json.dumps(_additional_targets()) if target.startswith("additional-") else ""
         else:
@@ -1067,10 +1067,10 @@ def _publisher_job_environment(target: str = "primary-live") -> dict[str, str]:
 
 
 @pytest.mark.parametrize("target", ["primary-live", "additional-1", "additional-2", "additional-3"])
-def test_workflow_publishes_broker_positions_only_for_primary(target):
+def test_workflow_publishes_broker_positions_only_for_qualified_inventory_targets(target):
     environment = _publisher_job_environment(target)
     assert environment["IBKR_ACCOUNT_FACTS_INCLUDE_POSITIONS"] == (
-        "true" if target == "primary-live" else "false"
+        "true" if target in {"primary-live", "additional-2", "additional-3"} else "false"
     )
 
 
@@ -1692,3 +1692,18 @@ def test_cli_identity_mismatch_keeps_first_line_exit_and_hides_private_values(mo
     }
     for marker in ["PRIVATE", "private-prefix-marker", "private-target-marker", "U00000001", "U00000999", "ibkr-primary-service"]:
         assert marker not in output
+
+
+def test_complete_empty_inventory_survives_projection_and_explicit_opt_in():
+    report = _report()
+    facts = report["summary"]["account_facts"]
+    facts.update(broker_reported_positions=[], broker_reported_positions_scope="stocks_only",
+                 broker_reported_positions_complete=True)
+    projected = _project(report)
+    assert projected["broker_reported_positions"] == []
+    assert projected["broker_reported_positions_complete"] is True
+    assert publisher.prepare_sync_payload(projected, include_positions=True)["broker_reported_positions_complete"] is True
+    assert not any(k.startswith("broker_reported_positions") for k in publisher.prepare_sync_payload(projected))
+    for flag in (None, False, "true"):
+        facts["broker_reported_positions_complete"] = flag
+        assert "broker_reported_positions" not in _project(report)
