@@ -88,7 +88,7 @@ def test_ci_docker_and_runtime_monitoring_use_uv_lock() -> None:
 def test_ci_uses_declared_immutable_internal_dependency_revisions() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
     lockfile = Path("uv.lock").read_text(encoding="utf-8")
-    ci = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    ci = _job_block(Path(".github/workflows/ci.yml").read_text(encoding="utf-8"), "test")
     revisions = {}
     for dependency in pyproject["project"]["dependencies"]:
         match = re.search(r"QuantStrategyLab/([^/]+)\.git@([0-9a-f]{40})$", dependency)
@@ -111,3 +111,18 @@ def test_ci_uses_declared_immutable_internal_dependency_revisions() -> None:
     assert "repository: QuantStrategyLab/" not in ci
     assert "external/" not in ci
     assert "uv pip install --no-deps -e external/" not in ci
+
+
+def test_tqqq_research_overlay_is_immutable_isolated_and_has_no_cloud_identity() -> None:
+    offline = _job_block(Path(".github/workflows/ci.yml").read_text(), "tqqq-offline-risk")
+    source = Path("application/tqqq_offline_risk.py").read_text()
+    for env_key, code_key in (("UES_OFFLINE_SHA", "UES_REVISION"), ("QPK_OFFLINE_SHA", "QPK_REVISION")):
+        sha = re.search(rf"{env_key}: ([0-9a-f]{{40}})$", offline, re.M).group(1)
+        assert f'{code_key} = "{sha}"' in source
+    assert "ref: ${{ env.UES_OFFLINE_SHA }}" in offline
+    assert "IBKR_REQUIRE_TQQQ_OFFLINE" in offline
+    assert 'c.find("skipped")' in offline
+    assert "uv --no-config pip install" in offline
+    assert "google-github-actions/auth" not in offline
+    assert "secrets." not in offline
+    assert "gcloud " not in offline
