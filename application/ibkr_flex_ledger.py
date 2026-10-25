@@ -17,6 +17,7 @@ Pure, in-memory parsing only:
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Collection, Mapping
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -29,7 +30,7 @@ from application.ibkr_flex_source import (
     FlexSourceError,
     verify_report_accounts,
 )
-from application.ibkr_flex_executions import project_flex_executions
+from application.ibkr_flex_executions import _day, _local_time, _number_shape, project_flex_executions
 
 
 SCHEMA_VERSION = "ibkr_flex_ledger.v1"
@@ -55,6 +56,92 @@ _MISSING_CODES = frozenset({
     "external_flows_incomplete",
     "external_flows_mixed_currency",
 })
+_CASHFLOW_SECTIONS = (
+    ("CashTransactions", "CashTransaction", ("accountId", "currency", "amount", "type", "dateTime", "transactionID")),
+    ("StmtFunds", "StatementOfFundsLine", ("accountId", "currency", "amount", "activityCode", "date", "transactionID")),
+)
+_CASHFLOW_OPTIONAL_FIELDS = ("dateTime", "date", "reportDate", "settleDate", "tradeID", "clientReference",
+                             "code", "levelOfDetail", "timeZone", "timezone")
+_CASHFLOW_DATE_FIELDS = ("dateTime", "date", "reportDate", "settleDate")
+_CASHFLOW_ZONE_FIELDS = ("timeZone", "timezone")
+
+
+def _cashflow_timezone_format(value: str | None) -> str:
+    if value is None:
+        return "missing"
+    if not value:
+        return "empty_text"
+    if len(value) > 128:
+        return "unsupported"
+    if value in {"Z", "UTC", "GMT", "Etc/UTC"}:
+        return "utc_label"
+    offset = re.fullmatch(r"[+-]([0-9]{2}):?([0-9]{2})", value, re.ASCII)
+    if offset and int(offset[1]) < 24 and int(offset[2]) < 60:
+        return "numeric_offset"
+    if re.fullmatch(r"[A-Za-z]{2,5}", value, re.ASCII):
+        return "abbreviation"
+    if re.fullmatch(r"[A-Za-z_]+(?:/[A-Za-z0-9_+-]+)+", value, re.ASCII):
+        return "iana_like"
+    return "unsupported"
+
+
+def _cashflow_datetime_format(value: str | None) -> str:
+    if value is None:
+        return "missing"
+    if not value:
+        return "empty_text"
+    if len(value) > 128:
+        return "unsupported"
+    if _day(value):
+        return "date_only"
+    day = _day(re.split(r"[;T ]", value, maxsplit=1)[0])
+    if not day:
+        return "unsupported"
+    if _local_time(value.replace("T", ";"), day):
+        return "local_datetime"
+    zoned = re.fullmatch(r"(.+?)(Z|[+-][0-9]{2}:?[0-9]{2}| [A-Za-z]{2,5}| [A-Za-z_]+(?:/[A-Za-z0-9_+-]+)+)", value)
+    if zoned and _local_time(zoned[1].replace("T", ";"), day):
+        return {"utc_label": "utc_datetime", "numeric_offset": "offset_datetime",
+                "abbreviation": "named_zone_datetime", "iana_like": "named_zone_datetime"}.get(
+                    _cashflow_timezone_format(zoned[2].lstrip()), "unsupported")
+    return "unsupported"
+
+
+def _cashflow_source_diagnostic(statement: ElementTree.Element) -> dict[str, Any]:
+    """Fixed names and aggregate formats only; never echo XML keys or values.
+
+    This observes source shape, not valid identity, effective times, cash-flow
+    classification, filter settings or complete coverage. It performs no I/O.
+    """
+    sections = {}
+    for section_name, row_name, required in _CASHFLOW_SECTIONS:
+        containers = statement.findall(section_name)
+        rows = [row for section in containers for row in section.findall(row_name)]
+        fields = tuple(dict.fromkeys((*required, *_CASHFLOW_OPTIONAL_FIELDS)))
+        field_types = {}
+        for field in fields if rows else ():
+            types = Counter()
+            for row in rows:
+                value = row.get(field)
+                kind = "missing" if value is None else "empty_text" if not value else "text"
+                if field == "amount" and value:
+                    kind = _number_shape(value)["kind"] + "_text"
+                types[kind] += 1
+            field_types[field] = dict(sorted(types.items()))
+        sections[section_name] = {
+            "section_count": len(containers), "record_count": len(rows),
+            "unsupported_record_count": sum(len(section) for section in containers) - len(rows),
+            "field_type_counts": field_types,
+            "date_time_format_counts": {field: dict(sorted(Counter(
+                _cashflow_datetime_format(row.get(field)) for row in rows).items()))
+                for field in _CASHFLOW_DATE_FIELDS if rows},
+            "timezone_format_counts": {field: dict(sorted(Counter(
+                _cashflow_timezone_format(row.get(field)) for row in rows).items()))
+                for field in _CASHFLOW_ZONE_FIELDS if rows},
+            "missing_required_fields": sorted(field for field in required
+                                              if any(not row.get(field) for row in rows)),
+        }
+    return {"schema_version": "ibkr.flex_cashflow_source_shape.v1", "coverage": "not_evaluated", "sections": sections}
 
 
 def _diagnostic_date(value: object) -> str | None:
@@ -348,6 +435,7 @@ def build_flex_ledger(
         "schema_version": SCHEMA_VERSION,
         "source_ref": report.content_sha256,
         "executions": project_flex_executions(statement, source_ref=report.content_sha256, period=period),
+        "cashflow_source_diagnostic": _cashflow_source_diagnostic(statement),
         "account_ids": [account_id],
         "currency": declared_currency,
         "account_base_currency": base_currency,
