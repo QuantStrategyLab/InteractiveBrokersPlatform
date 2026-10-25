@@ -27,6 +27,7 @@ from application.ibkr_period_return import (
     _TARGET as _PERIOD_TARGET,
     PeriodReturnError, build_ibkr_period_return, validate_period_return_scope,
 )
+from application.ibkr_flex_executions import build_ibkr_executions
 from scripts.publish_account_facts_from_report import _NoRedirect, _additional_target_configs, _selector
 
 
@@ -34,6 +35,7 @@ from scripts.console_config import console_base_url
 
 
 SYNC_URL = console_base_url() + "/api/account-facts/period-return/sync"
+EXECUTIONS_SYNC_URL = console_base_url() + "/api/account-facts/executions/sync"
 _ACK_LIMIT = 8192
 _TOKEN_ALIASES = (
     "ACCOUNT_FACTS_SYNC_TOKEN", "SCHWAB_ACCOUNT_FACTS_SYNC_TOKEN", "FIRSTRADE_ACCOUNT_FACTS_SYNC_TOKEN",
@@ -217,6 +219,56 @@ def publish_period_return(payload: Mapping[str, Any], *, sync_token: str, expect
         return "sync_unknown"
 
 
+def publish_executions(payload: Mapping[str, Any], *, sync_token: str, expected_account_key: str) -> str:
+    """One independent execution POST; never retry an uncertain remote write."""
+    request = Request(EXECUTIONS_SYNC_URL, data=json.dumps(payload, separators=(",", ":")).encode(),
+        headers={"Authorization": f"Bearer {sync_token}", "Content-Type": "application/json",
+                 "User-Agent": "QSL-IBKR-Executions/1.0"}, method="POST")
+    try:
+        opener = build_opener(ProxyHandler({}), _NoRedirect())
+        with opener.open(request, timeout=15) as response:
+            if response.status != 200:
+                return "sync_rejected" if 300 <= response.status < 500 else "sync_unknown"
+            body = response.read(_ACK_LIMIT + 1)
+            if not isinstance(body, bytes) or len(body) > _ACK_LIMIT:
+                return "sync_unknown"
+            ack = json.loads(body, object_pairs_hook=_unique_keys)
+            if (
+                not isinstance(ack, dict)
+                or set(ack) != {"ok", "stored", "unchanged", "account_key", "period", "record_count"}
+                or ack.get("ok") is not True or ack.get("stored") is not True
+                or type(ack.get("unchanged")) is not bool or ack.get("account_key") != expected_account_key
+                or ack.get("period") != payload["period"] or type(ack.get("record_count")) is not int
+                or ack.get("record_count") != len(payload["records"])
+            ):
+                return "sync_unknown"
+            return "unchanged" if ack["unchanged"] else "published"
+    except HTTPError as exc:
+        return "sync_rejected" if 300 <= exc.code < 500 else "sync_unknown"
+    except Exception:
+        return "sync_unknown"
+
+
+def _execution_result(ledger, config, observed_at):
+    """Status/shape only: raw execution values never enter stdout."""
+    projection = ledger.get("executions") or {}
+    diagnostic = projection.get("diagnostic", {})
+    result = {"executions_status": "source_unavailable", "executions_diagnostic": diagnostic}
+    if projection.get("status") != "available":
+        return result
+    try:
+        payload = build_ibkr_executions(ledger, observed_at=observed_at,
+            **{key: config[key] for key in ("target_id", "source_binding_id", "account_scope", "expected_account_ids")})
+        if config.get("report_date") and payload["period"] != {"from": config["report_date"], "to": config["report_date"]}:
+            result["executions_status"] = "historical_period_mismatch"
+        else:
+            result["executions_status"] = publish_executions(payload,
+                sync_token=config["sync_token"], expected_account_key=config["account_key"])
+    except Exception:
+        result["executions_status"] = "projection_rejected"
+    return result
+
+
 def _collect_configured_ledger(config, session):
     """Generate once; only a provider-declared 1019 may re-read that handle."""
     accounts = tuple(config["expected_account_ids"])
@@ -273,8 +325,9 @@ def main(argv: Sequence[str] = ()) -> int:
                     "TypeError", "ValueError", "RuntimeError",
                 } else "other"}
             else:
+                observed_at = datetime.now(timezone.utc)
                 try:
-                    payload = build_ibkr_period_return(ledger, observed_at=datetime.now(timezone.utc),
+                    payload = build_ibkr_period_return(ledger, observed_at=observed_at,
                         **{key: config[key] for key in ("target_id", "source_binding_id", "account_scope", "expected_account_ids")})
                 except PeriodReturnError as exc:
                     status = "native_twr_unavailable" if str(exc) == "native_twr_unavailable" else "projection_rejected"
@@ -286,7 +339,10 @@ def main(argv: Sequence[str] = ()) -> int:
                     else:
                         kwargs = {"historical": True} if config.get("report_date") else {}
                         status = publish_period_return(payload, sync_token=config["sync_token"], expected_account_key=config["account_key"], **kwargs)
+                diagnostics.update(_execution_result(ledger, config, observed_at))
     print(json.dumps({"status": status, **diagnostics}, sort_keys=True))
+    if diagnostics.get("executions_status") in {"sync_unknown", "sync_rejected", "projection_rejected", "historical_period_mismatch"}:
+        return 1
     return 0 if status in {"published", "unchanged"} else 2 if status in {"disabled", "configuration_incomplete"} else 1
 
 
