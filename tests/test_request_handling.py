@@ -790,6 +790,14 @@ def test_handle_probe_projects_only_target_bound_snapshot_facts(
             "net_assets": "1234.50",
             "net_assets_semantics": "USD NetLiquidation; null unless broker source is verified",
             "cash_semantics": "IBKR accountValues cash balance; source tag retained; not available funds",
+            "broker_cash_observations": {
+                "schema_version": "ibkr.cash_observations.v1",
+                "observed_at": "2026-09-30T12:00:00Z",
+                "values": [
+                    {"currency": "HKD", "source_tag": "$LEDGER-TotalCashBalance", "value": "-4.25"},
+                    {"currency": "USD", "source_tag": "CashBalance", "value": "0"},
+                ],
+            },
             "cash": [
                 {"currency": "USD", "cash_balance": "0", "source_tag": "CashBalance"},
                 {"currency": "HKD", "cash_balance": "-4.25", "source_tag": "$LEDGER-TotalCashBalance"},
