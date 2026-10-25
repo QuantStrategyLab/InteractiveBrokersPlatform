@@ -369,13 +369,19 @@ def test_missing_policy_does_not_turn_verified_closed_state_into_permission(tmp_
     assert "TQQQ_EVENT_POLICY_MISSING" in out["gaps"]
 
 
-def test_settled_cash_cannot_be_invented_behind_an_unchanged_cash_balance_projection(tmp_path):
+@pytest.mark.parametrize("rebind_facts", [False, True])
+def test_settled_cash_cannot_be_invented_behind_an_unchanged_cash_balance_projection(tmp_path, rebind_facts):
     args = fixture()
     args[1].metadata["cash_balances"][0]["SettledCash"] = "1"
-    # Native facts intentionally select CashBalance; it still matches exactly.
-    assert build_ibkr_account_facts(args[1]) == args[2]["facts"]
+    # The original selected balance stays unchanged; the separate native
+    # attachment now exposes the change before the cash-evidence comparison.
+    facts = build_ibkr_account_facts(args[1])
+    assert facts["cash"] == args[2]["facts"]["cash"]
+    assert facts != args[2]["facts"]
+    if rebind_facts:
+        args[2]["facts"] = facts
     out = call(tmp_path, args, "initialize", initialization=args[-1])
-    assert out["gaps"] == ["TQQQ_NATIVE_CASH_CONFLICT"]
+    assert out["gaps"] == ["TQQQ_NATIVE_CASH_CONFLICT" if rebind_facts else "TQQQ_NATIVE_ACCOUNT_FACTS_MISMATCH"]
     assert not out["readback_verified"]
     assert list(tmp_path.rglob("*.json")) == []
 

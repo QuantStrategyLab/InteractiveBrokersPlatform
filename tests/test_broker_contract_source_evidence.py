@@ -168,3 +168,22 @@ assert not out['execution_authorized']
     monkeypatch.undo()
     result = subprocess.run([sys.executable, '-S', '-c', code], capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
+
+
+def test_additional_native_settled_cash_is_visible_but_never_grants_spending_authority(monkeypatch):
+    _, report, _ = report_fixture(monkeypatch)
+    facts = report["summary"]["account_facts"]
+    facts["broker_cash_observations"] = {
+        "schema_version": "ibkr.cash_observations.v1", "observed_at": facts["observed_at"],
+        "values": [{"currency": "USD", "source_tag": "SettledCash", "value": "73.25"}],
+        "invalid_fields": [],
+    }
+    out = inspect_broker_contract_sources(report)
+    assert out["native_cash_fields"]["status"] == "OBSERVED_FIELDS_ONLY"
+    assert out["native_cash_fields"]["fields"]["SettledCash"] == "OBSERVED"
+    assert out["usd_cash_observation"]["settled_tag_observed"] is True
+    assert out["usd_cash_observation"]["source_tag"] == "CashBalance"
+    assert "USD_SETTLED_CASH_NOT_OBSERVED_IN_PROJECTED_CASH" not in out["gaps"]
+    assert out["usd_cash_observation"]["spendable_cash_verified"] is False
+    assert out["complete_cash_obligations_verified"] is False
+    assert "73.25" not in json.dumps(out)

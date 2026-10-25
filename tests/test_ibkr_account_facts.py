@@ -165,3 +165,44 @@ def test_confirmed_empty_inventory_survives_runtime_report_json(tmp_path):
     assert stored["broker_reported_positions"] == []
     assert stored["broker_reported_positions_complete"] is True
     assert stored["broker_reported_positions_scope"] == "stocks_only"
+
+
+def test_independent_native_cash_fields_survive_without_changing_balance_priority():
+    snapshot = _snapshot(
+        observed_at=datetime(2026, 9, 30, 12, tzinfo=timezone.utc),
+        cash_balances=({"account_id": "DU123", "currency": "USD",
+            "$LEDGER-CashBalance": 100, "SettledCash": 60, "AvailableFunds": 75},),
+    )
+    facts = build_ibkr_account_facts(snapshot)
+    assert facts["cash"] == [{"currency": "USD", "cash_balance": "100", "source_tag": "$LEDGER-CashBalance"}]
+    observed = facts["broker_cash_observations"]
+    assert observed["schema_version"] == "ibkr.cash_observations.v1"
+    assert observed["observed_at"] == facts["observed_at"]
+    assert observed["values"] == [
+        {"currency": "USD", "source_tag": "$LEDGER-CashBalance", "value": "100"},
+        {"currency": "USD", "source_tag": "AvailableFunds", "value": "75"},
+        {"currency": "USD", "source_tag": "SettledCash", "value": "60"},
+    ]
+    assert "invalid_fields" not in observed
+
+
+def test_cash_observations_survive_the_original_runtime_report_writer(tmp_path):
+    from quant_platform_kit.common.runtime_reports import (
+        build_runtime_report_base, finalize_runtime_report, write_runtime_report_json,
+    )
+    from application.ibkr_cash_observations import inspect_cash_observations
+
+    snapshot = _snapshot(observed_at=datetime(2026, 9, 30, 12, tzinfo=timezone.utc),
+        cash_balances=({"account_id": "DU123", "currency": "USD",
+            "CashBalance": 100, "SettledCash": 0, "AvailableFunds": -2},))
+    facts = build_ibkr_account_facts(snapshot)
+    report = build_runtime_report_base(platform="interactive_brokers", deploy_target="offline",
+        service_name="example-runtime", strategy_profile="example", run_id="cash-fields", run_source="test")
+    finalize_runtime_report(report, status="ok", summary={"account_facts": facts})
+    path = write_runtime_report_json(report, output_path=tmp_path / "report.json")
+    stored = json.loads(path.read_text())["summary"]["account_facts"]
+    assert stored["broker_cash_observations"] == facts["broker_cash_observations"]
+    diagnostic = inspect_cash_observations(stored["broker_cash_observations"],
+        observed_at=stored["observed_at"], selected_cash=stored["cash"][0])
+    assert diagnostic["fields"]["SettledCash"] == "OBSERVED"
+    assert diagnostic["spendable_cash_verified"] is False

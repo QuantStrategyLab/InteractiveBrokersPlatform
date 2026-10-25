@@ -21,6 +21,30 @@
 
 全部来源维持原 `synthetic=true` 要求。不得把真实账户数据仅改标志后送入研究入口。实际账户报告已核对来源这一事实，也不自动证明完整持仓、资金义务、结算现金、收费方案或风险政策合格。
 
+### 原生现金字段的保存和只读核验
+
+平台账户快照另外保存可选的`broker_cash_observations`（`ibkr.cash_observations.v1`），
+保留原`cash_balances`里分别出现的CashBalance、TotalCashBalance、两个LEDGER余额字段、
+SettledCash、AvailableFunds和FullAvailableFunds。原`cash`的选择优先级和执行购买力算法保持原样；
+新增字段不把这些金额相加，也不将AvailableFunds或余额重命名为已结算、可支用现金。
+
+附件继承同一个父快照的账户身份和`observed_at`，只写明确币种，排除BASE；零与负数按原值保留，
+非法值仅记录固定字段名，缺字段保持缺失。空数组省略，以兼容原运行报告的保存归一化；
+字段未出现不代表余额为零、义务为空或查询完整。
+
+原受保护`--broker-contract-source-evidence`入口在账户、版本和时效检查后核这个附件，
+只输出字段的OBSERVED／INVALID／MISSING状态，不输出金额。原字段被另一种现金标签遮住时，
+可以准确说明SettledCash是否实际出现；附件时间不符、重复字段、同一原生字段的两份投影冲突时不认证。
+未含附件的旧报告仍可读取，新增明细状态为NOT_REPORTED，不据此反推旧原始数据。
+
+这些是已报告字段的观察，不证明原生缓存独立时效、完整结算查询、全部渠道义务或可花现金。
+读到SettledCash只关闭“未观察到该标签”一项；费用、数量权限和完整义务仍须独立核实，
+`spendable_cash_verified=false`、`complete_cash_obligations_verified=false`及所有执行权限保持原语义。
+接口不新增券商请求、凭据读取、配置应用、存储或风险数值。
+
+字段语义参见[IBKR TWS账户字段](https://www.interactivebrokers.com/docs/tws-api/doc/account-portfolio-data/account-updates/account-value-keys)
+及[Account Summary](https://interactivebrokers.github.io/tws-api/account_summary.html)。原生字段含义与适用账户合同须分开核对。
+
 `runtime.runtime_settings.trusted_runtime_risk_policy` 在**这条离线入口**中消费原 UES 事件政策形状，必须与 `event_context.policy` 完全一致；它不是把旧 SOXL `RuntimeRiskLimits` 字典改个 profile 就能使用的入口。事件止损/熔断政策与 `risk_inputs` 中的资金预算、三档曲线、原硬约束分别核对，不能相互替代。
 
 离线 target 使用明确的冻结 release 引用：
