@@ -49,6 +49,22 @@ def _number(value: object) -> str | None:
     return value if isinstance(value, str) and len(value) <= 64 and _DECIMAL.fullmatch(value) else None
 
 
+def _number_shape(value: object) -> dict[str, Any]:
+    """Describe a rejected numeric format without retaining its value or sign."""
+    if not isinstance(value, str):
+        return {"kind": "not_text"}
+    if len(value) > 256:
+        return {"kind": "oversized"}
+    if value.strip().casefold().lstrip("+-") in {"nan", "inf", "infinity"}:
+        return {"kind": "nonfinite"}
+    match = re.fullmatch(r"[+-]?([0-9]+)(?:\.([0-9]+))?([eE][+-]?[0-9]+)?", value.strip(), re.ASCII)
+    if match is None:
+        return {"kind": "unsupported"}
+    return {"kind": "scientific" if match[3] else "decimal",
+            "integer_digits": len(match[1]), "fraction_digits": len(match[2] or ""),
+            "has_whitespace": value != value.strip()}
+
+
 def _text(value: object, limit: int) -> bool:
     return (isinstance(value, str) and 0 < len(value) <= limit and value == value.strip()
             and not any(ord(char) < 0x20 or ord(char) == 0x7F for char in value))
@@ -89,10 +105,11 @@ def project_flex_executions(
     diagnostic = {"section_present": section is not None, "native_record_count": len(rows),
                   "field_names": field_names[:128], "level_types": levels, "missing_fields": [], "invalid_fields": []}
 
-    def unavailable(reason, *, missing=(), invalid=()):
+    def unavailable(reason, *, missing=(), invalid=(), numeric_shapes=None):
+        safe_shapes = {"invalid_numeric_shapes": numeric_shapes} if numeric_shapes else {}
         return {"status": "source_unavailable", "records": None,
                 "diagnostic": {**diagnostic, "reason": reason, "missing_fields": sorted(set(missing)),
-                               "invalid_fields": sorted(set(invalid))}}
+                               "invalid_fields": sorted(set(invalid)), **safe_shapes}}
 
     if section is None:
         return unavailable("trades_section_missing")
@@ -147,7 +164,8 @@ def project_flex_executions(
             raw = row.get(field)
             fees[field] = _number(raw) if raw not in (None, "") else None
             if raw not in (None, "") and fees[field] is None:
-                return unavailable("execution_fields_invalid", invalid=[field])
+                return unavailable("execution_fields_invalid", invalid=[field],
+                                   numeric_shapes={field: _number_shape(raw)})
         fee_currency = row.get("ibCommissionCurrency") or None
         if fee_currency is not None and not _CURRENCY.fullmatch(fee_currency):
             return unavailable("execution_fields_invalid", invalid=["ibCommissionCurrency"])
