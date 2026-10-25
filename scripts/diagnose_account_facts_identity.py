@@ -748,12 +748,13 @@ def main(argv: Sequence[str] | None = None, *, now: datetime | None = None) -> i
             result = _source_result(source_sha, "diagnostic_error")
         print(json.dumps(result, sort_keys=True))
         return 0 if result["reason"] == "deploy_provenance_verified" else 1
-    if args not in ([], ["--preflight"]):
+    source_evidence = args == ["--broker-contract-source-evidence"]
+    if args not in ([], ["--preflight"], ["--broker-contract-source-evidence"]):
         print(json.dumps(_result(source_sha=source_sha, reason="arguments_invalid"), sort_keys=True))
         return 1
     try:
         expected = resolve_expected()
-        if args:
+        if args == ["--preflight"]:
             print(json.dumps(_result(source_sha=source_sha, status="preflight", reason="target_config_valid"), sort_keys=True))
             return 0
         current = now if now is not None else datetime.now(timezone.utc)
@@ -780,6 +781,17 @@ def main(argv: Sequence[str] | None = None, *, now: datetime | None = None) -> i
     )
     if passed:
         result["positions_source_evidence"] = _positions_source_evidence(report)
+    if source_evidence:
+        result["broker_contract_source_evidence"] = dict(status="NOT_EVALUATED",
+            gaps=["BROKER_SOURCE_IDENTITY_TIME_OR_READ_UNVERIFIED"])
+        if passed:
+            try:
+                from application.broker_contract_source_evidence import inspect_broker_contract_sources
+                result["broker_contract_source_evidence"] = inspect_broker_contract_sources(report)
+            except Exception:
+                result["broker_contract_source_evidence"] = dict(status="NOT_EVALUATED",
+                    gaps=["BROKER_SOURCE_PROJECTION_FAILED"])
+                passed = False
     print(json.dumps(result, sort_keys=True))
     return 0 if passed else 1
 

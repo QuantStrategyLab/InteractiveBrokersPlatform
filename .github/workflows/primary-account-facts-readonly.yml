@@ -68,4 +68,4 @@ jobs:
         uses: google-github-actions/setup-gcloud@v3
 
       - name: Read the existing report and service identity without publishing
-        run: python3 -m scripts.diagnose_account_facts_identity
+        run: python3 -m scripts.diagnose_account_facts_identity --broker-contract-source-evidence
