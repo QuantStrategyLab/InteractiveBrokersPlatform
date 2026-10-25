@@ -25,14 +25,18 @@ def digest(value):
 
 
 def traffic_tag(run_id, service):
-    # Cloud Run limits tag + service name to 46 characters. Base36 retains
-    # the complete run identity without hashing, truncation or collisions.
+    # Cloud Run limits tag + service name to 46 characters. The full run ID
+    # remains in the Scheduler name. A shortened tag is never overwritten:
+    # the existing-resource check rejects any occupied name before mutation.
     number, encoded = int(run_id), ""
     while number:
         number, digit = divmod(number, 36)
         encoded = "0123456789abcdefghijklmnopqrstuvwxyz"[digit] + encoded
-    tag = "c" + (encoded or "0")
-    if len(tag) + len(service) > 46 or not pilot.NAME.fullmatch(tag):
+    available = 46 - len(service)
+    if available < 2:
+        raise pilot.ReleaseError("candidate_tag_length_unsupported")
+    tag = "c" + (encoded or "0")[-(available - 1):]
+    if not pilot.NAME.fullmatch(tag):
         raise pilot.ReleaseError("candidate_tag_length_unsupported")
     return tag
 
@@ -80,6 +84,12 @@ def admit(expected, state, candidate, source):
 
 def project(report, uri, expected, *, candidate, started, now):
     """A candidate projection never changes the configured publisher binding."""
+    if report.get("diagnostics", {}).get("maintenance_cash_observation") is not True:
+        raise pilot.ReleaseError("maintenance_report_marker_missing")
+    try:
+        publisher._source_report_uri(uri, expected["expected_report_prefix"].rstrip("/") + "/maintenance-cash")
+    except ValueError:
+        raise pilot.ReleaseError("maintenance_report_namespace_invalid") from None
     scope = {**expected, "expected_runtime_revision": candidate}
     result = publisher.project_ibkr_account_facts_history(report, source_report_uri=uri, **scope)
     if result.get("schema_version") != publisher.HISTORY_SCHEMA:
@@ -168,12 +178,16 @@ def observe(expected, source, env, receipt, *, run=pilot.command, snapshot=pilot
         run(["gcloud", "scheduler", "jobs", "create", "http", job, *scheduler,
             "--schedule=" + schedule, "--time-zone=Etc/UTC", "--uri=" + url + "/probe",
             "--http-method=POST", "--oidc-service-account-email=" + caller,
+            "--headers=X-QSL-Maintenance-Cash=1",
             "--oidc-token-audience=" + service_url, "--attempt-deadline=300s",
             "--max-retry-attempts=0", "--max-retry-duration=0s", "--quiet", "--format=json"],
             stage="scheduler_create_unknown")
         created = read(["scheduler", "jobs", "describe", job, *scheduler], "scheduler_readback_failed")
         retry = created.get("retryConfig", {})
+        headers = created.get("httpTarget", {}).get("headers", {})
+        isolation_header = any(k.lower() == "x-qsl-maintenance-cash" and v == "1" for k, v in headers.items())
         if (not owned_job(created, job=job, url=url, caller=caller, audience=service_url)
+                or not isolation_header
                 or created.get("state") != "ENABLED" or created.get("schedule") != schedule
                 or created.get("timeZone") != "Etc/UTC" or created.get("attemptDeadline") != "300s"
                 or retry.get("retryCount", 0) != 0 or retry.get("maxRetryDuration", "0s") != "0s"):
@@ -189,7 +203,7 @@ def observe(expected, source, env, receipt, *, run=pilot.command, snapshot=pilot
             for entry in logs:
                 match = re.search(r"execution_report (gs://[^\s]+)", entry.get("textPayload", ""))
                 if match:
-                    uris.add(publisher._source_report_uri(match[1], expected["expected_report_prefix"]))
+                    uris.add(publisher._source_report_uri(match[1], expected["expected_report_prefix"].rstrip("/") + "/maintenance-cash"))
             if len(uris) > 1:
                 raise pilot.ReleaseError("candidate_report_ambiguous")
             if uris:
