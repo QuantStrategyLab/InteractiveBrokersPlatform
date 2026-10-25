@@ -87,7 +87,7 @@ def fixture(opened=False):
         account_scope="ARTIFICIAL_SCOPE", service_name="artificial-offline-service", strategy_release=release)
     settings = SimpleNamespace(strategy_profile=PROFILE, runtime_target=target, account_ids=("ARTIFICIAL_ACCOUNT",),
         trusted_runtime_risk_policy=deepcopy(c["policy"]), cash_only_execution=True,
-        reserved_cash_ratio=0., dry_run_only=True)
+        reserved_cash_ratio=0., reserved_cash_floor_usd=0., dry_run_only=True)
     runtime = LoadedStrategyRuntime(entrypoint=SimpleNamespace(manifest=SimpleNamespace(profile=PROFILE)),
         runtime_settings=settings, runtime_adapter=StrategyRuntimeAdapter(), merged_runtime_config=config,
         cash_reserve_ratio=0., logger=lambda _: None)
@@ -329,3 +329,146 @@ print('OPEN retained; no configuration or order authority')
             capture_output=True, text=True, timeout=30)
         assert completed.returncode == 0, completed.stderr
         assert "OPEN retained" in completed.stdout
+
+
+def reserve_fixture(ratio, floor, reserved):
+    args = fixture()
+    runtime, _, p, _, _, _ = args
+    runtime.runtime_settings.reserved_cash_ratio = ratio
+    runtime.runtime_settings.reserved_cash_floor_usd = floor
+    runtime = replace(runtime, cash_reserve_ratio=ratio, cash_reserve_floor_usd=floor)
+    args = (runtime, *args[1:])
+    p['account_contract']['reserved_cash'] = str(reserved)
+    p['cash_evidence']['reservations'] = [dict(id='explicit-reserve', kind='RESERVE', amount=str(reserved)),
+        dict(id='separate-obligation', kind='OTHER', amount='3')]
+    p['account_contract']['other_cash_obligations'] = '3'
+    return args
+
+
+@pytest.mark.parametrize(('ratio', 'floor', 'reserved'), [(.1, 5., 10.), (.05, 10., 10.), (0., 10., 10.)])
+def test_fixed_and_ratio_reserve_use_max_once_then_separate_obligations(tmp_path, ratio, floor, reserved):
+    args = seed(tmp_path, reserve_fixture(ratio, floor, reserved))
+    saved = call(tmp_path, args, event_id='reserve-funded')
+    assert saved['status'] == 'SETTINGS_DRAFT_PERSISTED', saved
+    quantity = saved['preview']['allocation_preview']['requested_preview']['quantity_preview']
+    for scenario in quantity['scenarios']:
+        assert scenario['spendable_cash'] == 99 - reserved - 3
+        assert scenario['sale_proceeds_used_for_funding'] is False
+    assert_unarmed(saved)
+
+
+@pytest.mark.parametrize(('ratio', 'floor', 'reserved'), [(.1, 5., 9.), (.05, 10., 9.)])
+def test_underfunded_effective_reserve_rejects_before_store_write(tmp_path, ratio, floor, reserved):
+    args = reserve_fixture(ratio, floor, reserved)
+    out = call(tmp_path, args, 'initialize', initialization=args[-1])
+    assert out['gaps'] == ['TQQQ_RESERVE_NOT_FUNDED'], out
+    assert not list(tmp_path.rglob('*.json'))
+    assert_unarmed(out)
+
+
+@pytest.mark.parametrize('floor', [None, True, -1., float('nan'), float('inf'), 10.])
+def test_missing_invalid_or_runtime_mismatched_floor_never_writes(tmp_path, floor):
+    args = fixture()
+    args[0].runtime_settings.reserved_cash_floor_usd = floor
+    out = call(tmp_path, args, 'initialize', initialization=args[-1])
+    assert out['gaps']
+    assert not list(tmp_path.rglob('*.json'))
+    assert_unarmed(out)
+
+
+def cash_only_fixture():
+    from application.tqqq_offline_risk import build_tqqq_offline_account_facts
+    args = fixture()
+    runtime, snapshot, p, c, b, proof = args
+    snapshot = replace(snapshot, positions=())
+    snapshot.metadata['cash_balances'][0].update(CashBalance='100', SettledCash='100')
+    for row in p['cash_evidence']['account_values']:
+        row['value'] = '100'
+    p['account_contract']['settled_cash'] = '100'
+    evidence = {key: deepcopy(p['cash_evidence'][key]) for key in (
+        'synthetic', 'account_id', 'scope_ref', 'currency', 'source', 'source_version',
+        'observed_at', 'available_at', 'max_age_seconds', 'valid_from', 'valid_until')}
+    evidence.update(positions_complete=True, asset_scope='STOCKS_AND_CASH_ONLY',
+        account_snapshot_sha256=digest(build_ibkr_account_facts(snapshot)))
+    p['facts'] = build_tqqq_offline_account_facts(snapshot, account_contract=p['account_contract'],
+        inventory_evidence=evidence)
+    c['observations'].update(account_snapshot_sha256=digest(p['facts']), sleeves=[])
+    return (runtime, snapshot, p, c, b, proof), evidence
+
+
+@pytest.mark.parametrize('level', ['conservative', 'balanced', 'growth'])
+def test_explicit_artificial_empty_inventory_can_preview_and_read_back(tmp_path, level):
+    args, evidence = cash_only_fixture()
+    assert 'broker_reported_positions' not in build_ibkr_account_facts(args[1])
+    assert args[2]['facts']['broker_reported_positions'] == []
+    initialized = call(tmp_path, args, 'initialize', initialization=args[-1], inventory_evidence=evidence)
+    assert initialized['readback_verified'], initialized
+    args = (*args[:4], initialized['next_binding'], args[-1])
+    request = request_fixture(); request['level'] = level
+    saved = call(tmp_path, args, request=request, event_id='cash-allocation', inventory_evidence=evidence)
+    assert saved['status'] == 'SETTINGS_DRAFT_PERSISTED', saved
+    args = (*args[:4], saved['next_binding'], args[-1])
+    read = call(tmp_path, args, 'preflight', request=request, inventory_evidence=evidence,
+        expected_artifact_sha256=saved['artifact_receipt']['artifact_sha256'],
+        consumption_cutoff_utc='2000-01-04T12:01:30Z')
+    assert read['status'] == 'READY_OFFLINE_SETTINGS_PREFLIGHT', read
+    assert_unarmed(read)
+
+
+@pytest.mark.parametrize('change', ['missing', 'incomplete', 'scope', 'snapshot', 'stale', 'real', 'options', 'nonempty', 'unknown'])
+def test_empty_native_projection_alone_or_invalid_attestation_never_means_flat(tmp_path, change):
+    args, evidence = cash_only_fixture()
+    if change == 'missing': evidence = None
+    elif change == 'incomplete': evidence['positions_complete'] = False
+    elif change == 'scope': evidence['account_id'] = 'OTHER'
+    elif change == 'snapshot': evidence['account_snapshot_sha256'] = 'f' * 64
+    elif change == 'stale': evidence['observed_at'] = '1999-01-01T00:00:00Z'
+    elif change == 'real': evidence['synthetic'] = False
+    elif change == 'options': args[1].metadata['option_positions'] = ({'unknown': True},)
+    elif change == 'nonempty': args = (args[0], replace(args[1], positions=fixture()[1].positions), *args[2:])
+    elif change == 'unknown': args = (args[0], replace(args[1], positions=None), *args[2:])
+    out = call(tmp_path, args, 'initialize', initialization=args[-1], inventory_evidence=evidence)
+    assert out['gaps']
+    assert out['draft_settings'] is None
+    assert not list(tmp_path.rglob('*.json'))
+    assert_unarmed(out)
+
+
+
+def test_expired_empty_inventory_evidence_cannot_refresh_a_saved_draft(tmp_path):
+    args, evidence = cash_only_fixture()
+    evidence['max_age_seconds'] = 60
+    initialized = call(tmp_path, args, 'initialize', initialization=args[-1], inventory_evidence=evidence)
+    assert initialized['readback_verified'], initialized
+    args = (*args[:4], initialized['next_binding'], args[-1])
+    saved = call(tmp_path, args, event_id='short-inventory', inventory_evidence=evidence)
+    assert saved['status'] == 'SETTINGS_DRAFT_PERSISTED', saved
+    args = (*args[:4], saved['next_binding'], args[-1])
+    before = {str(f): f.read_bytes() for f in tmp_path.rglob('*.json')}
+    read = call(tmp_path, args, 'preflight', inventory_evidence=evidence,
+        expected_artifact_sha256=saved['artifact_receipt']['artifact_sha256'],
+        consumption_cutoff_utc='2000-01-04T12:01:30Z')
+    assert read['gaps'] and read['draft_settings'] is None
+    assert before == {str(f): f.read_bytes() for f in tmp_path.rglob('*.json')}
+    assert_unarmed(read)
+
+
+
+def test_execution_equity_cannot_use_a_different_reserve_denominator(tmp_path):
+    args = reserve_fixture(.1, 0., 10.)
+    args = (args[0], replace(args[1], total_equity=200.), *args[2:])
+    # Broker NLV, cash facts and their capital adapter still say 100.
+    out = call(tmp_path, args, 'initialize', initialization=args[-1])
+    assert out['gaps'] == ['TQQQ_EXECUTION_EQUITY_DENOMINATOR_MISMATCH'], out
+    assert not list(tmp_path.rglob('*.json'))
+    assert_unarmed(out)
+
+
+@pytest.mark.parametrize('field', ['minimum_fee_applies', 'minimum_fee_amount', 'per_share_fee', 'per_order_fee'])
+def test_account_fee_features_are_not_approximated_by_fixed_bps(tmp_path, field):
+    args = fixture()
+    args[2]['execution_rules']['fees'][field] = True if field == 'minimum_fee_applies' else '1'
+    out = call(tmp_path, args, 'initialize', initialization=args[-1])
+    assert 'UNSUPPORTED_FEE_RULE' in out['gaps'], out
+    assert not list(tmp_path.rglob('*.json'))
+    assert_unarmed(out)
