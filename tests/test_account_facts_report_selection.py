@@ -160,10 +160,10 @@ def test_listing_has_explicit_item_time_and_call_limits(monkeypatch, configured)
     calls = []
     def run(args, **kwargs):
         calls.append((args, kwargs))
-        assert args[:4] == ("gcloud", "storage", "objects", "list")
-        assert "--limit=2049" in args and "--page-size=1000" in args and "--uri" in args
+        assert args[:3] == ("gcloud", "storage", "ls")
+        assert "--uri" not in args, "objects list --uri returns REST self-links, not gs:// report names"
         assert kwargs["timeout"] == 60
-        prefix = args[4][:-1]
+        prefix = args[3]
         return SimpleNamespace(returncode=0, stdout=prefix + "20261013T115900Z.json\n", stderr="")
     monkeypatch.setattr(publisher.subprocess, "run", run)
     assert publisher._latest_report_uri(prefix=expected["expected_report_prefix"],
