@@ -389,7 +389,7 @@ def test_cli_external_failures_are_redacted_and_never_publish(monkeypatch, capsy
     def fake_run(command, **kwargs):
         commands.append(command)
         assert kwargs["capture_output"] is True
-        if command[1:4] == ("storage", "objects", "list"):
+        if command[1:3] == ("storage", "ls"):
             if failure == "listing":
                 return subprocess.CompletedProcess(command, 1, "", PRIVATE)
             return subprocess.CompletedProcess(command, 0, expected["expected_report_prefix"] + "/2026-10/20261013T115958Z.json\n", "")
@@ -431,7 +431,7 @@ def test_full_cli_uses_selected_read_commands_and_requires_fresh_identity(monkey
     def fake_run(command, **kwargs):
         commands.append(command)
         assert command[command.index("--project") + 1] == expected["expected_project_id"]
-        if command[1:4] == ("storage", "objects", "list"):
+        if command[1:3] == ("storage", "ls"):
             return subprocess.CompletedProcess(command, 0, expected["expected_report_prefix"] + "/2026-10/20261013T110000Z.json\n", "")
         if command[1:3] == ("storage", "cat"):
             return subprocess.CompletedProcess(command, 0, json.dumps(report), "")

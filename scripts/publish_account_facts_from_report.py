@@ -795,9 +795,9 @@ def _report_candidate_uris(*, prefix: str, project_id: str, now: datetime) -> li
     for month in months:
         month_prefix = f"{prefix.rstrip('/')}/{month}/"
         result = subprocess.run(
-            ("gcloud", "storage", "objects", "list", month_prefix + "*", "--uri",
-             f"--limit={_REPORT_LIST_LIMIT + 1}", "--page-size=1000",
-             "--project", project_id),
+            # Keep the proven versionless gs:// listing. objects list --uri
+            # returns REST self-links, not storage URLs accepted by provenance.
+            ("gcloud", "storage", "ls", month_prefix, "--project", project_id),
             capture_output=True,
             text=True,
             check=False,

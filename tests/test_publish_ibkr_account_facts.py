@@ -1378,9 +1378,9 @@ def test_latest_report_listing_is_confined_to_exact_prefix(monkeypatch):
             self.stdout = stdout
 
     def run(argv, **_kwargs):
-        seen.append(argv[4])
-        assert argv[:4] == ("gcloud", "storage", "objects", "list")
-        assert "--limit=2049" in argv and "--page-size=1000" in argv
+        seen.append(argv[3])
+        assert argv[:3] == ("gcloud", "storage", "ls")
+        assert "--uri" not in argv
         return Result(
             "gs://bucket/root/interactive_brokers/example-profile/live-primary/2026-09/"
             "20260930T010000Z.json\n"
