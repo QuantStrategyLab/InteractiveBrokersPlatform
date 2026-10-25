@@ -193,6 +193,30 @@ def test_settled_cash_cannot_be_invented_behind_an_unchanged_cash_balance_projec
     assert list(tmp_path.rglob("*.json")) == []
 
 
+@pytest.mark.parametrize("change", ["held_symbol", "scenario_scope"])
+def test_native_holdings_and_funding_model_cannot_silently_use_another_scope(tmp_path, change):
+    args = fixture()
+    runtime, snapshot, p, c, b, proof = args
+    if change == "held_symbol":
+        snapshot = replace(snapshot, positions=(Position(symbol="OTHER", quantity=1., market_value=1., currency="USD"),))
+        p["facts"] = build_ibkr_account_facts(snapshot)
+        args = (runtime, snapshot, p, c, b, proof)
+        expected = "TQQQ_HELD_SECURITY_OUTSIDE_SCENARIO_SCOPE"
+    else:
+        risk = p["risk_inputs"]
+        descriptor = replace(risk["scenario_set"].descriptor, scope="OTHER")
+        risk["scenario_set"] = replace(risk["scenario_set"], descriptor=descriptor)
+        risk["account_policy"] = replace(risk["account_policy"], descriptor=descriptor)
+        risk["presets"] = {level: replace(policy, descriptor=descriptor) for level, policy in risk["presets"].items()}
+        release = replace(runtime.runtime_settings.runtime_target.strategy_release,
+            risk_policy_sha256=digest(dict(event_policy=c["policy"], funding_inputs_sha256=_hash(risk))))
+        runtime.runtime_settings.runtime_target = replace(runtime.runtime_settings.runtime_target, strategy_release=release)
+        expected = "TQQQ_SCENARIO_ACCOUNT_SCOPE_MISMATCH"
+    out = call(tmp_path, args, "initialize", initialization=proof)
+    assert out["gaps"] == [expected]
+    assert list(tmp_path.rglob("*.json")) == []
+
+
 def test_empty_store_never_assumes_closed_or_initializes_itself(tmp_path, packet):
     out = call(tmp_path, packet, event_id="event-1")
     assert out["breaker_state"] == "UNKNOWN"

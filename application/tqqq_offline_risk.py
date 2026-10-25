@@ -17,7 +17,7 @@ import math
 from application.account_facts import build_ibkr_account_facts
 
 PROFILE = "tqqq_growth_income"
-UES_REVISION = "284a3787d9c5bd180218bdd79ac992cbb0a615b2"
+UES_REVISION = "3dfa547bccd73a562667a975dd91ffd65d47850a"
 QPK_REVISION = "7840127862ea715e44c8f70b03155a399dc817de"
 
 
@@ -129,8 +129,12 @@ def _admit(runtime, snapshot, packet, context):
     _require(account["nav"] == capital["capital_base"].target_equity, "TQQQ_CAPITAL_DENOMINATOR_MISMATCH")
     _require(float(contract["reserved_cash"]) >= account["nav"] * reserve, "TQQQ_RESERVE_NOT_FUNDED")
     risk = {key: value for key, value in packet["risk_inputs"].items() if key != "scenario_available_at"}
+    scenario = risk["scenario_set"]
+    _require(scenario.descriptor.scope == contract["scope_ref"]
+        and scenario.descriptor.currency == contract["currency"], "TQQQ_SCENARIO_ACCOUNT_SCOPE_MISMATCH")
+    _require(set(account["current_weights"]) <= set(scenario.symbols), "TQQQ_HELD_SECURITY_OUTSIDE_SCENARIO_SCOPE")
     book = DecisionBook({symbol: account["current_weights"].get(symbol, 0.)
-        for symbol in risk["scenario_set"].symbols}, account["nav"], contract["currency"], 0.)
+        for symbol in scenario.symbols}, account["nav"], contract["currency"], 0.)
     for level in LEVELS:
         checked = preview_capital_adaptive_target(level=level, proposal=Action("HOLD_POSITIONS"),
             decision_book=book, **risk)
