@@ -64,6 +64,18 @@ _CASHFLOW_OPTIONAL_FIELDS = ("dateTime", "date", "reportDate", "settleDate", "tr
                              "code", "levelOfDetail", "timeZone", "timezone")
 _CASHFLOW_DATE_FIELDS = ("dateTime", "date", "reportDate", "settleDate")
 _CASHFLOW_ZONE_FIELDS = ("timeZone", "timezone")
+# Fixed XML-name candidates for the public Change in NAV reference fields:
+# https://www.ibkrguides.com/reportingreference/reportguide/changeinnav_fq.htm
+# A candidate's presence does not establish its meaning, mode or completeness.
+_NAV_TEXT_FIELDS = ("accountId", "acctAlias", "model", "currency", "mode", "fromDate", "toDate")
+_NAV_NUMERIC_FIELDS = (
+    "startingValue", "mtm", "realized", "changeInUnrealized", "depositsWithdrawals",
+    "internalCashTransfers", "assetTransfers", "dividends", "withholdingTax", "withholding871m",
+    "changeInDividendAccruals", "interest", "changeInInterestAccruals", "advisorFees", "clientFees",
+    "otherFees", "feesReceivables", "commissions", "commissionReceivables", "forexCommissions",
+    "transactionTax", "taxReceivables", "salesTax", "softDollars", "netFxTrading", "fxTranslation",
+    "linkingAdjustments", "other", "endingValue", "twr",
+)
 
 
 def _cashflow_timezone_format(value: str | None) -> str:
@@ -142,6 +154,36 @@ def _cashflow_source_diagnostic(statement: ElementTree.Element) -> dict[str, Any
                                               if any(not row.get(field) for row in rows)),
         }
     return {"schema_version": "ibkr.flex_cashflow_source_shape.v1", "coverage": "not_evaluated", "sections": sections}
+
+
+def _nav_source_diagnostic(statement: ElementTree.Element) -> dict[str, Any]:
+    """Count fixed NAV candidates, never values or unknown attribute names.
+
+    This does not authenticate a NAV bridge, mode, base currency, capital-flow
+    coverage or absent fields as zero. It does not calculate money P/L.
+    """
+    rows = statement.findall("ChangeInNAV")
+    fields = (*_NAV_TEXT_FIELDS, *_NAV_NUMERIC_FIELDS)
+    field_types = {}
+    for field in fields if rows else ():
+        types = Counter()
+        for row in rows:
+            value = row.get(field)
+            kind = "missing" if value is None else "empty_text" if not value else "text"
+            if field in _NAV_NUMERIC_FIELDS and value:
+                kind = _number_shape(value)["kind"] + "_text"
+            types[kind] += 1
+        field_types[field] = dict(sorted(types.items()))
+    return {
+        "schema_version": "ibkr.flex_nav_source_shape.v1", "coverage": "not_evaluated",
+        "nav_bridge": "not_evaluated", "missing_fields_are_zero": False,
+        "record_count": len(rows), "unsupported_record_count": sum(len(row) for row in rows),
+        "unknown_field_count": sum(len(set(row.attrib) - set(fields)) for row in rows),
+        "field_type_counts": field_types,
+        "date_time_format_counts": {field: dict(sorted(Counter(
+            _cashflow_datetime_format(row.get(field)) for row in rows).items()))
+            for field in ("fromDate", "toDate") if rows},
+    }
 
 
 def _diagnostic_date(value: object) -> str | None:
@@ -436,6 +478,7 @@ def build_flex_ledger(
         "source_ref": report.content_sha256,
         "executions": project_flex_executions(statement, source_ref=report.content_sha256, period=period),
         "cashflow_source_diagnostic": _cashflow_source_diagnostic(statement),
+        "nav_source_diagnostic": _nav_source_diagnostic(statement),
         "account_ids": [account_id],
         "currency": declared_currency,
         "account_base_currency": base_currency,
