@@ -178,6 +178,14 @@ def test_other_template_label_difference_is_not_ignored(controlled_release):
         state.execute()
 
 
+def test_client_generated_revision_nonce_is_not_runtime_configuration(controlled_release):
+    state = controlled_release
+    for snapshot in state.states:
+        snapshot["service"]["spec"]["template"]["metadata"]["labels"]["client.knative.dev/nonce"] = "synthetic-current"
+    state.candidate["metadata"]["labels"]["client.knative.dev/nonce"] = "synthetic-created"
+    assert state.execute()["status"] == "verified_no_traffic"
+
+
 def test_build_labels_cannot_change_during_image_update(controlled_release):
     state = controlled_release
     state.after["service"]["spec"]["template"]["metadata"]["labels"]["github-run-id"] = "unexpected"

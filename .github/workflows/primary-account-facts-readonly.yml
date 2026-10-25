@@ -1,8 +1,14 @@
 name: Read Primary TQQQ Account Facts
 
-# Manual, single-account diagnosis of existing private reports only.
+# Manual, single-account diagnosis. Optional candidate mode calls only /probe.
 on:
   workflow_dispatch:
+    inputs:
+      maintenance_source_commit:
+        description: "Optional exact 40-character source SHA for one zero-traffic /probe; empty reads existing reports only."
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -16,7 +22,7 @@ jobs:
   inspect:
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       IBKR_ACCOUNT_FACTS_TARGET: primary-live
       IBKR_ACCOUNT_FACTS_PROJECT_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID }}
@@ -28,6 +34,7 @@ jobs:
       IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON }}
       IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR: ${{ secrets.IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR }}
       CLOUD_RUN_REGION: us-central1
+      MAINTENANCE_SOURCE_COMMIT: ${{ inputs.maintenance_source_commit }}
     steps:
       - name: Require infrastructure variables
         env:
@@ -47,6 +54,8 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
+          import os
+          import re
           from pathlib import PurePosixPath
           from urllib.parse import urlsplit
           from scripts.diagnose_account_facts_identity import resolve_expected
@@ -55,6 +64,9 @@ jobs:
           parts = PurePosixPath(urlsplit(expected["expected_report_prefix"]).path).parts
           if "tqqq_growth_income" not in parts:
               raise SystemExit("status=blocked reason=primary_profile_mismatch")
+          source = os.environ.get("MAINTENANCE_SOURCE_COMMIT", "")
+          if source and (not re.fullmatch(r"[0-9a-f]{40}", source) or os.environ["GITHUB_RUN_ATTEMPT"] != "1"):
+              raise SystemExit("status=blocked reason=candidate_source_invalid")
           print("status=preflight_verified scope=primary_tqqq")
           PY
 
@@ -68,4 +80,18 @@ jobs:
         uses: google-github-actions/setup-gcloud@v3
 
       - name: Read the existing report and service identity without publishing
+        if: inputs.maintenance_source_commit == ''
         run: python3 -m scripts.diagnose_account_facts_identity --broker-contract-source-evidence
+
+      - name: Observe one zero-traffic maintenance cash snapshot without strategy execution
+        if: inputs.maintenance_source_commit != ''
+        run: python3 -m scripts.observe_maintenance_cash
+
+      - name: Retain only the value-free maintenance observation
+        if: always() && inputs.maintenance_source_commit != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: maintenance-cash-${{ github.run_id }}
+          path: ${{ runner.temp }}/maintenance-cash.safe.json
+          if-no-files-found: warn
+          retention-days: 30

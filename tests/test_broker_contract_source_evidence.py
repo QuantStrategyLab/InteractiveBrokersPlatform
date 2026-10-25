@@ -136,11 +136,14 @@ def test_source_projection_failure_emits_no_partial_private_values(monkeypatch, 
     assert PRIVATE not in json.dumps(out)
 
 
-def test_primary_workflow_changes_only_the_existing_read_mode():
+def test_primary_workflow_keeps_default_report_read_and_explicit_candidate_mode():
     workflow = Path(".github/workflows/primary-account-facts-readonly.yml").read_text()
     assert "scripts.diagnose_account_facts_identity --broker-contract-source-evidence" in workflow
     assert "github.ref == 'refs/heads/main'" in workflow and "workflow_dispatch:" in workflow
-    assert "schedule:" not in workflow and "actions/upload-artifact" not in workflow
+    assert "schedule:" not in workflow
+    assert "if: inputs.maintenance_source_commit == ''" in workflow
+    assert "if: always() && inputs.maintenance_source_commit != ''" in workflow
+    assert "path: ${{ runner.temp }}/maintenance-cash.safe.json" in workflow
     assert workflow.count("uses: google-github-actions/auth@") == 1
     assert "IBKR_FLEX_TOKEN" not in workflow and "probe-live-permission" not in workflow
     assert workflow.index("Verify the existing primary scope") < workflow.index("Authenticate with the existing read identity")
