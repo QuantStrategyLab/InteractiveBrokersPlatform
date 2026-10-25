@@ -46,9 +46,17 @@ target, disables Scheduler retries, removes only this run's temporary resources,
 and reads back the original baseline. Failed or ambiguous writes are not retried.
 Raw reports and projections stay in the protected runner; the artifact contains
 fixed states, source/hash/time and no amounts or account identifiers.
-The tag encodes the full run ID in base36 and checks Cloud Run's combined
-46-character tag/service limit before any mutation. Existing tags are never
-replaced; a name collision or unsupported service length stops the observation.
+The tag uses as much of the base36 run ID as fits Cloud Run's combined
+46-character tag/service limit. The complete ID remains in the Scheduler name.
+Existing tags are never replaced; an occupied name or unsupported service
+length stops before mutation.
+
+The fixed maintenance request header selects the original writer's
+`maintenance-cash/` child prefix. Both success and failure reports are isolated
+from the live publisher's monthly listing; the reader requires this namespace
+and the marker. Use a reviewed maintenance application that includes this
+isolation, in addition to the read-only client guard. No publisher binding or
+live report is rewritten or deleted.
 
 The output is explicitly candidate-only. It does not update the publisher's
 revision binding, activate the runtime, run a strategy, establish product/API
