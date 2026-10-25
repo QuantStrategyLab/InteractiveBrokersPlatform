@@ -84,6 +84,8 @@ def _handle_probe(*, response_body: str = "Probe OK"):
     try:
         log_context = main.build_request_log_context()
         report = main.build_execution_report(log_context, dry_run_only_override=True)
+        if request.headers.get("X-QSL-Maintenance-Cash") == "1":
+            report.setdefault("diagnostics", {})["maintenance_cash_observation"] = True
         main.log_runtime_event(
             log_context,
             "health_probe_received",
