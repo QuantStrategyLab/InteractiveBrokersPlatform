@@ -20,6 +20,7 @@ from application.ibkr_period_return import validate_period_return_scope
 SCHEMA_VERSION = "broker_executions.v1"
 _HASH = re.compile(r"[a-f0-9]{64}", re.ASCII)
 _DECIMAL = re.compile(r"-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,8})?", re.ASCII)
+_FEE_DECIMAL = re.compile(r"-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,18})?", re.ASCII)
 _CURRENCY = re.compile(r"[A-Z][A-Z0-9]{2,9}", re.ASCII)
 _REQUIRED = ("accountId", "levelOfDetail", "ibExecID", "tradeDate", "buySell", "quantity",
              "tradePrice", "currency", "assetCategory", "symbol")
@@ -43,10 +44,11 @@ def _day(value: object) -> str | None:
     return None
 
 
-def _number(value: object) -> str | None:
+def _number(value: object, *, fee: bool = False) -> str | None:
     # Preserve the broker's sign and precision; no abs(), inherited currency,
     # scientific notation or nonfinite values enter the consumer contract.
-    return value if isinstance(value, str) and len(value) <= 64 and _DECIMAL.fullmatch(value) else None
+    pattern = _FEE_DECIMAL if fee else _DECIMAL
+    return value if isinstance(value, str) and len(value) <= 64 and pattern.fullmatch(value) else None
 
 
 def _number_shape(value: object) -> dict[str, Any]:
@@ -162,7 +164,7 @@ def project_flex_executions(
         fees = {}
         for field in ("ibCommission", "taxes"):
             raw = row.get(field)
-            fees[field] = _number(raw) if raw not in (None, "") else None
+            fees[field] = _number(raw, fee=True) if raw not in (None, "") else None
             if raw not in (None, "") and fees[field] is None:
                 return unavailable("execution_fields_invalid", invalid=[field],
                                    numeric_shapes={field: _number_shape(raw)})
