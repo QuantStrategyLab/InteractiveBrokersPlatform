@@ -17,7 +17,7 @@ import math
 from application.account_facts import build_ibkr_account_facts
 
 PROFILE = "tqqq_growth_income"
-UES_REVISION = "3dfa547bccd73a562667a975dd91ffd65d47850a"
+UES_REVISION = "8f2f1717cdcfb6c7736037708a4a61c6da9d74ed"
 QPK_REVISION = "3ea9f47d67914c4e39143ed4348c7bc248b759ce"
 
 
