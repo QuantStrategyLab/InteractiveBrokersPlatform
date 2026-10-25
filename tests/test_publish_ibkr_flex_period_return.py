@@ -95,13 +95,25 @@ class Opener:
 
 
 def _missing_executions(status):
+    nav_fields = ("accountId", "acctAlias", "model", "currency", "mode", "fromDate", "toDate",
+        "startingValue", "mtm", "realized", "changeInUnrealized", "depositsWithdrawals", "internalCashTransfers",
+        "assetTransfers", "dividends", "withholdingTax", "withholding871m", "changeInDividendAccruals", "interest",
+        "changeInInterestAccruals", "advisorFees", "clientFees", "otherFees", "feesReceivables", "commissions",
+        "commissionReceivables", "forexCommissions", "transactionTax", "taxReceivables", "salesTax", "softDollars",
+        "netFxTrading", "fxTranslation", "linkingAdjustments", "other", "endingValue", "twr")
     return {"status": status, "executions_status": "source_unavailable", "executions_diagnostic": {
         "section_present": False, "native_record_count": 0, "field_names": [], "level_types": [],
         "missing_fields": [], "invalid_fields": [], "reason": "trades_section_missing"},
         "cashflow_source_diagnostic": {"schema_version": "ibkr.flex_cashflow_source_shape.v1", "coverage": "not_evaluated",
             "sections": {name: {"section_count": 0, "record_count": 0, "unsupported_record_count": 0,
                 "field_type_counts": {}, "date_time_format_counts": {}, "timezone_format_counts": {},
-                "missing_required_fields": []} for name in ("CashTransactions", "StmtFunds")}}}
+                "missing_required_fields": []} for name in ("CashTransactions", "StmtFunds")}},
+        "nav_source_diagnostic": {"schema_version": "ibkr.flex_nav_source_shape.v1", "coverage": "not_evaluated",
+            "nav_bridge": "not_evaluated", "missing_fields_are_zero": False,
+            "record_count": 1, "unsupported_record_count": 0, "unknown_field_count": 0,
+            "field_type_counts": {field: {"text" if field in {"fromDate", "toDate"}
+                else "decimal_text" if field == "twr" else "missing": 1} for field in nav_fields},
+            "date_time_format_counts": {field: {"date_only": 1} for field in ("fromDate", "toDate")}}}
 
 
 def test_full_synthetic_flex_fetch_import_projection_one_post_ack(monkeypatch, capsys):
@@ -661,7 +673,7 @@ def test_historical_period_mismatch_blocks_both_posts(monkeypatch, capsys):
 
 
 @pytest.mark.parametrize("pending,twr", [(False, "1.25"), (True, "1.25"), (False, None)])
-def test_cashflow_shape_uses_same_flex_handle_without_new_posts_or_private_output(monkeypatch, capsys, pending, twr):
+def test_source_shapes_use_same_flex_handle_without_new_posts_or_private_output(monkeypatch, capsys, pending, twr):
     import time
 
     configure(monkeypatch)
@@ -669,7 +681,10 @@ def test_cashflow_shape_uses_same_flex_handle_without_new_posts_or_private_outpu
             'amount="98765.432101" type="synthetic-private-cash-type" '
             'transactionID="synthetic-private-cash-id" dateTime="20260105;123456" '
             'privateCashKey="synthetic-private-value"/></CashTransactions>')
-    report = _execution_xml(twr=twr).replace(b"</FlexStatement>", cash.encode() + b"</FlexStatement>")
+    native = ('<ChangeInNAV accountId="DU0000000" currency="EUR" fromDate="20260101" toDate="20260131" '
+              'startingValue="98765.432101" endingValue="12345.678901" depositsWithdrawals="1e-3" '
+              'privateNavKey="synthetic-private-nav-value"' + (f' twr="{twr}"' if twr else "") + '/>')
+    report = _execution_xml(twr=None).replace(b"</FlexStatement>", (cash + native).encode() + b"</FlexStatement>")
     session = FlexSession(b"<FlexStatementResponse><ErrorCode>1019</ErrorCode></FlexStatementResponse>" if pending else report)
     opener = ExecutionsOpener()
     monkeypatch.setattr(cli.requests, "Session", lambda: session)
@@ -683,13 +698,22 @@ def test_cashflow_shape_uses_same_flex_handle_without_new_posts_or_private_outpu
     assert section["field_type_counts"]["transactionID"] == {"text": 1}
     assert section["date_time_format_counts"]["dateTime"] == {"local_datetime": 1}
     assert result["cashflow_source_diagnostic"]["coverage"] == "not_evaluated"
+    nav = result["nav_source_diagnostic"]
+    assert nav["record_count"] == nav["unknown_field_count"] == 1
+    assert nav["field_type_counts"]["startingValue"] == {"decimal_text": 1}
+    assert nav["field_type_counts"]["depositsWithdrawals"] == {"scientific_text": 1}
+    assert nav["field_type_counts"]["assetTransfers"] == {"missing": 1}
+    assert nav["coverage"] == nav["nav_bridge"] == "not_evaluated" and nav["missing_fields_are_zero"] is False
     assert result["executions_status"] == "published"
     assert len(opener.calls) == (2 if twr else 1)
     assert all("cashflow" not in request.full_url for request, _ in opener.calls)
+    assert {request.full_url for request, _ in opener.calls} == ({cli.SYNC_URL, cli.EXECUTIONS_SYNC_URL}
+        if twr else {cli.EXECUTIONS_SYNC_URL})
     assert sum(url.endswith("/SendRequest") for url, _ in session.calls) == 1
     assert len(session.calls) == (3 if pending else 2)
     gets = [kw["params"] for url, kw in session.calls if url.endswith("/GetStatement")]
     assert all(params == gets[0] for params in gets)
     assert not any(value in output for value in ("DU0000000", "98765.432101", "20260105", "synthetic-private-cash-type",
-                                               "synthetic-private-cash-id", "privateCashKey", "synthetic-private-value"))
+                                               "synthetic-private-cash-id", "privateCashKey", "synthetic-private-value",
+                                               "12345.678901", "privateNavKey", "synthetic-private-nav-value"))
     assert "synthetic-private" not in output

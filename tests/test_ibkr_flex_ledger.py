@@ -464,3 +464,76 @@ def test_cashflow_diagnostic_only_visits_selected_statement_and_counts_unknown_r
     assert diagnostic["sections"]["CashTransactions"]["unsupported_record_count"] == 1
     assert diagnostic["sections"]["StmtFunds"]["section_count"] == 2
     assert all(value not in json.dumps(diagnostic) for value in ("UnknownPrivateTag", "privateKey", "private-value", "private-id", "DU0000099"))
+
+
+def test_nav_source_diagnostic_covers_public_components_without_private_values_or_bridge_claim():
+    report = _wrap(_statement(
+        f'<ChangeInNAV accountId="{ACCOUNT}" acctAlias="synthetic-private-alias" model="synthetic-private-model" '
+        'currency="EUR" mode="synthetic-private-mode" fromDate="20260101" toDate="20260131" '
+        'startingValue="76543.210987" mtm="76543.210987" realized="76543.210987" changeInUnrealized="76543.210987" '
+        'depositsWithdrawals="76543.210987" internalCashTransfers="76543.210987" assetTransfers="76543.210987" '
+        'dividends="76543.210987" withholdingTax="76543.210987" withholding871m="76543.210987" '
+        'changeInDividendAccruals="76543.210987" interest="76543.210987" changeInInterestAccruals="76543.210987" '
+        'advisorFees="76543.210987" clientFees="76543.210987" otherFees="76543.210987" feesReceivables="76543.210987" '
+        'commissions="76543.210987" commissionReceivables="76543.210987" forexCommissions="76543.210987" '
+        'transactionTax="76543.210987" taxReceivables="76543.210987" salesTax="76543.210987" softDollars="76543.210987" '
+        'netFxTrading="76543.210987" fxTranslation="76543.210987" linkingAdjustments="76543.210987" other="76543.210987" '
+        'endingValue="76543.210987" twr="1.25" privateNavKey="synthetic-private-value"/>'
+    ))
+    ledger = build_flex_ledger(report, expected_account_ids=(ACCOUNT,))
+    diagnostic = ledger["nav_source_diagnostic"]
+    assert diagnostic["schema_version"] == "ibkr.flex_nav_source_shape.v1"
+    assert diagnostic["record_count"] == 1 and diagnostic["unsupported_record_count"] == 0
+    assert diagnostic["unknown_field_count"] == 1
+    assert len(diagnostic["field_type_counts"]) == 37
+    assert list(diagnostic["field_type_counts"].values()).count({"decimal_text": 1}) == 30
+    assert list(diagnostic["field_type_counts"].values()).count({"text": 1}) == 7
+    assert diagnostic["date_time_format_counts"] == {"fromDate": {"date_only": 1}, "toDate": {"date_only": 1}}
+    assert diagnostic["coverage"] == diagnostic["nav_bridge"] == "not_evaluated"
+    assert diagnostic["missing_fields_are_zero"] is False
+    # Even deliberately inconsistent components do not create or overwrite P/L.
+    assert ledger["native_returns"]["twr"] == "1.25" and "native_nav_change" not in ledger
+    output = json.dumps(diagnostic)
+    assert all(value not in output for value in (ACCOUNT, "76543.210987", "1.25", "EUR", "20260101", "20260131",
+        "synthetic-private-alias", "synthetic-private-model", "synthetic-private-mode", "privateNavKey", "synthetic-private-value"))
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("-76543.210987", "decimal_text"), (" 1.25 ", "decimal_text"), ("1e-3", "scientific_text"),
+    ("NaN", "nonfinite_text"), ("-Infinity", "nonfinite_text"), ("not-a-number", "unsupported_text"),
+    ("9" * 257, "oversized_text"), ("", "empty_text"),
+])
+def test_nav_numeric_formats_are_classified_without_value_sign_or_precision(value, expected):
+    report = _wrap(_statement(f'<ChangeInNAV startingValue="{value}"/>'))
+    diagnostic = build_flex_ledger(report, expected_account_ids=(ACCOUNT,))["nav_source_diagnostic"]
+    assert diagnostic["field_type_counts"]["startingValue"] == {expected: 1}
+    assert diagnostic["field_type_counts"]["depositsWithdrawals"] == {"missing": 1}
+    assert value not in json.dumps(diagnostic) if value else True
+
+
+@pytest.mark.parametrize("section,count", [("", 0), ("<ChangeInNAV/>", 1), ("<ChangeInNAV/><ChangeInNAV/>", 2)])
+def test_nav_missing_empty_or_duplicate_records_never_certify_zero_or_coverage(section, count):
+    diagnostic = build_flex_ledger(_wrap(_statement(section)), expected_account_ids=(ACCOUNT,))["nav_source_diagnostic"]
+    assert diagnostic["record_count"] == count and diagnostic["unknown_field_count"] == 0
+    if count:
+        assert len(diagnostic["field_type_counts"]) == 37
+        assert all(types == {"missing": count} for types in diagnostic["field_type_counts"].values())
+    else:
+        assert diagnostic["field_type_counts"] == {}
+    assert diagnostic["coverage"] == diagnostic["nav_bridge"] == "not_evaluated"
+    assert diagnostic["missing_fields_are_zero"] is False
+
+
+def test_nav_diagnostic_counts_only_selected_records_and_unknown_names_stay_hidden():
+    selected = _statement('<ChangeInNAV privateNavKey="private-nav-value">'
+        '<PrivateNavChild privateChildKey="private-child-value"/></ChangeInNAV>'
+        '<ChangeInNAV otherPrivateKey="other-private-value" startingValue="1e3" fromDate="bad-private-date"/>')
+    other = _statement('<ChangeInNAV startingValue="987654.321" otherAccountPrivateKey="private-value"/>', account="DU0000099")
+    diagnostic = build_flex_ledger(_wrap(selected, other), expected_account_ids=(ACCOUNT,),
+        allowed_report_account_ids=(ACCOUNT, "DU0000099"))["nav_source_diagnostic"]
+    assert diagnostic["record_count"] == diagnostic["unknown_field_count"] == 2
+    assert diagnostic["unsupported_record_count"] == 1
+    assert diagnostic["field_type_counts"]["startingValue"] == {"missing": 1, "scientific_text": 1}
+    assert diagnostic["date_time_format_counts"]["fromDate"] == {"missing": 1, "unsupported": 1}
+    assert not any(value in json.dumps(diagnostic) for value in ("privateNavKey", "PrivateNavChild", "privateChildKey",
+        "otherPrivateKey", "otherAccountPrivateKey", "987654.321", "DU0000099", "private-nav-value", "bad-private-date"))

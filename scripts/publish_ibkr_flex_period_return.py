@@ -327,6 +327,7 @@ def main(argv: Sequence[str] = ()) -> int:
             else:
                 observed_at = datetime.now(timezone.utc)
                 diagnostics["cashflow_source_diagnostic"] = ledger["cashflow_source_diagnostic"]
+                diagnostics["nav_source_diagnostic"] = ledger["nav_source_diagnostic"]
                 try:
                     payload = build_ibkr_period_return(ledger, observed_at=observed_at,
                         **{key: config[key] for key in ("target_id", "source_binding_id", "account_scope", "expected_account_ids")})
