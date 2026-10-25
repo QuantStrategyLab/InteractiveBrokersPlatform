@@ -370,6 +370,38 @@ def run_tqqq_offline_risk(request, *, runtime, portfolio_snapshot, packet, event
             persist_portfolio_settings_draft, preflight_portfolio_settings_draft,
         )
 
+        if action == "read":
+            # A historical read needs trusted identity and checkpoint integrity,
+            # not current allocation inputs or permission to use the policy.
+            from quant_platform_kit.common.strategy_risk_state import StrategyRiskStateIdentity
+            from us_equity_strategies.research.auto_portfolio_account import digest
+            from us_equity_strategies.research.portfolio_risk_events_preview import _portfolio_id
+
+            settings = runtime.runtime_settings
+            target = settings.runtime_target
+            contract = packet["account_contract"]
+            _require(runtime.profile == settings.strategy_profile == target.strategy_profile == PROFILE,
+                "TQQQ_PROFILE_MISMATCH")
+            _require(settings.dry_run_only is True and target.dry_run_only is True,
+                "TQQQ_OFFLINE_RUNTIME_REQUIRED")
+            _require(contract.get("synthetic") is True, "TQQQ_ARTIFICIAL_INPUT_REQUIRED")
+            _require(tuple(settings.account_ids) == (contract["account_id"],)
+                and target.account_scope == contract["scope_ref"], "TQQQ_ACCOUNT_SCOPE_MISMATCH")
+            _require(bool(target.service_name or target.deployment_selector), "TQQQ_RUNTIME_SCOPE_REQUIRED")
+            _require(packet["moments"]["strategy_ids"] == [PROFILE]
+                and set(packet["composition"]["weights"]) == {PROFILE}, "TQQQ_STRATEGY_COMPOSITION_MISMATCH")
+            policy = settings.trusted_runtime_risk_policy
+            _require(isinstance(policy, Mapping), "TQQQ_EVENT_POLICY_MISSING")
+            _require(all(policy.get(key) == contract[key] for key in ("account_id", "scope_ref", "currency")),
+                "TQQQ_ACCOUNT_SCOPE_MISMATCH")
+            expected = StrategyRiskStateIdentity("portfolio_risk_events", contract["scope_ref"],
+                _portfolio_id(packet), digest(policy)).to_dict()
+            _require(binding.get("identity") == expected, "TQQQ_JOURNAL_POLICY_OR_PORTFOLIO_MISMATCH")
+            out.update(deepcopy(read_portfolio_event_state(
+                journal=journal, binding=binding, account_contract=contract)))
+            out.update(new_risk_prohibited=True, draft_settings=None)
+            return out
+
         # Reusing a prepared packet must not bypass policy revalidation merely
         # by omitting the optional convenience argument on a later read.
         reservations = packet["cash_evidence"].get("reservations")
@@ -408,9 +440,6 @@ def run_tqqq_offline_risk(request, *, runtime, portfolio_snapshot, packet, event
         if action == "initialize":
             result = initialize_portfolio_event_state(journal=journal, binding=binding,
                 account_contract=packet["account_contract"], initialization=initialization)
-        elif action == "read":
-            result = read_portfolio_event_state(journal=journal, binding=binding,
-                account_contract=packet["account_contract"])
         elif action == "persist":
             result = persist_portfolio_settings_draft(request, journal=journal, binding=binding,
                 event_id=event_id, event_context=event_context, **packet)
