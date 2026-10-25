@@ -24,6 +24,19 @@ def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+def traffic_tag(run_id, service):
+    # Cloud Run limits tag + service name to 46 characters. Base36 retains
+    # the complete run identity without hashing, truncation or collisions.
+    number, encoded = int(run_id), ""
+    while number:
+        number, digit = divmod(number, 36)
+        encoded = "0123456789abcdefghijklmnopqrstuvwxyz"[digit] + encoded
+    tag = "c" + (encoded or "0")
+    if len(tag) + len(service) > 46 or not pilot.NAME.fullmatch(tag):
+        raise pilot.ReleaseError("candidate_tag_length_unsupported")
+    return tag
+
+
 def configuration(revision):
     result = pilot._configuration(revision, without_image=True)
     result["metadata"]["labels"] = {k: v for k, v in result["metadata"]["labels"].items()
@@ -108,7 +121,7 @@ def observe(expected, source, env, receipt, *, run=pilot.command, snapshot=pilot
         raise pilot.ReleaseError("candidate_not_admitted")
     revision = read(["run", "revisions", "describe", candidate, *common], "candidate_read_failed")
     candidate = admit(expected, before, revision, source)
-    tag = "cash-read-" + env["GITHUB_RUN_ID"]
+    tag = traffic_tag(env["GITHUB_RUN_ID"], ctx.service)
     job = "ibkr-cash-read-" + env["GITHUB_RUN_ID"]
     service_url = before["service"]["status"]["url"]
     # Reuse the existing warm-up identity. No new IAM, account or caller.
