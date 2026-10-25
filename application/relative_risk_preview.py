@@ -32,7 +32,7 @@ def _require(condition, code):
         raise RelativeRiskPreviewError(code)
 
 
-def _validate_path(returns, context, *, security_reference=False):
+def _validate_path(returns, context):
     _require(isinstance(returns, pd.Series) and len(returns) >= 2, "RETURN_PATH_REQUIRED")
     index = returns.index
     _require(isinstance(index, pd.DatetimeIndex), "DAILY_SESSION_INDEX_REQUIRED")
@@ -52,22 +52,11 @@ def _validate_path(returns, context, *, security_reference=False):
         _require(isinstance(context.get(key), str) and bool(context[key].strip()),
                  "COMPARISON_CONTEXT_INCOMPLETE")
     _require(context.get("frequency") == "daily", "DAILY_RETURN_BASIS_REQUIRED")
-    if security_reference:
-        _require(context.get("wealth_scope") == "SECURITY_BENCHMARK_REFERENCE"
-                 and "account_scope" not in context
-                 and context.get("return_basis") == "PROVIDER_ADJUSTED_CLOSE_RATIO"
-                 and context.get("distribution_treatment") == "PROVIDER_SPLIT_DIVIDEND_ADJUSTED"
-                 and context.get("cost_treatment") == "ACCOUNT_TRADING_COSTS_EXCLUDED"
-                 and context.get("cash_flow_basis") == "NOT_AN_ACCOUNT"
-                 and context.get("cash_income_treatment") == "NOT_AN_ACCOUNT"
-                 and context.get("valuation_sampling") == "DAILY_CLOSE",
-                 "SECURITY_REFERENCE_BASIS_REQUIRED")
-    else:
-        _require(context.get("return_basis") == "NET_SIMPLE_TOTAL_RETURN"
-                 and context.get("cash_flow_basis") == "EXTERNAL_FLOWS_REMOVED"
-                 and context.get("cost_treatment") == "APPLICABLE_COSTS_INCLUDED"
-                 and context.get("cash_income_treatment") == "INCLUDED_IN_NET_WEALTH",
-                 "NET_WEALTH_BASIS_REQUIRED")
+    _require(context.get("return_basis") == "NET_SIMPLE_TOTAL_RETURN"
+             and context.get("cash_flow_basis") == "EXTERNAL_FLOWS_REMOVED"
+             and context.get("cost_treatment") == "APPLICABLE_COSTS_INCLUDED"
+             and context.get("cash_income_treatment") == "INCLUDED_IN_NET_WEALTH",
+             "NET_WEALTH_BASIS_REQUIRED")
     annualization = context.get("periods_per_year")
     _require(type(annualization) in (int, float) and math.isfinite(annualization)
              and annualization > 0, "ANNUALIZATION_REQUIRED")
@@ -113,14 +102,27 @@ def _benchmark_drawdown_rule(strategy_loss, reference, context):
     """
     if reference is None:
         return dict(status="UNDETERMINED", reason="BENCHMARK_DRAWDOWN_REFERENCE_REQUIRED", limit_fraction=None)
-    security = isinstance(reference, Mapping) and "schema_version" in reference
+    if isinstance(reference, Mapping) and "schema_version" in reference:
+        _require(isinstance(context.get("account_scope"), str) and bool(context["account_scope"].strip())
+            and context.get("wealth_scope") == "ALLOCATED_ACCOUNT_NET_WEALTH", "ACCOUNT_REFERENCE_SCOPE_REQUIRED")
+        try:
+            from quant_platform_kit.strategy_lifecycle.security_drawdown_reference import (
+                SecurityDrawdownReferenceError, describe_security_drawdown_reference,
+            )
+        except ImportError:
+            raise RelativeRiskPreviewError("SECURITY_REFERENCE_DEPENDENCY_UNAVAILABLE") from None
+        try:
+            result = describe_security_drawdown_reference(reference,
+                selected_benchmark=context.get("account_risk_benchmark"), currency=context["currency"],
+                calendar_id=context["calendar_id"], valuation_sampling=context.get("valuation_sampling"),
+                decision_cutoff_utc=context.get("decision_cutoff_utc"))
+        except SecurityDrawdownReferenceError as exc:
+            raise RelativeRiskPreviewError(str(exc)) from None
+        loss = result["max_drawdown_loss_fraction"]
+        return dict(result, status="WITHIN" if strategy_loss <= loss else "EXCEEDS", reason=None,
+            limit_fraction=loss, model="FROZEN_SECURITY_DRAWDOWN_PROXY")
     fields = {"benchmark_symbol", "reference_id", "available_at_utc", "frozen_at_utc", "dates", "net_returns", "context"}
-    if security:
-        fields = (fields - {"net_returns"}) | {"schema_version", "returns"}
     _require(isinstance(reference, Mapping) and set(reference) == fields, "ACCOUNT_REFERENCE_INCOMPLETE")
-    if security:
-        _require(reference["schema_version"] == "qsl.security_drawdown_reference.v1",
-                 "SECURITY_REFERENCE_SCHEMA_UNSUPPORTED")
     _require(all(isinstance(reference[key], str) and bool(reference[key].strip())
                  for key in ("benchmark_symbol", "reference_id")), "ACCOUNT_REFERENCE_IDENTITY_REQUIRED")
 
@@ -136,7 +138,7 @@ def _benchmark_drawdown_rule(strategy_loss, reference, context):
     available, frozen, cutoff = (timestamp(reference["available_at_utc"]),
         timestamp(reference["frozen_at_utc"]), timestamp(context.get("decision_cutoff_utc")))
     _require(available <= frozen <= cutoff, "ACCOUNT_REFERENCE_NOT_AVAILABLE_AT_FREEZE")
-    raw_dates, raw_returns = reference["dates"], reference["returns" if security else "net_returns"]
+    raw_dates, raw_returns = reference["dates"], reference["net_returns"]
     _require(type(raw_dates) is list and type(raw_returns) is list
         and all(isinstance(day, str) and len(day) == 10 for day in raw_dates), "ACCOUNT_REFERENCE_DAILY_PATH_REQUIRED")
     try:
@@ -145,24 +147,16 @@ def _benchmark_drawdown_rule(strategy_loss, reference, context):
     except (TypeError, ValueError, OverflowError):
         raise RelativeRiskPreviewError("ACCOUNT_REFERENCE_DAILY_PATH_INVALID") from None
     source = reference["context"]
-    path = _validate_path(path, source, security_reference=security)
+    path = _validate_path(path, source)
     _require(all(day.date() < available.date() for day in dates), "ACCOUNT_REFERENCE_UNFINISHED_DAILY_SESSION")
     _require(source["series_id"] == reference["benchmark_symbol"] == context.get("account_risk_benchmark"),
         "ACCOUNT_REFERENCE_SELECTION_MISMATCH")
     _require(isinstance(context.get("account_scope"), str) and bool(context["account_scope"].strip())
+        and source.get("account_scope") == context["account_scope"]
+        and source.get("wealth_scope") == "ACCOUNT_RISK_REFERENCE_NET_WEALTH"
         and context.get("wealth_scope") == "ALLOCATED_ACCOUNT_NET_WEALTH", "ACCOUNT_REFERENCE_SCOPE_REQUIRED")
-    if security:
-        # A reusable security reference has no account cash flows or trading
-        # costs. Match denomination, calendar and sampling, not false net labels.
-        _require(context.get("valuation_sampling") == "DAILY_CLOSE"
-            and all(source[key] == context[key] for key in ("currency", "calendar_id", "frequency")),
-            "SECURITY_REFERENCE_COMPARISON_BASIS_MISMATCH")
-    else:
-        _require(source.get("account_scope") == context["account_scope"]
-            and source.get("wealth_scope") == "ACCOUNT_RISK_REFERENCE_NET_WEALTH",
-            "ACCOUNT_REFERENCE_SCOPE_REQUIRED")
-        _require(all(source[key] == context[key] for key in _COMPARISON_FIELDS if key != "window_id"),
-            "ACCOUNT_REFERENCE_BASIS_MISMATCH")
+    _require(all(source[key] == context[key] for key in _COMPARISON_FIELDS if key != "window_id"),
+        "ACCOUNT_REFERENCE_BASIS_MISMATCH")
     try:
         metric = compute_window_metrics(path, **{key: source[key]
             for key in ("periods_per_year", "calendar_id", "volatility_ddof")})
@@ -170,18 +164,13 @@ def _benchmark_drawdown_rule(strategy_loss, reference, context):
         raise RelativeRiskPreviewError("ACCOUNT_REFERENCE_METRIC_UNCOMPUTABLE") from None
     loss = -metric.max_drawdown
     _require(math.isfinite(loss) and 0 <= loss < 1, "ACCOUNT_REFERENCE_METRIC_UNCOMPUTABLE")
-    result = dict(status="WITHIN" if strategy_loss <= loss else "EXCEEDS", reason=None,
-        limit_fraction=loss, model="FROZEN_SECURITY_DRAWDOWN_PROXY" if security else "FROZEN_BENCHMARK_DRAWDOWN_REFERENCE",
+    return dict(status="WITHIN" if strategy_loss <= loss else "EXCEEDS", reason=None,
+        limit_fraction=loss, model="FROZEN_BENCHMARK_DRAWDOWN_REFERENCE",
         benchmark_symbol=reference["benchmark_symbol"], reference_id=reference["reference_id"],
         reference_source_sha256=source["source_sha256"], frozen_at_utc=reference["frozen_at_utc"],
         reference_window=dict(start_date=dates[0].date().isoformat(), end_date=dates[-1].date().isoformat(),
             observations=len(path), window_id=source["window_id"]),
         reference_qualified=False, model_calibrated=False, enforcement_eligible=False)
-    if security:
-        result.update(reference_return_basis=source["return_basis"], reference_wealth_scope=source["wealth_scope"],
-            valuation_sampling=source["valuation_sampling"], account_costs_included=False,
-            distribution_treatment=source["distribution_treatment"])
-    return result
 
 
 def _dynamic_drawdown_rule(strategy_loss, benchmark_loss, policy, binding, context, benchmark_context,

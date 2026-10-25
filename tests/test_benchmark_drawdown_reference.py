@@ -1,5 +1,7 @@
 """Artificial reference paths, no downloaded prices or personal policy values."""
 from copy import deepcopy
+import builtins
+import importlib.util
 import json
 import socket
 
@@ -7,6 +9,10 @@ import pytest
 
 from application.relative_risk_preview import RelativeRiskPreviewError, preview_relative_risk
 from tests.test_relative_risk_preview import assert_unarmed, inputs
+
+requires_shared_reference = pytest.mark.skipif(importlib.util.find_spec(
+    "quant_platform_kit.strategy_lifecycle.security_drawdown_reference") is None,
+    reason="requires frozen shared reference contract; isolated CI verifies this path")
 
 
 @pytest.fixture(autouse=True)
@@ -51,6 +57,7 @@ def security_reference_inputs():
     return packet, as_security_reference(reference)
 
 
+@requires_shared_reference
 def test_security_proxy_keeps_its_basis_without_claiming_net_account_wealth():
     packet, reference = security_reference_inputs()
     out = preview_relative_risk(**packet, account_drawdown_reference=reference)
@@ -65,6 +72,7 @@ def test_security_proxy_keeps_its_basis_without_claiming_net_account_wealth():
     assert_unarmed(out)
 
 
+@requires_shared_reference
 def test_security_reference_is_reusable_without_an_account_in_its_source():
     packet, reference = security_reference_inputs()
     first = preview_relative_risk(**packet, account_drawdown_reference=reference)
@@ -78,6 +86,7 @@ def test_security_reference_is_reusable_without_an_account_in_its_source():
 
 @pytest.mark.parametrize("fault", ["schema", "net_label", "account_scope", "role", "costs", "dividends",
     "cash_flows", "source_sampling", "account_sampling", "currency", "calendar", "future_freeze"])
+@requires_shared_reference
 def test_security_reference_rejects_unknown_or_mismatched_roles_and_sampling(fault):
     packet, reference = security_reference_inputs()
     if fault == "schema": reference["schema_version"] = "qsl.security_drawdown_reference.v2"
@@ -100,6 +109,19 @@ def test_account_path_cannot_use_the_security_proxy_basis():
     packet, reference = security_reference_inputs()
     packet["strategy_context"].update(reference["context"])
     with pytest.raises(RelativeRiskPreviewError, match="^NET_WEALTH_BASIS_REQUIRED$"):
+        preview_relative_risk(**packet, account_drawdown_reference=reference)
+
+
+def test_missing_shared_capability_cannot_issue_a_fallback_ceiling(monkeypatch):
+    original = builtins.__import__
+
+    def guarded(name, *args, **kwargs):
+        if name == "quant_platform_kit.strategy_lifecycle.security_drawdown_reference":
+            raise ImportError("artificial unavailable capability")
+        return original(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, "__import__", guarded)
+    packet, reference = security_reference_inputs()
+    with pytest.raises(RelativeRiskPreviewError, match="^SECURITY_REFERENCE_DEPENDENCY_UNAVAILABLE$"):
         preview_relative_risk(**packet, account_drawdown_reference=reference)
 
 
