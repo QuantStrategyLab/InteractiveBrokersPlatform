@@ -475,3 +475,79 @@ def test_workflow_inputs_and_private_context_are_separated_before_headers():
         assert forbidden not in callee
     assert callee.count("actions/upload-artifact") == 1
     assert "path: ${{ runner.temp }}/pilot-release.safe.json" in callee
+
+
+def _platform_metadata_shape(state):
+    compact = '[{"network":"synthetic-network","subnetwork":"synthetic-subnet"}]'
+    formatted = '[ { "subnetwork": "synthetic-subnet", "network": "synthetic-network" } ]'
+    for snapshot in state.states:
+        template = snapshot["service"]["spec"]["template"]
+        template["metadata"]["annotations"][pilot.NETWORK_INTERFACES_ANNOTATION] = compact
+        revision = snapshot["serving_revision"]
+        revision["metadata"]["labels"]["cloud.googleapis.com/location"] = "synthetic-region"
+        revision["metadata"]["annotations"][pilot.INGRESS_ANNOTATION] = "internal"
+        revision["metadata"]["annotations"][pilot.NETWORK_INTERFACES_ANNOTATION] = formatted
+    state.candidate["metadata"]["labels"]["cloud.googleapis.com/location"] = "synthetic-region"
+    state.candidate["metadata"]["annotations"][pilot.INGRESS_ANNOTATION] = "internal"
+    state.candidate["metadata"]["annotations"][pilot.NETWORK_INTERFACES_ANNOTATION] = formatted
+
+
+def test_platform_location_ingress_and_network_json_representation_are_equivalent(controlled_release):
+    state = controlled_release
+    _platform_metadata_shape(state)
+    assert state.execute()["status"] == "verified_no_traffic"
+    # Revision projection must not remove the Service-global ingress record.
+    config = pilot._service_configuration(state.before["service"])
+    assert config["metadata"]["annotations"][pilot.INGRESS_ANNOTATION] == "internal"
+
+
+@pytest.mark.parametrize("where", ["serving", "after_template", "candidate"])
+def test_actual_network_interface_change_is_never_normalized_away(controlled_release, where):
+    state = controlled_release
+    _platform_metadata_shape(state)
+    if where == "serving":
+        template = state.before["serving_revision"]
+    elif where == "after_template":
+        template = state.after["service"]["spec"]["template"]
+    else:
+        template = state.candidate
+    template["metadata"]["annotations"][pilot.NETWORK_INTERFACES_ANNOTATION] = '[{"network":"different-network","subnetwork":"synthetic-subnet"}]'
+    with pytest.raises(pilot.ReleaseError):
+        state.execute()
+
+
+@pytest.mark.parametrize("change", ["global_ingress", "environment", "unrelated_annotation", "unrelated_label"])
+def test_platform_metadata_normalization_keeps_all_other_configuration_checks(controlled_release, change):
+    state = controlled_release
+    _platform_metadata_shape(state)
+    template = state.after["service"]["spec"]["template"]
+    if change == "global_ingress":
+        state.after["service"]["metadata"]["annotations"][pilot.INGRESS_ANNOTATION] = "all"
+    elif change == "environment":
+        template["spec"]["containers"][0]["env"][1]["value"] = "different-private-value"
+    elif change == "unrelated_annotation":
+        template["metadata"]["annotations"]["run.googleapis.com/vpc-access-egress"] = "all-traffic"
+    else:
+        template["metadata"]["labels"]["policy-binding"] = "different"
+    with pytest.raises(pilot.ReleaseError):
+        state.execute()
+
+
+@pytest.mark.parametrize("where", ["serving", "candidate"])
+def test_revision_ingress_projection_must_match_service_global(controlled_release, where):
+    state = controlled_release
+    _platform_metadata_shape(state)
+    revision = state.before["serving_revision"] if where == "serving" else state.candidate
+    revision["metadata"]["annotations"][pilot.INGRESS_ANNOTATION] = "all"
+    with pytest.raises(pilot.ReleaseError, match="ingress_projection_unverified"):
+        state.execute()
+
+
+@pytest.mark.parametrize("network_json", ['not-json', '[{"network":"a","network":"b"}]', '[{"network":NaN}]', '"synthetic-network"'])
+def test_network_annotation_requires_strict_known_json_shape(controlled_release, network_json):
+    state = controlled_release
+    _platform_metadata_shape(state)
+    state.before["service"]["spec"]["template"]["metadata"]["annotations"][pilot.NETWORK_INTERFACES_ANNOTATION] = network_json
+    with pytest.raises(pilot.ReleaseError):
+        state.execute()
+    assert [args[0] for args, _ in state.calls] == ["git", "git"]

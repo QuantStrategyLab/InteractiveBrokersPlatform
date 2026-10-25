@@ -36,6 +36,8 @@ REVISION_CONTROLLER_LABELS = frozenset({
     "serving.knative.dev/serviceUid",
 })
 BUILD_LABELS = frozenset({"commit-sha", "github-run-id"})
+INGRESS_ANNOTATION = "run.googleapis.com/ingress"
+NETWORK_INTERFACES_ANNOTATION = "run.googleapis.com/network-interfaces"
 
 
 class ReleaseError(RuntimeError):
@@ -175,7 +177,30 @@ def _configuration(template: dict, *, without_image: bool = False) -> dict:
         raise ReleaseError("image_unavailable")
     if without_image:
         containers[0].pop("image")
-    return {"metadata": _metadata(template), "spec": spec}
+    metadata = _metadata(template)
+    # These are resource/global projections on a Revision, not independent
+    # revision configuration. Service-global ingress is compared separately.
+    metadata["labels"].pop("cloud.googleapis.com/location", None)
+    metadata["annotations"].pop(INGRESS_ANNOTATION, None)
+    if NETWORK_INTERFACES_ANNOTATION in metadata["annotations"]:
+        value = metadata["annotations"][NETWORK_INTERFACES_ANNOTATION]
+        if not isinstance(value, str):
+            raise ReleaseError("network_configuration_invalid")
+        interfaces = _json(value)
+        if not isinstance(interfaces, list) or any(not isinstance(row, dict) for row in interfaces):
+            raise ReleaseError("network_configuration_invalid")
+        metadata["annotations"][NETWORK_INTERFACES_ANNOTATION] = json.dumps(
+            interfaces, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        )
+    return {"metadata": metadata, "spec": spec}
+
+
+def _verify_ingress_projection(service: dict, *revisions: dict) -> None:
+    global_ingress = _metadata(service)["annotations"].get(INGRESS_ANNOTATION)
+    for revision in revisions:
+        annotations = _metadata(revision)["annotations"]
+        if INGRESS_ANNOTATION in annotations and annotations[INGRESS_ANNOTATION] != global_ingress:
+            raise ReleaseError("ingress_projection_unverified")
 
 
 def _runtime_target(template: dict) -> dict:
@@ -297,6 +322,7 @@ def snapshot(ctx: Context, run=command) -> dict:
 def validate_baseline(ctx: Context, state: dict) -> dict:
     service = state["service"]
     _no_manual_scaling(service)
+    _verify_ingress_projection(service, service.get("spec", {}).get("template", {}), state["serving_revision"])
     # Keep unused/failed image candidates. Only the complete non-image account
     # configuration must agree with the actual serving revision.
     current = _configuration(service.get("spec", {}).get("template"), without_image=True)
@@ -315,6 +341,8 @@ def unchanged(before: dict, after: dict) -> None:
     for key in ("traffic", "serving", "iam", "scheduler", "serving_revision"):
         if before[key] != after[key]:
             raise ReleaseError("baseline_changed")
+    for state in (before, after):
+        _verify_ingress_projection(state["service"], state["service"].get("spec", {}).get("template", {}))
     if _service_configuration(before["service"]) != _service_configuration(after["service"]):
         raise ReleaseError("configuration_changed")
 
@@ -398,6 +426,8 @@ def release(ctx: Context, source: Path, env: Mapping[str, str], run=command, tak
         raise ReleaseError("candidate_changed")
     candidate = _json(run(["gcloud", "run", "revisions", "describe", candidate_name,
                            f"--project={ctx.project}", f"--region={ctx.region}", "--format=json"], stage="candidate_read_failed"))
+    if isinstance(candidate, dict):
+        _verify_ingress_projection(after["service"], candidate)
     if (not isinstance(candidate, dict) or not _ready(candidate)
             or candidate.get("metadata", {}).get("name") != candidate_name
             or _configuration(candidate, without_image=True) != _configuration(before["service"]["spec"]["template"], without_image=True)

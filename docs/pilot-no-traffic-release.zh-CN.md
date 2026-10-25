@@ -10,6 +10,8 @@ Cloud Run 仅执行 `services update --image=<immutable image> --no-traffic`。i
 
 发布前后比较实际 serving revision、解析后的流量和 tags、全部非镜像 template 配置、服务全局配置、IAM 及指向该服务的 Scheduler 配置。新候选必须 Ready、使用准确镜像、没有正流量或新增 tag。普通 env 的值及 Secret 引用都在 runner 内比较，公开产物只有固定状态与代码/镜像身份，不包含配置、金额哈希或原始日志。
 
+template 与 Revision 的配置比较只去除平台派生的 location 标签及 Service 全局 ingress 投影；出现 ingress 投影时必须与 Service 全局值一致，Service 全局值仍完整参与前后比较。只有已知 network-interfaces 注解按严格 JSON 比较，允许对象键顺序和空白不同，不归一化资源名称，也不忽略真实网络或 env 变化。[ingress 层级](https://docs.cloud.google.com/run/docs/securing/ingress)、[Direct VPC 注解合同](https://docs.cloud.google.com/run/docs/configuring/vpc-direct-vpc)
+
 回执保留镜像推送、KEEP 和 Service update 各自的 attempted/completed，以及独立的 readback_verified。变更前先记录 attempted；只有成功确认后才记录 completed。失败时这些进度不会清空，因此 update 后读回失败与 update 结果不明可区分，不能仅凭 source_read_failed 宣称未发生生产写入。
 
 `--no-traffic` 可能把原先指向 LATEST 的流量改为明确绑定原 revision，所以验收比较实际解析结果，不要求路由表达方式相同。[gcloud update 合同](https://docs.cloud.google.com/sdk/gcloud/reference/run/services/update)
