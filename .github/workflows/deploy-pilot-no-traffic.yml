@@ -1,0 +1,39 @@
+name: Deploy IBKR pilot without traffic
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "Single pilot profile; never enables trading or shifts traffic."
+        required: true
+        type: choice
+        options: [tqqq_growth_income]
+      source_commit:
+        description: "Exact reviewed 40-character repository commit to build."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+# Share the original deployment lock; this entry must not race ordinary deploys.
+concurrency:
+  group: Deploy Cloud Run-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main' && github.run_attempt == 1 && github.event_name == 'workflow_dispatch' && github.repository == 'QuantStrategyLab/InteractiveBrokersPlatform'
+    uses: ./.github/workflows/deploy-pilot-no-traffic-protected.yml
+    with:
+      profile: ${{ inputs.profile }}
+      source_commit: ${{ inputs.source_commit }}
+    secrets:
+      DEPLOY_GATE: ${{ vars.ENABLE_GITHUB_CLOUD_RUN_DEPLOY }}
+      GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
+      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+      CLOUD_RUN_REGION: ${{ vars.CLOUD_RUN_REGION }}
+      CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ vars.CLOUD_RUN_SERVICE_TARGETS_JSON || secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}
+      GCP_ARTIFACT_REGISTRY_HOSTNAME: ${{ vars.GCP_ARTIFACT_REGISTRY_HOSTNAME }}
+      IBKR_ARTIFACT_REGISTRY_ROLLBACK_DIGESTS: ${{ vars.IBKR_ARTIFACT_REGISTRY_ROLLBACK_DIGESTS }}
