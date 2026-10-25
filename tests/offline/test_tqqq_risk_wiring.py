@@ -308,8 +308,18 @@ def test_unbound_relative_input_never_produces_a_draft_or_resets_state(tmp_path,
 
 @pytest.mark.parametrize("mode", ["simple", "advanced"])
 @pytest.mark.parametrize("level", ["conservative", "balanced", "growth"])
-def test_tqqq_account_policy_cash_quantity_event_draft_round_trip(tmp_path, mode, level):
-    args = seed(tmp_path)
+@pytest.mark.parametrize("captured_native", [False, True])
+def test_tqqq_account_policy_cash_quantity_event_draft_round_trip(tmp_path, mode, level, captured_native):
+    args = fixture()
+    if captured_native:
+        from application.ibkr_cash_observations import capture_cash_observation_rows
+        values = [SimpleNamespace(account=row["account_id"], currency=row["currency"], tag=tag, value=value)
+            for row in args[1].metadata["cash_balances"] for tag, value in row.items()
+            if tag not in {"account_id", "currency"}]
+        args[1].metadata["cash_observation_rows"] = capture_cash_observation_rows(
+            values, account_ids=args[1].metadata["account_ids"])
+        assert build_ibkr_account_facts(args[1]) == args[2]["facts"]
+    args = seed(tmp_path, args)
     request = request_fixture(mode)
     request["level"] = level
     if mode == "advanced":
@@ -383,6 +393,28 @@ def test_settled_cash_cannot_be_invented_behind_an_unchanged_cash_balance_projec
     out = call(tmp_path, args, "initialize", initialization=args[-1])
     assert out["gaps"] == ["TQQQ_NATIVE_CASH_CONFLICT" if rebind_facts else "TQQQ_NATIVE_ACCOUNT_FACTS_MISMATCH"]
     assert not out["readback_verified"]
+    assert list(tmp_path.rglob("*.json")) == []
+
+
+@pytest.mark.parametrize("raw_value,duplicate,reason", [
+    (None, False, "TQQQ_NATIVE_CASH_INVALID"),
+    ("98", False, "TQQQ_NATIVE_CASH_CONFLICT"),
+    ("99", True, "TQQQ_NATIVE_CASH_TAG_MISSING_OR_AMBIGUOUS"),
+])
+def test_captured_native_cash_cannot_be_overruled_by_the_numeric_cache(tmp_path, raw_value, duplicate, reason):
+    args = fixture()
+    row = args[1].metadata["cash_balances"][0]
+    captured = [{"account_id":row["account_id"], "currency":row["currency"],
+        "CashBalance":row["CashBalance"], "SettledCash":raw_value}]
+    if duplicate:
+        captured.append({"account_id":row["account_id"], "currency":row["currency"], "SettledCash":raw_value})
+    args[1].metadata["cash_observation_rows"] = captured
+    args[2]["facts"] = build_ibkr_account_facts(args[1])
+    # The old numeric cache and artificial funding evidence still agree.
+    assert row["SettledCash"] == "99"
+    out = call(tmp_path, args, "initialize", initialization=args[-1])
+    assert out["gaps"] == [reason]
+    assert out["new_risk_prohibited"] is True
     assert list(tmp_path.rglob("*.json")) == []
 
 

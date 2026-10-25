@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from copy import deepcopy
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from importlib.metadata import distribution
 import json
 import math
@@ -129,15 +129,27 @@ def _native_cash(snapshot, evidence):
     """CashBalance projection does not attest the separately consumed SettledCash."""
     native = snapshot.metadata.get("cash_balances")
     _require(isinstance(native, (tuple, list)), "TQQQ_NATIVE_CASH_MISSING")
+    sources = [native]
+    if "cash_observation_rows" in snapshot.metadata:
+        captured = snapshot.metadata["cash_observation_rows"]
+        _require(isinstance(captured, (tuple, list)), "TQQQ_NATIVE_CASH_MISSING")
+        sources.append(captured)
+    _require(all(isinstance(item, Mapping) for source in sources for item in source),
+        "TQQQ_NATIVE_CASH_MISSING")
     for row in evidence["account_values"]:
-        matches = [item for item in native if item.get("account_id") == row["account_id"]
-            and item.get("currency") == row["currency"] and row["tag"] in item]
-        _require(len(matches) == 1, "TQQQ_NATIVE_CASH_TAG_MISSING_OR_AMBIGUOUS")
-        supplied, actual = row["value"], matches[0][row["tag"]]
-        _require(not isinstance(supplied, bool) and not isinstance(actual, bool), "TQQQ_NATIVE_CASH_INVALID")
-        supplied, actual = Decimal(str(supplied)), Decimal(str(actual))
-        _require(supplied.is_finite() and actual.is_finite() and supplied == actual,
-            "TQQQ_NATIVE_CASH_CONFLICT")
+        for source in sources:
+            matches = [item for item in source if item.get("account_id") == row["account_id"]
+                and item.get("currency") == row["currency"] and row["tag"] in item]
+            _require(len(matches) == 1, "TQQQ_NATIVE_CASH_TAG_MISSING_OR_AMBIGUOUS")
+            supplied, actual = row["value"], matches[0][row["tag"]]
+            _require(supplied is not None and actual is not None
+                and not isinstance(supplied, bool) and not isinstance(actual, bool), "TQQQ_NATIVE_CASH_INVALID")
+            try:
+                supplied, actual = Decimal(str(supplied)), Decimal(str(actual))
+            except (InvalidOperation, ValueError):
+                raise ValueError("TQQQ_NATIVE_CASH_INVALID") from None
+            _require(supplied.is_finite() and actual.is_finite() and supplied == actual,
+                "TQQQ_NATIVE_CASH_CONFLICT")
 
 
 def build_tqqq_offline_account_facts(snapshot, *, account_contract, inventory_evidence=None):
