@@ -71,3 +71,57 @@ jobs:
         run: |
           set -euo pipefail
           PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run --no-sync python -m pytest -q tests
+
+  tqqq-offline-risk:
+    # Artificial contracts only; no cloud identity, broker, production pin or
+    # deployment. The research overlay exists only in this job's environment.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      IBKR_REQUIRE_TQQQ_OFFLINE: "1"
+      IBKR_OFFLINE_UES_SOURCE: ${{ github.workspace }}/.offline-ues
+      UES_OFFLINE_SHA: 284a3787d9c5bd180218bdd79ac992cbb0a615b2
+      QPK_OFFLINE_SHA: 7840127862ea715e44c8f70b03155a399dc817de
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Checkout frozen artificial contracts
+        uses: actions/checkout@v6
+        with:
+          repository: QuantStrategyLab/UsEquityStrategies
+          ref: ${{ env.UES_OFFLINE_SHA }}
+          path: .offline-ues
+          persist-credentials: false
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install isolated research consumers
+        run: |
+          set -euo pipefail
+          python -m pip install uv
+          uv sync --frozen --extra test
+          uv --no-config pip install --python .venv/bin/python --no-deps \
+            "us-equity-strategies @ git+https://github.com/QuantStrategyLab/UsEquityStrategies.git@${UES_OFFLINE_SHA}" \
+            "quant-platform-kit @ git+https://github.com/QuantStrategyLab/QuantPlatformKit.git@${QPK_OFFLINE_SHA}"
+          uv --no-config pip install --python .venv/bin/python jsonschema
+      - name: Verify exact isolated package revisions
+        run: |
+          .venv/bin/python - <<'PY'
+          import json, os
+          from importlib.metadata import distribution
+          for name, key in (("us-equity-strategies", "UES_OFFLINE_SHA"), ("quant-platform-kit", "QPK_OFFLINE_SHA")):
+              value = json.loads(distribution(name).read_text("direct_url.json"))
+              assert value["vcs_info"]["commit_id"] == os.environ[key]
+          PY
+      - name: Verify TQQQ policies, funding, journal and draft consumers offline
+        run: |
+          set -euo pipefail
+          PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -q -rs \
+            tests/offline/test_tqqq_risk_wiring.py --junitxml=offline-tqqq-tests.xml
+          .venv/bin/python - <<'PY'
+          import xml.etree.ElementTree as ET
+          cases = list(ET.parse("offline-tqqq-tests.xml").getroot().iter("testcase"))
+          assert cases
+          assert not any(c.find("skipped") is not None or c.find("failure") is not None or c.find("error") is not None for c in cases)
+          PY
