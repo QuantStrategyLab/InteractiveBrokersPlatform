@@ -119,6 +119,122 @@ def assert_unarmed(out):
         assert out[key] is False
 
 
+def attach_relative_comparison(args, request):
+    from tests.offline.test_dynamic_relative_risk import inputs, policy
+    from us_equity_strategies.research.portfolio_intraday_state_io import HEADER
+
+    _runtime, snapshot, packet, context, _binding, _proof = args
+    source = inputs()
+    scope = packet["account_contract"]["scope_ref"]
+    for key in ("strategy_context", "benchmark_context"):
+        source[key]["account_scope"] = scope
+    proposed = policy(source, level=request["level"], capital=float(snapshot.total_equity))
+    proposed["account_scope"] = scope
+    context["relative_risk_comparison"] = {
+        **{key: deepcopy(context["policy"][key]) for key in HEADER},
+        "portfolio_id": _portfolio_id(packet), "request_sha256": digest(request),
+        "returns": {"dates": ["1999-12-27", "1999-12-28", "1999-12-29", "1999-12-30"],
+            "strategy": source["strategy_returns"].tolist(),
+            "benchmark": source["benchmark_returns"].tolist()},
+        "binding": vars(source["binding"]), "strategy_context": source["strategy_context"],
+        "benchmark_context": source["benchmark_context"], "allowed_excess": None,
+        "dynamic_policy": proposed,
+    }
+
+
+def test_relative_comparison_source_expires_at_consumption_without_refreshing_the_draft(tmp_path):
+    args = seed(tmp_path); request = request_fixture()
+    attach_relative_comparison(args, request)
+    args[3]["relative_risk_comparison"]["max_age_seconds"] = 60
+    saved = call(tmp_path, args, request=request, event_id="relative-comparison-1")
+    assert saved["status"] == "SETTINGS_DRAFT_PERSISTED", saved
+    args = (*args[:4], saved["next_binding"], args[-1])
+    read = call(tmp_path, args, "preflight", request=request,
+        expected_artifact_sha256=saved["artifact_receipt"]["artifact_sha256"],
+        consumption_cutoff_utc="2000-01-04T12:01:30Z")
+    assert read["gaps"] == ["SETTINGS_CURRENT_SOURCE_EVIDENCE_EXPIRED_OR_UNBOUND"]
+    assert read["draft_settings"] is None and not read["relative_risk_input_bound_to_draft"]
+    assert_unarmed(read)
+
+
+def test_relative_comparison_roundtrip_keeps_open_and_reduction_only(tmp_path):
+    args = seed(tmp_path, fixture(opened=True)); request = request_fixture()
+    attach_relative_comparison(args, request)
+    saved = call(tmp_path, args, request=request, event_id="relative-reduction-1")
+    assert saved["status"] == "SETTINGS_DRAFT_PERSISTED", saved
+    assert saved["breaker_state"] == "OPEN" and saved["new_risk_prohibited"]
+    assert all(value == 0 for value in saved["draft_settings"]["security_target_weights"].values())
+    args = (*args[:4], saved["next_binding"], args[-1])
+    read = call(tmp_path, args, "preflight", request=request,
+        expected_artifact_sha256=saved["artifact_receipt"]["artifact_sha256"],
+        consumption_cutoff_utc="2000-01-04T12:01:30Z")
+    assert read["relative_risk_input_bound_to_draft"] and read["breaker_state"] == "OPEN"
+    assert read["consumer_action"] == "REDUCTION_PREVIEW_ONLY"
+    assert_unarmed(read)
+
+
+@pytest.mark.parametrize("mode", ["simple", "advanced"])
+@pytest.mark.parametrize("level", ["conservative", "balanced", "growth"])
+def test_relative_comparison_bound_to_original_draft_receipt_for_both_modes(tmp_path, mode, level):
+    args = seed(tmp_path)
+    request = request_fixture(mode); request["level"] = level
+    attach_relative_comparison(args, request)
+    saved = call(tmp_path, args, request=request, event_id="relative-comparison-1")
+    assert saved["status"] == "SETTINGS_DRAFT_PERSISTED", saved
+    assert saved["relative_risk_input_bound_to_draft"] is True
+    args = (*args[:4], saved["next_binding"], args[-1])
+    read = call(tmp_path, args, "preflight", request=request,
+        expected_artifact_sha256=saved["artifact_receipt"]["artifact_sha256"],
+        consumption_cutoff_utc="2000-01-04T12:01:30Z")
+    assert read["status"] == "READY_OFFLINE_SETTINGS_PREFLIGHT", read
+    assert read["relative_risk_input_bound_to_draft"] is True
+    assert read["relative_risk_preview"] == saved["relative_risk_preview"]
+    assert read["relative_risk_preview"]["drawdown_rule_previews"]["capital_adaptive"]["model_calibrated"] is False
+    assert read["relative_risk_enforced"] is False
+    assert_unarmed(saved); assert_unarmed(read)
+
+
+@pytest.mark.parametrize("change", ["omit", "source", "nonbinding_limit", "path"])
+def test_changed_or_omitted_relative_inputs_cannot_reuse_old_draft(tmp_path, change):
+    args = seed(tmp_path); request = request_fixture()
+    attach_relative_comparison(args, request)
+    saved = call(tmp_path, args, request=request, event_id="relative-comparison-1")
+    assert saved["status"] == "SETTINGS_DRAFT_PERSISTED", saved
+    args = (*args[:4], saved["next_binding"], args[-1])
+    evidence = args[3]["relative_risk_comparison"]
+    if change == "omit": del args[3]["relative_risk_comparison"]
+    elif change == "source": evidence["source_version"] = "different-artificial-source"
+    elif change == "nonbinding_limit": evidence["dynamic_policy"]["account_max_drawdown_fraction"] = .9
+    else: evidence["returns"]["strategy"][0] *= .5
+    read = call(tmp_path, args, "preflight", request=request,
+        expected_artifact_sha256=saved["artifact_receipt"]["artifact_sha256"],
+        consumption_cutoff_utc="2000-01-04T12:01:30Z")
+    assert read["draft_settings"] is None and read["gaps"]
+    assert read["relative_risk_input_bound_to_draft"] is False
+    assert_unarmed(read)
+
+
+@pytest.mark.parametrize("change", ["real", "account", "portfolio", "request", "level", "nav", "future", "scope", "currency"])
+def test_unbound_relative_input_never_produces_a_draft_or_resets_state(tmp_path, change):
+    args = seed(tmp_path); request = request_fixture()
+    attach_relative_comparison(args, request)
+    evidence = args[3]["relative_risk_comparison"]
+    if change == "real": evidence["synthetic"] = False
+    elif change == "account": evidence["account_id"] = "OTHER"
+    elif change == "portfolio": evidence["portfolio_id"] = "OTHER"
+    elif change == "request": evidence["request_sha256"] = "f" * 64
+    elif change == "level": evidence["dynamic_policy"]["level"] = "growth"
+    elif change == "nav": evidence["dynamic_policy"]["nav"] += 1
+    elif change == "future": evidence["returns"]["dates"][-1] = "2000-01-04"
+    elif change == "scope": evidence["benchmark_context"]["account_scope"] = "OTHER"
+    else: evidence["benchmark_context"]["currency"] = "HKD"
+    before = deepcopy(args[4])
+    result = call(tmp_path, args, request=request, event_id="relative-comparison-1")
+    assert result["draft_settings"] is None and result["gaps"]
+    assert result["state_persisted"] is False and args[4] == before
+    assert_unarmed(result)
+
+
 @pytest.mark.parametrize("mode", ["simple", "advanced"])
 @pytest.mark.parametrize("level", ["conservative", "balanced", "growth"])
 def test_tqqq_account_policy_cash_quantity_event_draft_round_trip(tmp_path, mode, level):
