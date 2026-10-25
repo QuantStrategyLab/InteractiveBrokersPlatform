@@ -97,7 +97,11 @@ class Opener:
 def _missing_executions(status):
     return {"status": status, "executions_status": "source_unavailable", "executions_diagnostic": {
         "section_present": False, "native_record_count": 0, "field_names": [], "level_types": [],
-        "missing_fields": [], "invalid_fields": [], "reason": "trades_section_missing"}}
+        "missing_fields": [], "invalid_fields": [], "reason": "trades_section_missing"},
+        "cashflow_source_diagnostic": {"schema_version": "ibkr.flex_cashflow_source_shape.v1", "coverage": "not_evaluated",
+            "sections": {name: {"section_count": 0, "record_count": 0, "unsupported_record_count": 0,
+                "field_type_counts": {}, "date_time_format_counts": {}, "timezone_format_counts": {},
+                "missing_required_fields": []} for name in ("CashTransactions", "StmtFunds")}}}
 
 
 def test_full_synthetic_flex_fetch_import_projection_one_post_ack(monkeypatch, capsys):
@@ -654,3 +658,38 @@ def test_historical_period_mismatch_blocks_both_posts(monkeypatch, capsys):
     assert cli.main() == 1
     result = json.loads(capsys.readouterr().out)
     assert result["status"] == result["executions_status"] == "historical_period_mismatch"
+
+
+@pytest.mark.parametrize("pending,twr", [(False, "1.25"), (True, "1.25"), (False, None)])
+def test_cashflow_shape_uses_same_flex_handle_without_new_posts_or_private_output(monkeypatch, capsys, pending, twr):
+    import time
+
+    configure(monkeypatch)
+    cash = ('<CashTransactions><CashTransaction accountId="DU0000000" currency="EUR" '
+            'amount="98765.432101" type="synthetic-private-cash-type" '
+            'transactionID="synthetic-private-cash-id" dateTime="20260105;123456" '
+            'privateCashKey="synthetic-private-value"/></CashTransactions>')
+    report = _execution_xml(twr=twr).replace(b"</FlexStatement>", cash.encode() + b"</FlexStatement>")
+    session = FlexSession(b"<FlexStatementResponse><ErrorCode>1019</ErrorCode></FlexStatementResponse>" if pending else report)
+    opener = ExecutionsOpener()
+    monkeypatch.setattr(cli.requests, "Session", lambda: session)
+    monkeypatch.setattr(time, "sleep", lambda _delay: setattr(session, "report", report))
+    monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
+    assert cli.main() == (0 if twr else 1)
+    output = capsys.readouterr().out
+    result = json.loads(output)
+    section = result["cashflow_source_diagnostic"]["sections"]["CashTransactions"]
+    assert section["section_count"] == section["record_count"] == 1
+    assert section["field_type_counts"]["transactionID"] == {"text": 1}
+    assert section["date_time_format_counts"]["dateTime"] == {"local_datetime": 1}
+    assert result["cashflow_source_diagnostic"]["coverage"] == "not_evaluated"
+    assert result["executions_status"] == "published"
+    assert len(opener.calls) == (2 if twr else 1)
+    assert all("cashflow" not in request.full_url for request, _ in opener.calls)
+    assert sum(url.endswith("/SendRequest") for url, _ in session.calls) == 1
+    assert len(session.calls) == (3 if pending else 2)
+    gets = [kw["params"] for url, kw in session.calls if url.endswith("/GetStatement")]
+    assert all(params == gets[0] for params in gets)
+    assert not any(value in output for value in ("DU0000000", "98765.432101", "20260105", "synthetic-private-cash-type",
+                                               "synthetic-private-cash-id", "privateCashKey", "synthetic-private-value"))
+    assert "synthetic-private" not in output

@@ -397,3 +397,70 @@ def test_non_usd_base_currency_is_not_relabelled():
     assert ledger["currency"] is None
     assert ledger["account_base_currency"] == "EUR"
     assert {"code": "account_base_currency_not_usd"} in ledger["warnings"]
+
+
+def test_cashflow_source_diagnostic_has_fixed_fields_and_no_private_values():
+    private = (ACCOUNT, "76543.210987", "synthetic-private-transaction", "privateXmlKey", "privateXmlValue")
+    report = _wrap(_statement(
+        '<CashTransactions><CashTransaction accountId="' + ACCOUNT + '" currency="USD" '
+        'type="Deposits/Withdrawals" amount="76543.210987" transactionID="synthetic-private-transaction" '
+        'dateTime="20260105;123456 EDT" timeZone="America/New_York" privateXmlKey="privateXmlValue"/>'
+        '<CashTransaction accountId="' + ACCOUNT + '" currency="USD" type="Dividends" '
+        'amount="1e-3" dateTime="2026-01-05T12:34:56+08:00"/></CashTransactions>'
+        '<StmtFunds><StatementOfFundsLine accountId="' + ACCOUNT + '" currency="USD" '
+        'date="20260105" reportDate="2026-01-05" activityCode="DEP" amount="76543.210987" '
+        'transactionID="synthetic-private-transaction"/></StmtFunds>'
+    ))
+    diagnostic = build_flex_ledger(report, expected_account_ids=(ACCOUNT,))["cashflow_source_diagnostic"]
+    assert diagnostic["schema_version"] == "ibkr.flex_cashflow_source_shape.v1"
+    assert diagnostic["coverage"] == "not_evaluated"
+    cash = diagnostic["sections"]["CashTransactions"]
+    funds = diagnostic["sections"]["StmtFunds"]
+    assert cash["section_count"] == 1 and cash["record_count"] == 2
+    assert cash["field_type_counts"]["amount"] == {"decimal_text": 1, "scientific_text": 1}
+    assert cash["date_time_format_counts"]["dateTime"] == {"named_zone_datetime": 1, "offset_datetime": 1}
+    assert cash["timezone_format_counts"]["timeZone"] == {"iana_like": 1, "missing": 1}
+    assert cash["missing_required_fields"] == ["transactionID"]
+    assert funds["record_count"] == 1 and funds["missing_required_fields"] == []
+    assert funds["date_time_format_counts"]["date"] == {"date_only": 1}
+    serialized = json.dumps(diagnostic)
+    assert all(value not in serialized for value in private)
+    assert "America/New_York" not in serialized and "20260105" not in serialized
+    assert "complete" not in serialized
+
+
+@pytest.mark.parametrize("section", ["", "<CashTransactions/><StmtFunds/>"])
+def test_cashflow_empty_or_missing_sections_never_certify_coverage(section):
+    diagnostic = build_flex_ledger(_wrap(_statement(section)), expected_account_ids=(ACCOUNT,))["cashflow_source_diagnostic"]
+    assert diagnostic["coverage"] == "not_evaluated"
+    for source in diagnostic["sections"].values():
+        assert source["section_count"] == int(bool(section)) and source["record_count"] == 0
+        assert source["field_type_counts"] == {} and source["missing_required_fields"] == []
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("20260105", "date_only"), ("2026-01-05", "date_only"),
+    ("20260105;123456", "local_datetime"), ("2026-01-05T12:34:56", "local_datetime"),
+    ("2026-01-05T12:34:56Z", "utc_datetime"),
+    ("20260105;12:34:56-0500", "offset_datetime"),
+    ("20260105;123456 America/New_York", "named_zone_datetime"),
+    ("2026-02-30T12:34:56Z", "unsupported"), ("2026-01-05T25:00:00Z", "unsupported"),
+    ("2026-01-05T12:34:56+25:00", "unsupported"), ("synthetic-private-time", "unsupported"),
+    ("", "empty_text"),
+])
+def test_cashflow_datetime_diagnostic_classifies_formats_without_values(value, expected):
+    report = _wrap(_statement(f'<CashTransactions><CashTransaction dateTime="{value}"/></CashTransactions>'))
+    section = build_flex_ledger(report, expected_account_ids=(ACCOUNT,))["cashflow_source_diagnostic"]["sections"]["CashTransactions"]
+    assert section["date_time_format_counts"]["dateTime"] == {expected: 1}
+    assert value not in json.dumps(section) if value else True
+
+
+def test_cashflow_diagnostic_only_visits_selected_statement_and_counts_unknown_rows():
+    selected = _statement('<CashTransactions><UnknownPrivateTag privateKey="private-value"/></CashTransactions><StmtFunds/><StmtFunds/>')
+    other = _statement('<CashTransactions><CashTransaction transactionID="private-id"/></CashTransactions>', account="DU0000099")
+    report = _wrap(selected, other)
+    diagnostic = build_flex_ledger(report, expected_account_ids=(ACCOUNT,), allowed_report_account_ids=(ACCOUNT, "DU0000099"))["cashflow_source_diagnostic"]
+    assert diagnostic["sections"]["CashTransactions"]["record_count"] == 0
+    assert diagnostic["sections"]["CashTransactions"]["unsupported_record_count"] == 1
+    assert diagnostic["sections"]["StmtFunds"]["section_count"] == 2
+    assert all(value not in json.dumps(diagnostic) for value in ("UnknownPrivateTag", "privateKey", "private-value", "private-id", "DU0000099"))
