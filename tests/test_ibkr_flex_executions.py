@@ -132,6 +132,24 @@ def test_missing_fee_currency_is_not_inherited_and_zero_fee_is_retained():
     assert row["commission"] == "0" and row["commission_currency"] is None
 
 
+@pytest.mark.parametrize(("value", "shape"), [
+    ("-0.123456789", {"kind": "decimal", "integer_digits": 1, "fraction_digits": 9, "has_whitespace": False}),
+    ("-1.25E-9", {"kind": "scientific", "integer_digits": 1, "fraction_digits": 2, "has_whitespace": False}),
+    (" -0.25 ", {"kind": "decimal", "integer_digits": 1, "fraction_digits": 2, "has_whitespace": True}),
+    ("NaN", {"kind": "nonfinite"}),
+    ("synthetic-private-fee", {"kind": "unsupported"}),
+])
+def test_invalid_commission_reports_only_safe_format_and_preserves_rejection(value, shape):
+    source = ledger(f'<Trades>{trade(ibCommission=value)}</Trades>')
+    executions = source["executions"]
+    assert executions["status"] == "source_unavailable" and executions["records"] is None
+    assert executions["diagnostic"]["invalid_numeric_shapes"] == {"ibCommission": shape}
+    assert executions["diagnostic"]["invalid_fields"] == ["ibCommission"]
+    output = json.dumps(executions["diagnostic"])
+    assert value not in output and ACCOUNT not in output and "synthetic-execution" not in output
+    assert source["return_assessment"]["computable"] is True
+
+
 @pytest.mark.parametrize("changes", [{"quantity": "0"}, {"quantity": "NaN"}, {"tradePrice": "-1"},
                                       {"tradePrice": "1e2"}, {"quantity": "0.123456789"},
                                       {"tradePrice": "1000000000000"}, {"buySell": "BOT"},
