@@ -9,6 +9,7 @@ import re
 from typing import Any
 
 from application.ibkr_portfolio import MARKET_CURRENCY_CASH_TAG_PRIORITY
+from application.ibkr_cash_observations import build_cash_observations
 
 
 def _finite_decimal_text(value: Any) -> str | None:
@@ -174,6 +175,7 @@ def build_ibkr_account_facts(snapshot: Any) -> dict[str, Any]:
         "net_assets_semantics": "USD NetLiquidation; null unless broker source is verified",
         "cash_semantics": "IBKR accountValues cash balance; source tag retained; not available funds",
         "cash": cash,
+        "broker_cash_observations": build_cash_observations(rows, observed_at=observed_at),
     }
     # Optional, fail-soft: omitted entirely when unknown or malformed.
     positions = build_broker_reported_positions(snapshot)
