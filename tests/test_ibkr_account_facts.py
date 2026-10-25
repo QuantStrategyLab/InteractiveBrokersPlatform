@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -140,3 +141,27 @@ def test_usd_net_assets_require_matching_explicit_usd_net_liquidation():
         broker_net_liquidation=100,
     ))
     assert missing["net_assets"] is None
+
+
+def test_confirmed_empty_inventory_survives_runtime_report_json(tmp_path):
+    from quant_platform_kit.common.runtime_reports import (
+        build_runtime_report_base, finalize_runtime_report, write_runtime_report_json,
+    )
+
+    snapshot = _snapshot(
+        observed_at=datetime(2026, 9, 30, 12, tzinfo=timezone.utc),
+        cash_balances=({"account_id": "DU123", "currency": "USD", "CashBalance": 10},),
+        broker_stock_positions_empty=True,
+    )
+    snapshot.positions = ()
+    facts = build_ibkr_account_facts(snapshot)
+    report = build_runtime_report_base(
+        platform="interactive_brokers", deploy_target="offline", service_name="example-runtime",
+        strategy_profile="example", run_id="empty-inventory", run_source="test",
+    )
+    finalize_runtime_report(report, status="ok", summary={"account_facts": facts})
+    path = write_runtime_report_json(report, output_path=tmp_path / "report.json")
+    stored = json.loads(path.read_text(encoding="utf-8"))["summary"]["account_facts"]
+    assert stored["broker_reported_positions"] == []
+    assert stored["broker_reported_positions_complete"] is True
+    assert stored["broker_reported_positions_scope"] == "stocks_only"
