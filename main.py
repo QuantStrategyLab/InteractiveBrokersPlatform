@@ -8,6 +8,7 @@ import re
 import threading
 import time
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -935,13 +936,20 @@ def connect_ib(
 ):
     """Connect to the Gateway with an optional read-only session boundary."""
     require_gateway_execution_backend()
+    # ib_insync 0.9.86 automatically binds manual orders for client ID 0,
+    # including readonly=True. Never reach that SDK path from a read probe.
+    if read_only and (type(IB_CLIENT_ID) is not int or IB_CLIENT_ID <= 0):
+        raise RuntimeError("read-only Gateway access requires a configured nonzero client ID")
     # A probe must not merely skip the local what-if permission check.  Its
     # Gateway session itself must be read-only, so a future probe change cannot
     # accidentally acquire broker write authority.
     adapter_dry_run_override = True if read_only else None
-    return build_broker_adapters(
+    adapters = build_broker_adapters(
         dry_run_only_override=adapter_dry_run_override,
-    ).connect_ib(
+    )
+    if read_only:
+        adapters = replace(adapters, connect_attempts=1)
+    return adapters.connect_ib(
         validate_trading_permissions=validate_trading_permissions,
         redact_connection_diagnostics=read_only,
     )
