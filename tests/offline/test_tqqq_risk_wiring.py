@@ -119,6 +119,37 @@ def assert_unarmed(out):
         assert out[key] is False
 
 
+@pytest.mark.parametrize('mode', ['simple','advanced'])
+def test_order_components_persist_and_preflight_through_original_consumers(tmp_path, mode):
+    from test_funded_portfolio_preview import order_cost_fixture
+    args = fixture()
+    packet,context = args[2],args[3]
+    fees = rename(order_cost_fixture()['execution_rules']['fees'])
+    for sides in fees['terms_by_symbol'].values():
+        for terms in sides.values():
+            terms.update(per_share='0',per_order='0',minimum_amount='.001',
+                maximum_notional_bps=None,extra_per_share='0',extra_notional_bps='0')
+    packet['execution_rules']['fees'] = fees
+    context['observations'].update(fee_evidence_sha256=digest(fees),
+        liquidation_fee_allocation='PRO_RATA_MARKET_VALUE_SINGLE_ACCOUNT_ORDER')
+    args = seed(tmp_path,args)
+    request = request_fixture(mode)
+    saved = call(tmp_path,args,request=request,event_id='order-fee-preview')
+    assert saved['status']=='SETTINGS_DRAFT_PERSISTED',saved
+    quantity = saved['preview']['allocation_preview']['requested_preview']['quantity_preview']
+    assert quantity['cost_evaluation']=='EXACT_ORDER_FEE_RECHECK'
+    assert not quantity['nonlinear_cost_optimized'] and not quantity['actual_commissions_included']
+    for row in quantity['scenarios']:
+        assert row['fee_amount']==pytest.approx(len(row['trades'])*.001)
+    receipt=saved['artifact_receipt']
+    read = call(tmp_path,(*args[:4],saved['next_binding'],args[-1]),'preflight',request=request,
+        event_id='order-fee-preview',expected_artifact_sha256=receipt['artifact_sha256'],
+        consumption_cutoff_utc=packet['account_contract']['cutoff_utc'])
+    assert read['artifact_readback_verified'],read
+    assert_unarmed(saved)
+    assert_unarmed(read)
+
+
 def attach_relative_comparison(args, request):
     from tests.offline.test_dynamic_relative_risk import inputs, policy
     from us_equity_strategies.research.portfolio_intraday_state_io import HEADER
