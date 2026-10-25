@@ -157,6 +157,9 @@ def _benchmark_drawdown_rule(strategy_loss, reference, context):
         and context.get("wealth_scope") == "ALLOCATED_ACCOUNT_NET_WEALTH", "ACCOUNT_REFERENCE_SCOPE_REQUIRED")
     _require(all(source[key] == context[key] for key in _COMPARISON_FIELDS if key != "window_id"),
         "ACCOUNT_REFERENCE_BASIS_MISMATCH")
+    if "valuation_sampling" in source or "valuation_sampling" in context:
+        _require(source.get("valuation_sampling") == context.get("valuation_sampling") == "DAILY_CLOSE",
+            "ACCOUNT_REFERENCE_SAMPLING_MISMATCH")
     try:
         metric = compute_window_metrics(path, **{key: source[key]
             for key in ("periods_per_year", "calendar_id", "volatility_ddof")})
@@ -309,6 +312,11 @@ def preview_relative_risk(
     _require(strategy.index.equals(benchmark.index), "EXACT_SESSION_MATCH_REQUIRED")
     _require(all(strategy_context[k] == benchmark_context[k] for k in _COMPARISON_FIELDS),
              "COMPARISON_BASIS_MISMATCH")
+    # Daily date labels do not prove closing valuations. Preserve undeclared
+    # legacy previews, but never infer a sampling basis from the other path.
+    if "valuation_sampling" in strategy_context or "valuation_sampling" in benchmark_context:
+        _require(strategy_context.get("valuation_sampling")
+            == benchmark_context.get("valuation_sampling") == "DAILY_CLOSE", "COMPARISON_SAMPLING_MISMATCH")
     kwargs = {k: strategy_context[k] for k in ("periods_per_year", "calendar_id", "volatility_ddof")}
     # Lazy, read-only research statistics; this module has no runtime caller.
     from quant_platform_kit.research_stats.unified_report import build_unified_net_report
@@ -349,6 +357,7 @@ def preview_relative_risk(
         "input_sha256": input_digest,
         "binding": vars(binding).copy(), "observations": len(strategy),
         "currency": strategy_context["currency"], "calendar_id": kwargs["calendar_id"],
+        "valuation_sampling": strategy_context.get("valuation_sampling"),
         "start_date": strategy.index[0].date().isoformat(),
         "end_date": strategy.index[-1].date().isoformat(),
         "max_drawdown_loss_fraction": {"strategy": losses[0], "benchmark": losses[1]},
