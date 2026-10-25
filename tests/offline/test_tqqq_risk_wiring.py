@@ -427,6 +427,60 @@ def test_missing_policy_does_not_turn_verified_closed_state_into_permission(tmp_
     assert "TQQQ_EVENT_POLICY_MISSING" in out["gaps"]
 
 
+@pytest.mark.parametrize("opened", [False, True])
+@pytest.mark.parametrize("missing", ["cash", "fees", "prices", "presets", "current_threshold", "snapshot"])
+def test_state_read_does_not_require_current_allocation_inputs(tmp_path, opened, missing):
+    args = seed(tmp_path, fixture(opened=opened))
+    original = call(tmp_path, args, "read")
+    assert original["readback_verified"], original
+    before = {p.relative_to(tmp_path): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    if missing == "cash": args[2].pop("cash_evidence")
+    elif missing == "fees": args[2]["execution_rules"].pop("fees")
+    elif missing == "prices": args[2]["execution_rules"].pop("prices")
+    elif missing == "presets": args[2]["risk_inputs"].pop("presets")
+    elif missing == "current_threshold": args[3]["policy"]["thresholds_by_level"].pop("balanced")
+    else: args = (args[0], None, *args[2:])
+    out = call(tmp_path, args, "read")
+    assert out["readback_verified"] and not out["gaps"], out
+    assert out["state_readback"] == original["state_readback"]
+    assert out["breaker_state"] == ("OPEN" if opened else "CLOSED")
+    assert out["new_risk_prohibited"] and out["draft_settings"] is None
+    assert before == {p.relative_to(tmp_path): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    assert_unarmed(out)
+
+
+def test_state_read_ignores_current_cash_preview_but_not_trusted_policy_identity(tmp_path):
+    args, evidence = cash_policy_fixture()
+    args = seed_cash_policy(tmp_path, args, evidence)
+    evidence["read_status"] = "READ_FAILED"
+    before = {p.relative_to(tmp_path): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    read = call(tmp_path, args, "read", cash_policy_evidence=evidence)
+    assert read["readback_verified"] and read["cash_policy_preview"] is None, read
+    assert_unarmed(read)
+    args[0].runtime_settings.trusted_runtime_risk_policy["policy_id"] = "another-artificial-policy"
+    wrong = call(tmp_path, args, "read", cash_policy_evidence=evidence)
+    assert wrong["gaps"] == ["TQQQ_JOURNAL_POLICY_OR_PORTFOLIO_MISMATCH"], wrong
+    assert not wrong["readback_verified"]
+    assert before == {p.relative_to(tmp_path): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    assert_unarmed(wrong)
+
+
+@pytest.mark.parametrize("change", ["account", "profile", "real", "live", "checkpoint"])
+def test_state_only_read_still_rejects_unbound_scope_and_checkpoint(tmp_path, change):
+    args = seed(tmp_path, fixture(opened=True))
+    if change == "account": args[0].runtime_settings.account_ids = ("OTHER",)
+    elif change == "profile": args[0].runtime_settings.strategy_profile = "other"
+    elif change == "real": args[2]["account_contract"]["synthetic"] = False
+    elif change == "live": args[0].runtime_settings.dry_run_only = False
+    else: args[4]["expected_head_sha256"] = "f" * 64
+    before = {p.relative_to(tmp_path): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    out = call(tmp_path, args, "read")
+    assert out["gaps"] and not out["readback_verified"], out
+    assert out["breaker_state"] == "UNKNOWN" and out["new_risk_prohibited"]
+    assert before == {p.relative_to(tmp_path): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    assert_unarmed(out)
+
+
 @pytest.mark.parametrize("rebind_facts", [False, True])
 def test_settled_cash_cannot_be_invented_behind_an_unchanged_cash_balance_projection(tmp_path, rebind_facts):
     args = fixture()
