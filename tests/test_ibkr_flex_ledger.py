@@ -537,3 +537,46 @@ def test_nav_diagnostic_counts_only_selected_records_and_unknown_names_stay_hidd
     assert diagnostic["date_time_format_counts"]["fromDate"] == {"missing": 1, "unsupported": 1}
     assert not any(value in json.dumps(diagnostic) for value in ("privateNavKey", "PrivateNavChild", "privateChildKey",
         "otherPrivateKey", "otherAccountPrivateKey", "987654.321", "DU0000099", "private-nav-value", "bad-private-date"))
+
+
+def _nav_amount_report(*, attributes=None, nav_copies=1, information_copies=1, child=""):
+    attrs = {"accountId": ACCOUNT, "model": "", "currency": "BASE_SUMMARY",
+        "fromDate": "20260101", "toDate": "20260131", "twr": "1.25",
+        "startingValue": "10000.00", "endingValue": "11250.00", "depositsWithdrawals": "1000.00",
+        "internalCashTransfers": "0", "assetTransfers": "-0.00", "linkingAdjustments": "0.00",
+        "mtm": "99999.123456", "commissions": "-98765.4321", "dividends": "87654.321"}
+    attrs.update(attributes or {})
+    row = "<ChangeInNAV " + " ".join(f'{key}="{value}"' for key, value in attrs.items() if value is not None) + ">" + child + "</ChangeInNAV>"
+    return _wrap(_statement('<AccountInformation currency="EUR"/>' * information_copies + row * nav_copies))
+
+
+@pytest.mark.parametrize("currency", ["BASE_SUMMARY", "EUR"])
+def test_ledger_preserves_one_native_total_nav_row_without_calculating_or_forwarding_unrelated_components(currency):
+    ledger = build_flex_ledger(_nav_amount_report(attributes={"currency": currency}), expected_account_ids=(ACCOUNT,))
+    assert ledger["native_nav_change"] == {"source": "ChangeInNAV", "account_id": ACCOUNT,
+        "model": "", "currency": currency, "period": {"from": "2026-01-01", "to": "2026-01-31"},
+        "components": {"startingValue": "10000.00", "endingValue": "11250.00", "depositsWithdrawals": "1000.00",
+            "internalCashTransfers": "0", "assetTransfers": "-0.00", "linkingAdjustments": "0.00"}}
+    assert ledger["native_returns"]["twr"] == "1.25"
+    diagnostic = json.dumps(ledger["nav_source_diagnostic"])
+    assert all(value not in diagnostic for value in (ACCOUNT, "10000.00", "11250.00", "1000.00", "99999.123456", "-98765.4321"))
+
+
+@pytest.mark.parametrize("field,value", [("currency", "USD"), ("currency", None), ("currency", " EUR"),
+    ("model", None), ("model", "synthetic-model"), ("model", " "), ("accountId", None)])
+def test_unqualified_native_nav_metadata_does_not_hide_native_twr(field, value):
+    ledger = build_flex_ledger(_nav_amount_report(attributes={field: value}), expected_account_ids=(ACCOUNT,))
+    assert "native_nav_change" not in ledger and ledger["native_returns"]["twr"] == "1.25"
+
+
+@pytest.mark.parametrize("kwargs", [{"nav_copies": 2}, {"information_copies": 2}, {"child": "<PrivateChild/>"}])
+def test_ambiguous_nav_source_structure_omits_only_native_nav_metadata(kwargs):
+    ledger = build_flex_ledger(_nav_amount_report(**kwargs), expected_account_ids=(ACCOUNT,))
+    assert "native_nav_change" not in ledger and ledger["native_returns"]["twr"] == "1.25"
+
+
+@pytest.mark.parametrize("field,value", [("fromDate", "20260102"), ("toDate", "20260130"),
+    ("fromDate", "20260101;120000"), ("toDate", "20260131;120000")])
+def test_nav_source_period_requires_matching_native_calendar_dates(field, value):
+    ledger = build_flex_ledger(_nav_amount_report(attributes={field: value}), expected_account_ids=(ACCOUNT,))
+    assert "native_nav_change" not in ledger

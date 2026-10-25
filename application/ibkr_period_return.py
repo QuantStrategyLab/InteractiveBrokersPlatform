@@ -17,6 +17,10 @@ _SCOPE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", re.ASCII)
 _BINDING = re.compile(r"[a-f0-9]{64}", re.ASCII)
 _CURRENCY = re.compile(r"[A-Z]{3}", re.ASCII)
 _DECIMAL = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?", re.ASCII)
+NAV_CHANGE_COMPONENT_FIELDS = (
+    "startingValue", "endingValue", "depositsWithdrawals",
+    "internalCashTransfers", "assetTransfers", "linkingAdjustments",
+)
 
 
 class PeriodReturnError(ValueError):
@@ -51,6 +55,45 @@ def _number(value: object) -> Fraction:
         raise PeriodReturnError("native_value_invalid")
     # Fraction(Decimal) compares exactly, independent of the ambient Decimal context.
     return Fraction(Decimal(value))
+
+
+def _optional_nav_change(
+    raw: object, *, account_id: str, currency: str, period: Mapping[str, str],
+) -> dict[str, Any] | None:
+    """NAV reconciliation only when the ambiguous transfer components are zero.
+
+    Deposits/withdrawals already include cash transfers. Never subtract the
+    other transfer fields a second time, or add/deduct income and fees already
+    contained in NAV. Missing money facts do not affect the native TWR.
+    """
+    if (
+        not isinstance(raw, Mapping) or raw.get("source") != "ChangeInNAV"
+        or raw.get("account_id") != account_id or raw.get("model") != ""
+        or not isinstance(raw.get("currency"), str)
+        or raw.get("currency") not in {currency, "BASE_SUMMARY"}
+        or raw.get("period") != dict(period)
+    ):
+        return None
+    components = raw.get("components")
+    if not isinstance(components, Mapping) or set(components) != set(NAV_CHANGE_COMPONENT_FIELDS):
+        return None
+    try:
+        values = {key: _number(components[key]) for key in NAV_CHANGE_COMPONENT_FIELDS}
+    except PeriodReturnError:
+        return None
+    if any(values[key] != 0 for key in NAV_CHANGE_COMPONENT_FIELDS[3:]):
+        return None
+    amount = values["endingValue"] - values["startingValue"] - values["depositsWithdrawals"]
+    # All inputs are finite decimal strings. Integer scaling preserves their
+    # precision exactly, even under a caller's reduced Decimal context.
+    scale = max(len(components[key].partition(".")[2]) for key in NAV_CHANGE_COMPONENT_FIELDS)
+    scaled = amount * 10 ** scale
+    digits = str(abs(scaled.numerator)).zfill(scale + 1)
+    text = ("-" if amount < 0 else "") + (f"{digits[:-scale]}.{digits[-scale:]}" if scale else digits)
+    if len(text) > 64:
+        return None
+    return {"method": "ibkr_nav_reconciliation", "source": "ChangeInNAV",
+            "components": {key: components[key] for key in NAV_CHANGE_COMPONENT_FIELDS}, "amount": text}
 
 
 def build_ibkr_period_return(
@@ -93,7 +136,7 @@ def build_ibkr_period_return(
     percent, ratio = _number(native.get("twr")), _number(assessment.get("value"))
     if ratio * 100 != percent or ratio < -1:
         raise PeriodReturnError("native_value_invalid")
-    return {
+    result = {
         "schema_version": SCHEMA_VERSION, "target_id": target_id,
         "source_binding_id": source_binding_id, "account_scope": account_scope,
         "account_ids": list(expected_account_ids), "observed_at": observed.isoformat().replace("+00:00", "Z"),
@@ -101,3 +144,8 @@ def build_ibkr_period_return(
         "method": "native_ibkr_twr", "source": "ChangeInNAV.twr", "source_unit": "percent",
         "source_value": native["twr"], "unit": "ratio", "value": assessment["value"],
     }
+    nav_change = _optional_nav_change(ledger.get("native_nav_change"), account_id=expected_account_ids[0],
+                                      currency=currency, period=result["period"])
+    if nav_change is not None:
+        result["nav_change"] = nav_change
+    return result

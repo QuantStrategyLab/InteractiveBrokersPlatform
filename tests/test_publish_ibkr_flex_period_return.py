@@ -101,7 +101,7 @@ def _missing_executions(status):
         "changeInInterestAccruals", "advisorFees", "clientFees", "otherFees", "feesReceivables", "commissions",
         "commissionReceivables", "forexCommissions", "transactionTax", "taxReceivables", "salesTax", "softDollars",
         "netFxTrading", "fxTranslation", "linkingAdjustments", "other", "endingValue", "twr")
-    return {"status": status, "executions_status": "source_unavailable", "executions_diagnostic": {
+    return {"status": status, "nav_change_status": "unavailable", "executions_status": "source_unavailable", "executions_diagnostic": {
         "section_present": False, "native_record_count": 0, "field_names": [], "level_types": [],
         "missing_fields": [], "invalid_fields": [], "reason": "trades_section_missing"},
         "cashflow_source_diagnostic": {"schema_version": "ibkr.flex_cashflow_source_shape.v1", "coverage": "not_evaluated",
@@ -717,3 +717,40 @@ def test_source_shapes_use_same_flex_handle_without_new_posts_or_private_output(
                                                "synthetic-private-cash-id", "privateCashKey", "synthetic-private-value",
                                                "12345.678901", "privateNavKey", "synthetic-private-nav-value"))
     assert "synthetic-private" not in output
+
+
+@pytest.mark.parametrize("pending", [False, True])
+@pytest.mark.parametrize("transfer", ["0.00", "0.000000000000000001"])
+def test_optional_nav_amount_uses_existing_post_and_never_reaches_safe_stdout(monkeypatch, capsys, pending, transfer):
+    import time
+
+    configure(monkeypatch)
+    nav = ('<ChangeInNAV accountId="DU0000000" model="" currency="BASE_SUMMARY" '
+        'fromDate="20260101" toDate="20260131" twr="1.25" startingValue="98765.432101" '
+        'endingValue="99999.876543" depositsWithdrawals="1000.012345" internalCashTransfers="' + transfer + '" '
+        'assetTransfers="0" linkingAdjustments="-0.00" mtm="77777.555555" commissions="-44444.555555"/>')
+    report = _execution_xml(twr=None).replace(b"</FlexStatement>", nav.encode() + b"</FlexStatement>")
+    session = FlexSession(b"<FlexStatementResponse><ErrorCode>1019</ErrorCode></FlexStatementResponse>" if pending else report)
+    opener = ExecutionsOpener()
+    monkeypatch.setattr(cli.requests, "Session", lambda: session)
+    monkeypatch.setattr(time, "sleep", lambda _delay: setattr(session, "report", report))
+    monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
+    assert cli.main() == 0
+    output = capsys.readouterr().out
+    status = json.loads(output)
+    assert status["status"] == status["executions_status"] == "published"
+    assert len(opener.calls) == 2
+    payload = json.loads(next(request.data for request, _ in opener.calls if request.full_url == cli.SYNC_URL))
+    assert payload["method"] == "native_ibkr_twr" and payload["value"] == "0.0125"
+    if transfer == "0.00":
+        assert status["nav_change_status"] == "included"
+        assert payload["nav_change"]["amount"] == "234.432097"
+        assert set(payload["nav_change"]) == {"method", "source", "components", "amount"}
+        assert payload["nav_change"]["components"]["startingValue"] == "98765.432101"
+    else:
+        assert status["nav_change_status"] == "unavailable" and "nav_change" not in payload
+    assert sum(url.endswith("/SendRequest") for url, _ in session.calls) == 1
+    gets = [kwargs["params"] for url, kwargs in session.calls if url.endswith("/GetStatement")]
+    assert all(params == gets[0] for params in gets) and len(gets) == (2 if pending else 1)
+    assert not any(value in output for value in ("DU0000000", "98765.432101", "99999.876543", "1000.012345",
+        "234.432097", "77777.555555", "-44444.555555", "synthetic-flex-token", "synthetic-sync-token"))

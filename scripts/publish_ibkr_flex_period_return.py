@@ -328,6 +328,7 @@ def main(argv: Sequence[str] = ()) -> int:
                 observed_at = datetime.now(timezone.utc)
                 diagnostics["cashflow_source_diagnostic"] = ledger["cashflow_source_diagnostic"]
                 diagnostics["nav_source_diagnostic"] = ledger["nav_source_diagnostic"]
+                diagnostics["nav_change_status"] = "unavailable"
                 try:
                     payload = build_ibkr_period_return(ledger, observed_at=observed_at,
                         **{key: config[key] for key in ("target_id", "source_binding_id", "account_scope", "expected_account_ids")})
@@ -336,6 +337,7 @@ def main(argv: Sequence[str] = ()) -> int:
                 except Exception:
                     status = "projection_rejected"
                 else:
+                    diagnostics["nav_change_status"] = "included" if "nav_change" in payload else "unavailable"
                     if config.get("report_date") and payload["period"] != {"from": config["report_date"], "to": config["report_date"]}:
                         status = "historical_period_mismatch"
                     else:
