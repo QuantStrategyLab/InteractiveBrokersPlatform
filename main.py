@@ -964,7 +964,16 @@ def build_execution_report(log_context, *, dry_run_only_override: bool | None = 
 
 
 def persist_execution_report(report, *, dry_run_only_override: bool | None = None):
-    return build_composer(dry_run_only_override=dry_run_only_override).build_reporting_adapters().persist_execution_report(report)
+    adapters = build_composer(dry_run_only_override=dry_run_only_override).build_reporting_adapters()
+    diagnostics = report.get("diagnostics")
+    if isinstance(diagnostics, Mapping) and diagnostics.get("maintenance_cash_observation") is True:
+        prefix = adapters.report_gcs_prefix_uri
+        if not prefix:
+            raise RuntimeError("maintenance observation requires the existing private report destination")
+        adapters = replace(adapters,
+            report_base_dir=os.path.join(adapters.report_base_dir, "maintenance-cash") if adapters.report_base_dir else None,
+            report_gcs_prefix_uri=prefix.rstrip("/") + "/maintenance-cash")
+    return adapters.persist_execution_report(report)
 
 
 def persist_reconciliation_report(report):
