@@ -13,8 +13,8 @@
 
 ## 调用方必须明确提供
 
-1. `runtime`：一个明确 dry-run、cash-only、options disabled 的人工 `LoadedStrategyRuntime`；profile 固定为 `tqqq_growth_income`，target、账户范围、账户列表、有效执行现金保留比例必须一致。非零固定现金保留额目前未在这条薄适配器中表示，交缺口，不忽略。
-2. `portfolio_snapshot`：人工原生形状的账户快照。`packet.facts` 必须与当前平台生产函数的投影完全相同；原生期权库存必须明确为空，缺失或非空都不能被 stocks-only 投影隐去。现金证据中每个账户/币种/标签还须与该快照的原生 cash_balances 对齐，尤其单独核 `SettledCash`，不能由 `CashBalance` 代替。
+1. `runtime`：一个明确 dry-run、cash-only、options disabled 的人工 `LoadedStrategyRuntime`；profile 固定为 `tqqq_growth_income`，target、账户范围、账户列表、有效执行现金保留比例必须一致。固定现金保留额须显式提供并与 runtime 一致；资金合同须覆盖 max(比例 × 净值, 固定底线)，保留额由原现金适配器扣除一次。未定值不按零补齐。
+2. `portfolio_snapshot`：人工原生形状的账户快照。`packet.facts` 必须与当前平台生产函数的投影完全相同；明确全现金的人工场景可另附 `inventory_evidence`，通过独立完整性证明后使用研究投影，详见[券商事实与接线](tqqq-broker-facts.zh-CN.md)。原生期权库存必须明确为空，缺失或非空都不能被 stocks-only 投影隐去。现金证据中每个账户/币种/标签还须与该快照的原生 cash_balances 对齐，尤其单独核 `SettledCash`，不能由 `CashBalance` 代替。
 3. `packet`：原 UES facts/account_contract、cash_evidence、execution_rules、moments、composition、risk_inputs、definition_bytes、request_id、Kelly 数学合同。当前只装配一个 TQQQ 策略及其明确证券组成；不扩为多个平台或其他策略。
 4. `event_context`：原三档完整事件政策、风险观察、日初基准、外部流量、高水位、费用后持仓周期，以及如适用的减仓和恢复证据。预算/期限/阈值、曲线或任何必需规则缺失时交 gaps。
 5. `journal`、`binding`：明确离线根目录及原 `PortfolioEventJournal`，外部保存的精确 checkpoint；初始化另需完整显式初态证明。身份必须恰为当前账户范围、当前 TQQQ 组合和当前事件政策，不能拿同账户的其他链替代。
@@ -49,7 +49,7 @@ read = run_tqqq_offline_risk(request, action="preflight",
 
 新事件按原合同追加并完整读回；重放只恢复状态，不重新计算候选或补发草稿。OPEN 跨重启保留；合格减仓也不清除 OPEN。止损、熔断事件可以成功保存但没有合格草稿，结果分别记录；不会为了恢复草稿回滚已保存状态。读取/预检不创建文件、不更新原冻结时间、不重新生成候选。过期来源、新 OPEN、旧头部、损坏记录或政策错配拒绝旧草稿。
 
-原事实投影对未知/空库存会省略持仓字段，本接口保留这一语义，不能自动填成已知空仓。真实全现金场景若缺完整库存合同，目前继续返回缺口。费用也维持原支持范围：明确固定非负 BPS、全部成本包含、无最低佣金；不兼容的实际券商费用须补模型和适用证据，不能降级为该人工费率。
+原事实投影对未知/空库存会省略持仓字段。原报告语义保持；只有明确原生空股票/期权集合及来源、范围、摘要、时效均绑定的人工完整性证明，才能通过独立研究投影生成空持仓；消费预检继续核证明时效。真实全现金场景的来源完整性仍缺，不自动填成已知空仓。费用也维持原支持范围：明确固定非负 BPS、全部成本包含、无最低佣金；不兼容的实际券商费用须补模型和适用证据，不能降级为该人工费率。
 
 ## 验证与本包终点
 
@@ -66,3 +66,5 @@ PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv-offline/bin/python -m pytest
 测试仅用人工资金与场景，覆盖三档两模式、账户/版本/政策错配、未结算现金冲突、费用数量缺项、未知 pending、初始化身份、空链、OPEN、重放、陈旧草稿和独立进程读回。fixture 中的所有数值只用于证明程序行为，均不是账户预算或建议阈值。
 
 本包到“离线 TQQQ 接线和拒绝路径可验证，缺项不授予配置权限”结束。仍需真实账户有效政策与批准来源、资金/费用/数量适用证据、可信初态/checkpoint 发行方、实际存储资格，以及未来获准消费者与生效读回；这些不由本次合成验证替代。B5 的原不采用决定保持。
+
+资金取舍待填写[风险政策确认草案](tqqq-risk-policy-draft.zh-CN.md)；事实来源与缺口见[券商事实](tqqq-broker-facts.zh-CN.md)。草案不是批准或启用凭据。

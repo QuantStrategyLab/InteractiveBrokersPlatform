@@ -54,7 +54,38 @@ def _native_cash(snapshot, evidence):
             "TQQQ_NATIVE_CASH_CONFLICT")
 
 
-def _admit(runtime, snapshot, packet, context):
+def build_tqqq_offline_account_facts(snapshot, *, account_contract, inventory_evidence=None):
+    """Keep native facts; explicit artificial completeness may attest an empty set.
+
+    The production producer intentionally omits empty or unknown inventory. An
+    omitted field alone is never enough. This separate research projection uses
+    the existing scoped/time-bound evidence contract and never publishes facts.
+    """
+    from us_equity_strategies.research.auto_portfolio_account import digest
+    from us_equity_strategies.research.funded_portfolio_preview import _bound
+
+    facts = build_ibkr_account_facts(snapshot)
+    if inventory_evidence is None:
+        return facts
+    _bound(inventory_evidence, account_contract)
+    _require(account_contract.get("synthetic") is True
+        and account_contract.get("positions_complete") is True
+        and account_contract.get("asset_scope") == "STOCKS_AND_CASH_ONLY",
+        "TQQQ_EMPTY_INVENTORY_CONTRACT_REQUIRED")
+    _require(facts.get("account_ids") == [account_contract["account_id"]]
+        and facts.get("currency") == account_contract["currency"]
+        and inventory_evidence.get("account_snapshot_sha256") == digest(facts),
+        "TQQQ_EMPTY_INVENTORY_SNAPSHOT_MISMATCH")
+    _require(isinstance(snapshot.positions, (tuple, list)) and not snapshot.positions
+        and isinstance(snapshot.metadata.get("option_positions"), (tuple, list))
+        and not snapshot.metadata["option_positions"]
+        and inventory_evidence.get("positions_complete") is True
+        and inventory_evidence.get("asset_scope") == "STOCKS_AND_CASH_ONLY",
+        "TQQQ_COMPLETE_EMPTY_INVENTORY_REQUIRED")
+    return dict(facts, broker_reported_positions=[], broker_reported_positions_scope="stocks_only")
+
+
+def _admit(runtime, snapshot, packet, context, inventory_evidence):
     from us_equity_strategies.research.auto_portfolio_account import digest
     from us_equity_strategies.research.auto_portfolio_preview import _hash
     from us_equity_strategies.research.funded_portfolio_preview import (
@@ -79,9 +110,10 @@ def _admit(runtime, snapshot, packet, context):
     _require(bool(target.service_name or target.deployment_selector), "TQQQ_RUNTIME_SCOPE_REQUIRED")
     _require(packet["moments"]["strategy_ids"] == [PROFILE]
         and set(packet["composition"]["weights"]) == {PROFILE}, "TQQQ_STRATEGY_COMPOSITION_MISMATCH")
-    # The exact native producer is used; an omitted inventory is not filled in
-    # with [] and a verified account field is never relabelled as synthetic.
-    _require(build_ibkr_account_facts(snapshot) == packet["facts"], "TQQQ_NATIVE_ACCOUNT_FACTS_MISMATCH")
+    # Empty inventory requires separate bound artificial evidence; native
+    # omission remains unknown when that evidence is absent.
+    _require(build_tqqq_offline_account_facts(snapshot, account_contract=contract,
+        inventory_evidence=inventory_evidence) == packet["facts"], "TQQQ_NATIVE_ACCOUNT_FACTS_MISMATCH")
     options = snapshot.metadata.get("option_positions")
     _require(isinstance(options, (tuple, list)) and not options, "TQQQ_COMPLETE_EMPTY_OPTION_INVENTORY_REQUIRED")
     _native_cash(snapshot, packet["cash_evidence"])
@@ -115,7 +147,9 @@ def _admit(runtime, snapshot, packet, context):
     _require(all(config.get(key) is False for key in (
         "option_overlay_enabled", "option_growth_overlay_enabled", "option_income_overlay_enabled")),
         "TQQQ_OPTIONS_DISABLED_REQUIRED")
-    _require(_number(runtime.cash_reserve_floor_usd) == 0, "TQQQ_UNREPRESENTED_RESERVE_FLOOR")
+    floor = _number(settings.reserved_cash_floor_usd)
+    _require(floor >= 0 and _number(runtime.cash_reserve_floor_usd) == floor,
+        "TQQQ_EFFECTIVE_RESERVE_FLOOR_MISMATCH")
 
     # Reuse original admission for budgets, curves, costs, quantities and cash.
     # HOLD validates the frozen risk contract without generating a candidate.
@@ -127,7 +161,13 @@ def _admit(runtime, snapshot, packet, context):
     if gaps:
         return gaps
     _require(account["nav"] == capital["capital_base"].target_equity, "TQQQ_CAPITAL_DENOMINATOR_MISMATCH")
-    _require(float(contract["reserved_cash"]) >= account["nav"] * reserve, "TQQQ_RESERVE_NOT_FUNDED")
+    _require(_number(snapshot.total_equity) == account["nav"],
+        "TQQQ_EXECUTION_EQUITY_DENOMINATOR_MISMATCH")
+    # Same max(ratio * equity, fixed floor) as the existing execution service.
+    # This reserve is already deducted by adapt_cash_evidence, exactly once.
+    required_reserve = max(Decimal(str(account["nav"])) * Decimal(str(reserve)), Decimal(str(floor)))
+    _require(Decimal(str(cash["account_contract"]["reserved_cash"])) >= required_reserve,
+        "TQQQ_RESERVE_NOT_FUNDED")
     risk = {key: value for key, value in packet["risk_inputs"].items() if key != "scenario_available_at"}
     scenario = risk["scenario_set"]
     _require(scenario.descriptor.scope == contract["scope_ref"]
@@ -145,7 +185,7 @@ def _admit(runtime, snapshot, packet, context):
 
 def run_tqqq_offline_risk(request, *, runtime, portfolio_snapshot, packet, event_context,
         journal, binding, action, event_id=None, initialization=None,
-        expected_artifact_sha256=None, consumption_cutoff_utc=None):
+        expected_artifact_sha256=None, consumption_cutoff_utc=None, inventory_evidence=None):
     """Initialize/read/persist/preflight an explicit artificial TQQQ contract.
 
     Callers retain the external checkpoint and draft receipt. There is no reset,
@@ -169,10 +209,13 @@ def run_tqqq_offline_risk(request, *, runtime, portfolio_snapshot, packet, event
             persist_portfolio_settings_draft, preflight_portfolio_settings_draft,
         )
 
-        gaps = _admit(runtime, portfolio_snapshot, packet, event_context)
+        gaps = _admit(runtime, portfolio_snapshot, packet, event_context, inventory_evidence)
         if gaps:
             out["gaps"] = gaps
             return out
+        if action == "preflight" and inventory_evidence is not None:
+            from us_equity_strategies.research.funded_portfolio_preview import _bound
+            _bound(inventory_evidence, dict(packet["account_contract"], cutoff_utc=consumption_cutoff_utc))
         from quant_platform_kit.common.strategy_risk_state import StrategyRiskStateIdentity
         from us_equity_strategies.research.auto_portfolio_account import digest
         from us_equity_strategies.research.portfolio_risk_events_preview import _portfolio_id
