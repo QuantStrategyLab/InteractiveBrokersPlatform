@@ -27,6 +27,7 @@ _REASONS = frozenset({
     "report_provenance_invalid", "runtime_target_mismatch", "account_facts_invalid",
     "account_identity_mismatch", "observation_invalid", "identity_verified",
     "diagnostic_error", "arguments_invalid",
+    "report_selection_changed",
 })
 _EQUALITY_FIELDS = (
     "report_equals_configured", "configured_equals_ready", "report_equals_ready",
@@ -752,15 +753,15 @@ def main(argv: Sequence[str] | None = None, *, now: datetime | None = None) -> i
     if args not in ([], ["--preflight"], ["--broker-contract-source-evidence"]):
         print(json.dumps(_result(source_sha=source_sha, reason="arguments_invalid"), sort_keys=True))
         return 1
+    activity = {}
     try:
         expected = resolve_expected()
         if args == ["--preflight"]:
             print(json.dumps(_result(source_sha=source_sha, status="preflight", reason="target_config_valid"), sort_keys=True))
             return 0
         current = now if now is not None else datetime.now(timezone.utc)
-        uri = publisher._latest_report_uri(prefix=expected["expected_report_prefix"],
-            project_id=expected["expected_project_id"], now=current)
-        report = publisher._load_gcs_report(uri, project_id=expected["expected_project_id"])
+        uri, report = publisher.select_account_facts_report(expected=expected, now=current, activity=activity,
+            report_name=os.environ.get("IBKR_ACCOUNT_FACTS_REPORT_NAME", ""))
         metadata = _read_cloud_run_metadata(expected)
         result = diagnose_identity(report, expected=expected, source_report_uri=uri,
             now=current, cloud_run_metadata=metadata, source_sha=source_sha)
@@ -773,6 +774,8 @@ def main(argv: Sequence[str] | None = None, *, now: datetime | None = None) -> i
     except Exception:
         # No exception type, subprocess stderr, URI, or private values are emitted.
         result = _result(source_sha=source_sha, reason="diagnostic_error")
+    if activity:
+        result["report_selection"] = activity
     passed = (
         result["projection_passed"] is True and result["freshness_status"] == "fresh"
         and result["cloud_run_metadata_status"] == "read"
