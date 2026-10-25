@@ -75,6 +75,30 @@ packet 可省略待派生的 `account_contract.reserved_cash`；若已提供则�
 
 ## 状态与草稿
 
+### 将相对风险比较绑定到同一份离线草稿
+
+`event_context.relative_risk_comparison` 可附显式人工比较输入。它复用上述11字段来源
+header，另含 `portfolio_id`、`request_sha256`、`returns`、`binding`、`strategy_context`、
+`benchmark_context`、`allowed_excess`、`dynamic_policy`；字段须完整，未指定规则继续为 null，
+不补风险数值。`returns` 只含等长的 `dates`、`strategy`、`benchmark` JSON 数组，日期为
+ISO 日日期且必须早于冻结截止日，不接受当前未完成日或未来日。
+
+沿用原 `preview_relative_risk` 数学合同，同时绑定原组合ID、精确请求摘要、账户范围、
+币种、两侧账户净财富角色；动态政策的档位与 NAV 必须与请求及人工快照一致。两种设置模式
+走同一接缝。初始化及纯状态读取不消费该可选附件；保存及预检有附件就验证。
+
+原 UES 草稿和事件 fingerprint 已包含完整 `event_context`，因此直接复用原 journal、
+外部 checkpoint 和 artifact receipt，不另建存储或签发第二份回执。以后省略附件、改来源、
+改路径或改当前没有主导限额的参数，原消费预检均拒绝复用旧草稿；其原来源有效期和年龄
+在消费时继续复核，不延长冻结时间。
+
+`relative_risk_preview` 是从同一冻结输入重新得到的确定性诊断，不重新生成 Kelly 候选。
+只有原 artifact 的完整输入指纹和读回通过，才有 `relative_risk_input_bound_to_draft=true`。
+这证明输入绑定，不声称比较结果已经作为策略约束执行：`relative_risk_enforced=false`，
+模型校准和连续状态核实仍未获证，结果也不证明这条人工财富路径就是所生成目标的实际
+费用后财富路径。观察到 WITHIN/EXCEEDS 均不产生真实风险政策、运行准入、配置应用或恢复权限。
+该附件不能替代事件政策；原 OPEN、减仓和不自动解除的语义继续保留。
+
 ```python
 initialized = run_tqqq_offline_risk(request, action="initialize", initialization=proof, **inputs)
 # 显式保留 initialized["next_binding"]，不从目录猜最新头部。

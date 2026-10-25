@@ -266,6 +266,64 @@ def _admit(runtime, snapshot, packet, context, inventory_evidence):
     return []
 
 
+def _relative_comparison(context, packet, request, nav):
+    """Bind a declared diagnostic to the existing draft fingerprint, not a limit.
+
+    The original UES receipt hashes the entire event context. Neither a new
+    journal nor a second artifact is needed; omission or any input change is
+    therefore checked by its existing read-only consumer preflight.
+    """
+    if "relative_risk_comparison" not in context:
+        return None
+    import pandas as pd
+
+    from quant_platform_kit.strategy_lifecycle.benchmark_catalog import StrategyBenchmarkBinding
+    from us_equity_strategies.research.auto_portfolio_account import digest, utc
+    from us_equity_strategies.research.funded_portfolio_preview import _bound
+    from us_equity_strategies.research.portfolio_intraday_state_io import HEADER
+    from us_equity_strategies.research.portfolio_risk_events_preview import _portfolio_id
+    from application.relative_risk_preview import preview_relative_risk
+
+    try:
+        evidence = context["relative_risk_comparison"]
+        fields = {"portfolio_id", "request_sha256", "returns", "binding", "strategy_context",
+                  "benchmark_context", "allowed_excess", "dynamic_policy"}
+        _require(isinstance(evidence, Mapping) and set(evidence) == HEADER | fields,
+            "TQQQ_RELATIVE_COMPARISON_INCOMPLETE")
+        _bound(evidence, packet["account_contract"])
+        _require(evidence["portfolio_id"] == _portfolio_id(packet)
+            and evidence["request_sha256"] == digest(request), "TQQQ_RELATIVE_REQUEST_MISMATCH")
+        contract = packet["account_contract"]
+        for key, role in (("strategy_context", "ALLOCATED_ACCOUNT_NET_WEALTH"),
+                          ("benchmark_context", "ACCOUNT_RISK_REFERENCE_NET_WEALTH")):
+            _require(evidence[key].get("account_scope") == contract["scope_ref"]
+                and evidence[key].get("currency") == contract["currency"]
+                and evidence[key].get("wealth_scope") == role,
+                "TQQQ_RELATIVE_ACCOUNT_PATH_MISMATCH")
+        policy = evidence["dynamic_policy"]
+        if policy is not None:
+            _require(policy["level"] == request["level"] and policy["nav"] == nav,
+                "TQQQ_RELATIVE_LEVEL_OR_CAPITAL_MISMATCH")
+        paths = evidence["returns"]
+        _require(isinstance(paths, Mapping) and set(paths) == {"dates", "strategy", "benchmark"}
+            and all(type(paths[key]) is list for key in paths)
+            and all(isinstance(value, str) and len(value) == 10 for value in paths["dates"]),
+            "TQQQ_RELATIVE_PATHS_REQUIRED")
+        dates = pd.DatetimeIndex(pd.to_datetime(paths["dates"], format="%Y-%m-%d", errors="raise"))
+        _require(len(dates) >= 2 and all(day.date() < utc(contract["cutoff_utc"]).date() for day in dates),
+            "TQQQ_RELATIVE_PRIOR_DAILY_SESSIONS_REQUIRED")
+        return preview_relative_risk(
+            pd.Series(paths["strategy"], index=dates), pd.Series(paths["benchmark"], index=dates),
+            binding=StrategyBenchmarkBinding(**evidence["binding"]),
+            strategy_context=evidence["strategy_context"], benchmark_context=evidence["benchmark_context"],
+            allowed_excess=evidence["allowed_excess"], dynamic_policy=policy)
+    except Exception as exc:
+        # Never expose a supplied path, identity, exception body or policy value.
+        reason = str(exc)
+        raise ValueError(reason if reason.startswith("TQQQ_RELATIVE_")
+                         else "TQQQ_RELATIVE_COMPARISON_INVALID") from None
+
+
 def run_tqqq_offline_risk(request, *, runtime, portfolio_snapshot, packet, event_context,
         journal, binding, action, event_id=None, initialization=None,
         expected_artifact_sha256=None, consumption_cutoff_utc=None, inventory_evidence=None,
@@ -278,6 +336,7 @@ def run_tqqq_offline_risk(request, *, runtime, portfolio_snapshot, packet, event
     """
     out = dict(status="TQQQ_OFFLINE_RISK_GAPS", gaps=[], platform_profile=PROFILE,
         draft_settings=None, preview=None, cash_policy_preview=None, next_binding=None, artifact_receipt=None,
+        relative_risk_preview=None, relative_risk_input_bound_to_draft=False, relative_risk_enforced=False,
         readback_verified=False, artifact_readback_verified=False, state_persisted=False,
         breaker_state="UNKNOWN", new_risk_prohibited=True, application_status="NOT_APPLIED",
         confirmation_granted=False, execution_authorized=False, settings_applied=False,
@@ -312,6 +371,9 @@ def run_tqqq_offline_risk(request, *, runtime, portfolio_snapshot, packet, event
             if out["cash_policy_preview"]["gaps"]:
                 out["gaps"] = out["cash_policy_preview"]["gaps"]
                 return out
+        if action in {"persist", "preflight"}:
+            out["relative_risk_preview"] = _relative_comparison(
+                event_context, packet, request, portfolio_snapshot.total_equity)
         gaps = _admit(runtime, portfolio_snapshot, packet, event_context, inventory_evidence)
         if gaps:
             out["gaps"] = gaps
@@ -339,6 +401,8 @@ def run_tqqq_offline_risk(request, *, runtime, portfolio_snapshot, packet, event
                 expected_artifact_sha256=expected_artifact_sha256,
                 consumption_cutoff_utc=consumption_cutoff_utc, event_context=event_context, **packet)
         out.update(deepcopy(result))
+        out["relative_risk_input_bound_to_draft"] = (
+            out["relative_risk_preview"] is not None and out["artifact_readback_verified"])
         # Initialization and state-only reads grant no candidate permission.
         # A failed candidate can preserve a successfully committed OPEN event.
         if action in {"initialize", "read"} or out["gaps"]:
