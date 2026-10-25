@@ -423,6 +423,31 @@ def test_dry_run_composer_wires_dry_run_override_to_order_execution(strategy_mod
     assert observed["dry_run_only_override"] is True
 
 
+@pytest.mark.parametrize('client_id', [0,-1,None,True])
+def test_read_only_connection_rejects_automatic_binding_before_building_broker(strategy_module_factory,monkeypatch,client_id):
+    module=strategy_module_factory()
+    monkeypatch.setattr(module,'IB_CLIENT_ID',client_id)
+    monkeypatch.setattr(module,'build_broker_adapters',lambda **kwargs: pytest.fail('must stop before SDK access'))
+    with pytest.raises(RuntimeError,match='configured nonzero client ID'):
+        module.connect_ib(read_only=True,validate_trading_permissions=False)
+
+
+def test_read_only_connection_preserves_configured_identity_without_permission_probe(strategy_module_factory,monkeypatch):
+    module=strategy_module_factory();seen=[]
+    monkeypatch.setattr(module,'IB_CLIENT_ID',7)
+    @dataclass(frozen=True)
+    class Adapter:
+        connect_attempts:int=3
+        def connect_ib(self,**kwargs):
+            assert self.connect_attempts==1
+            seen.append(kwargs);return 'synthetic-broker'
+    def build(**kwargs):
+        seen.append(kwargs);return Adapter()
+    monkeypatch.setattr(module,'build_broker_adapters',build)
+    assert module.connect_ib(read_only=True,validate_trading_permissions=False)=='synthetic-broker'
+    assert seen==[{'dry_run_only_override':True},{'validate_trading_permissions':False,'redact_connection_diagnostics':True}]
+
+
 def test_dry_run_composer_connects_read_only_without_permission_probe(
     strategy_module, monkeypatch
 ):
