@@ -12,7 +12,7 @@ from tests.test_pilot_no_traffic_release import baseline, COMMIT, CANDIDATE, SER
 from tests.test_publish_ibkr_account_facts import _report
 
 NOW = datetime(2026, 9, 30, 1, 0, tzinfo=timezone.utc)
-URI = "gs://example-bucket/tqqq_growth_income/2026-09/20260930T010000Z.json"
+URI = "gs://example-bucket/tqqq_growth_income/maintenance-cash/2026-09/20260930T010000Z.json"
 
 
 def inputs():
@@ -36,6 +36,7 @@ def inputs():
     report["runtime_target"].update(account_selector=list(expected["expected_account_selector"]),
         deployment_selector=expected["expected_deployment_selector"])
     report["diagnostics"]["runtime_revision"] = CANDIDATE
+    report["diagnostics"]["maintenance_cash_observation"] = True
     facts = report["summary"]["account_facts"]
     facts["account_ids"] = list(expected["expected_account_selector"])
     facts["broker_cash_observations"] = dict(schema_version="ibkr.cash_observations.v1", observed_at=facts["observed_at"],
@@ -74,7 +75,7 @@ class Cloud:
         if args[1:4] == ["scheduler", "jobs", "create"]:
             self.jobs.append(dict(name="ibkr-cash-read-123", state="ENABLED", schedule="03 01 30 09 *",
                 timeZone="Etc/UTC", attemptDeadline="300s", retryConfig={}, httpTarget=dict(
-                uri="https://c3f---synthetic.run.app/probe", httpMethod="POST",
+                uri="https://c3f---synthetic.run.app/probe", httpMethod="POST", headers={"X-QSL-Maintenance-Cash": "1"},
                 oidcToken=dict(serviceAccountEmail="synthetic-caller", audience="https://synthetic.run.app"))))
             if self.failure == "create_unknown":
                 raise pilot.ReleaseError("scheduler_create_unknown")
@@ -107,6 +108,7 @@ def test_one_probe_path_and_owned_cleanup_without_strategy_or_retry(tmp_path, mo
     assert result["baseline_restored"] is (failure != "delete_unknown")
     creates = [args for args in cloud.calls if args[1:4] == ["scheduler", "jobs", "create"]]
     assert len(creates) == 1 and "--max-retry-attempts=0" in creates[0]
+    assert "--headers=X-QSL-Maintenance-Cash=1" in creates[0]
     assert all("/run" not in arg and "/dry-run" not in arg and "/reconcile" not in arg
         for args in cloud.calls for arg in args)
     assert not any("--to-latest" in args or "set-iam-policy" in args for args in cloud.calls)
@@ -169,14 +171,40 @@ def test_zero_traffic_retired_candidate_does_not_replace_service_ready_identity(
     assert observer.admit(expected, state, revision, COMMIT) == CANDIDATE
 
 
-def test_realistic_run_identifier_fits_combined_tag_limit_without_collision():
+def test_realistic_run_identifier_fits_combined_tag_limit_and_shorter_budget():
     run_id = "40218930896"
     tag = observer.traffic_tag(run_id, "s" * 38)
     assert len(tag) == 8 and int(tag[1:], 36) == int(run_id)
     assert len(tag) + 38 == 46
+    assert len(observer.traffic_tag(run_id, "s" * 39)) == 7
+    assert len(observer.traffic_tag(run_id, "s" * 44)) == 2
     with pytest.raises(pilot.ReleaseError, match="candidate_tag_length_unsupported"):
-        observer.traffic_tag(run_id, "s" * 39)
+        observer.traffic_tag(run_id, "s" * 45)
     assert tag != observer.traffic_tag(str(int(run_id) + 1), "s" * 38)
+
+
+@pytest.mark.parametrize("change", ["marker", "path"])
+def test_candidate_report_cannot_use_live_report_namespace(change):
+    _, _, expected, report = inputs()
+    uri = URI
+    if change == "marker":
+        report["diagnostics"].pop("maintenance_cash_observation")
+    else:
+        uri = uri.replace("/maintenance-cash", "")
+    with pytest.raises(pilot.ReleaseError):
+        observer.project(report, uri, expected, candidate=CANDIDATE, started=NOW, now=NOW + timedelta(seconds=2))
+
+
+def test_occupied_short_tag_is_rejected_without_replacing_it(tmp_path):
+    state, revision, expected, _ = inputs()
+    state["traffic"].append(dict(revision=CANDIDATE, percent=0, tag="c3f", url="https://c3f---synthetic.run.app"))
+    cloud = Cloud(state, revision)
+    state["service"]["status"]["traffic"].append(dict(revisionName=CANDIDATE, percent=0, tag="c3f", url="https://c3f---synthetic.run.app"))
+    cloud.state = state
+    with pytest.raises(pilot.ReleaseError, match="observation_resource_already_exists"):
+        observer.observe(expected, COMMIT, {**environment(), "CLOUD_RUN_REGION": "us-central1"}, tmp_path / "safe.json",
+            run=cloud.run, snapshot=cloud.snapshot, now=lambda: NOW)
+    assert not any(args[1:4] == ["run", "services", "update-traffic"] for args in cloud.calls)
 
 
 @pytest.mark.parametrize("key,value", [("GITHUB_RUN_ATTEMPT", "2"), ("GITHUB_REF", "refs/heads/other"),
