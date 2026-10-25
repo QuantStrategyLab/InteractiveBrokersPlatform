@@ -11,6 +11,8 @@ from typing import Any
 
 from quant_platform_kit.common.models import PortfolioSnapshot, Position
 
+from application.ibkr_cash_observations import capture_cash_observation_rows
+
 MARKET_CURRENCY_CASH_TAG_PRIORITY = (
     "$LEDGER-CashBalance",
     "$LEDGER-TotalCashBalance",
@@ -435,6 +437,8 @@ def fetch_portfolio_snapshot(
                 key=lambda item: ((item[0][0] or ""), item[0][1]),
             )
         ),
+        "cash_observation_rows": capture_cash_observation_rows(
+            account_values, account_ids=selected_account_ids),
         "total_equity_source": (
             "broker_net_liquidation"
             if source_digest is not None
@@ -577,5 +581,7 @@ def fetch_reconciled_paper_portfolio_snapshot(
                     key=lambda item: ((item[0][0] or ""), item[0][1]),
                 )
             ),
+            "cash_observation_rows": capture_cash_observation_rows(
+                raw_account_values, account_ids=selected_account_ids),
         },
     )

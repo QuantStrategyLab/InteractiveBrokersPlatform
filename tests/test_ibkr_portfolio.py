@@ -110,6 +110,44 @@ def _usd_account_values(account, cash, nlv):
     ]
 
 
+@pytest.mark.parametrize("native", ["invalid", "NaN", "Infinity", True,
+    "1e99999999", "1e-99999999", "0", "0.1234567890123456789"])
+def test_native_cash_field_integrity_survives_the_numeric_snapshot_adapter(native):
+    from application.account_facts import build_ibkr_account_facts
+    from application.ibkr_cash_observations import inspect_cash_observations
+
+    values = _usd_account_values("DU123", 100, 100) + [
+        SimpleNamespace(account="DU123", currency="USD", tag="SettledCash", value=native),
+        SimpleNamespace(account="DU999", currency="USD", tag="SettledCash", value="999"),
+    ]
+    snapshot = fetch_portfolio_snapshot(SnapshotIB([], [], values), account_ids=("DU123",), wait_seconds=0)
+    facts = build_ibkr_account_facts(snapshot)
+    out = inspect_cash_observations(facts["broker_cash_observations"], observed_at=facts["observed_at"])
+    invalid = native in ("invalid", "NaN", "Infinity", True, "1e99999999", "1e-99999999")
+    assert out["fields"]["SettledCash"] == ("INVALID" if invalid else "OBSERVED")
+    if not invalid:
+        row = next(row for row in facts["broker_cash_observations"]["values"] if row["source_tag"] == "SettledCash")
+        assert row["value"] == native
+    assert facts["cash"][0]["cash_balance"] == "100.0"
+    assert snapshot.buying_power == 100
+
+
+def test_duplicate_native_settled_cash_is_ambiguous_even_when_the_values_match():
+    from application.account_facts import build_ibkr_account_facts
+    from application.ibkr_cash_observations import inspect_cash_observations
+
+    values = _usd_account_values("DU123", 100, 100) + [
+        SimpleNamespace(account="DU123", currency="USD", tag="SettledCash", value="50"),
+        SimpleNamespace(account="DU123", currency="USD", tag="SettledCash", value="50"),
+    ]
+    snapshot = fetch_portfolio_snapshot(SnapshotIB([], [], values), account_ids=("DU123",), wait_seconds=0)
+    facts = build_ibkr_account_facts(snapshot)
+    out = inspect_cash_observations(facts["broker_cash_observations"], observed_at=facts["observed_at"])
+    assert out["fields"]["SettledCash"] == "INVALID"
+    assert out["fields"]["CashBalance"] == "OBSERVED"
+    assert out["spendable_cash_verified"] is False
+
+
 class FakeIB:
     def __init__(self):
         self.req_positions_called = 0
