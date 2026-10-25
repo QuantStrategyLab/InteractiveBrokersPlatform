@@ -356,6 +356,17 @@ def build_sync_plan(env: Mapping[str, str] = os.environ) -> dict[str, object]:
         }
         for row in get_platform_profile_status_matrix()
     }
+    image_only = (
+        env.get("WORKFLOW_TARGET") == "configured"
+        and env.get("INPUT_DEPLOY_IMAGE") == "true"
+        and all(env.get(name) == "false" for name in (
+            "INPUT_SYNC_ENV", "INPUT_APPROVE_TRAFFIC_SHIFT", "INPUT_APPROVE_SCHEDULER_SYNC",
+        ))
+    )
+    if image_only:
+        if not selected or not per_service_mode:
+            raise ValueError("image-only staging requires one exact configured_service")
+        return _build_image_only_plan(selected, env, status_rows)
     planned_targets = []
     recovery_ledger_applied_count = 0
     for target in target_entries:
@@ -380,6 +391,49 @@ def build_sync_plan(env: Mapping[str, str] = os.environ) -> dict[str, object]:
         "mode": "per_service" if per_service_mode else "legacy",
         "targets": planned_targets,
     }
+
+
+def _build_image_only_plan(
+    service_name: str,
+    env: Mapping[str, str],
+    status_rows: Mapping[str, Mapping[str, object]],
+) -> dict[str, object]:
+    """Admit the incumbent for an image-only stage, never apply desired config."""
+    from scripts import verify_deployed_runtime_target_admission as admission
+
+    project, region = env.get("GCP_PROJECT_ID"), env.get("CLOUD_RUN_REGION")
+    if not project or not region:
+        raise ValueError("image-only admission requires project and region")
+    service = admission._describe_service(service=service_name, project=project, region=region)
+    active = [row for row in service.get("status", {}).get("traffic", []) if row.get("percent", 0) > 0]
+    if len(active) != 1 or active[0].get("percent") != 100 or not active[0].get("revisionName"):
+        raise ValueError("image-only staging requires one explicitly serving 100-percent revision")
+    revision_name = active[0]["revisionName"]
+    revision = json.loads(admission._run([
+        "gcloud", "run", "revisions", "describe", revision_name,
+        f"--project={project}", f"--region={region}", "--format=json",
+    ]))
+    if revision.get("metadata", {}).get("name") != revision_name:
+        raise ValueError("image-only serving revision identity does not match")
+    serving = {"spec": {"template": {"spec": revision.get("spec", {})}}}
+    observed = admission.verify_service(service=service_name, service_json=serving)
+    admission.verify_service(service=service_name, service_json=service)
+    # A pending template must not smuggle different account/risk configuration
+    # into an image rollout that claims to preserve the serving environment.
+    def environment(payload):
+        containers = payload.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
+        return sorted(containers[0].get("env", []), key=lambda item: item.get("name", ""))
+
+    if environment(service) != environment(serving):
+        raise ValueError("image-only template environment differs from serving revision")
+    status = status_rows.get(str(observed["profile"]))
+    if observed["enabled"] and (not status or not status.get("eligible") or not status.get("enabled")):
+        raise ValueError("image-only serving strategy is not eligible/enabled")
+    target = admission._runtime_target(admission._container_env(serving), service=service_name)
+    return {"mode": "per_service", "targets": [{
+        "service_name": service_name,
+        "env": {"RUNTIME_TARGET_JSON": json.dumps(target, sort_keys=True, separators=(",", ":"))},
+    }]}
 
 
 def _load_target_entries(
