@@ -46,6 +46,9 @@ target, disables Scheduler retries, removes only this run's temporary resources,
 and reads back the original baseline. Failed or ambiguous writes are not retried.
 Raw reports and projections stay in the protected runner; the artifact contains
 fixed states, source/hash/time and no amounts or account identifiers.
+The tag encodes the full run ID in base36 and checks Cloud Run's combined
+46-character tag/service limit before any mutation. Existing tags are never
+replaced; a name collision or unsupported service length stops the observation.
 
 The output is explicitly candidate-only. It does not update the publisher's
 revision binding, activate the runtime, run a strategy, establish product/API
