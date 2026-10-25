@@ -87,6 +87,24 @@ ISO 日日期且必须早于冻结截止日，不接受当前未完成日或未�
 币种、两侧账户净财富角色；动态政策的档位与 NAV 必须与请求及人工快照一致。两种设置模式
 走同一接缝。初始化及纯状态读取不消费该可选附件；保存及预检有附件就验证。
 
+附件还可提供 `account_drawdown_reference`，将调用方预先选定的账户回撤参照绑定到同一草稿。
+此对象完整包含 `benchmark_symbol`、`reference_id`、`available_at_utc`、`frozen_at_utc`、
+`dates`、`net_returns`、`context`。参照可用不同历史窗口；日期必须为严格递增、不重复的
+完整日序列，均早于声明可用时刻的 UTC 日期；可用时刻不晚于冻结时刻，冻结不晚于决策截止。
+`strategy_context.decision_cutoff_utc` 须与原账户合同的 `cutoff_utc` 相同。
+参照符号须与 `strategy_context.account_risk_benchmark` 的事先选择相同，并绑定同一账户范围、
+币种、频率、成本、现金收益与外部资金流口径；其角色为账户风险参照净财富。
+
+账户风险参照与策略的无杠杆标的映射分别声明，不自动互相替代。公共接口不预设参照证券、
+年份或百分比，不以个人配置产生全局默认。它复用 QPK 计算参照路径的最大回撤，
+不接受用单个年度收益代替回撤。动态政策的 `account_max_drawdown_fraction` 可为 null，
+由这份冻结参照提供独立上限；同时提供数值上限时取较小者。二者都缺失则拒绝动态计算。
+参照不会推导允许超出的幅度、选择活动档位或补齐三档曲线参数。
+
+完整参照和冻结声明随原输入 fingerprint 保存、读回和预检，变更或省略均使旧草稿失效。
+`reference_qualified=false`、`model_calibrated=false` 保持不变：调用方声明和内容哈希
+不能证明来源真实、完整覆盖、历史可获得性或未来风险；观察到零回撤也不构成零风险保证。
+
 原 UES 草稿和事件 fingerprint 已包含完整 `event_context`，因此直接复用原 journal、
 外部 checkpoint 和 artifact receipt，不另建存储或签发第二份回执。以后省略附件、改来源、
 改路径或改当前没有主导限额的参数，原消费预检均拒绝复用旧草稿；其原来源有效期和年龄

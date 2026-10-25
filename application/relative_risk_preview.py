@@ -93,7 +93,69 @@ def _drawdown_rules(strategy_loss, benchmark_loss, allowed_excess):
     return {"strict_no_excess": strict, "bounded_excess": bounded}
 
 
-def _dynamic_drawdown_rule(strategy_loss, benchmark_loss, policy, binding, context, benchmark_context):
+def _benchmark_drawdown_rule(strategy_loss, reference, context):
+    """A caller-selected, frozen account reference, not a live moving stop.
+
+    The reference window can differ from the comparison window. Its known
+    availability and freeze must precede the declared decision cutoff. These
+    declarations and content hashes do not verify the issuer or data quality.
+    """
+    if reference is None:
+        return dict(status="UNDETERMINED", reason="BENCHMARK_DRAWDOWN_REFERENCE_REQUIRED", limit_fraction=None)
+    fields = {"benchmark_symbol", "reference_id", "available_at_utc", "frozen_at_utc", "dates", "net_returns", "context"}
+    _require(isinstance(reference, Mapping) and set(reference) == fields, "ACCOUNT_REFERENCE_INCOMPLETE")
+    _require(all(isinstance(reference[key], str) and bool(reference[key].strip())
+                 for key in ("benchmark_symbol", "reference_id")), "ACCOUNT_REFERENCE_IDENTITY_REQUIRED")
+
+    def timestamp(raw):
+        _require(isinstance(raw, str) and bool(raw.strip()), "ACCOUNT_REFERENCE_TIME_REQUIRED")
+        try:
+            value = pd.Timestamp(raw)
+            _require(not pd.isna(value) and value.tzinfo is not None, "ACCOUNT_REFERENCE_TIME_REQUIRED")
+            return value.tz_convert("UTC")
+        except (TypeError, ValueError, OverflowError):
+            raise RelativeRiskPreviewError("ACCOUNT_REFERENCE_TIME_INVALID") from None
+
+    available, frozen, cutoff = (timestamp(reference["available_at_utc"]),
+        timestamp(reference["frozen_at_utc"]), timestamp(context.get("decision_cutoff_utc")))
+    _require(available <= frozen <= cutoff, "ACCOUNT_REFERENCE_NOT_AVAILABLE_AT_FREEZE")
+    raw_dates, raw_returns = reference["dates"], reference["net_returns"]
+    _require(type(raw_dates) is list and type(raw_returns) is list
+        and all(isinstance(day, str) and len(day) == 10 for day in raw_dates), "ACCOUNT_REFERENCE_DAILY_PATH_REQUIRED")
+    try:
+        dates = pd.DatetimeIndex(pd.to_datetime(raw_dates, format="%Y-%m-%d", errors="raise"))
+        path = pd.Series(raw_returns, index=dates)
+    except (TypeError, ValueError, OverflowError):
+        raise RelativeRiskPreviewError("ACCOUNT_REFERENCE_DAILY_PATH_INVALID") from None
+    source = reference["context"]
+    path = _validate_path(path, source)
+    _require(all(day.date() < available.date() for day in dates), "ACCOUNT_REFERENCE_UNFINISHED_DAILY_SESSION")
+    _require(source["series_id"] == reference["benchmark_symbol"] == context.get("account_risk_benchmark"),
+        "ACCOUNT_REFERENCE_SELECTION_MISMATCH")
+    _require(isinstance(context.get("account_scope"), str) and bool(context["account_scope"].strip())
+        and source.get("account_scope") == context["account_scope"]
+        and source.get("wealth_scope") == "ACCOUNT_RISK_REFERENCE_NET_WEALTH"
+        and context.get("wealth_scope") == "ALLOCATED_ACCOUNT_NET_WEALTH", "ACCOUNT_REFERENCE_SCOPE_REQUIRED")
+    _require(all(source[key] == context[key] for key in _COMPARISON_FIELDS if key != "window_id"),
+        "ACCOUNT_REFERENCE_BASIS_MISMATCH")
+    try:
+        metric = compute_window_metrics(path, **{key: source[key]
+            for key in ("periods_per_year", "calendar_id", "volatility_ddof")})
+    except (ArithmeticError, ValueError):
+        raise RelativeRiskPreviewError("ACCOUNT_REFERENCE_METRIC_UNCOMPUTABLE") from None
+    loss = -metric.max_drawdown
+    _require(math.isfinite(loss) and 0 <= loss < 1, "ACCOUNT_REFERENCE_METRIC_UNCOMPUTABLE")
+    return dict(status="WITHIN" if strategy_loss <= loss else "EXCEEDS", reason=None,
+        limit_fraction=loss, model="FROZEN_BENCHMARK_DRAWDOWN_REFERENCE",
+        benchmark_symbol=reference["benchmark_symbol"], reference_id=reference["reference_id"],
+        reference_source_sha256=source["source_sha256"], frozen_at_utc=reference["frozen_at_utc"],
+        reference_window=dict(start_date=dates[0].date().isoformat(), end_date=dates[-1].date().isoformat(),
+            observations=len(path), window_id=source["window_id"]),
+        reference_qualified=False, model_calibrated=False)
+
+
+def _dynamic_drawdown_rule(strategy_loss, benchmark_loss, policy, binding, context, benchmark_context,
+                           reference_ceiling=None):
     """Hypothetical, independently supplied DD policy; never reuse a CVaR budget.
 
     Scale explicit account and relative allowances with the existing capital
@@ -147,7 +209,14 @@ def _dynamic_drawdown_rule(strategy_loss, benchmark_loss, policy, binding, conte
         "DYNAMIC_DRAWDOWN_LEVELS_UNORDERED")
     nav = number(policy["nav"])
     _require(nav > 0, "DYNAMIC_DRAWDOWN_NAV_REQUIRED")
-    account_ceiling = number(policy["account_max_drawdown_fraction"], fraction=True)
+    raw_ceiling = policy["account_max_drawdown_fraction"]
+    if raw_ceiling is None:
+        _require(reference_ceiling is not None, "DYNAMIC_ACCOUNT_CEILING_SOURCE_REQUIRED")
+        account_ceiling = reference_ceiling
+    else:
+        account_ceiling = number(raw_ceiling, fraction=True)
+        if reference_ceiling is not None:
+            account_ceiling = min(account_ceiling, reference_ceiling)
     try:
         from us_equity_strategies.research.capital_adaptive_risk import (
             CapitalProtectionCurve, capital_protection_factor,
@@ -184,9 +253,9 @@ def _dynamic_drawdown_rule(strategy_loss, benchmark_loss, policy, binding, conte
 
 def preview_relative_risk(
     strategy_returns, benchmark_returns, *, binding, strategy_context, benchmark_context,
-    allowed_excess=None, dynamic_policy=None,
+    allowed_excess=None, dynamic_policy=None, account_drawdown_reference=None,
 ):
-    """Describe two hypothetical drawdown rules on one exact supplied window.
+    """Describe hypothetical rules on an exact supplied comparison window.
 
     ``difference_fraction`` adds return-fraction units (0.01 = one percentage
     point); ``benchmark_multiple`` multiplies the benchmark loss magnitude.
@@ -194,7 +263,9 @@ def preview_relative_risk(
     empirical *signed daily return*, not an approved tail horizon or threshold.
     ``dynamic_policy`` optionally supplies independent, artificial drawdown
     policy inputs to the existing capital curve. Its account ceiling remains
-    separate from its dynamic relative allowance. No number has a default.
+    separate from its dynamic relative allowance. A caller-selected frozen
+    ``account_drawdown_reference`` may supply the independent account ceiling
+    from a separately declared prior window. No number has a default.
     Every result remains offline, unapproved and without execution authority.
     """
     _require(type(binding) is StrategyBenchmarkBinding and binding.relative_drawdown_required,
@@ -231,8 +302,11 @@ def preview_relative_risk(
     _require(all(math.isfinite(v) for v in (*losses, *(m.volatility for m in metrics))),
              "RISK_METRIC_UNCOMPUTABLE")
     rules = _drawdown_rules(*losses, allowed_excess)
+    rules["benchmark_anchored_account"] = _benchmark_drawdown_rule(
+        losses[0], account_drawdown_reference, strategy_context)
     rules["capital_adaptive"] = _dynamic_drawdown_rule(
-        *losses, dynamic_policy, binding, strategy_context, benchmark_context)
+        *losses, dynamic_policy, binding, strategy_context, benchmark_context,
+        reference_ceiling=rules["benchmark_anchored_account"]["limit_fraction"])
     digest_input = {
         "binding": vars(binding), "contexts": [dict(strategy_context), dict(benchmark_context)],
         "dates": [d.date().isoformat() for d in strategy.index],
@@ -240,6 +314,8 @@ def preview_relative_risk(
     }
     if dynamic_policy is not None:
         digest_input["dynamic_policy"] = dict(dynamic_policy)
+    if account_drawdown_reference is not None:
+        digest_input["account_drawdown_reference"] = dict(account_drawdown_reference)
     try:
         input_digest = hashlib.sha256(json.dumps(digest_input, sort_keys=True,
             separators=(",", ":"), allow_nan=False).encode()).hexdigest()
@@ -268,7 +344,8 @@ def preview_relative_risk(
             "policy_role": None},
         "remaining_policy_fields": ["selected_drawdown_rule", "comparison_horizon",
             "volatility_policy_role_and_limit", "tail_policy_role_horizon_and_limit",
-            "protected_capital", "absolute_loss_budget", "account_policy_approval"]
+            "protected_capital", "account_policy_approval"]
+            + (["absolute_loss_budget"] if account_drawdown_reference is None else ["account_reference_source_qualification"])
             + (["drawdown_excess_method_and_value"] if allowed_excess is None and dynamic_policy is None else [])
             + (["dynamic_drawdown_calibration_and_source_approval"] if dynamic_policy is not None else []),
         "zero_benchmark_drawdown": losses[1] == 0,

@@ -92,6 +92,30 @@ def test_previous_limits_only_tighten_and_remain_caller_supplied_state():
     assert rule['excess_fraction'] == .005
 
 
+@pytest.mark.parametrize('explicit', [None, .07, .41])
+def test_frozen_benchmark_can_supply_or_tighten_account_ceiling_without_a_personal_number(explicit):
+    from tests.test_benchmark_drawdown_reference import reference_inputs
+
+    packet, reference = reference_inputs()
+    proposed = policy(packet)
+    proposed['account_scope'] = packet['strategy_context']['account_scope']
+    proposed['comparison_context'] = {key: value for key, value in proposed['comparison_context'].items()
+        if key not in ('account_risk_benchmark', 'decision_cutoff_utc')}
+    proposed['account_max_drawdown_fraction'] = explicit
+    out = preview_relative_risk(**packet, dynamic_policy=proposed, account_drawdown_reference=reference)
+    rule = out['drawdown_rule_previews']['capital_adaptive']
+    assert rule['account_limit_fraction'] == pytest.approx(.07 if explicit == .07 else .17)
+    assert rule['model_calibrated'] is False
+    assert_unarmed(out)
+
+
+def test_no_scalar_and_no_reference_never_default_to_an_account_risk_number():
+    proposed = policy()
+    proposed['account_max_drawdown_fraction'] = None
+    with pytest.raises(RelativeRiskPreviewError, match='DYNAMIC_ACCOUNT_CEILING_SOURCE_REQUIRED'):
+        preview_relative_risk(**inputs(), dynamic_policy=proposed)
+
+
 def test_candidate_cannot_set_its_own_limit_and_a_smaller_path_can_pass():
     packet = inputs()
     _, large = run(packet)
