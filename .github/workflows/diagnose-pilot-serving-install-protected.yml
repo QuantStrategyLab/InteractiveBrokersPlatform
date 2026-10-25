@@ -1,0 +1,87 @@
+name: Read IBKR pilot serving install identity (protected execution)
+
+on:
+  workflow_call:
+    inputs:
+      profile:
+        type: string
+        required: true
+      source_commit:
+        type: string
+        required: true
+    secrets:
+      DEPLOY_GATE:
+        required: true
+      GCP_PROJECT_ID:
+        required: true
+      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT:
+        required: true
+      CLOUD_RUN_REGION:
+        required: true
+      CLOUD_RUN_SERVICE_TARGETS_JSON:
+        required: true
+      GCP_ARTIFACT_REGISTRY_HOSTNAME:
+        required: false
+      IBKR_ARTIFACT_REGISTRY_ROLLBACK_DIGESTS:
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  diagnose:
+    if: github.ref == 'refs/heads/main' && github.run_attempt == 1 && github.event_name == 'workflow_dispatch' && github.repository == 'QuantStrategyLab/InteractiveBrokersPlatform'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDSDK_CORE_DISABLE_FILE_LOGGING: "true"
+      CLOUDSDK_CORE_LOG_HTTP: "false"
+      CLOUDSDK_CORE_DISABLE_PROMPTS: "1"
+    steps:
+      - name: Checkout trusted identity reader
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Setup uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+      - name: Install frozen reader dependencies
+        run: uv sync --frozen --no-dev
+      - name: Validate the single private target before authentication
+        env: &private_context
+          PILOT_DEPLOY_GATE: ${{ secrets.DEPLOY_GATE }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          CLOUD_RUN_REGION: ${{ secrets.CLOUD_RUN_REGION }}
+          CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}
+          GCP_ARTIFACT_REGISTRY_HOSTNAME: ${{ secrets.GCP_ARTIFACT_REGISTRY_HOSTNAME }}
+          IBKR_ARTIFACT_REGISTRY_ROLLBACK_DIGESTS: ${{ secrets.IBKR_ARTIFACT_REGISTRY_ROLLBACK_DIGESTS }}
+          PILOT_PROFILE: ${{ inputs.profile }}
+          PILOT_SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: uv run --no-sync python -m scripts.diagnose_pilot_serving_install --preflight --bootstrap-identity --receipt "${RUNNER_TEMP}/pilot-serving-install.safe.json"
+      - name: Checkout exact lockfile comparison source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_commit }}
+          path: source
+          persist-credentials: false
+      - name: Authenticate using the original deployment identity
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ env.PILOT_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
+      - name: Setup existing cloud reader
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+      - name: Read one digest-pinned serving image in isolation
+        env: *private_context
+        run: uv run --no-sync python -m scripts.diagnose_pilot_serving_install --source-dir source --receipt "${RUNNER_TEMP}/pilot-serving-install.safe.json"
+      - name: Retain the fixed safe receipt only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ibkr-pilot-serving-install-${{ github.run_id }}
+          path: ${{ runner.temp }}/pilot-serving-install.safe.json
+          if-no-files-found: warn
+          retention-days: 30
