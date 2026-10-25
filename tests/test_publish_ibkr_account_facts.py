@@ -1692,3 +1692,18 @@ def test_cli_identity_mismatch_keeps_first_line_exit_and_hides_private_values(mo
     }
     for marker in ["PRIVATE", "private-prefix-marker", "private-target-marker", "U00000001", "U00000999", "ibkr-primary-service"]:
         assert marker not in output
+
+
+def test_complete_empty_inventory_survives_projection_and_explicit_opt_in():
+    report = _report()
+    facts = report["summary"]["account_facts"]
+    facts.update(broker_reported_positions=[], broker_reported_positions_scope="stocks_only",
+                 broker_reported_positions_complete=True)
+    projected = _project(report)
+    assert projected["broker_reported_positions"] == []
+    assert projected["broker_reported_positions_complete"] is True
+    assert publisher.prepare_sync_payload(projected, include_positions=True)["broker_reported_positions_complete"] is True
+    assert not any(k.startswith("broker_reported_positions") for k in publisher.prepare_sync_payload(projected))
+    for flag in (None, False, "true"):
+        facts["broker_reported_positions_complete"] = flag
+        assert "broker_reported_positions" not in _project(report)

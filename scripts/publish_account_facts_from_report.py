@@ -422,7 +422,7 @@ def _bound_source_id(
 POSITIONS_SCOPE = "stocks_only"
 # QRS accepts these optional fields. Upload requires an explicit opt-in;
 # archived projections remain available to existing offline consumers.
-POSITIONS_KEYS = ("broker_reported_positions", "broker_reported_positions_scope")
+POSITIONS_KEYS = ("broker_reported_positions", "broker_reported_positions_scope", "broker_reported_positions_complete")
 _POSITION_SYMBOL = re.compile(r"[A-Z0-9][A-Z0-9./ -]{0,31}\Z", re.ASCII)
 _MAX_POSITIONS = 64
 _POSITION_KEYS = frozenset({"symbol", "quantity", "market_value", "currency", "avg_cost"})
@@ -433,7 +433,10 @@ def _project_positions(facts: Mapping[str, Any]) -> list[dict[str, str]] | None:
     raw = facts.get("broker_reported_positions")
     if facts.get("broker_reported_positions_scope") != POSITIONS_SCOPE:
         return None
-    if not isinstance(raw, list) or not raw or len(raw) > _MAX_POSITIONS:
+    complete = facts.get("broker_reported_positions_complete")
+    if "broker_reported_positions_complete" in facts and complete is not True:
+        return None
+    if not isinstance(raw, list) or (not raw and complete is not True) or len(raw) > _MAX_POSITIONS:
         return None
     rows: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -1104,6 +1107,8 @@ def _project_ibkr_account_facts_history(
     if positions is not None:
         body["broker_reported_positions"] = positions
         body["broker_reported_positions_scope"] = POSITIONS_SCOPE
+        if facts.get("broker_reported_positions_complete") is True:
+            body["broker_reported_positions_complete"] = True
     return body
 
 
