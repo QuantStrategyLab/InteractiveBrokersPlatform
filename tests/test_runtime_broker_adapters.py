@@ -791,6 +791,7 @@ def persistent_real_caller(tmp_path, monkeypatch, strategy_module_factory):
 
     class FakeIB:
         def openTrades(self): return []
+        reqAllOpenOrders = openTrades
         def fills(self): return []
         def accountValues(self):
             return [SimpleNamespace(tag="CashBalance", currency="USD", value="1500", account=account)]

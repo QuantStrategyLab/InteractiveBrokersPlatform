@@ -21,6 +21,15 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from application.account_facts_target_config import (
+    ADDITIONAL_TARGETS as IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS,
+    ADDITIONAL_TARGET_CONFIG_KEYS as _ADDITIONAL_TARGET_CONFIG_KEYS,
+    AccountFactsTargetConfigError,
+    account_selector,
+    parse_additional_target_configs,
+    single_line_text,
+)
+
 
 HISTORY_SCHEMA = "ibkr_account_snapshot_history.v1"
 SNAPSHOT_SCHEMA = "ibkr_account_snapshot.v1"
@@ -36,21 +45,6 @@ IBKR_ACCOUNT_FACTS_MAX_AGE = timedelta(hours=36)
 IBKR_ACCOUNT_FACTS_INGRESS_DIAGNOSTIC_TARGET = "ingress-diagnostic"
 IBKR_ACCOUNT_FACTS_PRIMARY_TARGET = "primary-live"
 IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON_ENV = "IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON"
-IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS = frozenset(
-    {"additional-1", "additional-2", "additional-3"}
-)
-_ADDITIONAL_TARGET_CONFIG_KEYS = frozenset(
-    {
-        "project_id",
-        "report_prefix",
-        "target_id",
-        "service_name",
-        "runtime_revision",
-        "account_scope",
-        "account_selector",
-        "deployment_selector",
-    }
-)
 _INGRESS_DIAGNOSTIC_BODY = b"{}"
 _INGRESS_DIAGNOSTIC_ERROR = "invalid_account_facts_history"
 _REPORT_RUN_ID = re.compile(r"^\d{8}T\d{6}Z\.json$")
@@ -136,11 +130,7 @@ def _text(value: object) -> str:
 
 
 def _selector(value: object) -> tuple[str, ...]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
-        return ()
-    if any(not isinstance(item, str) or not item or item != item.strip() for item in value):
-        return ()
-    return tuple(value)
+    return account_selector(value)
 
 
 def _exact_text(value: object) -> str:
@@ -166,87 +156,14 @@ def _expected_account_selector() -> tuple[str, ...]:
 
 
 def _single_line_text(value: object) -> str:
-    text = _exact_text(value)
-    if not text or "\n" in text or "\r" in text:
-        return ""
-    return text
+    return single_line_text(value)
 
 
 def _additional_target_configs(raw: str) -> dict[str, dict[str, Any]]:
-    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        result: dict[str, Any] = {}
-        for key, value in pairs:
-            if key in result:
-                raise _ProjectionError("target_config_invalid")
-            result[key] = value
-        return result
-
     try:
-        parsed = json.loads(raw, object_pairs_hook=unique_object)
-    except (json.JSONDecodeError, TypeError, _ProjectionError):
+        return parse_additional_target_configs(raw)
+    except AccountFactsTargetConfigError:
         raise _ProjectionError("target_config_invalid") from None
-    if not isinstance(parsed, dict) or set(parsed) != IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS:
-        raise _ProjectionError("target_config_invalid")
-
-    configs: dict[str, dict[str, Any]] = {}
-    seen_identities: set[tuple[str, ...]] = set()
-    seen_target_ids: set[str] = set()
-    seen_prefixes: set[tuple[str, str, str]] = set()
-    for slot in sorted(IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS):
-        record = parsed[slot]
-        if not isinstance(record, dict) or set(record) != _ADDITIONAL_TARGET_CONFIG_KEYS:
-            raise _ProjectionError("target_config_invalid")
-        normalized = {
-            key: _single_line_text(record[key])
-            for key in (
-                "project_id",
-                "report_prefix",
-                "target_id",
-                "service_name",
-                "runtime_revision",
-                "account_scope",
-                "deployment_selector",
-            )
-        }
-        selector = _selector(record["account_selector"])
-        prefix = normalized["report_prefix"]
-        try:
-            parsed_prefix = urlsplit(prefix)
-        except ValueError:
-            raise _ProjectionError("target_config_invalid") from None
-        if (
-            any(not value for value in normalized.values())
-            or not _TARGET_ID.fullmatch(normalized["target_id"])
-            or len(selector) != 1
-            or selector[0].lower() == "default"
-            or "\n" in selector[0]
-            or "\r" in selector[0]
-            or parsed_prefix.scheme != "gs"
-            or not parsed_prefix.netloc
-            or not parsed_prefix.path.strip("/")
-            or parsed_prefix.query
-            or parsed_prefix.fragment
-        ):
-            raise _ProjectionError("target_config_invalid")
-        identity = selector
-        target_id = normalized["target_id"]
-        prefix_identity = (
-            parsed_prefix.scheme,
-            parsed_prefix.netloc,
-            parsed_prefix.path.rstrip("/"),
-        )
-        if (
-            identity in seen_identities
-            or target_id in seen_target_ids
-            or prefix_identity in seen_prefixes
-        ):
-            raise _ProjectionError("target_config_invalid")
-        seen_identities.add(identity)
-        seen_target_ids.add(target_id)
-        seen_prefixes.add(prefix_identity)
-        normalized["account_selector"] = selector
-        configs[slot] = normalized
-    return configs
 
 
 def additional_target_environment(target: str) -> dict[str, str]:

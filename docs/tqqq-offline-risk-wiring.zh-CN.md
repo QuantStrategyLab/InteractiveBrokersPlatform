@@ -31,6 +31,48 @@
 
 这里定义的是本离线输入的冻结引用，不签发真实 release、不改变现役 release 摘要口径，也不证明真实政策发行者。配置或资金/事件模型改变须提供新的明确引用；接口不会自己补摘要或更新 checkpoint。
 
+## 复用原现金政策生成保留要求
+
+原手工 reservations 入口保留。调用方还可以给上述四个动作传入 `cash_policy_evidence`，
+让同一 QPK `CashPolicy` 从已加载的 runtime 设置生成保留要求，再交给原现金桥：
+
+```text
+CashPolicy(settings.reserved_cash_ratio, settings.reserved_cash_floor_usd)
+  + config.execution_cash_reserve_ratio
+  → max(有效比例 × 原账户净值, 固定底线)
+  → 一条原 RESERVE
+  → SettledCash − RESERVE − 不重叠的 OTHER
+```
+
+该证据复用原人工来源 header：`synthetic`、`account_id`、`scope_ref`、`currency`、
+`source`、`source_version`、`observed_at`、`available_at`、`max_age_seconds`、`valid_from`、`valid_until`，另有：
+
+| 字段 | 要求 |
+|---|---|
+| `read_status` | 明确 `RESOLVED`；未知、读取失败都不能按零处理 |
+| `resolved_cash_policy` | 原 `CashPolicy.to_dict()` 三字段，须与已加载设置完全一致 |
+| `config_sha256` | 原 `digest(runtime.merged_runtime_config)` |
+| `reservation_id` | 调用方明确标识这份现金保留要求；不能靠金额猜同一项 |
+
+按比例模式不需要用户填固定额；这里读取原配置解析后的完整值，包括有明确默认规则的零值，
+不把原始缺失、草稿移除覆盖或读取失败自行解析成零。当前金额仅支持原 USD 合同。
+
+packet 可省略待派生的 `account_contract.reserved_cash`；若已提供则必须相符，不覆盖冲突的显式零或旧金额。
+已有同 `reservation_id` 的 RESERVE 仅校验并附来源，不追加第二条；不同 ID 的 RESERVE 不能猜成同一要求。
+明确不重叠的其他义务保持原样；相应完整性证据缺失仍拒绝。原 packet 不被修改。
+
+完整政策证据随该 RESERVE 进入原草稿 fingerprint、保存、读回和消费时效复核。
+重新使用 prepared packet 时，即使省略可选参数，已嵌入的唯一来源也会与当前 runtime 重验；
+修改不主导当前金额的固定底线同样使旧草稿失效。无新来源的原手工路径不被标记为已接通配置来源。
+
+`cash_policy_preview` 读回原政策、有效比例、保留金额、SettledCash、其他义务、可花现金、
+来源和冻结时间。它明确属于 `FROZEN_INPUT_NOT_SERVING_CONFIG`，不证明线上已消费该配置；
+即使人工现金合同完整，缺少风险政策仍不得生成草稿。消费预检失败后，冻结计算说明也不能当成当前采用资格。
+
+三档与智能/高级模式共享该资金计算；高级 `cash_floor_ratio` 仍为原费用后组合约束，不另扣一笔余额。
+保留不足不自动借款、转入外部资金或卖出。OPEN 仍由原账本保留，资金到账不解除它。
+真实盘中资金流调整指数的来源绑定仍属独立缺口，不能由本入口或期末流量公式反推。
+
 ## 状态与草稿
 
 ```python
@@ -63,7 +105,7 @@ PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv-offline/bin/python -m pytest
   tests/offline/test_tqqq_risk_wiring.py
 ```
 
-测试仅用人工资金与场景，覆盖三档两模式、账户/版本/政策错配、未结算现金冲突、费用数量缺项、未知 pending、初始化身份、空链、OPEN、重放、陈旧草稿和独立进程读回。fixture 中的所有数值只用于证明程序行为，均不是账户预算或建议阈值。
+测试仅用人工资金与场景，覆盖三档两模式、三种现金模式、策略保留底线、同一保留不重复扣、非主导固定额的指纹和可选入口重验、来源过期/冲突、资金不足、账户/版本/政策错配、未结算现金冲突、费用数量缺项、未知 pending、初始化身份、空链、OPEN、重放、陈旧草稿和独立进程读回。到账用例同步新原生 NAV/余额/SettledCash，显式累计净流入和调整后指数；重复事件不重算候选或重记本金。fixture 中的所有数值只用于证明程序行为，均不是账户预算或建议阈值。
 
 本包到“离线 TQQQ 接线和拒绝路径可验证，缺项不授予配置权限”结束。仍需真实账户有效政策与批准来源、资金/费用/数量适用证据、可信初态/checkpoint 发行方、实际存储资格，以及未来获准消费者与生效读回；这些不由本次合成验证替代。B5 的原不采用决定保持。
 

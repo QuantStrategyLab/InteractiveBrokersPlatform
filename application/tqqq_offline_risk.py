@@ -31,6 +31,92 @@ def _number(value):
     return value
 
 
+def _effective_cash_policy(runtime):
+    from quant_platform_kit.common.runtime_control import CashPolicy
+
+    settings = runtime.runtime_settings
+    ratio = _number(settings.reserved_cash_ratio)
+    floor = _number(settings.reserved_cash_floor_usd)
+    strategy_ratio = _number(runtime.merged_runtime_config["execution_cash_reserve_ratio"])
+    _require(0 <= ratio <= 1 and 0 <= strategy_ratio <= 1
+        and _number(runtime.cash_reserve_ratio) == max(ratio, strategy_ratio), "TQQQ_EFFECTIVE_RESERVE_MISMATCH")
+    _require(floor >= 0 and _number(runtime.cash_reserve_floor_usd) == floor,
+        "TQQQ_EFFECTIVE_RESERVE_FLOOR_MISMATCH")
+    _require(settings.cash_only_execution is True, "TQQQ_CASH_ONLY_REQUIRED")
+    return CashPolicy(cash_only=True, reserved_cash_ratio=ratio, reserved_cash_floor_usd=floor)
+
+
+def _cash_policy_packet(runtime, snapshot, packet, evidence):
+    """Project one explicitly bound CashPolicy into the original reservations.
+
+    A reservation ID identifies the SAME reserve on retries; an unrelated
+    RESERVE cannot be guessed to overlap it. Native balances and obligations
+    remain untouched. Both settings modes consume this same frozen packet.
+    """
+    from us_equity_strategies.research.auto_portfolio_account import adapt_ibkr_account_input, digest
+    from us_equity_strategies.research.funded_portfolio_preview import _amount, _bound, adapt_cash_evidence
+
+    contract = packet["account_contract"]
+    _require(contract.get("synthetic") is True and runtime.runtime_settings.dry_run_only is True
+        and runtime.runtime_settings.runtime_target.dry_run_only is True, "TQQQ_OFFLINE_RUNTIME_REQUIRED")
+    _require(contract.get("currency") == "USD", "TQQQ_CASH_POLICY_USD_REQUIRED")
+    try:
+        _bound(evidence, contract)
+    except (ValueError, TypeError, AttributeError, OverflowError) as exc:
+        raise ValueError("TQQQ_CASH_POLICY_SOURCE_UNBOUND") from exc
+    _require(evidence.get("read_status") == "RESOLVED", "TQQQ_CASH_POLICY_SOURCE_UNRESOLVED")
+    policy = _effective_cash_policy(runtime)
+    supplied = evidence.get("resolved_cash_policy")
+    _require(isinstance(supplied, Mapping) and supplied == policy.to_dict()
+        and supplied.get("cash_only") is True, "TQQQ_CASH_POLICY_SOURCE_MISMATCH")
+    for key in ("reserved_cash_ratio", "reserved_cash_floor_usd"):
+        _number(supplied[key])
+    _require(evidence.get("config_sha256") == digest(runtime.merged_runtime_config),
+        "TQQQ_CASH_POLICY_CONFIG_MISMATCH")
+    identity = evidence.get("reservation_id")
+    _require(isinstance(identity, str) and bool(identity.strip()), "TQQQ_CASH_POLICY_RESERVATION_ID_REQUIRED")
+    _native_cash(snapshot, packet["cash_evidence"])
+    nav = _amount(packet["facts"]["net_assets"], positive=True)
+    _require(Decimal(str(_number(snapshot.total_equity))) == nav,
+        "TQQQ_EXECUTION_EQUITY_DENOMINATOR_MISMATCH")
+    strategy_ratio = runtime.merged_runtime_config["execution_cash_reserve_ratio"]
+    # Use the deployed helper, including its number semantics, for both the
+    # generated reservation and the later minimum-reserve admission check.
+    reserve = _amount(policy.reserved_cash_usd(float(nav), strategy_ratio))
+    prepared = deepcopy(packet)
+    rows = prepared["cash_evidence"]["reservations"]
+    _require(isinstance(rows, list) and all(isinstance(row, Mapping) for row in rows),
+        "TQQQ_CASH_POLICY_RESERVATIONS_INVALID")
+    matched = [row for row in rows if row.get("id") == identity]
+    _require(len(matched) <= 1 and all(row.get("id") == identity
+        for row in rows if row.get("kind") == "RESERVE"), "TQQQ_CASH_POLICY_RESERVE_AMBIGUOUS")
+    if matched:
+        row = matched[0]
+        _require(row.get("kind") == "RESERVE" and _amount(row.get("amount")) == reserve,
+            "TQQQ_CASH_POLICY_RESERVATION_CONFLICT")
+        _require(row.get("cash_policy_evidence", evidence) == evidence,
+            "TQQQ_CASH_POLICY_RESERVATION_CONFLICT")
+        row["cash_policy_evidence"] = deepcopy(evidence)
+    else:
+        rows.append(dict(id=identity, kind="RESERVE", amount=str(reserve), cash_policy_evidence=deepcopy(evidence)))
+    cash = adapt_cash_evidence(prepared["facts"], contract, prepared["cash_evidence"])
+    account = adapt_ibkr_account_input(prepared["facts"], cash["account_contract"])
+    gaps = sorted(set(cash["gaps"] + account["gaps"]))
+    if not gaps:
+        prepared["account_contract"] = cash["account_contract"]
+    preview = dict(status="CASH_POLICY_PREVIEW_GAPS" if gaps else "READY_SYNTHETIC_CASH_POLICY_PREVIEW",
+        gaps=gaps, currency=contract["currency"], resolved_cash_policy=policy.to_dict(),
+        effective_reserve_ratio=policy.effective_reserve_ratio(strategy_ratio),
+        required_reserve_usd=str(reserve), settled_cash=cash["account_contract"].get("settled_cash"),
+        other_cash_obligations=cash["account_contract"].get("other_cash_obligations"),
+        spendable_cash=account["spendable_cash"], source=evidence["source"],
+        source_version=evidence["source_version"], observed_at=evidence["observed_at"],
+        evidence_sha256=digest(evidence), reservation_id=identity,
+        frozen_cutoff_utc=contract["cutoff_utc"], readback_scope="FROZEN_INPUT_NOT_SERVING_CONFIG",
+        source_attestation_only=True, execution_authorized=False, settings_applied=False)
+    return prepared, preview
+
+
 def _research_dependencies():
     """Check the actual isolated distributions; no fallback to weaker contracts."""
     for name, revision in (("us-equity-strategies", UES_REVISION), ("quant-platform-kit", QPK_REVISION)):
@@ -142,14 +228,10 @@ def _admit(runtime, snapshot, packet, context, inventory_evidence):
     # Bind the execution reserve actually used by LoadedStrategyRuntime, rather
     # than borrowing SOXL's reserve or exit-buffer constants.
     config = runtime.merged_runtime_config
-    reserve = max(_number(config["execution_cash_reserve_ratio"]), _number(settings.reserved_cash_ratio))
-    _require(0 <= reserve <= 1 and runtime.cash_reserve_ratio == reserve, "TQQQ_EFFECTIVE_RESERVE_MISMATCH")
+    cash_policy = _effective_cash_policy(runtime)
     _require(all(config.get(key) is False for key in (
         "option_overlay_enabled", "option_growth_overlay_enabled", "option_income_overlay_enabled")),
         "TQQQ_OPTIONS_DISABLED_REQUIRED")
-    floor = _number(settings.reserved_cash_floor_usd)
-    _require(floor >= 0 and _number(runtime.cash_reserve_floor_usd) == floor,
-        "TQQQ_EFFECTIVE_RESERVE_FLOOR_MISMATCH")
 
     # Reuse original admission for budgets, curves, costs, quantities and cash.
     # HOLD validates the frozen risk contract without generating a candidate.
@@ -165,7 +247,8 @@ def _admit(runtime, snapshot, packet, context, inventory_evidence):
         "TQQQ_EXECUTION_EQUITY_DENOMINATOR_MISMATCH")
     # Same max(ratio * equity, fixed floor) as the existing execution service.
     # This reserve is already deducted by adapt_cash_evidence, exactly once.
-    required_reserve = max(Decimal(str(account["nav"])) * Decimal(str(reserve)), Decimal(str(floor)))
+    required_reserve = Decimal(str(cash_policy.reserved_cash_usd(
+        account["nav"], config["execution_cash_reserve_ratio"])))
     _require(Decimal(str(cash["account_contract"]["reserved_cash"])) >= required_reserve,
         "TQQQ_RESERVE_NOT_FUNDED")
     risk = {key: value for key, value in packet["risk_inputs"].items() if key != "scenario_available_at"}
@@ -185,7 +268,8 @@ def _admit(runtime, snapshot, packet, context, inventory_evidence):
 
 def run_tqqq_offline_risk(request, *, runtime, portfolio_snapshot, packet, event_context,
         journal, binding, action, event_id=None, initialization=None,
-        expected_artifact_sha256=None, consumption_cutoff_utc=None, inventory_evidence=None):
+        expected_artifact_sha256=None, consumption_cutoff_utc=None, inventory_evidence=None,
+        cash_policy_evidence=None):
     """Initialize/read/persist/preflight an explicit artificial TQQQ contract.
 
     Callers retain the external checkpoint and draft receipt. There is no reset,
@@ -193,7 +277,7 @@ def run_tqqq_offline_risk(request, *, runtime, portfolio_snapshot, packet, event
     An existing CLOSED record never substitutes for missing effective policy.
     """
     out = dict(status="TQQQ_OFFLINE_RISK_GAPS", gaps=[], platform_profile=PROFILE,
-        draft_settings=None, preview=None, next_binding=None, artifact_receipt=None,
+        draft_settings=None, preview=None, cash_policy_preview=None, next_binding=None, artifact_receipt=None,
         readback_verified=False, artifact_readback_verified=False, state_persisted=False,
         breaker_state="UNKNOWN", new_risk_prohibited=True, application_status="NOT_APPLIED",
         confirmation_granted=False, execution_authorized=False, settings_applied=False,
@@ -209,6 +293,25 @@ def run_tqqq_offline_risk(request, *, runtime, portfolio_snapshot, packet, event
             persist_portfolio_settings_draft, preflight_portfolio_settings_draft,
         )
 
+        # Reusing a prepared packet must not bypass policy revalidation merely
+        # by omitting the optional convenience argument on a later read.
+        reservations = packet["cash_evidence"].get("reservations")
+        embedded = [row for row in reservations if isinstance(row, Mapping)
+            and "cash_policy_evidence" in row] if isinstance(reservations, list) else []
+        if embedded:
+            _require(len(embedded) == 1 and embedded[0].get("kind") == "RESERVE"
+                and isinstance(embedded[0]["cash_policy_evidence"], Mapping),
+                "TQQQ_CASH_POLICY_RESERVE_AMBIGUOUS")
+            source = embedded[0]["cash_policy_evidence"]
+            _require(cash_policy_evidence is None or cash_policy_evidence == source,
+                "TQQQ_CASH_POLICY_RESERVATION_CONFLICT")
+            cash_policy_evidence = source
+        if cash_policy_evidence is not None:
+            packet, out["cash_policy_preview"] = _cash_policy_packet(
+                runtime, portfolio_snapshot, packet, cash_policy_evidence)
+            if out["cash_policy_preview"]["gaps"]:
+                out["gaps"] = out["cash_policy_preview"]["gaps"]
+                return out
         gaps = _admit(runtime, portfolio_snapshot, packet, event_context, inventory_evidence)
         if gaps:
             out["gaps"] = gaps
