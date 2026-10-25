@@ -46,7 +46,7 @@ def admit(expected, state, candidate, source):
     status = service.get("status", {})
     if (not pilot.SHA.fullmatch(source) or not pilot.NAME.fullmatch(name or "")
             or name != status.get("latestCreatedRevisionName")
-            or name != status.get("latestReadyRevisionName") or name == state["serving"]
+            or name == state["serving"]
             or not pilot._ready(candidate)
             or candidate.get("metadata", {}).get("labels", {}).get("commit-sha") != source
             or configuration(candidate) != configuration(state["serving_revision"])
@@ -103,7 +103,7 @@ def observe(expected, source, env, receipt, *, run=pilot.command, snapshot=pilot
         return pilot._json(run(["gcloud", *args, "--format=json"], stage=stage))
 
     before = snapshot(ctx, run)
-    candidate = before["service"].get("status", {}).get("latestReadyRevisionName")
+    candidate = before["service"].get("status", {}).get("latestCreatedRevisionName")
     if not pilot.NAME.fullmatch(candidate or ""):
         raise pilot.ReleaseError("candidate_not_admitted")
     revision = read(["run", "revisions", "describe", candidate, *common], "candidate_read_failed")

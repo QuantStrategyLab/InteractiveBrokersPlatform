@@ -161,6 +161,14 @@ def test_candidate_workflow_preserves_existing_reader_and_safe_artifact_only():
     assert "path: ${{ runner.temp }}/maintenance-cash.safe.json" in text
 
 
+def test_zero_traffic_retired_candidate_does_not_replace_service_ready_identity():
+    state, revision, expected, _ = inputs()
+    state["service"]["status"]["latestReadyRevisionName"] = SERVING
+    revision["status"]["conditions"] = [{"type": "Ready", "status": "True", "reason": "Retired"},
+        {"type": "Active", "status": "False", "reason": "Retired"}]
+    assert observer.admit(expected, state, revision, COMMIT) == CANDIDATE
+
+
 @pytest.mark.parametrize("key,value", [("GITHUB_RUN_ATTEMPT", "2"), ("GITHUB_REF", "refs/heads/other"),
     ("GITHUB_EVENT_NAME", "schedule"), ("GITHUB_REPOSITORY", "synthetic-fork/repo")])
 def test_repeated_or_non_main_dispatch_stops_before_cloud_reads(tmp_path, key, value):
