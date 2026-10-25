@@ -94,13 +94,19 @@ class Opener:
         return self.response
 
 
+def _missing_executions(status):
+    return {"status": status, "executions_status": "source_unavailable", "executions_diagnostic": {
+        "section_present": False, "native_record_count": 0, "field_names": [], "level_types": [],
+        "missing_fields": [], "invalid_fields": [], "reason": "trades_section_missing"}}
+
+
 def test_full_synthetic_flex_fetch_import_projection_one_post_ack(monkeypatch, capsys):
     configure(monkeypatch)
     session, opener = FlexSession(xml()), Opener()
     monkeypatch.setattr(cli.requests, "Session", lambda: session)
     monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
     assert cli.main() == 0
-    assert capsys.readouterr().out == '{"status": "published"}\n'
+    assert json.loads(capsys.readouterr().out) == _missing_executions("published")
     assert len(session.calls) == 2 and session.closed
     assert session.calls[0][1]["params"] == {"t": "synthetic-flex-token", "q": "12345", "v": "3"}
     assert len(opener.calls) == 1
@@ -185,7 +191,7 @@ def test_pending_generation_completes_in_same_run_without_second_generation(monk
     opener = Opener()
     monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
     assert cli.main() == 0
-    assert json.loads(capsys.readouterr().out) == {"status": "published"}
+    assert json.loads(capsys.readouterr().out) == _missing_executions("published")
     assert waits == [3]
     assert len(opener.calls) == 1
     assert sum(url.endswith("/SendRequest") for url, _ in session.calls) == 1
@@ -277,7 +283,7 @@ def test_approved_multiaccount_source_publishes_only_target_and_keeps_one_reques
     opener = Opener()
     monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
     assert cli.main() == 0
-    assert json.loads(capsys.readouterr().out) == {"status": "published"}
+    assert json.loads(capsys.readouterr().out) == _missing_executions("published")
     assert len(opener.calls) == 1
     payload = json.loads(opener.calls[0][0].data)
     assert payload["account_ids"] == expected and payload["value"] == "0.0125"
@@ -307,7 +313,7 @@ def test_invalid_ack_never_claims_success_or_retries(monkeypatch, capsys, patch,
     opener = Opener(patch=patch, raw=raw)
     monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
     assert cli.main() == 1
-    assert capsys.readouterr().out == '{"status": "sync_unknown"}\n'
+    assert json.loads(capsys.readouterr().out) == _missing_executions("sync_unknown")
     assert len(opener.calls) == 1
 
 
@@ -323,7 +329,7 @@ def test_transport_failures_are_fixed_one_attempt(monkeypatch, capsys, error, st
     opener = Opener(error=error)
     monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
     assert cli.main() == 1
-    assert capsys.readouterr().out == json.dumps({"status": status}) + "\n"
+    assert json.loads(capsys.readouterr().out) == _missing_executions(status)
     assert len(opener.calls) == 1
 
 
@@ -333,7 +339,7 @@ def test_unchanged_ack_is_success_without_second_post(monkeypatch, capsys):
     opener = Opener(patch={"unchanged": True})
     monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
     assert cli.main() == 0
-    assert capsys.readouterr().out == '{"status": "unchanged"}\n'
+    assert json.loads(capsys.readouterr().out) == _missing_executions("unchanged")
     assert len(opener.calls) == 1
 
 
@@ -516,3 +522,135 @@ def test_provider_ignoring_date_override_never_publishes(monkeypatch, capsys):
     monkeypatch.setattr(cli, "build_opener", lambda *_args: pytest.fail("must not publish mismatched period"))
     assert cli.main() == 1
     assert json.loads(capsys.readouterr().out)["status"] == "historical_period_mismatch"
+
+
+class ExecutionsOpener(Opener):
+    def __init__(self, *, execution_patch=None, execution_error=None, execution_raw=None):
+        super().__init__()
+        self.execution_patch = execution_patch
+        self.execution_error = execution_error
+        self.execution_raw = execution_raw
+
+    def open(self, request, *, timeout):
+        if request.full_url != cli.EXECUTIONS_SYNC_URL:
+            return super().open(request, timeout=timeout)
+        self.calls.append((request, timeout))
+        if self.execution_error:
+            raise self.execution_error
+        payload = json.loads(request.data)
+        ack = {"ok": True, "stored": True, "unchanged": False, "account_key": "synthetic-account-key",
+               "period": payload["period"], "record_count": len(payload["records"])}
+        ack.update(self.execution_patch or {})
+        return Response(self.execution_raw if self.execution_raw is not None else json.dumps(ack).encode())
+
+
+def _execution_xml(*, twr="1.25", empty=False):
+    from tests.test_ibkr_flex_executions import trade
+
+    section = "<Trades/>" if empty else f"<Trades>{trade()}</Trades>"
+    return xml(twr=twr).replace(b"</FlexStatement>", section.encode() + b"</FlexStatement>")
+
+
+@pytest.mark.parametrize("pending", [False, True])
+def test_same_flex_report_projects_both_twr_and_executions_without_new_generation(monkeypatch, capsys, pending):
+    import time
+
+    configure(monkeypatch)
+    report = _execution_xml()
+    session = FlexSession(b"<FlexStatementResponse><ErrorCode>1019</ErrorCode></FlexStatementResponse>" if pending else report)
+    opener = ExecutionsOpener()
+    monkeypatch.setattr(cli.requests, "Session", lambda: session)
+    monkeypatch.setattr(time, "sleep", lambda _delay: setattr(session, "report", report))
+    handlers = []
+    def make_opener(*args):
+        handlers.append(args)
+        return opener
+    monkeypatch.setattr(cli, "build_opener", make_opener)
+    assert cli.main() == 0
+    output = capsys.readouterr().out
+    result = json.loads(output)
+    assert result["status"] == "published" and result["executions_status"] == "published"
+    assert result["executions_diagnostic"]["record_count"] == 1
+    assert len(opener.calls) == 2 and session.closed
+    assert [request.full_url for request, _ in opener.calls] == [cli.SYNC_URL, cli.EXECUTIONS_SYNC_URL]
+    assert sum(url.endswith("/SendRequest") for url, _ in session.calls) == 1
+    assert len(session.calls) == (3 if pending else 2)
+    gets = [kw["params"] for url, kw in session.calls if url.endswith("/GetStatement")]
+    assert all(params == gets[0] for params in gets)
+    request, timeout = opener.calls[-1]
+    payload = json.loads(request.data)
+    assert payload["account_selector"] == "DU0000000" and payload["records"][0]["quantity"] == "-2.5000"
+    assert payload["source_ref"] == hashlib.sha256(report).hexdigest()
+    assert request.get_header("Authorization") == "Bearer synthetic-sync-token" and timeout == 15
+    assert all(isinstance(item[0], cli.ProxyHandler) and item[0].proxies == {}
+               and isinstance(item[1], cli._NoRedirect) for item in handlers)
+    assert not any(value in output for value in ("DU0000000", "synthetic-execution", "-2.5000", "10.2500", "-0.35", "1.25"))
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_twr_unavailable_does_not_block_one_independent_execution_publish(monkeypatch, capsys, empty):
+    configure(monkeypatch)
+    session, opener = FlexSession(_execution_xml(twr=None, empty=empty)), ExecutionsOpener()
+    monkeypatch.setattr(cli.requests, "Session", lambda: session)
+    monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
+    assert cli.main() == 1  # Original TWR exit remains explicit.
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "native_twr_unavailable" and output["executions_status"] == "published"
+    assert len(opener.calls) == 1 and opener.calls[0][0].full_url == cli.EXECUTIONS_SYNC_URL
+    assert len(json.loads(opener.calls[0][0].data)["records"]) == (0 if empty else 1)
+
+
+@pytest.mark.parametrize("patch,raw", [
+    ({"ok": False}, None), ({"stored": False}, None), ({"unchanged": "true"}, None),
+    ({"account_key": "synthetic-other"}, None), ({"record_count": 0}, None),
+    ({"record_count": True}, None), ({"record_count": "1"}, None),
+    ({"period": {"from": "2025-01-01", "to": "2025-01-31"}}, None),
+    ({"unexpected": True}, None), ({}, b"not-json"), ({}, b"{}" + b" " * 8192),
+    ({}, b'{"ok":true,"ok":false}'),
+])
+def test_execution_ack_mismatch_is_unknown_without_retry_or_losing_twr(monkeypatch, capsys, patch, raw):
+    configure(monkeypatch)
+    monkeypatch.setattr(cli.requests, "Session", lambda: FlexSession(_execution_xml()))
+    opener = ExecutionsOpener(execution_patch=patch, execution_raw=raw)
+    monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
+    assert cli.main() == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "published" and result["executions_status"] == "sync_unknown"
+    assert len(opener.calls) == 2
+
+
+@pytest.mark.parametrize("error,status", [
+    (TimeoutError("synthetic-private-value"), "sync_unknown"),
+    (HTTPError(cli.EXECUTIONS_SYNC_URL, 302, "synthetic-private-value", {}, None), "sync_rejected"),
+    (HTTPError(cli.EXECUTIONS_SYNC_URL, 403, "synthetic-private-value", {}, None), "sync_rejected"),
+    (HTTPError(cli.EXECUTIONS_SYNC_URL, 503, "synthetic-private-value", {}, None), "sync_unknown"),
+])
+def test_execution_transport_failure_is_one_attempt_and_redacted(monkeypatch, capsys, error, status):
+    configure(monkeypatch)
+    monkeypatch.setattr(cli.requests, "Session", lambda: FlexSession(_execution_xml()))
+    opener = ExecutionsOpener(execution_error=error)
+    monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
+    assert cli.main() == 1
+    output = capsys.readouterr().out
+    assert json.loads(output)["executions_status"] == status and "synthetic-private-value" not in output
+    assert len(opener.calls) == 2
+
+
+def test_execution_unchanged_ack_has_no_second_execution_post(monkeypatch, capsys):
+    configure(monkeypatch)
+    monkeypatch.setattr(cli.requests, "Session", lambda: FlexSession(_execution_xml()))
+    opener = ExecutionsOpener(execution_patch={"unchanged": True})
+    monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
+    assert cli.main() == 0
+    assert json.loads(capsys.readouterr().out)["executions_status"] == "unchanged"
+    assert len(opener.calls) == 2
+
+
+def test_historical_period_mismatch_blocks_both_posts(monkeypatch, capsys):
+    configure(monkeypatch)
+    monkeypatch.setenv("IBKR_NATIVE_RETURN_DATE", "2026-01-15")
+    monkeypatch.setattr(cli.requests, "Session", lambda: FlexSession(_execution_xml()))
+    monkeypatch.setattr(cli, "build_opener", lambda *_args: pytest.fail("mismatched report must not publish"))
+    assert cli.main() == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == result["executions_status"] == "historical_period_mismatch"

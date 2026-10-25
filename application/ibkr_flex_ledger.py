@@ -29,6 +29,7 @@ from application.ibkr_flex_source import (
     FlexSourceError,
     verify_report_accounts,
 )
+from application.ibkr_flex_executions import project_flex_executions
 
 
 SCHEMA_VERSION = "ibkr_flex_ledger.v1"
@@ -145,7 +146,7 @@ def _statement(root: ElementTree.Element, expected: Collection[str]) -> ElementT
         raise FlexSourceError("IBKR Flex ledger requires exactly one statement account")
     statement = statements[0]
     account_id = statement.get("accountId", "").strip()
-    financial_rows = {"AccountInformation", "EquitySummaryByReportDateInBase", "StatementOfFundsLine", "ConversionRate", "ChangeInNAV"}
+    financial_rows = {"AccountInformation", "EquitySummaryByReportDateInBase", "StatementOfFundsLine", "ConversionRate", "ChangeInNAV", "Trade"}
     if any(row.get("accountId", "").strip() not in {"", account_id} for row in statement.iter() if row.tag in financial_rows):
         error = FlexSourceError("IBKR Flex statement row account scope mismatch", endpoint="GetStatement", category="scope")
         error.safe_diagnostic["nested_account_mismatch"] = True
@@ -345,6 +346,8 @@ def build_flex_ledger(
 
     return {
         "schema_version": SCHEMA_VERSION,
+        "source_ref": report.content_sha256,
+        "executions": project_flex_executions(statement, source_ref=report.content_sha256, period=period),
         "account_ids": [account_id],
         "currency": declared_currency,
         "account_base_currency": base_currency,
