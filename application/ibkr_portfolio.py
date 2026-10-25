@@ -187,7 +187,7 @@ def fetch_portfolio_snapshot(
 
     selected_account_ids = _normalize_account_ids(account_ids)
     market_currency = str(currency or "USD").strip().upper()
-    ib.reqPositions()
+    native_positions = ib.reqPositions()
     if wait_seconds:
         import time as time_module
 
@@ -393,6 +393,15 @@ def fetch_portfolio_snapshot(
     )
     metadata: dict[str, Any] = {
         "account_ids": selected_account_ids,
+        # A completed, explicitly empty native query proves empty inventory.
+        # The cached strategy list alone, or a missing return, does not.
+        "broker_stock_positions_empty": (
+            len(selected_account_ids) == 1
+            and isinstance(native_positions, list)
+            and not native_positions
+            and not positions
+            and not option_positions
+        ),
         "option_positions": tuple(option_positions),
         "currency": market_currency,
         "market_currency_cash": market_currency_cash,
