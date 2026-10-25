@@ -80,7 +80,7 @@ jobs:
     env:
       IBKR_REQUIRE_TQQQ_OFFLINE: "1"
       IBKR_OFFLINE_UES_SOURCE: ${{ github.workspace }}/.offline-ues
-      UES_OFFLINE_SHA: 3dfa547bccd73a562667a975dd91ffd65d47850a
+      UES_OFFLINE_SHA: 8f2f1717cdcfb6c7736037708a4a61c6da9d74ed
       QPK_OFFLINE_SHA: 3ea9f47d67914c4e39143ed4348c7bc248b759ce
     steps:
       - name: Checkout
