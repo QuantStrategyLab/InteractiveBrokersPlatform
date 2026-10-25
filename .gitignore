@@ -5,3 +5,14 @@ __pycache__/
 .venv-test/
 
 *.egg-info/
+
+# Keep AI rule files and shared engineering conventions tracked even when a
+# personal global ignore excludes Markdown.
+!AGENTS.md
+!CLAUDE.md
+!.github/engineering.md
+
+# Local editor, OS and tool cache files.
+.DS_Store
+.ruff_cache/
+.pytest_cache/
