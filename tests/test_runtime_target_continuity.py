@@ -103,6 +103,29 @@ def test_healthy_http_candidate_passes():
     verify_traffic_revision(candidate(), expected_revision="unit-service-00001", expected_commit="a" * 40)
 
 
+@pytest.mark.parametrize("case", ["disabled", "enabled", "unset", "unhealthy", "not_retired"])
+def test_cold_retired_candidate_requires_explicitly_disabled_execution(case):
+    revision = candidate()
+    revision["status"]["conditions"] = [
+        {"type": "Ready", "status": "True", "reason": "Retired"},
+        {"type": "Active", "status": "False", "reason": "Retired"},
+        {"type": "ContainerReady", "status": "True"},
+    ]
+    if case != "unset":
+        revision["spec"]["containers"][0]["env"].append(
+            {"name": "RUNTIME_TARGET_ENABLED", "value": "true" if case == "enabled" else "false"},
+        )
+    if case == "unhealthy":
+        revision["status"]["conditions"].append({"type": "ContainerHealthy", "status": "False"})
+    elif case == "not_retired":
+        revision["status"]["conditions"][0].pop("reason")
+    if case == "disabled":
+        verify_traffic_revision(revision, expected_revision="unit-service-00001", expected_commit="a" * 40)
+    else:
+        with pytest.raises(ValueError):
+            verify_traffic_revision(revision, expected_revision="unit-service-00001", expected_commit="a" * 40)
+
+
 @pytest.mark.parametrize("failure", ["tcp", "path", "port", "unhealthy", "not_ready", "commit", "name", "stale_target", "missing_target"])
 def test_traffic_gate_rejects_unbootable_or_unverified_revision(failure):
     revision = candidate()
