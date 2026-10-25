@@ -119,7 +119,7 @@ jobs:
           set -euo pipefail
           PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -q -rs \
             tests/offline/test_tqqq_risk_wiring.py tests/offline/test_dynamic_relative_risk.py \
-            tests/test_relative_risk_preview.py --junitxml=offline-tqqq-tests.xml
+            tests/test_relative_risk_preview.py tests/test_benchmark_drawdown_reference.py --junitxml=offline-tqqq-tests.xml
           .venv/bin/python - <<'PY'
           import xml.etree.ElementTree as ET
           cases = list(ET.parse("offline-tqqq-tests.xml").getroot().iter("testcase"))

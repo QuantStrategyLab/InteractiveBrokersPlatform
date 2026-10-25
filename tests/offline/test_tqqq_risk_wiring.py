@@ -142,6 +142,66 @@ def attach_relative_comparison(args, request):
     }
 
 
+def attach_account_reference(args, request):
+    from application.relative_risk_preview import _COMPARISON_FIELDS
+
+    attach_relative_comparison(args, request)
+    evidence = args[3]["relative_risk_comparison"]
+    evidence["strategy_context"].update(account_risk_benchmark=evidence["binding"]["benchmark_symbol"],
+        decision_cutoff_utc=args[2]["account_contract"]["cutoff_utc"])
+    source = deepcopy(evidence["benchmark_context"])
+    source.update(window_id="ARTIFICIAL_FROZEN_REFERENCE", source_sha256="d" * 64)
+    evidence["account_drawdown_reference"] = dict(
+        benchmark_symbol=evidence["binding"]["benchmark_symbol"], reference_id="artificial-frozen-reference",
+        available_at_utc="2000-01-03T00:00:00Z", frozen_at_utc="2000-01-03T01:00:00Z",
+        dates=["1999-12-29", "1999-12-30", "1999-12-31"], net_returns=[.04, -.17, .03], context=source)
+    evidence["dynamic_policy"]["account_max_drawdown_fraction"] = None
+    evidence["dynamic_policy"]["comparison_context"] = {
+        key: evidence["strategy_context"][key] for key in _COMPARISON_FIELDS}
+
+
+@pytest.mark.parametrize("mode", ["simple", "advanced"])
+@pytest.mark.parametrize("level", ["conservative", "balanced", "growth"])
+def test_benchmark_account_reference_survives_original_draft_save_and_preflight(tmp_path, mode, level):
+    args = seed(tmp_path); request = request_fixture(mode); request["level"] = level
+    attach_account_reference(args, request)
+    saved = call(tmp_path, args, request=request, event_id="reference-allocation-1")
+    assert saved["status"] == "SETTINGS_DRAFT_PERSISTED", saved
+    reference = saved["relative_risk_preview"]["drawdown_rule_previews"]["benchmark_anchored_account"]
+    assert reference["limit_fraction"] == pytest.approx(.17) and reference["reference_qualified"] is False
+    args = (*args[:4], saved["next_binding"], args[-1])
+    read = call(tmp_path, args, "preflight", request=request,
+        expected_artifact_sha256=saved["artifact_receipt"]["artifact_sha256"],
+        consumption_cutoff_utc="2000-01-04T12:01:30Z")
+    assert read["status"] == "READY_OFFLINE_SETTINGS_PREFLIGHT", read
+    assert read["relative_risk_input_bound_to_draft"]
+    assert read["relative_risk_preview"] == saved["relative_risk_preview"]
+    assert read["relative_risk_enforced"] is False
+    assert_unarmed(read)
+
+
+@pytest.mark.parametrize("change", ["omitted", "source", "freeze", "reference_path", "cutoff"])
+def test_frozen_reference_cannot_be_changed_or_omitted_to_reuse_an_old_draft(tmp_path, change):
+    args = seed(tmp_path); request = request_fixture()
+    attach_account_reference(args, request)
+    saved = call(tmp_path, args, request=request, event_id="reference-allocation-1")
+    assert saved["status"] == "SETTINGS_DRAFT_PERSISTED", saved
+    args = (*args[:4], saved["next_binding"], args[-1])
+    evidence = args[3]["relative_risk_comparison"]
+    reference = evidence["account_drawdown_reference"]
+    if change == "omitted": del evidence["account_drawdown_reference"]
+    elif change == "source": reference["context"]["source_sha256"] = "f" * 64
+    elif change == "freeze": reference["frozen_at_utc"] = "2000-01-03T02:00:00Z"
+    elif change == "cutoff": evidence["strategy_context"]["decision_cutoff_utc"] = "2000-01-04T13:00:00Z"
+    else: reference["net_returns"][1] = -.19
+    read = call(tmp_path, args, "preflight", request=request,
+        expected_artifact_sha256=saved["artifact_receipt"]["artifact_sha256"],
+        consumption_cutoff_utc="2000-01-04T12:01:30Z")
+    assert read["draft_settings"] is None and read["gaps"]
+    assert read["relative_risk_input_bound_to_draft"] is False
+    assert_unarmed(read)
+
+
 def test_relative_comparison_source_expires_at_consumption_without_refreshing_the_draft(tmp_path):
     args = seed(tmp_path); request = request_fixture()
     attach_relative_comparison(args, request)

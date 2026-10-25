@@ -288,12 +288,17 @@ def _relative_comparison(context, packet, request, nav):
         evidence = context["relative_risk_comparison"]
         fields = {"portfolio_id", "request_sha256", "returns", "binding", "strategy_context",
                   "benchmark_context", "allowed_excess", "dynamic_policy"}
-        _require(isinstance(evidence, Mapping) and set(evidence) == HEADER | fields,
+        _require(isinstance(evidence, Mapping) and (set(evidence) == HEADER | fields
+            or set(evidence) == HEADER | fields | {"account_drawdown_reference"}),
             "TQQQ_RELATIVE_COMPARISON_INCOMPLETE")
         _bound(evidence, packet["account_contract"])
         _require(evidence["portfolio_id"] == _portfolio_id(packet)
             and evidence["request_sha256"] == digest(request), "TQQQ_RELATIVE_REQUEST_MISMATCH")
         contract = packet["account_contract"]
+        reference = evidence.get("account_drawdown_reference")
+        if reference is not None:
+            _require(utc(evidence["strategy_context"].get("decision_cutoff_utc")) == utc(contract["cutoff_utc"]),
+                "TQQQ_ACCOUNT_REFERENCE_CUTOFF_MISMATCH")
         for key, role in (("strategy_context", "ALLOCATED_ACCOUNT_NET_WEALTH"),
                           ("benchmark_context", "ACCOUNT_RISK_REFERENCE_NET_WEALTH")):
             _require(evidence[key].get("account_scope") == contract["scope_ref"]
@@ -316,7 +321,8 @@ def _relative_comparison(context, packet, request, nav):
             pd.Series(paths["strategy"], index=dates), pd.Series(paths["benchmark"], index=dates),
             binding=StrategyBenchmarkBinding(**evidence["binding"]),
             strategy_context=evidence["strategy_context"], benchmark_context=evidence["benchmark_context"],
-            allowed_excess=evidence["allowed_excess"], dynamic_policy=policy)
+            allowed_excess=evidence["allowed_excess"], dynamic_policy=policy,
+            account_drawdown_reference=reference)
     except Exception as exc:
         # Never expose a supplied path, identity, exception body or policy value.
         reason = str(exc)
