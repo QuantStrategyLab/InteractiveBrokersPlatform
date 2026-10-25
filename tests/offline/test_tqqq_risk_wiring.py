@@ -159,6 +159,7 @@ def attach_account_reference(args, request, *, security_proxy=False):
         from tests.test_benchmark_drawdown_reference import as_security_reference
 
         evidence["strategy_context"]["valuation_sampling"] = "DAILY_CLOSE"
+        evidence["benchmark_context"]["valuation_sampling"] = "DAILY_CLOSE"
         evidence["account_drawdown_reference"] = as_security_reference(evidence["account_drawdown_reference"])
     evidence["dynamic_policy"]["account_max_drawdown_fraction"] = None
     evidence["dynamic_policy"]["comparison_context"] = {
@@ -179,6 +180,7 @@ def test_benchmark_account_reference_survives_original_draft_save_and_preflight(
     if security_proxy:
         assert reference["reference_return_basis"] == "PROVIDER_ADJUSTED_CLOSE_RATIO"
         assert reference["account_costs_included"] is False
+        assert saved["relative_risk_preview"]["valuation_sampling"] == "DAILY_CLOSE"
     args = (*args[:4], saved["next_binding"], args[-1])
     read = call(tmp_path, args, "preflight", request=request,
         expected_artifact_sha256=saved["artifact_receipt"]["artifact_sha256"],
@@ -187,6 +189,52 @@ def test_benchmark_account_reference_survives_original_draft_save_and_preflight(
     assert read["relative_risk_input_bound_to_draft"]
     assert read["relative_risk_preview"] == saved["relative_risk_preview"]
     assert read["relative_risk_enforced"] is False
+    assert_unarmed(read)
+
+
+@pytest.mark.parametrize("mode", ["simple", "advanced"])
+@pytest.mark.parametrize("change", ["benchmark_missing", "benchmark_intraday", "source_missing", "source_intraday"])
+def test_inconsistent_daily_close_sampling_is_rejected_before_any_draft_write(tmp_path, mode, change):
+    args = seed(tmp_path); request = request_fixture(mode)
+    attach_account_reference(args, request, security_proxy=True)
+    evidence = args[3]["relative_risk_comparison"]
+    context = (evidence["benchmark_context"] if change.startswith("benchmark")
+        else evidence["account_drawdown_reference"]["context"])
+    if change.endswith("missing"):
+        del context["valuation_sampling"]
+    else:
+        context["valuation_sampling"] = "INTRADAY"
+    before = {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    out = call(tmp_path, args, request=request, event_id="invalid-sampling")
+    assert out["gaps"] == ["TQQQ_RELATIVE_COMPARISON_INVALID"], out
+    assert out["draft_settings"] is None and out["state_persisted"] is False
+    assert before == {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    assert_unarmed(out)
+
+
+@pytest.mark.parametrize("mode", ["simple", "advanced"])
+@pytest.mark.parametrize("change", ["omitted_both", "benchmark_intraday"])
+def test_changed_sampling_cannot_reuse_a_saved_daily_close_draft(tmp_path, mode, change):
+    args = seed(tmp_path); request = request_fixture(mode)
+    attach_relative_comparison(args, request)
+    evidence = args[3]["relative_risk_comparison"]
+    for key in ("strategy_context", "benchmark_context"):
+        evidence[key]["valuation_sampling"] = "DAILY_CLOSE"
+    saved = call(tmp_path, args, request=request, event_id="daily-close-allocation")
+    assert saved["status"] == "SETTINGS_DRAFT_PERSISTED", saved
+    args = (*args[:4], saved["next_binding"], args[-1])
+    if change == "omitted_both":
+        for key in ("strategy_context", "benchmark_context"):
+            del evidence[key]["valuation_sampling"]
+    else:
+        evidence["benchmark_context"]["valuation_sampling"] = "INTRADAY"
+    before = {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    read = call(tmp_path, args, "preflight", request=request,
+        expected_artifact_sha256=saved["artifact_receipt"]["artifact_sha256"],
+        consumption_cutoff_utc="2000-01-04T12:01:30Z")
+    assert read["gaps"] and read["draft_settings"] is None, read
+    assert read["relative_risk_input_bound_to_draft"] is False
+    assert before == {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
     assert_unarmed(read)
 
 

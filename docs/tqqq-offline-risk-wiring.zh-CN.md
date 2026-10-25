@@ -132,6 +132,10 @@ ISO 日日期且必须早于冻结截止日，不接受当前未完成日或未�
 替换为`returns`。该类型是独立证券的提供商调整收盘价代理，`context`不含账户scope；
 其分红、成本及资金流字段必须按`tqqq-risk-policy-draft.zh-CN.md`的证券口径声明。
 源和账户均须`valuation_sampling=DAILY_CLOSE`，币种与日历匹配，账户侧仍为费用后净财富。
+策略与基准比较路径也须同时明确`valuation_sampling=DAILY_CLOSE`；只声明一侧、null、盘中
+或不同采样均拒绝，不能用日日期标签推定收盘。原账户净财富参照若声明采样，同样与账户
+比较路径一致。两侧均未声明的旧预览仍可读算，但输出`valuation_sampling=null`，不升级为
+日收盘证据；新增声明进入原完整输入指纹，改变或省略后不能复用旧草稿。
 两类来源不通过改标签互换，证券代理不会声称包含账户交易成本或盘中采样。
 原保存及预检直接绑定该完整对象，无新存储或生产消费入口；两模式、三档均保持
 `enforcement_eligible=false`、`reference_qualified=false`和`relative_risk_enforced=false`。
