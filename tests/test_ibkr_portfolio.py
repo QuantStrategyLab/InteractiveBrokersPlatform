@@ -50,6 +50,36 @@ def test_only_completed_empty_native_query_can_confirm_empty_stock_inventory():
         snapshot(FailedQueryIB([], [], values))
 
 
+def test_completed_query_of_other_accounts_confirms_selected_account_is_empty():
+    other = _stock_position("DU999", "AAPL", 999, 2, 100)
+
+    class CompletedQueryIB(SnapshotIB):
+        def reqPositions(self):
+            return self._positions
+
+    snapshot = fetch_portfolio_snapshot(
+        CompletedQueryIB([other], [], _usd_account_values("DU123", 10, 10)),
+        account_ids=("DU123",),
+        wait_seconds=0,
+    )
+    assert snapshot.positions == ()
+    assert snapshot.metadata.get("broker_stock_positions_empty") is True
+
+
+@pytest.mark.parametrize("native_account", [None, "", "DU123"])
+def test_native_row_with_missing_or_selected_identity_does_not_prove_empty(native_account):
+    class InconsistentQueryIB(SnapshotIB):
+        def reqPositions(self):
+            return [SimpleNamespace(account=native_account)]
+
+    snapshot = fetch_portfolio_snapshot(
+        InconsistentQueryIB([], [], _usd_account_values("DU123", 10, 10)),
+        account_ids=("DU123",),
+        wait_seconds=0,
+    )
+    assert snapshot.metadata.get("broker_stock_positions_empty") is not True
+
+
 def _stock_position(account, symbol, con_id, quantity, average_cost, currency="USD"):
     return SimpleNamespace(
         account=account,
