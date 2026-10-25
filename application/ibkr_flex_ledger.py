@@ -31,6 +31,7 @@ from application.ibkr_flex_source import (
     verify_report_accounts,
 )
 from application.ibkr_flex_executions import _day, _local_time, _number_shape, project_flex_executions
+from application.ibkr_period_return import NAV_CHANGE_COMPONENT_FIELDS
 
 
 SCHEMA_VERSION = "ibkr_flex_ledger.v1"
@@ -438,6 +439,25 @@ def build_flex_ledger(
             else:
                 warnings.append({"code": "native_twr_period_mismatch"})
 
+    # Preserve only an unambiguous account-total NAV row. These private source
+    # components are independently qualified by the period-return producer;
+    # they never enter the safe diagnostics or alter native TWR availability.
+    native_nav_change = None
+    if (
+        change is not None and len(statement.findall("ChangeInNAV")) == 1 and not len(change)
+        and len(statement.findall("AccountInformation")) == 1 and period_valid
+        and change.get("accountId") == account_id and change.get("model") == ""
+        and isinstance(base_currency, str) and re.fullmatch(r"[A-Z]{3}", base_currency)
+        and information.get("currency") == base_currency
+        and change.get("currency") in {base_currency, "BASE_SUMMARY"}
+        and _day(change.get("fromDate")) == range_from and _day(change.get("toDate")) == range_to
+    ):
+        native_nav_change = {
+            "source": "ChangeInNAV", "account_id": account_id, "model": "",
+            "currency": change.get("currency"), "period": {"from": range_from, "to": range_to},
+            "components": {key: change.get(key) for key in NAV_CHANGE_COMPONENT_FIELDS},
+        }
+
     unavailable = []
     if ending_valuation is None:
         unavailable.append("ending_valuation_unavailable")
@@ -490,6 +510,7 @@ def build_flex_ledger(
         "fee_total": fee_total,
         "fx_rates": fx_rates,
         "native_returns": native_returns,
+        **({"native_nav_change": native_nav_change} if native_nav_change is not None else {}),
         "return_assessment": return_assessment,
         "warnings": warnings,
     }

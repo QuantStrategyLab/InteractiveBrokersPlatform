@@ -77,3 +77,111 @@ def test_exact_percent_relation_is_independent_of_decimal_context():
         context.prec = 4
         result = build_ibkr_period_return(data, observed_at=OBSERVED, **SCOPE)
     assert result["value"] == data["return_assessment"]["value"]
+
+
+def nav_source():
+    return {"source": "ChangeInNAV", "account_id": "DU0000000", "model": "", "currency": "BASE_SUMMARY",
+        "period": {"from": "2026-01-01", "to": "2026-01-31"}, "components": {
+            "startingValue": "10000.00", "endingValue": "11250.00", "depositsWithdrawals": "1000.00",
+            "internalCashTransfers": "0", "assetTransfers": "-0.00", "linkingAdjustments": "0.00"}}
+
+
+@pytest.mark.parametrize("currency", ["EUR", "BASE_SUMMARY"])
+def test_optional_nav_amount_preserves_components_period_and_native_twr(currency):
+    data = ledger()
+    data["native_nav_change"] = nav_source()
+    data["native_nav_change"]["currency"] = currency
+    # Extra ledger cash/fees are not added or deducted a second time.
+    data["fee_total"] = {"amount": "987654.321"}
+    result = build_ibkr_period_return(data, observed_at=OBSERVED, **SCOPE)
+    assert result["nav_change"] == {"method": "ibkr_nav_reconciliation", "source": "ChangeInNAV",
+        "components": nav_source()["components"], "amount": "250.00"}
+    assert result["period"] == data["native_nav_change"]["period"] and result["currency"] == "EUR"
+    del result["nav_change"]
+    assert result == build_ibkr_period_return(ledger(), observed_at=OBSERVED, **SCOPE)
+
+
+@pytest.mark.parametrize("field", ["startingValue", "endingValue", "depositsWithdrawals",
+                                  "internalCashTransfers", "assetTransfers", "linkingAdjustments"])
+@pytest.mark.parametrize("value", [None, "", "NaN", "1e3", " 1.00", "9" * 65])
+def test_invalid_or_missing_nav_components_never_block_twr(field, value):
+    data = ledger()
+    data["native_nav_change"] = nav_source()
+    data["native_nav_change"]["components"][field] = value
+    assert build_ibkr_period_return(data, observed_at=OBSERVED, **SCOPE) == build_ibkr_period_return(
+        ledger(), observed_at=OBSERVED, **SCOPE)
+
+
+@pytest.mark.parametrize("field", ["internalCashTransfers", "assetTransfers", "linkingAdjustments"])
+@pytest.mark.parametrize("value", ["1.00", "-1.00", "0.000000000000000001"])
+def test_nonzero_ambiguous_capital_components_omit_only_nav_amount(field, value):
+    data = ledger()
+    data["native_nav_change"] = nav_source()
+    data["native_nav_change"]["components"][field] = value
+    result = build_ibkr_period_return(data, observed_at=OBSERVED, **SCOPE)
+    assert "nav_change" not in result and result["value"] == "-0.0125"
+
+
+@pytest.mark.parametrize("field,value", [
+    ("source", "Other"), ("account_id", "DU0000001"), ("model", "model-name"), ("model", None),
+    ("currency", "USD"), ("currency", None), ("currency", ["EUR"]),
+    ("period", {"from": "2026-01-01", "to": "2026-01-30"}), ("period", None),
+])
+def test_nav_source_identity_currency_model_and_period_must_match_without_blocking_twr(field, value):
+    data = ledger()
+    data["native_nav_change"] = nav_source()
+    data["native_nav_change"][field] = value
+    result = build_ibkr_period_return(data, observed_at=OBSERVED, **SCOPE)
+    assert "nav_change" not in result and result["method"] == "native_ibkr_twr"
+
+
+@pytest.mark.parametrize("candidate", [None, [], "private-value", {"components": None}])
+def test_missing_or_malformed_optional_nav_source_does_not_change_old_payload(candidate):
+    data = ledger()
+    data["native_nav_change"] = candidate
+    assert build_ibkr_period_return(data, observed_at=OBSERVED, **SCOPE) == build_ibkr_period_return(
+        ledger(), observed_at=OBSERVED, **SCOPE)
+
+
+@pytest.mark.parametrize("change", ["missing", "extra"])
+def test_nav_component_set_is_exact_and_does_not_leak_unknown_financial_fields(change):
+    data = ledger()
+    data["native_nav_change"] = nav_source()
+    components = data["native_nav_change"]["components"]
+    if change == "missing":
+        del components["depositsWithdrawals"]
+    else:
+        components["privateFinancialKey"] = "987654.321"
+    assert "nav_change" not in build_ibkr_period_return(data, observed_at=OBSERVED, **SCOPE)
+
+
+def test_nav_amount_uses_exact_decimal_arithmetic_independent_of_context():
+    from decimal import localcontext
+
+    data = ledger()
+    data["native_nav_change"] = nav_source()
+    data["native_nav_change"]["components"].update({
+        "startingValue": "1000000000000000000000000000.000000000000000001",
+        "endingValue": "1000000000000000000000000001.000000000000000003",
+        "depositsWithdrawals": "0.000000000000000001"})
+    with localcontext() as context:
+        context.prec = 4
+        result = build_ibkr_period_return(data, observed_at=OBSERVED, **SCOPE)
+    assert result["nav_change"]["amount"] == "1.000000000000000001"
+
+
+@pytest.mark.parametrize("ending,deposit,expected", [("10001.00", "1.00", "0.00"),
+    ("9999.50", "1.00", "-1.50"), ("10001.00", "-1.00", "2.00")])
+def test_nav_reconciliation_preserves_signed_deposits_losses_and_zero(ending, deposit, expected):
+    data = ledger()
+    data["native_nav_change"] = nav_source()
+    data["native_nav_change"]["components"].update({"endingValue": ending, "depositsWithdrawals": deposit})
+    assert build_ibkr_period_return(data, observed_at=OBSERVED, **SCOPE)["nav_change"]["amount"] == expected
+
+
+def test_nav_amount_outside_wire_decimal_limit_omits_only_optional_amount():
+    data = ledger()
+    data["native_nav_change"] = nav_source()
+    data["native_nav_change"]["components"].update({"startingValue": "-" + "9" * 63,
+                                                 "endingValue": "9" * 64, "depositsWithdrawals": "0"})
+    assert "nav_change" not in build_ibkr_period_return(data, observed_at=OBSERVED, **SCOPE)
