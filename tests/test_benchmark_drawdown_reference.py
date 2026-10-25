@@ -1,5 +1,7 @@
 """Artificial reference paths, no downloaded prices or personal policy values."""
 from copy import deepcopy
+import builtins
+import importlib.util
 import json
 import socket
 
@@ -7,6 +9,10 @@ import pytest
 
 from application.relative_risk_preview import RelativeRiskPreviewError, preview_relative_risk
 from tests.test_relative_risk_preview import assert_unarmed, inputs
+
+requires_shared_reference = pytest.mark.skipif(importlib.util.find_spec(
+    "quant_platform_kit.strategy_lifecycle.security_drawdown_reference") is None,
+    reason="requires frozen shared reference contract; isolated CI verifies this path")
 
 
 @pytest.fixture(autouse=True)
@@ -30,6 +36,93 @@ def reference_inputs():
         available_at_utc="2000-01-03T00:00:00Z", frozen_at_utc="2000-01-04T00:00:00Z",
         dates=["1999-12-29", "1999-12-30", "1999-12-31"], net_returns=[.04, -.17, .03], context=context)
     return packet, reference
+
+
+def as_security_reference(reference):
+    result = deepcopy(reference)
+    result["schema_version"] = "qsl.security_drawdown_reference.v1"
+    result["returns"] = result.pop("net_returns")
+    source = result["context"]
+    source.pop("account_scope")
+    source.update(wealth_scope="SECURITY_BENCHMARK_REFERENCE",
+        return_basis="PROVIDER_ADJUSTED_CLOSE_RATIO", cash_flow_basis="NOT_AN_ACCOUNT",
+        cost_treatment="ACCOUNT_TRADING_COSTS_EXCLUDED", cash_income_treatment="NOT_AN_ACCOUNT",
+        distribution_treatment="PROVIDER_SPLIT_DIVIDEND_ADJUSTED", valuation_sampling="DAILY_CLOSE")
+    return result
+
+
+def security_reference_inputs():
+    packet, reference = reference_inputs()
+    packet["strategy_context"]["valuation_sampling"] = "DAILY_CLOSE"
+    return packet, as_security_reference(reference)
+
+
+@requires_shared_reference
+def test_security_proxy_keeps_its_basis_without_claiming_net_account_wealth():
+    packet, reference = security_reference_inputs()
+    out = preview_relative_risk(**packet, account_drawdown_reference=reference)
+    rule = out["drawdown_rule_previews"]["benchmark_anchored_account"]
+    assert rule["limit_fraction"] == pytest.approx(.17)
+    assert rule["reference_return_basis"] == "PROVIDER_ADJUSTED_CLOSE_RATIO"
+    assert rule["reference_wealth_scope"] == "SECURITY_BENCHMARK_REFERENCE"
+    assert rule["valuation_sampling"] == "DAILY_CLOSE"
+    assert rule["account_costs_included"] is False
+    assert rule["enforcement_eligible"] is False and rule["reference_qualified"] is False
+    assert reference["context"]["return_basis"] != packet["strategy_context"]["return_basis"]
+    assert_unarmed(out)
+
+
+@requires_shared_reference
+def test_security_reference_is_reusable_without_an_account_in_its_source():
+    packet, reference = security_reference_inputs()
+    first = preview_relative_risk(**packet, account_drawdown_reference=reference)
+    packet["strategy_context"]["account_scope"] = "ANOTHER_ARTIFICIAL_SCOPE"
+    packet["benchmark_context"]["account_scope"] = "ANOTHER_ARTIFICIAL_SCOPE"
+    second = preview_relative_risk(**packet, account_drawdown_reference=reference)
+    assert first["input_sha256"] != second["input_sha256"]
+    assert first["drawdown_rule_previews"] == second["drawdown_rule_previews"]
+    assert_unarmed(second)
+
+
+@pytest.mark.parametrize("fault", ["schema", "net_label", "account_scope", "role", "costs", "dividends",
+    "cash_flows", "source_sampling", "account_sampling", "currency", "calendar", "future_freeze"])
+@requires_shared_reference
+def test_security_reference_rejects_unknown_or_mismatched_roles_and_sampling(fault):
+    packet, reference = security_reference_inputs()
+    if fault == "schema": reference["schema_version"] = "qsl.security_drawdown_reference.v2"
+    elif fault == "net_label": reference["context"]["return_basis"] = "NET_SIMPLE_TOTAL_RETURN"
+    elif fault == "account_scope": reference["context"]["account_scope"] = "ARTIFICIAL_SCOPE"
+    elif fault == "role": reference["context"]["wealth_scope"] = "ALLOCATED_ACCOUNT_NET_WEALTH"
+    elif fault == "costs": reference["context"]["cost_treatment"] = "APPLICABLE_COSTS_INCLUDED"
+    elif fault == "dividends": reference["context"]["distribution_treatment"] = "UNKNOWN"
+    elif fault == "cash_flows": reference["context"]["cash_flow_basis"] = "EXTERNAL_FLOWS_REMOVED"
+    elif fault == "source_sampling": reference["context"]["valuation_sampling"] = "INTRADAY"
+    elif fault == "account_sampling": packet["strategy_context"]["valuation_sampling"] = "INTRADAY"
+    elif fault == "currency": reference["context"]["currency"] = "HKD"
+    elif fault == "calendar": reference["context"]["calendar_id"] = "OTHER"
+    else: reference["frozen_at_utc"] = "2000-01-11T00:00:00Z"
+    with pytest.raises(RelativeRiskPreviewError):
+        preview_relative_risk(**packet, account_drawdown_reference=reference)
+
+
+def test_account_path_cannot_use_the_security_proxy_basis():
+    packet, reference = security_reference_inputs()
+    packet["strategy_context"].update(reference["context"])
+    with pytest.raises(RelativeRiskPreviewError, match="^NET_WEALTH_BASIS_REQUIRED$"):
+        preview_relative_risk(**packet, account_drawdown_reference=reference)
+
+
+def test_missing_shared_capability_cannot_issue_a_fallback_ceiling(monkeypatch):
+    original = builtins.__import__
+
+    def guarded(name, *args, **kwargs):
+        if name == "quant_platform_kit.strategy_lifecycle.security_drawdown_reference":
+            raise ImportError("artificial unavailable capability")
+        return original(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, "__import__", guarded)
+    packet, reference = security_reference_inputs()
+    with pytest.raises(RelativeRiskPreviewError, match="^SECURITY_REFERENCE_DEPENDENCY_UNAVAILABLE$"):
+        preview_relative_risk(**packet, account_drawdown_reference=reference)
 
 
 def test_reference_computes_a_separate_account_ceiling_without_a_numeric_preference():

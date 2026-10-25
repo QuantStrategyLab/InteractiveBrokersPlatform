@@ -102,6 +102,25 @@ def _benchmark_drawdown_rule(strategy_loss, reference, context):
     """
     if reference is None:
         return dict(status="UNDETERMINED", reason="BENCHMARK_DRAWDOWN_REFERENCE_REQUIRED", limit_fraction=None)
+    if isinstance(reference, Mapping) and "schema_version" in reference:
+        _require(isinstance(context.get("account_scope"), str) and bool(context["account_scope"].strip())
+            and context.get("wealth_scope") == "ALLOCATED_ACCOUNT_NET_WEALTH", "ACCOUNT_REFERENCE_SCOPE_REQUIRED")
+        try:
+            from quant_platform_kit.strategy_lifecycle.security_drawdown_reference import (
+                SecurityDrawdownReferenceError, describe_security_drawdown_reference,
+            )
+        except ImportError:
+            raise RelativeRiskPreviewError("SECURITY_REFERENCE_DEPENDENCY_UNAVAILABLE") from None
+        try:
+            result = describe_security_drawdown_reference(reference,
+                selected_benchmark=context.get("account_risk_benchmark"), currency=context["currency"],
+                calendar_id=context["calendar_id"], valuation_sampling=context.get("valuation_sampling"),
+                decision_cutoff_utc=context.get("decision_cutoff_utc"))
+        except SecurityDrawdownReferenceError as exc:
+            raise RelativeRiskPreviewError(str(exc)) from None
+        loss = result["max_drawdown_loss_fraction"]
+        return dict(result, status="WITHIN" if strategy_loss <= loss else "EXCEEDS", reason=None,
+            limit_fraction=loss, model="FROZEN_SECURITY_DRAWDOWN_PROXY")
     fields = {"benchmark_symbol", "reference_id", "available_at_utc", "frozen_at_utc", "dates", "net_returns", "context"}
     _require(isinstance(reference, Mapping) and set(reference) == fields, "ACCOUNT_REFERENCE_INCOMPLETE")
     _require(all(isinstance(reference[key], str) and bool(reference[key].strip())
@@ -151,7 +170,7 @@ def _benchmark_drawdown_rule(strategy_loss, reference, context):
         reference_source_sha256=source["source_sha256"], frozen_at_utc=reference["frozen_at_utc"],
         reference_window=dict(start_date=dates[0].date().isoformat(), end_date=dates[-1].date().isoformat(),
             observations=len(path), window_id=source["window_id"]),
-        reference_qualified=False, model_calibrated=False)
+        reference_qualified=False, model_calibrated=False, enforcement_eligible=False)
 
 
 def _dynamic_drawdown_rule(strategy_loss, benchmark_loss, policy, binding, context, benchmark_context,
@@ -265,7 +284,9 @@ def preview_relative_risk(
     policy inputs to the existing capital curve. Its account ceiling remains
     separate from its dynamic relative allowance. A caller-selected frozen
     ``account_drawdown_reference`` may supply the independent account ceiling
-    from a separately declared prior window. No number has a default.
+    from a separately declared prior window. Its explicit security-reference
+    schema describes a daily adjusted-price proxy without claiming account
+    net wealth; the account path still requires net returns. No number has a default.
     Every result remains offline, unapproved and without execution authority.
     """
     _require(type(binding) is StrategyBenchmarkBinding and binding.relative_drawdown_required,

@@ -142,7 +142,7 @@ def attach_relative_comparison(args, request):
     }
 
 
-def attach_account_reference(args, request):
+def attach_account_reference(args, request, *, security_proxy=False):
     from application.relative_risk_preview import _COMPARISON_FIELDS
 
     attach_relative_comparison(args, request)
@@ -155,6 +155,11 @@ def attach_account_reference(args, request):
         benchmark_symbol=evidence["binding"]["benchmark_symbol"], reference_id="artificial-frozen-reference",
         available_at_utc="2000-01-03T00:00:00Z", frozen_at_utc="2000-01-03T01:00:00Z",
         dates=["1999-12-29", "1999-12-30", "1999-12-31"], net_returns=[.04, -.17, .03], context=source)
+    if security_proxy:
+        from tests.test_benchmark_drawdown_reference import as_security_reference
+
+        evidence["strategy_context"]["valuation_sampling"] = "DAILY_CLOSE"
+        evidence["account_drawdown_reference"] = as_security_reference(evidence["account_drawdown_reference"])
     evidence["dynamic_policy"]["account_max_drawdown_fraction"] = None
     evidence["dynamic_policy"]["comparison_context"] = {
         key: evidence["strategy_context"][key] for key in _COMPARISON_FIELDS}
@@ -162,13 +167,18 @@ def attach_account_reference(args, request):
 
 @pytest.mark.parametrize("mode", ["simple", "advanced"])
 @pytest.mark.parametrize("level", ["conservative", "balanced", "growth"])
-def test_benchmark_account_reference_survives_original_draft_save_and_preflight(tmp_path, mode, level):
+@pytest.mark.parametrize("security_proxy", [False, True])
+def test_benchmark_account_reference_survives_original_draft_save_and_preflight(tmp_path, mode, level, security_proxy):
     args = seed(tmp_path); request = request_fixture(mode); request["level"] = level
-    attach_account_reference(args, request)
+    attach_account_reference(args, request, security_proxy=security_proxy)
     saved = call(tmp_path, args, request=request, event_id="reference-allocation-1")
     assert saved["status"] == "SETTINGS_DRAFT_PERSISTED", saved
     reference = saved["relative_risk_preview"]["drawdown_rule_previews"]["benchmark_anchored_account"]
     assert reference["limit_fraction"] == pytest.approx(.17) and reference["reference_qualified"] is False
+    assert reference["enforcement_eligible"] is False
+    if security_proxy:
+        assert reference["reference_return_basis"] == "PROVIDER_ADJUSTED_CLOSE_RATIO"
+        assert reference["account_costs_included"] is False
     args = (*args[:4], saved["next_binding"], args[-1])
     read = call(tmp_path, args, "preflight", request=request,
         expected_artifact_sha256=saved["artifact_receipt"]["artifact_sha256"],
@@ -181,9 +191,10 @@ def test_benchmark_account_reference_survives_original_draft_save_and_preflight(
 
 
 @pytest.mark.parametrize("change", ["omitted", "source", "freeze", "reference_path", "cutoff"])
-def test_frozen_reference_cannot_be_changed_or_omitted_to_reuse_an_old_draft(tmp_path, change):
+@pytest.mark.parametrize("security_proxy", [False, True])
+def test_frozen_reference_cannot_be_changed_or_omitted_to_reuse_an_old_draft(tmp_path, change, security_proxy):
     args = seed(tmp_path); request = request_fixture()
-    attach_account_reference(args, request)
+    attach_account_reference(args, request, security_proxy=security_proxy)
     saved = call(tmp_path, args, request=request, event_id="reference-allocation-1")
     assert saved["status"] == "SETTINGS_DRAFT_PERSISTED", saved
     args = (*args[:4], saved["next_binding"], args[-1])
@@ -193,7 +204,7 @@ def test_frozen_reference_cannot_be_changed_or_omitted_to_reuse_an_old_draft(tmp
     elif change == "source": reference["context"]["source_sha256"] = "f" * 64
     elif change == "freeze": reference["frozen_at_utc"] = "2000-01-03T02:00:00Z"
     elif change == "cutoff": evidence["strategy_context"]["decision_cutoff_utc"] = "2000-01-04T13:00:00Z"
-    else: reference["net_returns"][1] = -.19
+    else: reference["returns" if security_proxy else "net_returns"][1] = -.19
     read = call(tmp_path, args, "preflight", request=request,
         expected_artifact_sha256=saved["artifact_receipt"]["artifact_sha256"],
         consumption_cutoff_utc="2000-01-04T12:01:30Z")

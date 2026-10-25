@@ -18,7 +18,7 @@ from application.account_facts import build_ibkr_account_facts
 
 PROFILE = "tqqq_growth_income"
 UES_REVISION = "3dfa547bccd73a562667a975dd91ffd65d47850a"
-QPK_REVISION = "7840127862ea715e44c8f70b03155a399dc817de"
+QPK_REVISION = "3ea9f47d67914c4e39143ed4348c7bc248b759ce"
 
 
 def _require(condition, reason):
