@@ -29,3 +29,25 @@ The explicit paper-liquidation rehearsal also carries optional account facts fro
 `report_stop_reason` exposes only an allowlisted category already declared by the same report, after existing envelope, provenance and scope checks pass. A skipped report may declare `already_running`, `market_closed` or `ibkr_fractional_equity_api_unsupported`; an error may declare `strategy_execution_blocked`, `strategy_deadline`, `ibkr_gateway_unavailable`, `ibkr_trading_permission` or `ibkr_portfolio_snapshot`. Unknown categories become fixed `unclassified_skip`/`unclassified_error`; contradictory status/reason fields become `invalid_stop_context`. Preflight, failed reads, unproven scope, pending/unrecognized status and unexpected optional errors remain `unknown`. `no_declared_stop` means only an `ok` report has neither stop field.
 
 The category is a report declaration, not independent proof of the running process, the reason account facts were omitted, gateway credentials, account ownership or financial accuracy. It exposes no free text, error bodies, counts or private values. The same report is reused without additional cloud or broker reads; original stages, projection guard and CLI exit remain unchanged.
+# Zero-traffic maintenance cash observation
+
+The existing `primary-account-facts-readonly.yml` manual workflow keeps its
+original report-only behavior when `maintenance_source_commit` is empty. An
+explicit reviewed source SHA selects one current ready, zero-traffic candidate
+with the same complete account/runtime configuration as the configured serving
+revision. The maintenance application must include the read-only Gateway guard:
+nonzero configured client identity and one connection attempt, because locked
+ib_insync can bind manual orders for client ID zero even with `readonly=True`.
+
+Candidate mode reuses the existing authenticated `/probe`, warm-up caller and
+private report storage. A temporary traffic tag and Scheduler job make the
+internal request without shifting normal traffic. It verifies the scheduled
+target, disables Scheduler retries, removes only this run's temporary resources,
+and reads back the original baseline. Failed or ambiguous writes are not retried.
+Raw reports and projections stay in the protected runner; the artifact contains
+fixed states, source/hash/time and no amounts or account identifiers.
+
+The output is explicitly candidate-only. It does not update the publisher's
+revision binding, activate the runtime, run a strategy, establish product/API
+permissions, verify complete pending cash obligations or authorize spending.
+It cannot count as the full no-submit trading cycle.

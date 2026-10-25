@@ -34,6 +34,8 @@ REVISION_CONTROLLER_LABELS = frozenset({
     "serving.knative.dev/service", "serving.knative.dev/configuration",
     "serving.knative.dev/route", "serving.knative.dev/configurationGeneration",
     "serving.knative.dev/serviceUid",
+    # Client-generated revision correlation nonce, not runtime configuration.
+    "client.knative.dev/nonce",
 })
 BUILD_LABELS = frozenset({"commit-sha", "github-run-id"})
 INGRESS_ANNOTATION = "run.googleapis.com/ingress"
