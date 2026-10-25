@@ -251,6 +251,134 @@ def test_pending_order_batch_is_not_rendered_as_submitted_or_filled():
     assert lines == ["⏳ 买单待券商最终确认 1个标的: SOXL 2"]
 
 
+def test_small_account_skip_is_not_a_broker_buy_failure_in_either_language():
+    for language, expected, rejected in (
+        ("zh", "买入跳过", "买入失败"),
+        ("en", "Buy skipped", "Buy failed"),
+    ):
+        lines = _build_order_batch_lines(
+            {
+                "orders_skipped": [
+                    {
+                        "symbol": "SYNTH",
+                        "side": "buy",
+                        "reason": "small_account_below_recommended_equity",
+                    }
+                ]
+            },
+            translator=build_translator(language),
+        )
+        text = "\n".join(lines)
+        assert expected in text
+        assert rejected not in text
+        assert "small_account_below_recommended_equity" not in text
+        assert "原因=" not in text
+
+
+def test_compact_pending_detail_is_deduplicated_but_unmatched_logs_are_retained():
+    from notifications.renderers import _build_notification_trade_lines
+
+    for language in ("zh", "en"):
+        translate = build_translator(language)
+        row = {
+            "symbol": "SYNTH",
+            "side": "sell",
+            "quantity": 2,
+            "status": "PendingSubmit",
+            "broker_order_id": "synthetic-71",
+        }
+        status = "⏳ " + translate(
+            "submitted", status=row["status"], order_id=row["broker_order_id"]
+        )
+        duplicate = translate("market_sell", symbol="SYNTH", qty="2") + " " + status
+        different_quantity = translate("market_sell", symbol="SYNTH", qty="3") + " " + status
+        different_id = (
+            translate("market_sell", symbol="SYNTH", qty="2")
+            + " ⏳ "
+            + translate("submitted", status=row["status"], order_id="synthetic-72")
+        )
+        note = "reconciliation note SYNTH-EXTRA-01"
+        summary = {"orders_pending": [row]}
+        lines = _build_notification_trade_lines(
+            [duplicate, different_quantity, different_id, note],
+            execution_summary=summary,
+            translator=translate,
+        )
+        assert lines == _build_notification_trade_lines(
+            [different_quantity, different_id, note],
+            execution_summary=summary,
+            translator=translate,
+        )
+        joined = "\n".join(lines)
+        assert duplicate not in lines
+        assert different_quantity in lines
+        assert "synthetic-72" in joined
+        assert "SYNTH-EXTRA-01" in joined
+        assert any("3" in line for line in lines)
+
+
+def test_compact_pending_buy_detail_deduplicates_without_hiding_detailed_log():
+    from notifications.renderers import _build_detailed_trade_lines, _build_notification_trade_lines
+
+    for language in ("zh", "en"):
+        translate = build_translator(language)
+        row = {
+            "symbol": "SYNTH",
+            "side": "buy",
+            "quantity": 2,
+            "status": "PendingSubmit",
+            "broker_order_id": "synthetic-71",
+        }
+        detail = (
+            translate("limit_buy", symbol="SYNTH", qty="2", price="12.34")
+            + " ⏳ "
+            + translate("submitted", status=row["status"], order_id=row["broker_order_id"])
+        )
+        compact = _build_notification_trade_lines(
+            [detail],
+            execution_summary={"orders_pending": [row]},
+            translator=translate,
+        )
+        detailed = _build_detailed_trade_lines([detail], translator=translate)
+        assert len(compact) == 1
+        assert "synthetic-71" not in "\n".join(compact)
+        assert "synthetic-71" in "\n".join(detailed)
+
+
+def test_small_account_compact_notice_keeps_actual_value_and_threshold():
+    from notifications.renderers import _build_notification_trade_lines
+
+    for language, threshold_text in (
+        ("zh", "低于策略建议"),
+        ("en", "below the strategy recommendation"),
+    ):
+        translate = build_translator(language)
+        guard = translate(
+            "buy_deferred_small_account",
+            portfolio_equity="125.00",
+            min_recommended_equity="500.00",
+        )
+        lines = _build_notification_trade_lines(
+            [guard],
+            execution_summary={
+                "orders_skipped": [
+                    {
+                        "symbol": "SYNTH",
+                        "side": "buy",
+                        "reason": "small_account_below_recommended_equity",
+                    }
+                ]
+            },
+            translator=translate,
+        )
+        joined = "\n".join(lines)
+        assert "125.00" in joined
+        assert "500.00" in joined
+        assert threshold_text in joined
+        assert "买入失败" not in joined
+        assert "Buy failed" not in joined
+
+
 def test_skip_order_batch_templates_stay_locale_pure():
     zh = build_translator("zh")
     en = build_translator("en")

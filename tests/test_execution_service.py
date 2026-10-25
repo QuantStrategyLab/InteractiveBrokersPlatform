@@ -132,8 +132,11 @@ def test_check_order_submitted_warns_submitted_order_is_not_fill_confirmation():
     assert ok is True
     assert "状态: Submitted" in message
     assert "仍可能被拒单或取消" in message
-    assert "尚未确认券商接受或成交" in message
-    assert "自动取消" in message
+    assert "尚未确认成交" in message
+    assert message.startswith("⏳")
+    assert "✅" not in message
+    assert "DAY" not in message
+    assert "限价" not in message
 
 
 def test_check_order_submitted_accepts_pending_submit_status():
@@ -141,6 +144,57 @@ def test_check_order_submitted_accepts_pending_submit_status():
     ok, message = check_order_submitted(report, translator=translate)
     assert ok is True
     assert "submitted 123" in message
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["PendingSubmit", "ApiPending", "ApiPendingSubmit", "Submitted", "PreSubmitted"],
+)
+@pytest.mark.parametrize("language", ["zh", "en"])
+def test_pending_notification_never_claims_a_fill_or_an_unspecified_order_type(
+    status, language,
+):
+    report = SimpleNamespace(broker_order_id="synthetic-71", status=status)
+    ok, message = check_order_submitted(report, translator=build_translator(language))
+    assert ok is True
+    assert message.startswith("⏳")
+    assert "✅" not in message
+    assert status in message
+    assert "synthetic-71" in message
+    assert "DAY" not in message
+    assert "limit" not in message.lower()
+    assert "限价" not in message
+
+
+@pytest.mark.parametrize(
+    "status,expected_prefix,expected_text,accepted",
+    [
+        ("Filled", "✅", "订单成交", True),
+        ("PartiallyFilled", "⚠️", "部分成交", True),
+        ("Cancelled", "❌", "失败", False),
+        ("Rejected", "❌", "失败", False),
+    ],
+)
+def test_terminal_order_status_keeps_its_own_outcome(
+    status, expected_prefix, expected_text, accepted,
+):
+    report = SimpleNamespace(
+        broker_order_id="synthetic-72",
+        status=status,
+        symbol="SYNTH",
+        side="buy",
+        quantity=2,
+        filled_quantity=2 if status == "Filled" else 1,
+        average_fill_price=12.34,
+    )
+    ok, message = check_order_submitted(report, translator=build_translator("zh"))
+    assert ok is accepted
+    assert message.startswith(expected_prefix)
+    assert expected_text in message
+    if accepted:
+        assert "synthetic-72" in message
+    else:
+        assert status in message
 
 
 def test_get_available_buying_power_prefers_usd_cash_balance_over_aggregate_available_funds():

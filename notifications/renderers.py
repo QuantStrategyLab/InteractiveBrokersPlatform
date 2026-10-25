@@ -158,6 +158,7 @@ _SOFT_ORDER_SKIP_REASONS = frozenset(
         "pending_sell_release",
         "negative_cash",
         "insufficient_buying_power",
+        "small_account_below_recommended_equity",
     }
 )
 _HARD_ORDER_SKIP_STATUS = frozenset(
@@ -169,6 +170,9 @@ _HARD_ORDER_SKIP_STATUS = frozenset(
         "api cancelled",
         "error",
     }
+)
+_PENDING_ORDER_STATUS = frozenset(
+    {"PendingSubmit", "ApiPending", "ApiPendingSubmit", "Submitted", "PreSubmitted"}
 )
 
 
@@ -313,6 +317,50 @@ def _build_order_batch_lines(execution_summary, *, translator) -> list[str]:
     return lines
 
 
+def _duplicates_pending_order_summary(text, execution_summary, *, translator) -> bool:
+    """Hide only the trade log that exactly repeats a pending order summary.
+
+    A pending acknowledgement is already shown by the order batch line. Any
+    difference (quantity, order id, status or extra broker detail) is retained.
+    """
+    for order in execution_summary.get("orders_pending") or ():
+        if not isinstance(order, Mapping):
+            continue
+        symbol = str(order.get("symbol") or "").strip().upper()
+        order_id = order.get("broker_order_id")
+        status = str(order.get("status") or "")
+        quantity = order.get("quantity")
+        if not symbol or not order_id or not quantity or status not in _PENDING_ORDER_STATUS:
+            continue
+        suffix = "⏳ " + translator("submitted", order_id=order_id, status=status)
+        if not text.endswith(suffix):
+            continue
+        prefix = text[: -len(suffix)].strip()
+        side = str(order.get("side") or "").strip().lower()
+        if side == "sell" and prefix == translator(
+            "market_sell", symbol=symbol, qty=format_quantity(quantity)
+        ):
+            return True
+        if side == "buy":
+            head = translator(
+                "limit_buy", symbol=symbol, qty=format_quantity(quantity), price=""
+            )
+            if prefix.startswith(head) and re.fullmatch(r"\d+(?:\.\d+)?", prefix[len(head) :]):
+                return True
+    return False
+
+
+def _is_small_account_guard_notice(text, *, translator) -> bool:
+    """Keep the guard notice because it carries the actual equity and threshold."""
+    probe = translator(
+        "buy_deferred_small_account",
+        portfolio_equity="\x00",
+        min_recommended_equity="\x00",
+    )
+    head = probe.split("\x00", 1)[0]
+    return bool(head.strip()) and text.startswith(head)
+
+
 def _build_notification_trade_lines(
     trade_logs,
     *,
@@ -361,9 +409,13 @@ def _build_notification_trade_lines(
         text = _localize_notification_text(str(raw_line).strip(), translator=translator)
         if not text:
             continue
+        if _duplicates_pending_order_summary(text, execution_summary, translator=translator):
+            continue
         if text.startswith(("目标差异 ", "target_diff ", "DRY_RUN buy ", "DRY_RUN sell ")):
             continue
-        if text.startswith(("ℹ️", "📏")):
+        if text.startswith(("ℹ️", "📏")) and not _is_small_account_guard_notice(
+            text, translator=translator
+        ):
             continue
         if text.startswith(("🧪 dry-run估价:", "🧪 dry-run pricing:")):
             continue
