@@ -48,6 +48,9 @@ IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON_ENV = "IBKR_ACCOUNT_FACTS_ADDITIONAL_
 _INGRESS_DIAGNOSTIC_BODY = b"{}"
 _INGRESS_DIAGNOSTIC_ERROR = "invalid_account_facts_history"
 _REPORT_RUN_ID = re.compile(r"^\d{8}T\d{6}Z\.json$")
+_REPORT_LIST_LIMIT = 2048
+_REPORT_READ_LIMIT = 64  # Covers hourly normal skips within the unchanged 36h freshness window.
+_REPORT_MAX_BYTES = 8 * 1024 * 1024
 _ACCOUNT_ID = re.compile(r"^(?:U|DU)\d+$")
 _ALLOWED_CASH_TAGS = frozenset(
     {"$LEDGER-CashBalance", "$LEDGER-TotalCashBalance", "CashBalance", "TotalCashBalance", "SettledCash"}
@@ -784,23 +787,29 @@ class _NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def _latest_report_uri(*, prefix: str, project_id: str, now: datetime) -> str:
+def _report_candidate_uris(*, prefix: str, project_id: str, now: datetime) -> list[str]:
+    """Two bounded monthly metadata listings; never silently truncate history."""
     current = now.astimezone(timezone.utc)
     months = (current.strftime("%Y-%m"), (current.replace(day=1) - timedelta(days=1)).strftime("%Y-%m"))
     candidates: list[tuple[datetime, str]] = []
     for month in months:
         month_prefix = f"{prefix.rstrip('/')}/{month}/"
         result = subprocess.run(
-            ("gcloud", "storage", "ls", month_prefix, "--project", project_id),
+            ("gcloud", "storage", "objects", "list", month_prefix + "*", "--uri",
+             f"--limit={_REPORT_LIST_LIMIT + 1}", "--page-size=1000",
+             "--project", project_id),
             capture_output=True,
             text=True,
             check=False,
+            timeout=60,
         )
         if result.returncode != 0:
             # Empty month listings are ordinary; other listing failures fail closed.
             if "matched no objects" not in result.stderr.lower() and "not found" not in result.stderr.lower():
                 raise _ProjectionError("report_listing_failed")
             continue
+        if len(result.stdout) > 1024 * 1024 or len(result.stdout.splitlines()) > _REPORT_LIST_LIMIT:
+            raise _ProjectionError("report_listing_failed")
         for uri in result.stdout.splitlines():
             normalized_uri = uri.strip()
             filename = PurePosixPath(urlsplit(normalized_uri).path).name
@@ -813,7 +822,11 @@ def _latest_report_uri(*, prefix: str, project_id: str, now: datetime) -> str:
             candidates.append((timestamp, normalized_uri))
     if not candidates:
         raise _ProjectionError("report_unavailable")
-    return max(candidates, key=lambda row: row[0])[1]
+    return [uri for _, uri in sorted(set(candidates), reverse=True)]
+
+
+def _latest_report_uri(*, prefix: str, project_id: str, now: datetime) -> str:
+    return _report_candidate_uris(prefix=prefix, project_id=project_id, now=now)[0]
 
 
 def _named_report_uri(*, prefix: str, report_name: str, now: datetime) -> str:
@@ -833,17 +846,33 @@ def _named_report_uri(*, prefix: str, report_name: str, now: datetime) -> str:
     return f"{prefix.rstrip('/')}/{report_time:%Y-%m}/{report_name}"
 
 
+def _report_json_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise _ProjectionError("runtime_report_invalid")
+        result[key] = value
+    return result
+
+
+def _report_json_constant(_value):
+    raise _ProjectionError("runtime_report_invalid")
+
+
 def _load_gcs_report(uri: str, *, project_id: str) -> dict[str, Any]:
     result = subprocess.run(
         ("gcloud", "storage", "cat", uri, "--project", project_id),
         capture_output=True,
         text=True,
         check=False,
+        timeout=60,
     )
     if result.returncode != 0:
         raise _ProjectionError("report_read_failed")
+    if len(result.stdout.encode("utf-8")) > _REPORT_MAX_BYTES:
+        raise _ProjectionError("runtime_report_invalid")
     try:
-        value = json.loads(result.stdout)
+        value = json.loads(result.stdout, object_pairs_hook=_report_json_pairs, parse_constant=_report_json_constant)
     except (json.JSONDecodeError, TypeError):
         raise _ProjectionError("runtime_report_invalid") from None
     if not isinstance(value, dict):
@@ -851,8 +880,58 @@ def _load_gcs_report(uri: str, *, project_id: str) -> dict[str, Any]:
     return value
 
 
+def _normal_market_closed_without_snapshot(report, *, uri, expected, now) -> bool:
+    """Only this proved normal skip may stop overshadowing a real snapshot."""
+    if not isinstance(report, Mapping) or report.get("status") != "skipped":
+        return False
+    diagnostics = report.get("diagnostics")
+    if (not isinstance(diagnostics, Mapping) or diagnostics.get("skip_reason") != "market_closed"
+            or diagnostics.get("failure_category") not in (None, "") or report.get("errors") not in (None, [])):
+        return False
+    if "summary" in report and (not isinstance(report["summary"], Mapping) or "account_facts" in report["summary"]):
+        return False
+    try:
+        filename = PurePosixPath(urlsplit(uri).path).name
+        if _named_report_uri(prefix=expected["expected_report_prefix"], report_name=filename, now=now) != uri:
+            return False
+        started, finished = _observed_timestamp(report.get("started_at")), _observed_timestamp(report.get("finished_at"))
+        if finished < started or finished > now.astimezone(timezone.utc) + timedelta(minutes=5):
+            return False
+        # The original pure projector verifies the complete envelope, protected
+        # account scope, revision and receipt *before* testing for account_facts.
+        # With the key proved absent, this exact failure proves those guards held.
+        _project_ibkr_account_facts_history(report, source_report_uri=uri, **expected)
+    except _ProjectionError as error:
+        return error.reason == "account_facts_invalid"
+    return False
+
+
+def select_account_facts_report(*, expected, now, activity, report_name=""):
+    """Read at most 64 reports; new errors and exact names never fall back."""
+    prefix, project = expected["expected_report_prefix"], expected["expected_project_id"]
+    if report_name:
+        uri = _named_report_uri(prefix=prefix, report_name=report_name, now=now)
+        return uri, _load_gcs_report(uri, project_id=project)
+    uri = _latest_report_uri(prefix=prefix, project_id=project, now=now)
+    report = _load_gcs_report(uri, project_id=project)
+    if not _normal_market_closed_without_snapshot(report, uri=uri, expected=expected, now=now):
+        return uri, report
+    activity.update(latest_run_status="skipped", latest_run_stop_reason="market_closed", skipped_market_closed_reports=1)
+    candidates = _report_candidate_uris(prefix=prefix, project_id=project, now=now)
+    # Do not hide a new report that arrived between the two bounded listings.
+    if not candidates or candidates[0] != uri:
+        raise _ProjectionError("report_selection_changed")
+    for uri in candidates[1:_REPORT_READ_LIMIT]:
+        report = _load_gcs_report(uri, project_id=project)
+        if not _normal_market_closed_without_snapshot(report, uri=uri, expected=expected, now=now):
+            return uri, report
+        activity["skipped_market_closed_reports"] += 1
+    raise _ProjectionError("report_unavailable")
+
+
 def main() -> int:
     """Workflow-only, explicitly enabled single-report publisher."""
+    activity = {}
     try:
         target = _text(os.environ.get("IBKR_ACCOUNT_FACTS_TARGET"))
         if target == IBKR_ACCOUNT_FACTS_INGRESS_DIAGNOSTIC_TARGET:
@@ -880,19 +959,7 @@ def main() -> int:
         }
         now = datetime.now(timezone.utc)
         report_name = os.environ.get("IBKR_ACCOUNT_FACTS_REPORT_NAME", "")
-        if report_name:
-            uri = _named_report_uri(
-                prefix=expected_prefix,
-                report_name=report_name,
-                now=now,
-            )
-        else:
-            uri = _latest_report_uri(
-                prefix=expected_prefix,
-                project_id=expected["expected_project_id"],
-                now=now,
-            )
-        report = _load_gcs_report(uri, project_id=expected["expected_project_id"])
+        uri, report = select_account_facts_report(expected=expected, now=now, activity=activity, report_name=report_name)
         result = publish_ibkr_account_facts_history(
             report,
             now=now,
@@ -910,6 +977,9 @@ def main() -> int:
     except Exception:
         print("skipped:publisher_error")
         return 1
+    finally:
+        if activity:
+            print(json.dumps({"report_selection": activity}, sort_keys=True))
 
 
 def _project_ibkr_account_facts_history(
