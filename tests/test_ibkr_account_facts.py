@@ -206,3 +206,10 @@ def test_cash_observations_survive_the_original_runtime_report_writer(tmp_path):
         observed_at=stored["observed_at"], selected_cash=stored["cash"][0])
     assert diagnostic["fields"]["SettledCash"] == "OBSERVED"
     assert diagnostic["spendable_cash_verified"] is False
+
+
+def test_raw_cash_observations_cannot_silently_belong_to_another_account():
+    snapshot = _snapshot(observed_at=datetime(2026, 9, 30, 12, tzinfo=timezone.utc),
+        cash_balances=({"account_id": "DU123", "currency": "USD", "CashBalance": 100},),
+        cash_observation_rows=({"account_id": "DU999", "currency": "USD", "SettledCash": "99"},))
+    assert build_ibkr_account_facts(snapshot) == {}

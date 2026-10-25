@@ -165,6 +165,15 @@ def build_ibkr_account_facts(snapshot: Any) -> dict[str, Any]:
 
     net_assets = _verified_usd_net_assets(rows, metadata)
 
+    # New producers retain each supported raw field before the numeric cache
+    # discards malformed values or overwrites duplicates. Old snapshots retain
+    # their explicitly weaker grouped-cache projection.
+    observation_rows = metadata.get("cash_observation_rows", rows)
+    if (not isinstance(observation_rows, (list, tuple))
+            or any(not isinstance(row, Mapping) or row.get("account_id") != account_id
+                for row in observation_rows)):
+        return {}
+
     facts: dict[str, Any] = {
         "schema_version": "ibkr_account_snapshot.v1",
         "account_ids": [account_id],
@@ -175,7 +184,7 @@ def build_ibkr_account_facts(snapshot: Any) -> dict[str, Any]:
         "net_assets_semantics": "USD NetLiquidation; null unless broker source is verified",
         "cash_semantics": "IBKR accountValues cash balance; source tag retained; not available funds",
         "cash": cash,
-        "broker_cash_observations": build_cash_observations(rows, observed_at=observed_at),
+        "broker_cash_observations": build_cash_observations(observation_rows, observed_at=observed_at),
     }
     # Optional, fail-soft: omitted entirely when unknown or malformed.
     positions = build_broker_reported_positions(snapshot)

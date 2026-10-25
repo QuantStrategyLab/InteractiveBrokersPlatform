@@ -23,29 +23,61 @@ def _decimal(value):
     return amount if amount.is_finite() else None
 
 
+def _decimal_text(value):
+    amount = _decimal(value)
+    if amount is None:
+        return None
+    digits, exponent = len(amount.as_tuple().digits), amount.as_tuple().exponent
+    # Bound serialization, not a financial balance. Never expand malformed
+    # vendor scientific notation into an unbounded string or truncate a value.
+    if digits + abs(exponent) > 4096:
+        return None
+    return format(amount, "f")
+
+
+def capture_cash_observation_rows(account_values, *, account_ids):
+    """Keep selected native fields before float conversion and key overwrite.
+
+    Invalid raw values become None, never stored raw error text. Duplicate
+    rows remain separate so the projection can mark that field ambiguous.
+    """
+    rows = []
+    for item in account_values:
+        account = str(getattr(item, "account", "") or "").strip()
+        currency = str(getattr(item, "currency", "") or "").strip().upper()
+        tag = str(getattr(item, "tag", "") or "").strip()
+        if account not in account_ids or not re.fullmatch(r"[A-Z]{3}", currency) or tag not in TAGS:
+            continue
+        rows.append(dict(account_id=account, currency=currency,
+            **{tag: _decimal_text(getattr(item, "value", None))}))
+    return tuple(rows)
+
+
 def build_cash_observations(rows, *, observed_at):
     """Keep every supported field after the parent has checked account scope."""
-    values, invalid = [], []
+    values, invalid, seen = {}, set(), set()
     for row in rows:
         currency = str(row.get("currency") or "").strip().upper()
         if currency == "BASE":
             continue
         for tag in sorted(TAGS & row.keys()):
-            field = dict(currency=currency, source_tag=tag)
-            amount = _decimal(row[tag])
-            if amount is None:
-                invalid.append(field)
+            identity = currency, tag
+            amount = _decimal_text(row[tag])
+            if amount is None or identity in seen:
+                invalid.add(identity)
+                values.pop(identity, None)
             else:
-                values.append(dict(field, value=format(amount, "f")))
-    def key(item):
-        return item["currency"], item["source_tag"]
+                values[identity] = amount
+            seen.add(identity)
     result = dict(schema_version=SCHEMA, observed_at=observed_at)
     # Runtime reports omit empty containers. Optional arrays keep the source
     # attachment byte-shape stable through that existing writer and readback.
     if values:
-        result["values"] = sorted(values, key=key)
+        result["values"] = [dict(currency=currency, source_tag=tag, value=amount)
+            for (currency, tag), amount in sorted(values.items())]
     if invalid:
-        result["invalid_fields"] = sorted(invalid, key=key)
+        result["invalid_fields"] = [dict(currency=currency, source_tag=tag)
+            for currency, tag in sorted(invalid)]
     return result
 
 
