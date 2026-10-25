@@ -133,7 +133,7 @@ def test_missing_fee_currency_is_not_inherited_and_zero_fee_is_retained():
 
 
 @pytest.mark.parametrize(("value", "shape"), [
-    ("-0.123456789", {"kind": "decimal", "integer_digits": 1, "fraction_digits": 9, "has_whitespace": False}),
+    ("-0.1234567890123456789", {"kind": "decimal", "integer_digits": 1, "fraction_digits": 19, "has_whitespace": False}),
     ("-1.25E-9", {"kind": "scientific", "integer_digits": 1, "fraction_digits": 2, "has_whitespace": False}),
     (" -0.25 ", {"kind": "decimal", "integer_digits": 1, "fraction_digits": 2, "has_whitespace": True}),
     ("NaN", {"kind": "nonfinite"}),
@@ -148,6 +148,13 @@ def test_invalid_commission_reports_only_safe_format_and_preserves_rejection(val
     output = json.dumps(executions["diagnostic"])
     assert value not in output and ACCOUNT not in output and "synthetic-execution" not in output
     assert source["return_assessment"]["computable"] is True
+
+
+@pytest.mark.parametrize("fee", ["-0.123456789", "-0.123456789000000001", "0.000000000000000001"])
+def test_native_fee_precision_is_preserved_as_signed_text(fee):
+    source = ledger(f'<Trades>{trade(ibCommission=fee, taxes=fee)}</Trades>')
+    row = build_ibkr_executions(source, **CONFIG)["records"][0]
+    assert row["commission"] == fee and row["taxes"] == fee
 
 
 @pytest.mark.parametrize("changes", [{"quantity": "0"}, {"quantity": "NaN"}, {"tradePrice": "-1"},
