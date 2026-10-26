@@ -1120,3 +1120,182 @@ def test_generated_cash_reserve_preserves_open_state_and_reduction_path(tmp_path
     assert read['readback_verified'] and read['breaker_state'] == 'OPEN'
     assert read['draft_settings'] is None
     assert_unarmed(saved); assert_unarmed(read)
+
+
+def web_ledger_fixture():
+    args, policy = cash_policy_fixture()
+    _, snapshot, packet, context, binding, proof = args
+    snapshot.metadata['cash_balances'][0].pop('SettledCash')
+    packet['facts'] = build_ibkr_account_facts(snapshot)
+    context['observations']['account_snapshot_sha256'] = digest(packet['facts'])
+    packet['account_contract'].pop('settled_cash')
+    cash = packet['cash_evidence']
+    cash['account_values'] = [row for row in cash['account_values'] if row['tag'] != 'SettledCash']
+    ledger = {key: deepcopy(cash[key]) for key in (
+        'synthetic', 'account_id', 'scope_ref', 'currency', 'source', 'source_version',
+        'observed_at', 'available_at', 'max_age_seconds', 'valid_from', 'valid_until')}
+    ledger.update(source='artificial-web-ledger', read_status='RESOLVED',
+        endpoint='/portfolio/{accountId}/ledger', account_snapshot_sha256=digest(packet['facts']),
+        response={'USD': dict(acctcode='ARTIFICIAL_ACCOUNT', currency='USD', cashbalance='99',
+            settledcash='95', timestamp=int(datetime.fromisoformat(ledger['observed_at']).timestamp()))})
+    cash['web_api_ledger'] = ledger
+    binding['identity']['candidate_id'] = _portfolio_id(packet)
+    proof['identity'] = deepcopy(binding['identity'])
+    return args, policy
+
+
+@pytest.mark.parametrize('mode', ['simple', 'advanced'])
+@pytest.mark.parametrize('level', ['conservative', 'balanced', 'growth'])
+def test_web_ledger_settled_cash_uses_existing_reserve_draft_and_readback(tmp_path, mode, level):
+    args, policy = web_ledger_fixture()
+    before = deepcopy(args[2])
+    args = seed_cash_policy(tmp_path, args, policy)
+    request = dict(request_fixture(mode), level=level)
+    saved = call(tmp_path, args, request=request, event_id='web-ledger', cash_policy_evidence=policy)
+    assert saved['status'] == 'SETTINGS_DRAFT_PERSISTED', saved
+    cash = saved['cash_policy_preview']
+    assert cash['spendable_cash'] == 82.  # 95 settled - 10 reserve - 3 other obligations.
+    assert cash['settled_cash_source_field'] == 'IBKR_WEB_API_PORTFOLIO_LEDGER.settledcash'
+    assert cash['cash_rule'] == args[2]['account_contract']['cash_rule']
+    assert not cash['borrowing_allowed'] and not cash['sale_proceeds_bridge_allowed']
+    read = call(tmp_path, (*args[:4], saved['next_binding'], args[-1]), 'preflight', request=request,
+        expected_artifact_sha256=saved['artifact_receipt']['artifact_sha256'],
+        consumption_cutoff_utc=args[2]['account_contract']['cutoff_utc'], cash_policy_evidence=policy)
+    assert read['artifact_readback_verified'], read
+    assert read['cash_policy_preview'] == cash
+    assert args[2] == before
+    assert 'SettledCash' not in args[1].metadata['cash_balances'][0]
+    assert_unarmed(saved); assert_unarmed(read)
+
+
+@pytest.mark.parametrize('change', ['account', 'currency', 'scope', 'snapshot', 'endpoint',
+    'missing_settled', 'null', 'negative', 'boolean', 'nan', 'cash_conflict', 'timestamp',
+    'milliseconds', 'expired', 'read_failed', 'unknown', 'real', 'obligations', 'disjoint',
+    'pending', 'explicit_conflict', 'native_conflict', 'forged_mapping'])
+def test_web_ledger_invalid_or_incomplete_evidence_never_writes(tmp_path, change):
+    args, policy = web_ledger_fixture()
+    packet = args[2]
+    ledger = packet['cash_evidence']['web_api_ledger']
+    row = ledger['response']['USD']
+    if change == 'account': row['acctcode'] = 'OTHER_ARTIFICIAL_ACCOUNT'
+    elif change == 'currency': row['currency'] = 'BASE'
+    elif change == 'scope': ledger['scope_ref'] = 'OTHER_ARTIFICIAL_SCOPE'
+    elif change == 'snapshot': ledger['account_snapshot_sha256'] = 'f' * 64
+    elif change == 'endpoint': ledger['endpoint'] = '/portfolio/summary'
+    elif change == 'missing_settled': row.pop('settledcash')
+    elif change == 'null': row['settledcash'] = None
+    elif change == 'negative': row['settledcash'] = '-1'
+    elif change == 'boolean': row['settledcash'] = True
+    elif change == 'nan': row['settledcash'] = 'NaN'
+    elif change == 'cash_conflict': row['cashbalance'] = '100'
+    elif change == 'timestamp': row['timestamp'] -= 1
+    elif change == 'milliseconds': row['timestamp'] *= 1000
+    elif change == 'expired': ledger['valid_until'] = ledger['observed_at']
+    elif change in ('read_failed', 'unknown'): ledger['read_status'] = change.upper()
+    elif change == 'real': ledger['synthetic'] = False
+    elif change == 'obligations': packet['cash_evidence']['obligations_complete'] = False
+    elif change == 'disjoint': packet['cash_evidence']['reservations_disjoint'] = False
+    elif change == 'pending': packet['cash_evidence']['pending_state'] = 'UNKNOWN'
+    elif change == 'explicit_conflict': packet['account_contract']['settled_cash'] = '99'
+    elif change == 'native_conflict':
+        args[1].metadata['cash_balances'][0]['SettledCash'] = '99'
+        packet['cash_evidence']['account_values'].append(dict(
+            account_id='ARTIFICIAL_ACCOUNT', currency='USD', tag='SettledCash', value='99'))
+    else:
+        packet['cash_evidence']['account_values'].append(dict(
+            account_id='ARTIFICIAL_ACCOUNT', currency='USD', tag='SettledCash', value='99',
+            source_field='IBKR_WEB_API_PORTFOLIO_LEDGER.settledcash'))
+    out = call(tmp_path, args, 'initialize', initialization=args[-1], cash_policy_evidence=policy)
+    assert out['gaps'], out
+    assert out['new_risk_prohibited'] and out['draft_settings'] is None
+    assert not list(tmp_path.rglob('*.json'))
+    assert_unarmed(out)
+
+
+@pytest.mark.parametrize('remove', ['ledger', 'settledcash'])
+def test_positive_cash_and_available_funds_do_not_replace_missing_settlement(tmp_path, remove):
+    args, policy = web_ledger_fixture()
+    cash = args[2]['cash_evidence']
+    cash['projected_sale_proceeds'] = '1000'
+    args[1].metadata['cash_balances'][0]['AvailableFunds'] = '400'
+    if remove == 'ledger': cash.pop('web_api_ledger')
+    else: cash['web_api_ledger']['response']['USD'].pop('settledcash')
+    out = call(tmp_path, args, 'initialize', initialization=args[-1], cash_policy_evidence=policy)
+    assert out['gaps'] and out['new_risk_prohibited'], out
+    assert not list(tmp_path.rglob('*.json'))
+    assert_unarmed(out)
+
+
+def test_web_ledger_source_is_rechecked_on_saved_draft_consumption(tmp_path):
+    args, policy = web_ledger_fixture()
+    args = seed_cash_policy(tmp_path, args, policy)
+    saved = call(tmp_path, args, event_id='web-ledger', cash_policy_evidence=policy)
+    assert saved['artifact_readback_verified'], saved
+    before = {p: p.read_bytes() for p in tmp_path.rglob('*.json')}
+    # Same amount and valid times, but a changed source version cannot consume the old draft.
+    args[2]['cash_evidence']['web_api_ledger']['source_version'] = 'another-artificial-version'
+    read = call(tmp_path, (*args[:4], saved['next_binding'], args[-1]), 'preflight',
+        expected_artifact_sha256=saved['artifact_receipt']['artifact_sha256'],
+        consumption_cutoff_utc=args[2]['account_contract']['cutoff_utc'], cash_policy_evidence=policy)
+    assert read['gaps'] and not read['artifact_readback_verified'], read
+    assert before == {p: p.read_bytes() for p in tmp_path.rglob('*.json')}
+    assert_unarmed(read)
+
+
+def test_web_ledger_child_expiry_is_checked_at_consumption_without_refresh(tmp_path):
+    args, policy = web_ledger_fixture()
+    ledger = args[2]['cash_evidence']['web_api_ledger']
+    ledger['valid_until'] = '2000-01-04T12:01:01Z'
+    args = seed_cash_policy(tmp_path, args, policy)
+    saved = call(tmp_path, args, event_id='web-ledger-expiry', cash_policy_evidence=policy)
+    assert saved['artifact_readback_verified'], saved
+    before = {p: p.read_bytes() for p in tmp_path.rglob('*.json')}
+    read = call(tmp_path, (*args[:4], saved['next_binding'], args[-1]), 'preflight',
+        expected_artifact_sha256=saved['artifact_receipt']['artifact_sha256'],
+        consumption_cutoff_utc='2000-01-04T12:01:01Z', cash_policy_evidence=policy)
+    assert read['gaps'] == ['SETTINGS_CURRENT_SOURCE_EVIDENCE_EXPIRED_OR_UNBOUND'], read
+    assert not read['artifact_readback_verified']
+    assert args[2]['cash_evidence']['web_api_ledger'] == ledger
+    assert before == {p: p.read_bytes() for p in tmp_path.rglob('*.json')}
+    assert_unarmed(read)
+
+
+def test_open_state_read_does_not_consume_current_web_ledger(tmp_path):
+    args = seed(tmp_path, fixture(opened=True))
+    before = {p: p.read_bytes() for p in tmp_path.rglob('*.json')}
+    args[2]['cash_evidence']['web_api_ledger'] = dict(read_status='READ_FAILED')
+    out = call(tmp_path, args, 'read')
+    assert out['readback_verified'] and out['breaker_state'] == 'OPEN', out
+    assert out['cash_policy_preview'] is None and out['new_risk_prohibited']
+    assert before == {p: p.read_bytes() for p in tmp_path.rglob('*.json')}
+    assert_unarmed(out)
+
+
+def test_web_ledger_mapping_is_idempotent_and_never_trusted_without_its_source(tmp_path):
+    from application.tqqq_offline_risk import _cash_policy_packet
+    args, policy = web_ledger_fixture()
+    prepared, first = _cash_policy_packet(args[0], args[1], args[2], policy)
+    repeated, second = _cash_policy_packet(args[0], args[1], prepared, policy)
+    assert prepared == repeated and first == second
+    assert len(prepared['cash_evidence']['account_values']) == 2
+    prepared['cash_evidence'].pop('web_api_ledger')
+    out = call(tmp_path, (*args[:2], prepared, *args[3:]), 'initialize',
+        initialization=args[-1], cash_policy_evidence=policy)
+    assert out['gaps'] == ['TQQQ_WEB_LEDGER_MAPPING_CONFLICT'], out
+    assert not list(tmp_path.rglob('*.json'))
+    assert_unarmed(out)
+
+
+def test_web_ledger_also_uses_original_explicit_reservation_path(tmp_path):
+    args, _ = web_ledger_fixture()
+    args[2]['account_contract']['reserved_cash'] = '10'
+    args[2]['cash_evidence']['reservations'].append(dict(id='manual-reserve', kind='RESERVE', amount='10'))
+    args = seed(tmp_path, args)
+    saved = call(tmp_path, args, event_id='manual-web-ledger')
+    assert saved['status'] == 'SETTINGS_DRAFT_PERSISTED', saved
+    assert saved['cash_policy_preview'] is None
+    read = call(tmp_path, (*args[:4], saved['next_binding'], args[-1]), 'preflight',
+        expected_artifact_sha256=saved['artifact_receipt']['artifact_sha256'],
+        consumption_cutoff_utc=args[2]['account_contract']['cutoff_utc'])
+    assert read['artifact_readback_verified'], read
+    assert_unarmed(saved); assert_unarmed(read)

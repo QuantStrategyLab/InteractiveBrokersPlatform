@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from copy import deepcopy
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from importlib.metadata import distribution
 import json
@@ -19,6 +20,7 @@ from application.account_facts import build_ibkr_account_facts
 PROFILE = "tqqq_growth_income"
 UES_REVISION = "8f2f1717cdcfb6c7736037708a4a61c6da9d74ed"
 QPK_REVISION = "3ea9f47d67914c4e39143ed4348c7bc248b759ce"
+WEB_LEDGER_SETTLED_FIELD = "IBKR_WEB_API_PORTFOLIO_LEDGER.settledcash"
 
 
 def _require(condition, reason):
@@ -75,7 +77,7 @@ def _cash_policy_packet(runtime, snapshot, packet, evidence):
         "TQQQ_CASH_POLICY_CONFIG_MISMATCH")
     identity = evidence.get("reservation_id")
     _require(isinstance(identity, str) and bool(identity.strip()), "TQQQ_CASH_POLICY_RESERVATION_ID_REQUIRED")
-    _native_cash(snapshot, packet["cash_evidence"])
+    cash_evidence = _native_cash(snapshot, packet["cash_evidence"], contract=contract, facts=packet["facts"])
     nav = _amount(packet["facts"]["net_assets"], positive=True)
     _require(Decimal(str(_number(snapshot.total_equity))) == nav,
         "TQQQ_EXECUTION_EQUITY_DENOMINATOR_MISMATCH")
@@ -83,7 +85,7 @@ def _cash_policy_packet(runtime, snapshot, packet, evidence):
     # Use the deployed helper, including its number semantics, for both the
     # generated reservation and the later minimum-reserve admission check.
     reserve = _amount(policy.reserved_cash_usd(float(nav), strategy_ratio))
-    prepared = deepcopy(packet)
+    prepared = deepcopy(dict(packet, cash_evidence=cash_evidence))
     rows = prepared["cash_evidence"]["reservations"]
     _require(isinstance(rows, list) and all(isinstance(row, Mapping) for row in rows),
         "TQQQ_CASH_POLICY_RESERVATIONS_INVALID")
@@ -113,6 +115,9 @@ def _cash_policy_packet(runtime, snapshot, packet, evidence):
         source_version=evidence["source_version"], observed_at=evidence["observed_at"],
         evidence_sha256=digest(evidence), reservation_id=identity,
         frozen_cutoff_utc=contract["cutoff_utc"], readback_scope="FROZEN_INPUT_NOT_SERVING_CONFIG",
+        cash_rule=contract["cash_rule"], borrowing_allowed=False, sale_proceeds_bridge_allowed=False,
+        settled_cash_source_field=(WEB_LEDGER_SETTLED_FIELD
+            if "web_api_ledger" in cash_evidence else "TWS.SettledCash"),
         source_attestation_only=True, execution_authorized=False, settings_applied=False)
     return prepared, preview
 
@@ -125,8 +130,45 @@ def _research_dependencies():
             "TQQQ_ISOLATED_RESEARCH_REVISION_REQUIRED")
 
 
-def _native_cash(snapshot, evidence):
-    """CashBalance projection does not attest the separately consumed SettledCash."""
+def _web_ledger_settled_cash(evidence, contract, facts):
+    """Validate one explicitly artificial Web API response, without broker I/O."""
+    from us_equity_strategies.research.auto_portfolio_account import digest, utc
+    from us_equity_strategies.research.funded_portfolio_preview import _amount, _bound
+
+    try:
+        _bound(evidence, contract)
+        _require(evidence.get("read_status") == "RESOLVED", "TQQQ_WEB_LEDGER_SOURCE_UNRESOLVED")
+        _require(evidence.get("endpoint") == "/portfolio/{accountId}/ledger"
+            and evidence.get("account_snapshot_sha256") == digest(facts), "TQQQ_WEB_LEDGER_SOURCE_MISMATCH")
+        row = evidence["response"][contract["currency"]]
+        _require(isinstance(row, Mapping) and row.get("acctcode") == contract["account_id"]
+            and row.get("currency") == contract["currency"], "TQQQ_WEB_LEDGER_SCOPE_MISMATCH")
+        timestamp = row.get("timestamp")
+        _require(type(timestamp) is int
+            and datetime.fromtimestamp(timestamp, timezone.utc) == utc(evidence["observed_at"]),
+            "TQQQ_WEB_LEDGER_TIMESTAMP_MISMATCH")
+        cash = facts["cash"]
+        _require(len(cash) == 1 and cash[0]["currency"] == contract["currency"]
+            and _amount(row["cashbalance"]) == _amount(cash[0]["cash_balance"]),
+            "TQQQ_WEB_LEDGER_BALANCE_CONFLICT")
+        return _amount(row["settledcash"])
+    except (ValueError, TypeError, KeyError, AttributeError, OverflowError, OSError) as exc:
+        reason = str(exc)
+        raise ValueError(reason if reason.startswith("TQQQ_WEB_LEDGER_")
+            else "TQQQ_WEB_LEDGER_EVIDENCE_INVALID") from None
+
+
+def _native_cash(snapshot, evidence, *, contract=None, facts=None):
+    """Keep native balances; map only separately validated Web settled cash.
+
+    SettledCash is the frozen UES adapter's internal key. A mapped row retains
+    its Web source field and full evidence, never claiming a TWS callback.
+    """
+    from us_equity_strategies.research.funded_portfolio_preview import _amount
+
+    web_settled = None
+    if "web_api_ledger" in evidence:
+        web_settled = _web_ledger_settled_cash(evidence["web_api_ledger"], contract, facts)
     native = snapshot.metadata.get("cash_balances")
     _require(isinstance(native, (tuple, list)), "TQQQ_NATIVE_CASH_MISSING")
     sources = [native]
@@ -136,7 +178,19 @@ def _native_cash(snapshot, evidence):
         sources.append(captured)
     _require(all(isinstance(item, Mapping) for source in sources for item in source),
         "TQQQ_NATIVE_CASH_MISSING")
+    if web_settled is not None:
+        for source in sources:
+            settled = [item for item in source if item.get("account_id") == contract["account_id"]
+                and item.get("currency") == contract["currency"] and "SettledCash" in item]
+            _require(len(settled) <= 1 and all(_amount(item["SettledCash"]) == web_settled for item in settled),
+                "TQQQ_WEB_LEDGER_NATIVE_SETTLED_CONFLICT")
     for row in evidence["account_values"]:
+        if "source_field" in row:
+            _require(web_settled is not None and row["source_field"] == WEB_LEDGER_SETTLED_FIELD
+                and row.get("account_id") == contract["account_id"] and row.get("currency") == contract["currency"]
+                and row.get("tag") == "SettledCash" and _amount(row.get("value")) == web_settled,
+                "TQQQ_WEB_LEDGER_MAPPING_CONFLICT")
+            continue
         for source in sources:
             matches = [item for item in source if item.get("account_id") == row["account_id"]
                 and item.get("currency") == row["currency"] and row["tag"] in item]
@@ -150,6 +204,16 @@ def _native_cash(snapshot, evidence):
                 raise ValueError("TQQQ_NATIVE_CASH_INVALID") from None
             _require(supplied.is_finite() and actual.is_finite() and supplied == actual,
                 "TQQQ_NATIVE_CASH_CONFLICT")
+    if web_settled is None:
+        return evidence
+    prepared = deepcopy(evidence)
+    settled_rows = [row for row in prepared["account_values"] if row.get("tag") == "SettledCash"]
+    _require(len(settled_rows) <= 1 and all(_amount(row.get("value")) == web_settled for row in settled_rows),
+        "TQQQ_WEB_LEDGER_SETTLED_CONFLICT")
+    if not settled_rows:
+        prepared["account_values"].append(dict(account_id=contract["account_id"], currency=contract["currency"],
+            tag="SettledCash", value=str(web_settled), source_field=WEB_LEDGER_SETTLED_FIELD))
+    return prepared
 
 
 def build_tqqq_offline_account_facts(snapshot, *, account_contract, inventory_evidence=None):
@@ -214,7 +278,7 @@ def _admit(runtime, snapshot, packet, context, inventory_evidence):
         inventory_evidence=inventory_evidence) == packet["facts"], "TQQQ_NATIVE_ACCOUNT_FACTS_MISMATCH")
     options = snapshot.metadata.get("option_positions")
     _require(isinstance(options, (tuple, list)) and not options, "TQQQ_COMPLETE_EMPTY_OPTION_INVENTORY_REQUIRED")
-    _native_cash(snapshot, packet["cash_evidence"])
+    _native_cash(snapshot, packet["cash_evidence"], contract=contract, facts=packet["facts"])
     capital, status = runtime._build_capital_base_capabilities(snapshot)
     _require(status.startswith("verified:") and capital.get("capital_base") is not None,
         "TQQQ_CAPITAL_EVIDENCE_UNBOUND")
@@ -401,6 +465,17 @@ def run_tqqq_offline_risk(request, *, runtime, portfolio_snapshot, packet, event
                 journal=journal, binding=binding, account_contract=contract)))
             out.update(new_risk_prohibited=True, draft_settings=None)
             return out
+
+        if "web_api_ledger" in packet["cash_evidence"]:
+            from us_equity_strategies.research.funded_portfolio_preview import adapt_cash_evidence
+
+            cash = _native_cash(portfolio_snapshot, packet["cash_evidence"],
+                contract=packet["account_contract"], facts=packet["facts"])
+            derived = adapt_cash_evidence(packet["facts"], packet["account_contract"], cash)
+            # Fill settlement through the original adapter, preserving explicit
+            # conflicts. Reserves still belong to CashPolicy or the manual path.
+            packet = dict(packet, cash_evidence=cash, account_contract=dict(packet["account_contract"],
+                settled_cash=derived["account_contract"].get("settled_cash")))
 
         # Reusing a prepared packet must not bypass policy revalidation merely
         # by omitting the optional convenience argument on a later read.
