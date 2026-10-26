@@ -7,6 +7,7 @@ import hashlib
 import os
 import re
 import sys
+import time
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime, timezone
 from typing import Any
@@ -19,7 +20,9 @@ from application.ibkr_flex_source import (
     FlexReportPending, FlexSourceError, collect_pending_activity_flex_ledger,
     import_activity_flex_ledger, import_activity_flex_ledger_from_request,
     request_activity_flex_report,
+    collect_activity_flex_xml,
 )
+from application.ibkr_flex_ledger import build_flex_ledger
 from application.ibkr_period_return import (
     _ACCOUNT as _PERIOD_ACCOUNT,
     _BINDING as _PERIOD_BINDING,
@@ -29,7 +32,9 @@ from application.ibkr_period_return import (
 )
 from application.ibkr_flex_executions import build_ibkr_executions
 from application.ibkr_external_flow import build_ibkr_external_flow
-from scripts.publish_account_facts_from_report import _NoRedirect, _additional_target_configs, _selector
+from scripts.publish_account_facts_from_report import (
+    _NoRedirect, _additional_target_configs, _bound_source_id, _selector,
+)
 
 
 from scripts.console_config import console_base_url
@@ -93,7 +98,48 @@ def _config(env: Mapping[str, str]) -> dict[str, Any]:
             raise PeriodReturnError("historical_date_invalid") from None
         config["report_date"] = historical_date
     config["allowed_report_account_ids"] = _configured_report_accounts(env, config["expected_account_ids"])
+    config["additional_returns"] = _additional_returns(env, config)
     return config
+
+
+def _additional_returns(env, primary):
+    """Opt in only named protected slots; never infer a receiver key from XML."""
+    raw = env.get("IBKR_PERIOD_RETURN_ADDITIONAL_ACCOUNT_KEYS_JSON")
+    if not raw:
+        return {}
+    try:
+        keys = json.loads(raw, object_pairs_hook=_unique_keys)
+        configs = _additional_target_configs(env.get("IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON"))
+        if not isinstance(keys, dict) or not keys or not set(keys) <= set(configs):
+            raise ValueError
+        if tuple(primary["expected_account_ids"]) != _selector(json.loads(env.get("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON"))):
+            raise ValueError
+        seen = {name: {primary[name]} for name in ("account_key", "target_id", "source_binding_id")}
+        result = {}
+        for slot, key in sorted(keys.items()):
+            if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", key, re.ASCII):
+                raise ValueError
+            source = configs[slot]
+            selected = {"account_key": key, "target_id": source["target_id"],
+                "account_scope": source["account_scope"], "expected_account_ids": source["account_selector"],
+                "source_binding_id": _bound_source_id(**{name: source[name] for name in (
+                    "project_id", "service_name", "runtime_revision", "account_scope", "account_selector", "deployment_selector")}),
+                "sync_token": primary["sync_token"]}
+            validate_period_return_scope(**{name: selected[name] for name in (
+                "target_id", "source_binding_id", "account_scope", "expected_account_ids")})
+            if (not primary["allowed_report_account_ids"]
+                    or set(selected["expected_account_ids"]) & set(primary["expected_account_ids"])):
+                raise ValueError
+            for name, values in seen.items():
+                if selected[name] in values:
+                    raise ValueError
+                values.add(selected[name])
+            if primary.get("report_date"):
+                selected["report_date"] = primary["report_date"]
+            result[slot] = selected
+        return result
+    except Exception:
+        raise PeriodReturnError("additional_return_configuration_invalid") from None
 
 
 def _configured_report_accounts(env, expected):
@@ -127,6 +173,11 @@ def _preflight_result(env: Mapping[str, str], *, status: str, fields: Mapping[st
         }
         if env.get("IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON"):
             result["approved_report_account_count"] = len(json.loads(env["IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON"])) + 1
+        if env.get("IBKR_PERIOD_RETURN_ADDITIONAL_ACCOUNT_KEYS_JSON"):
+            result["additional_return_fingerprints"] = {slot: {
+                f"{name}_sha256": hashlib.sha256(target[name].encode()).hexdigest()
+                for name in ("account_key", "target_id", "source_binding_id")}
+                for slot, target in _config(env)["additional_returns"].items()}
     return result
 
 
@@ -373,6 +424,41 @@ def _collect_configured_ledger(config, session):
         session=session, allowed_report_account_ids=allowed)
 
 
+def _collect_return_ledgers(config, session):
+    """One generation for all selected accounts, with the existing 1019 limit."""
+    day = config.get("report_date")
+    request = request_activity_flex_report(token=config["flex_token"], query_id=config["query_id"],
+        session=session, **({"from_date": day, "to_date": day} if day else {}))
+    for attempt in range(6):
+        try:
+            report = collect_activity_flex_xml(request, session=session)
+            break
+        except FlexReportPending as pending:
+            if pending.request != request:
+                raise FlexSourceError("IBKR Flex pending handle changed") from None
+            if attempt == 5:
+                raise
+            time.sleep(3)
+    # Validate every selected ledger before any publication. Private XML stays in memory.
+    return {slot: build_flex_ledger(report, expected_account_ids=target["expected_account_ids"],
+        allowed_report_account_ids=config["allowed_report_account_ids"])
+        for slot, target in {"primary": config, **config["additional_returns"]}.items()}
+
+
+def _publish_additional_return(ledger, config, observed_at):
+    try:
+        payload = build_ibkr_period_return(ledger, observed_at=observed_at,
+            **{key: config[key] for key in ("target_id", "source_binding_id", "account_scope", "expected_account_ids")})
+    except PeriodReturnError as exc:
+        return "native_twr_unavailable" if str(exc) == "native_twr_unavailable" else "projection_rejected"
+    except Exception:
+        return "projection_rejected"
+    if config.get("report_date") and payload["period"] != {"from": config["report_date"], "to": config["report_date"]}:
+        return "historical_period_mismatch"
+    return publish_period_return(payload, sync_token=config["sync_token"],
+        expected_account_key=config["account_key"], **({"historical": True} if config.get("report_date") else {}))
+
+
 def main(argv: Sequence[str] = ()) -> int:
     if tuple(argv) == ("--cashflow-only",):
         return _cashflow_only()
@@ -381,7 +467,8 @@ def main(argv: Sequence[str] = ()) -> int:
         result = _configuration_preflight(os.environ)
         print(json.dumps(result, sort_keys=True))
         return 0 if result["status"] == "configuration_shape_valid" else 2
-    if argv:
+    additional_only = tuple(argv) == ("--additional-returns-only",)
+    if argv and not additional_only:
         print(json.dumps(_preflight_result(os.environ, status="invalid", fields={}), sort_keys=True))
         return 2
     if os.environ.get("IBKR_PERIOD_RETURN_PUBLISH_ENABLED") != "true":
@@ -389,13 +476,19 @@ def main(argv: Sequence[str] = ()) -> int:
     else:
         try:
             config = _config(os.environ)
+            if additional_only and not config["additional_returns"]:
+                raise PeriodReturnError("additional_return_configuration_invalid")
         except Exception:
             status = "configuration_incomplete"
         else:
             try:
                 with requests.Session() as session:
                     session.trust_env = False
-                    ledger = _collect_configured_ledger(config, session)
+                    if config["additional_returns"]:
+                        ledgers = _collect_return_ledgers(config, session)
+                        ledger = ledgers["primary"]
+                    else:
+                        ledger = _collect_configured_ledger(config, session)
             except FlexReportPending:
                 # The CLI has no approved cross-process private handle store.
                 # Stop; rerunning it would generate a different request.
@@ -412,6 +505,15 @@ def main(argv: Sequence[str] = ()) -> int:
                 } else "other"}
             else:
                 observed_at = datetime.now(timezone.utc)
+                if additional_only:
+                    results = {}
+                    for slot, target in config["additional_returns"].items():
+                        results[slot] = _publish_additional_return(ledgers[slot], target, observed_at)
+                        if results[slot] not in {"published", "unchanged"}:
+                            break
+                    print(json.dumps({"additional_returns": results}, sort_keys=True))
+                    return 0 if len(results) == len(config["additional_returns"]) and all(
+                        value in {"published", "unchanged"} for value in results.values()) else 1
                 diagnostics["cashflow_source_diagnostic"] = ledger["cashflow_source_diagnostic"]
                 diagnostics["nav_source_diagnostic"] = ledger["nav_source_diagnostic"]
                 diagnostics["nav_change_status"] = "unavailable"
@@ -431,7 +533,15 @@ def main(argv: Sequence[str] = ()) -> int:
                         status = publish_period_return(payload, sync_token=config["sync_token"], expected_account_key=config["account_key"], **kwargs)
                 diagnostics.update(_execution_result(ledger, config, observed_at))
                 diagnostics.update(_external_flow_result(ledger, config))
+                if config["additional_returns"]:
+                    results = diagnostics["additional_returns"] = {}
+                    for slot, target in config["additional_returns"].items():
+                        results[slot] = _publish_additional_return(ledgers[slot], target, observed_at)
+                        if results[slot] not in {"published", "unchanged"}:
+                            break
     print(json.dumps({"status": status, **diagnostics}, sort_keys=True))
+    if any(value not in {"published", "unchanged"} for value in diagnostics.get("additional_returns", {}).values()):
+        return 1
     if diagnostics.get("external_flow_status") in {"sync_unknown", "sync_rejected", "projection_rejected"}:
         return 1
     if diagnostics.get("executions_status") in {"sync_unknown", "sync_rejected", "projection_rejected", "historical_period_mismatch"}:

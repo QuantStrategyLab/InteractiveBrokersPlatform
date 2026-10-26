@@ -207,7 +207,26 @@ IBKR [GetStatement 合同](https://www.interactivebrokers.com/docs/web-api/api-r
 
 ### 手动云端入口与尚未满足条件
 
-`.github/workflows/publish-ibkr-flex-period-return.yml` 提供单账户手动 GitHub Actions 入口，
+### 明确配置的附加账户收益
+
+可选 Secret `IBKR_PERIOD_RETURN_ADDITIONAL_ACCOUNT_KEYS_JSON` 是现有 additional 槽名到
+接收端既有账户 key 的 JSON 对象。仅列出的槽参与发布；未配置时保持原单账户行为。
+key 由受保护接收端配置提供，不能从显示名、报表顺序或 XML 猜测。
+target、scope、selector 与来源绑定复用原 `IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON`，
+来源 ID 按既有 `_bound_source_id` 计算。无效、重复或与 primary 冲突的配置在网络请求前拒绝。
+这些配置含私有身份，不能放入公开样例、Git、日志或普通产物。
+
+启用后，一次生成并领取的 XML 在内存中按各槽分别校验和投影；原 1019 有限等待仍只领取
+同一句柄。原入口保留 primary 的收益、成交和流水逻辑，附加槽只发布原生 TWR 及合格的
+`nav_change`，不额外发布附加账户成交、流水或余额快照。未列出的槽不会因为出现在报表中
+就获得发布资格。按账户核对 ACK，失败或结果不明时停止后续附加槽，不自动重试。
+
+一次历史补录可在同一工作流选择 `additional_returns_only=true`，对应 CLI
+`--additional-returns-only`；此模式不写 primary、成交或流水，与 `external_flow_only`
+互斥，仍使用同一个已配置查询及可选 `report_date`。它不补出 account-facts 历史净值快照，
+也不改交易、查询模板、采集频率或现有授权。上线采用与真实读回需另有执行证据。
+
+`.github/workflows/publish-ibkr-flex-period-return.yml` 提供显式配置账户的手动 GitHub Actions 入口，
 沿用现有 hosted runner、固定 uv action 与 frozen runtime lock。它只允许本仓 main 首次
 attempt，必须同时由维护者设置 `IBKR_PERIOD_RETURN_PUBLISH_ENABLED=true` 变量并勾选
 `publish_once`；两者默认关闭。目标及凭据使用上表同名 GitHub Secrets，且仅注入发布步骤。

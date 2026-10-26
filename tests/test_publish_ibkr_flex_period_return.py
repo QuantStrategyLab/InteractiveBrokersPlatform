@@ -507,6 +507,7 @@ def test_preflight_workflow_is_manual_main_configuration_only_with_exact_report_
     assert workflow.count("python -m scripts.publish_ibkr_flex_period_return --preflight") == 1
     assert set(re.findall(r"secrets\.([A-Z0-9_]+)", workflow)) == set(_PREFLIGHT_FIELDS) | {
         "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", "IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON",
+        "IBKR_PERIOD_RETURN_ADDITIONAL_ACCOUNT_KEYS_JSON",
     }
     assert set(re.findall(r"vars\.([A-Z0-9_]+)", workflow)) == {"QSL_CONSOLE_BASE_URL"}
     assert "GITHUB_SHA: ${{ github.sha }}" in workflow

@@ -24,7 +24,7 @@ def test_cloud_caller_uses_private_target_inputs_and_existing_locked_ci():
     for key in ("IBKR_PERIOD_RETURN_TARGET_ID", "IBKR_PERIOD_RETURN_SOURCE_BINDING_ID",
                 "IBKR_PERIOD_RETURN_ACCOUNT_SCOPE", "IBKR_PERIOD_RETURN_ACCOUNT_KEY",
                 "IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", "IBKR_FLEX_TOKEN", "IBKR_FLEX_QUERY_ID",
-                "IBKR_ACCOUNT_FACTS_SYNC_TOKEN"):
+                "IBKR_ACCOUNT_FACTS_SYNC_TOKEN", "IBKR_PERIOD_RETURN_ADDITIONAL_ACCOUNT_KEYS_JSON"):
         assert f"{key}: ${{{{ secrets.{key} }}}}" in workflow
         assert f"vars.{key}" not in workflow
     assert "REFERENCE" not in workflow and "SYNC_URL" not in workflow
