@@ -213,3 +213,47 @@ def test_raw_cash_observations_cannot_silently_belong_to_another_account():
         cash_balances=({"account_id": "DU123", "currency": "USD", "CashBalance": 100},),
         cash_observation_rows=({"account_id": "DU999", "currency": "USD", "SettledCash": "99"},))
     assert build_ibkr_account_facts(snapshot) == {}
+
+
+def test_schedule_survives_existing_local_and_cloud_report_normalization(tmp_path, monkeypatch):
+    from quant_platform_kit.common.runtime_reports import (
+        build_runtime_report_base, finalize_runtime_report, persist_runtime_report,
+    )
+    from quant_platform_kit import cloud
+    from application.ibkr_cash_observations import inspect_cash_schedule_observations
+
+    snapshot = _snapshot(observed_at=datetime(2000, 1, 3, 12, tzinfo=timezone.utc),
+        cash_balances=({"account_id": "DU123", "currency": "USD", "CashBalance": 100},),
+        cash_schedule_rows=(
+            {"account_id": "DU123", "currency": "USD", "source_tag": "SettledCashByDate", "raw_value": "20991231:99"},
+            {"account_id": "DU123", "currency": "BASE", "source_tag": "SettledCashByDate", "raw_value": "0:98"},
+            {"account_id": "DU123", "currency": "USD", "source_tag": "SettledCashByDate-C", "raw_value": None},
+        ))
+    facts = build_ibkr_account_facts(snapshot)
+    report = build_runtime_report_base(platform="interactive_brokers", deploy_target="offline",
+        service_name="example-runtime", strategy_profile="example", run_id="schedule-fields", run_source="test")
+    finalize_runtime_report(report, status="ok", summary={"account_facts": facts})
+    saved = {}
+    monkeypatch.setattr(cloud, "get_object_store", lambda **kwargs: SimpleNamespace(
+        write_text=lambda uri, text, **kw: saved.update(uri=uri, text=text)))
+    persist_runtime_report(report, output_path=tmp_path / "report.json",
+        cloud_prefix_uri="gs://synthetic-bucket/synthetic-reports")
+    for stored in (json.loads((tmp_path / "report.json").read_text()), json.loads(saved["text"])):
+        actual = stored["summary"]["account_facts"]
+        assert actual["broker_cash_schedule_observations"] == facts["broker_cash_schedule_observations"]
+        assert actual["broker_cash_observations"] == facts["broker_cash_observations"]
+        out = inspect_cash_schedule_observations(actual["broker_cash_schedule_observations"], observed_at=actual["observed_at"])
+        assert out["fields"]["SettledCashByDate"] == "OBSERVED_RAW"
+        assert out["fields"]["SettledCashByDate-C"] == "RAW_NOT_PRESERVED"
+        assert not out["spendable_cash_verified"]
+
+
+def test_optional_schedule_is_not_reconstructed_from_legacy_cache_or_misbound_rows():
+    snapshot = _snapshot(observed_at=datetime(2000, 1, 3, 12, tzinfo=timezone.utc),
+        cash_balances=({"account_id": "DU123", "currency": "USD", "CashBalance": 100,
+            "SettledCashByDate": 100},))
+    facts = build_ibkr_account_facts(snapshot)
+    assert "broker_cash_schedule_observations" not in facts
+    snapshot.metadata["cash_schedule_rows"] = ({"account_id": "DU999", "currency": "USD",
+        "source_tag": "SettledCashByDate", "raw_value": "20991231:100"},)
+    assert build_ibkr_account_facts(snapshot) == facts

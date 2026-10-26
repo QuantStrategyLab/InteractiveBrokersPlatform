@@ -11,6 +11,88 @@ import re
 SCHEMA = "ibkr.cash_observations.v1"
 TAGS = frozenset({"$LEDGER-CashBalance", "$LEDGER-TotalCashBalance", "CashBalance",
     "TotalCashBalance", "SettledCash", "AvailableFunds", "FullAvailableFunds"})
+SCHEDULE_SCHEMA = "ibkr.cash_schedule_observations.v1"
+SCHEDULE_TAGS = frozenset({"SettledCashByDate", "SettledCashByDate-C", "SettledCashByDate-S"})
+
+
+def _schedule_text(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return value if len(value.encode("utf-8")) <= 4096 else None
+    except UnicodeError:
+        return None
+
+
+def capture_cash_schedule_rows(account_values, *, account_ids):
+    """Preserve bounded native strings; never parse dates or select cash.
+
+    BASE remains a separate source currency. Invalid types and oversized
+    strings retain a null marker, never a truncated or fabricated value.
+    """
+    rows = []
+    for item in account_values:
+        account = str(getattr(item, "account", "") or "").strip()
+        currency = str(getattr(item, "currency", "") or "").strip().upper()
+        tag = str(getattr(item, "tag", "") or "").strip()
+        if (account not in account_ids or tag not in SCHEDULE_TAGS
+                or not (currency == "BASE" or re.fullmatch(r"[A-Z]{3}", currency))):
+            continue
+        raw = _schedule_text(getattr(item, "value", None))
+        rows.append(dict(account_id=account, currency=currency, source_tag=tag, raw_value=raw))
+    return tuple(rows)
+
+
+def build_cash_schedule_observations(rows, *, account_id, observed_at):
+    """Optional evidence only: malformed metadata does not invalidate cash."""
+    if not isinstance(rows, (tuple, list)):
+        return None
+    values = []
+    for row in rows:
+        if (not isinstance(row, Mapping)
+                or set(row) != {"account_id", "currency", "source_tag", "raw_value"}
+                or row["account_id"] != account_id
+                or not _schedule_row_valid({key: row[key] for key in ("currency", "source_tag", "raw_value")})):
+            return None
+        values.append({key: row[key] for key in ("currency", "source_tag", "raw_value") if row[key] is not None})
+    result = dict(schema_version=SCHEDULE_SCHEMA, observed_at=observed_at)
+    if values:
+        result["values"] = values
+    return result
+
+
+def _schedule_row_valid(row):
+    return (isinstance(row, Mapping) and {"currency", "source_tag"} <= set(row)
+        and not set(row) - {"currency", "source_tag", "raw_value"}
+        and isinstance(row["currency"], str)
+        and (row["currency"] == "BASE" or re.fullmatch(r"[A-Z]{3}", row["currency"]))
+        and isinstance(row["source_tag"], str) and row["source_tag"] in SCHEDULE_TAGS
+        and (row.get("raw_value") is None or (isinstance(row["raw_value"], str)
+            and _schedule_text(row["raw_value"]) is not None)))
+
+
+def inspect_cash_schedule_observations(value, *, observed_at, currency="USD"):
+    """Fixed states only; raw dates, amounts and arbitrary strings stay private."""
+    result = dict(status="NOT_REPORTED" if value is None else "INVALID",
+        fields=dict.fromkeys(sorted(SCHEDULE_TAGS), "MISSING"),
+        date_key_semantics_verified=False, settled_cash_equivalence_verified=False,
+        current_settlement_selected=False, spendable_cash_verified=False)
+    if (not isinstance(value, Mapping)
+            or not {"schema_version", "observed_at"} <= set(value)
+            or set(value) - {"schema_version", "observed_at", "values"}
+            or value["schema_version"] != SCHEDULE_SCHEMA
+            or not isinstance(observed_at, str) or not observed_at
+            or value["observed_at"] != observed_at
+            or not isinstance(value.get("values", []), list)
+            or any(not _schedule_row_valid(row) for row in value.get("values", []))):
+        return result
+    fields = {}
+    for tag in sorted(SCHEDULE_TAGS):
+        rows = [row for row in value.get("values", []) if row["currency"] == currency and row["source_tag"] == tag]
+        fields[tag] = ("MISSING" if not rows else "AMBIGUOUS_ROWS" if len(rows) > 1
+            else "RAW_NOT_PRESERVED" if rows[0].get("raw_value") is None else "OBSERVED_RAW")
+    result.update(status="RAW_FIELDS_ONLY", fields=fields)
+    return result
 
 
 def _decimal(value):

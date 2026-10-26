@@ -148,6 +148,33 @@ def test_duplicate_native_settled_cash_is_ambiguous_even_when_the_values_match()
     assert out["spendable_cash_verified"] is False
 
 
+@pytest.mark.parametrize("reconciled", [False, True])
+def test_native_schedule_capture_reuses_both_snapshot_paths_without_changing_cash(reconciled):
+    from application.account_facts import build_ibkr_account_facts
+    from application.ibkr_cash_observations import inspect_cash_observations
+
+    values = _usd_account_values("DU123", 100, 100) + [
+        SimpleNamespace(account="DU123", currency="USD", tag="SettledCashByDate", value="20991231:99"),
+        SimpleNamespace(account="DU123", currency="BASE", tag="SettledCashByDate", value="20991231:98"),
+        SimpleNamespace(account="DU999", currency="USD", tag="SettledCashByDate", value="20991231:999"),
+    ]
+    ib = SnapshotIB([], [], values)
+    snapshot = (ibkr_portfolio.fetch_reconciled_paper_portfolio_snapshot(ib, account_ids=("DU123",))
+        if reconciled else fetch_portfolio_snapshot(ib, account_ids=("DU123",), wait_seconds=0))
+    facts = build_ibkr_account_facts(snapshot)
+    assert len(snapshot.metadata["cash_schedule_rows"]) == 2
+    assert facts["broker_cash_schedule_observations"]["values"] == [
+        {"currency": "USD", "source_tag": "SettledCashByDate", "raw_value": "20991231:99"},
+        {"currency": "BASE", "source_tag": "SettledCashByDate", "raw_value": "20991231:98"},
+    ]
+    assert snapshot.buying_power == 100
+    assert snapshot.metadata["market_currency_cash"] == 100
+    assert snapshot.cash_balance == (100 if reconciled else None)
+    assert facts["cash"][0]["cash_balance"] == "100.0"
+    assert inspect_cash_observations(facts["broker_cash_observations"],
+        observed_at=facts["observed_at"])["fields"]["SettledCash"] == "MISSING"
+
+
 class FakeIB:
     def __init__(self):
         self.req_positions_called = 0
