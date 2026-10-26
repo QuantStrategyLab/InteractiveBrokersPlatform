@@ -42,7 +42,27 @@ def test_revision_mismatch_is_not_rebound_for_history():
     result = archive.inspect_report(report, uri=URI, expected=EXPECTED, day=DAY)
     assert result["status"] == "skipped"
     assert result["mismatched_fields"] == ["runtime_revision"]
+    assert result["historical_candidate"]["receiver_admission_verified"] is False
+    assert len(result["historical_candidate"]["source_binding_id_sha256"]) == 64
     assert "older-revision-canary" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("mutation", ["account", "scope", "receipt", "facts", "date"])
+def test_alternate_revision_preview_preserves_all_other_guards(mutation):
+    report = _report()
+    report["diagnostics"]["runtime_revision"] = "older-revision-canary"
+    if mutation == "account":
+        report["summary"]["account_facts"]["account_ids"] = ["U00000002"]
+    elif mutation == "scope":
+        report["account_scope"] = "different-scope"
+    elif mutation == "receipt":
+        report["runtime_release_receipt"]["runtime_revision"] = "contradictory-receipt"
+    elif mutation == "facts":
+        del report["summary"]["account_facts"]
+    day = DAY + timedelta(days=1) if mutation == "date" else DAY
+    result = archive.inspect_report(report, uri=URI, expected=EXPECTED, day=day)
+    assert result["status"] == "skipped"
+    assert "historical_candidate" not in result
 
 
 def test_original_observation_date_cannot_be_relabeled():

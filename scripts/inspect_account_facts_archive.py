@@ -55,6 +55,15 @@ def report_uris(*, day: date, expected: dict, now: datetime, metadata_only: bool
     return sorted(uris, reverse=True)
 
 
+def projection_metadata(projected: dict) -> dict:
+    payload = publisher.prepare_sync_payload(projected)
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return {"observation_date": projected["observation_date"],
+            "source_binding_id_sha256": hashlib.sha256(projected["source_binding"]["id"].encode()).hexdigest(),
+            "projection_sha256": hashlib.sha256(encoded).hexdigest(),
+            "net_assets_available": projected["broker_reported_balances"][0]["net_assets"] is not None}
+
+
 def inspect_report(report, *, uri: str, expected: dict, day: date) -> dict:
     projected = publisher.project_ibkr_account_facts_history(
         report, source_report_uri=uri, **expected,
@@ -62,17 +71,24 @@ def inspect_report(report, *, uri: str, expected: dict, day: date) -> dict:
     safe = {"report_name": uri.rsplit("/", 1)[-1]}
     if projected.get("status") == "skipped":
         safe.update(projected)
+        if (projected.get("reason") == "runtime_target_mismatch"
+                and projected.get("mismatched_fields") == ["runtime_revision"]):
+            # Preview only: establish whether the original report has otherwise
+            # valid same-account facts under its declared revision. Preserve the
+            # configured-source rejection; a hash does not admit this source.
+            candidate = publisher.project_ibkr_account_facts_history(
+                report, source_report_uri=uri,
+                **{**expected, "expected_runtime_revision": report["diagnostics"]["runtime_revision"]},
+            )
+            if candidate.get("status") != "skipped" and candidate["observation_date"] == day.isoformat():
+                safe["historical_candidate"] = {**projection_metadata(candidate),
+                                                "receiver_admission_verified": False}
         return safe
     if projected["observation_date"] != day.isoformat():
         return {**safe, "status": "skipped", "reason": "archive_observation_date_mismatch"}
     # The original pure projector enforces the full report/runtime/account
     # identity and timestamp interval. No expected revision or clock is replaced.
-    payload = publisher.prepare_sync_payload(projected)
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    return {**safe, "status": "verified", "observation_date": projected["observation_date"],
-            "source_binding_id_sha256": hashlib.sha256(projected["source_binding"]["id"].encode()).hexdigest(),
-            "projection_sha256": hashlib.sha256(encoded).hexdigest(),
-            "net_assets_available": projected["broker_reported_balances"][0]["net_assets"] is not None}
+    return {**safe, "status": "verified", **projection_metadata(projected)}
 
 
 def main() -> int:

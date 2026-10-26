@@ -54,6 +54,13 @@ The optional `metadata_only` mode lists up to 2,048 report filenames in the
 selected month and reports counts by filename date, without reading financial
 bodies. Filename dates establish archive availability only, not observation
 dates or financial validity. It does not silently truncate an oversized listing.
+When only the configured runtime revision differs, the reader may emit a
+`historical_candidate` hash after validating all remaining original report,
+account, receipt, snapshot and date predicates against the declared revision.
+The original `skipped` result remains unchanged and receiver admission is
+explicitly unverified. Compare the hash with the protected receiver's admitted
+historical sources separately; this preview never authorizes a source rotation
+or publishes the report.
 
 # Zero-traffic maintenance cash observation
 
