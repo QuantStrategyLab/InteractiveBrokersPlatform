@@ -180,3 +180,25 @@ def test_preflight_reports_only_selected_identity_hashes_without_io(monkeypatch,
         b"synthetic-key-2").hexdigest()
     assert "synthetic-key" not in output and "DU000000" not in output
     assert session.calls == [] and published == []
+
+
+@pytest.mark.parametrize("failed_stage", ["return_ack", "return_timeout", "execution", "flow"])
+def test_default_primary_failure_prevents_all_additional_posts(monkeypatch, capsys, failed_stage):
+    _session, published = setup(monkeypatch)
+    if failed_stage.startswith("return_"):
+        opener = Opener(patch={"account_key": "wrong-key"}) if failed_stage == "return_ack" else Opener(
+            error=TimeoutError("private-transport-details"))
+        monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
+        monkeypatch.setattr(cli, "publish_period_return", REAL_PUBLISH)
+    else:
+        name = "_execution_result" if failed_stage == "execution" else "_external_flow_result"
+        key = "executions_status" if failed_stage == "execution" else "external_flow_status"
+        monkeypatch.setattr(cli, name, lambda *_args: {key: "sync_unknown"})
+    assert cli.main() == 1
+    output = capsys.readouterr().out
+    assert json.loads(output)["additional_returns_status"] == "skipped_primary_failure"
+    if failed_stage.startswith("return_"):
+        assert len(opener.calls) == 1
+    else:
+        assert len(published) == 1 and published[0][1]["expected_account_key"] == "synthetic-account-key"
+    assert "private-transport-details" not in output

@@ -533,7 +533,12 @@ def main(argv: Sequence[str] = ()) -> int:
                         status = publish_period_return(payload, sync_token=config["sync_token"], expected_account_key=config["account_key"], **kwargs)
                 diagnostics.update(_execution_result(ledger, config, observed_at))
                 diagnostics.update(_external_flow_result(ledger, config))
-                if config["additional_returns"]:
+                failed_primary = status not in {"published", "unchanged"} or any(
+                    diagnostics.get(name) in {"sync_unknown", "sync_rejected", "projection_rejected", "historical_period_mismatch"}
+                    for name in ("executions_status", "external_flow_status"))
+                if config["additional_returns"] and failed_primary:
+                    diagnostics["additional_returns_status"] = "skipped_primary_failure"
+                elif config["additional_returns"]:
                     results = diagnostics["additional_returns"] = {}
                     for slot, target in config["additional_returns"].items():
                         results[slot] = _publish_additional_return(ledgers[slot], target, observed_at)
