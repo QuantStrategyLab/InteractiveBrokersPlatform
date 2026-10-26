@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import re
 import time
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import date
 from xml.etree import ElementTree
@@ -269,6 +269,8 @@ def diagnose_activity_flex_ledger(
     allowed_report_account_ids: Collection[str] | None = None,
     collect_pending: bool = False,
     cash_report_only: bool = False,
+    cashflow_source_only: bool = False,
+    report_period: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     """Read one target and return fixed status; bounded collection is opt-in."""
 
@@ -277,18 +279,40 @@ def diagnose_activity_flex_ledger(
     if (len(expected) != 1 or any(not isinstance(a, str) or not re.fullmatch(r"(?:U|DU)[0-9]+", a)
             for a in (*expected, *allowed)) or not allowed or len(set(allowed)) != len(allowed)
             or not set(expected) <= set(allowed) or type(collect_pending) is not bool
-            or type(cash_report_only) is not bool):
+            or type(cash_report_only) is not bool or type(cashflow_source_only) is not bool
+            or (cash_report_only and cashflow_source_only)):
         raise FlexSourceError("IBKR Flex diagnostic account scope is invalid")
+    if report_period is not None:
+        try:
+            if (not cashflow_source_only or not isinstance(report_period, Mapping)
+                    or set(report_period) != {"from", "to"}):
+                raise ValueError
+            start, end = (date.fromisoformat(report_period[key]) for key in ("from", "to"))
+            if (start.isoformat() != report_period["from"] or end.isoformat() != report_period["to"]
+                    or not 0 <= (end - start).days <= 30):
+                raise ValueError
+        except (TypeError, ValueError):
+            raise FlexSourceError("IBKR Flex diagnostic period is invalid") from None
     try:
-        ledger = import_activity_flex_ledger(token=token, query_id=query_id,
-            expected_account_ids=expected, session=session,
-            allowed_report_account_ids=allowed_report_account_ids)
+        if report_period is None:
+            ledger = import_activity_flex_ledger(token=token, query_id=query_id,
+                expected_account_ids=expected, session=session,
+                allowed_report_account_ids=allowed_report_account_ids)
+        else:
+            request = request_activity_flex_report(token=token, query_id=query_id, session=session,
+                from_date=report_period["from"], to_date=report_period["to"])
+            ledger = import_activity_flex_ledger_from_request(request, expected_account_ids=expected,
+                session=session, allowed_report_account_ids=allowed_report_account_ids)
     except FlexReportPending as pending:
         if not collect_pending:
             raise
         ledger = collect_pending_activity_flex_ledger(pending.request,
             expected_account_ids=expected, session=session,
             allowed_report_account_ids=allowed_report_account_ids)
-    from application.ibkr_flex_ledger import build_flex_cash_diagnostic, build_flex_ledger_diagnostic
+    from application.ibkr_flex_ledger import (
+        build_flex_cash_diagnostic, build_flex_cashflow_diagnostic, build_flex_ledger_diagnostic,
+    )
 
+    if cashflow_source_only:
+        return build_flex_cashflow_diagnostic(ledger)
     return build_flex_cash_diagnostic(ledger) if cash_report_only else build_flex_ledger_diagnostic(ledger)

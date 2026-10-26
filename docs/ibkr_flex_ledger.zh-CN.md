@@ -73,6 +73,24 @@ stdout 仍为固定 `ibkr_flex_diagnostic.v1`。`available` 仅表示目标报�
 TWR，不是账户收费计划、当前已交收资金、证券/碎股权限、全部资金义务或配置资格通过。
 原始 XML、金额、账户、token、ReferenceCode 和异常正文均不输出；此处没有补出风险数字。
 
+### 只核出入金来源字段
+
+同一只读工作流使用 `read_once=true`、`cashflow_source_only=true`，运行
+`--cashflow-read-once`。它复用已有账本中的现金交易/资金明细结构统计，不经过收益或成交发布器，
+不需要 QRS 同步令牌，也不写报告 artifact、账户事实或流水。与 `cash_source_only` 同时选择会停止。
+
+默认使用原查询期间。确需核一段历史时，可成对提供 `cashflow_period_from` / `cashflow_period_to`，
+规范 ISO 日期、最多31个日历日；它们仅在新模式下使用已有 SendRequest 的日期参数，并核对实际
+返回期间。原 Query 模板不变。原 `expected_period_from/to` 仍只核对；与请求期间冲突时在请求前停止。
+一次生成后只领取同一句柄，结果不明不重发替代请求。
+
+`ibkr_flex_cashflow_diagnostic.v1` 仅返回报表摘要、期间，以及固定字段名的类型、日期/时间、时区
+格式计数；不会输出账号、金额、交易标识、备注或动态 XML 属性。`CashTransactions` 缺段、成功空段
+和未知子节点分开统计，`StmtFunds` 的日期字段不补成虚构午夜。`coverage=not_evaluated`，字段存在或
+当日无记录均不证明完整资金流覆盖。未知时区不能猜成 UTC；分红、费用、交易结算也不能当外部入金。
+[IBKR Cash Transactions 字段定义](https://www.ibkrguides.com/reportingreference/reportguide/cash%20transactionsfq.htm)
+区分类型、日期时间与金额，本诊断只观察原字段，不据此计算收益。
+
 ### 只核现金报表字段
 
 同一手动工作流显式设置 `read_once=true`、`cash_source_only=true` 时，调用
