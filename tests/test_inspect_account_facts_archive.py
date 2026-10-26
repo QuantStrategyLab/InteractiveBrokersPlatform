@@ -76,3 +76,38 @@ def test_cli_is_manual_only_before_any_read(monkeypatch, capsys):
     monkeypatch.setattr(archive, "report_uris", lambda **k: pytest.fail("unexpected cloud read"))
     assert archive.main() == 1
     assert json.loads(capsys.readouterr().out)["reason"] == "manual_main_required"
+
+
+def test_month_inventory_confines_listing_and_never_reads_financial_bodies(monkeypatch, capsys):
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz):
+            return NOW
+
+    monkeypatch.setattr(archive, "datetime", FixedDatetime)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_TARGET", "additional-2")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_ARCHIVE_DATE", "2026-09-30")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_ARCHIVE_METADATA_ONLY", "true")
+    monkeypatch.setattr(archive.identity, "resolve_expected", lambda: EXPECTED)
+    monkeypatch.setattr(archive.publisher, "_load_gcs_report", lambda *a, **k: pytest.fail("financial read"))
+    calls = []
+
+    def listed(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=0, stderr="", stdout=URI + "\n" + URI.replace("20260930", "20260929") + "\n")
+
+    monkeypatch.setattr(archive.subprocess, "run", listed)
+    assert archive.main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["financial_bodies_read"] is False
+    assert result["report_counts_by_filename_date"] == {"2026-09-29": 1, "2026-09-30": 1}
+    assert calls[0][3] == EXPECTED["expected_report_prefix"] + "/2026-09/202609*.json"
+
+
+def test_month_inventory_rejects_other_month(monkeypatch):
+    monkeypatch.setattr(archive.subprocess, "run", lambda *a, **k:
+                        SimpleNamespace(returncode=0, stderr="", stdout=URI.replace("2026-09/20260930", "2026-08/20260830") + "\n"))
+    with pytest.raises(archive.ArchiveError, match="archive_listing_invalid"):
+        archive.report_uris(day=DAY, expected=EXPECTED, now=NOW, metadata_only=True)

@@ -27,9 +27,10 @@ def archive_day(value: str, *, now: datetime) -> date:
     return day
 
 
-def report_uris(*, day: date, expected: dict, now: datetime) -> list[str]:
+def report_uris(*, day: date, expected: dict, now: datetime, metadata_only: bool = False) -> list[str]:
     prefix = expected["expected_report_prefix"].rstrip("/")
-    match = f"{prefix}/{day:%Y-%m}/{day:%Y%m%d}T*.json"
+    filename_prefix = day.strftime("%Y%m" if metadata_only else "%Y%m%dT")
+    match = f"{prefix}/{day:%Y-%m}/{filename_prefix}*.json"
     result = subprocess.run(
         ["gcloud", "storage", "ls", match, "--project", expected["expected_project_id"]],
         capture_output=True, text=True, timeout=60, check=False,
@@ -39,7 +40,7 @@ def report_uris(*, day: date, expected: dict, now: datetime) -> list[str]:
             return []
         raise ArchiveError("archive_listing_failed")
     lines = result.stdout.splitlines()
-    if len(result.stdout) > 1024 * 1024 or len(lines) > 64:
+    if len(result.stdout) > 1024 * 1024 or len(lines) > (2048 if metadata_only else 64):
         raise ArchiveError("archive_listing_limit")
     uris = set()
     for uri in lines:
@@ -48,7 +49,7 @@ def report_uris(*, day: date, expected: dict, now: datetime) -> list[str]:
             valid = publisher._named_report_uri(prefix=prefix, report_name=name, now=now)
         except publisher._ProjectionError:
             raise ArchiveError("archive_listing_invalid") from None
-        if uri != valid or not name.startswith(day.strftime("%Y%m%d") + "T"):
+        if uri != valid or not name.startswith(filename_prefix):
             raise ArchiveError("archive_listing_invalid")
         uris.add(uri)
     return sorted(uris, reverse=True)
@@ -87,7 +88,22 @@ def main() -> int:
         day = archive_day(os.environ.get("IBKR_ACCOUNT_FACTS_ARCHIVE_DATE", ""), now=now)
         expected = identity.resolve_expected()
         stage = "listing"
-        uris = report_uris(day=day, expected=expected, now=now)
+        mode = os.environ.get("IBKR_ACCOUNT_FACTS_ARCHIVE_METADATA_ONLY", "false")
+        if mode not in {"true", "false"}:
+            raise ArchiveError("archive_mode_invalid")
+        uris = report_uris(day=day, expected=expected, now=now, metadata_only=mode == "true")
+        if mode == "true":
+            counts = {}
+            for uri in uris:
+                stamp = datetime.strptime(uri.rsplit("/", 1)[-1], "%Y%m%dT%H%M%SZ.json")
+                key = stamp.date().isoformat()
+                counts[key] = counts.get(key, 0) + 1
+            print(json.dumps({"status": "inspected", "mode": "metadata_inventory", "slot": slot,
+                              "month": day.strftime("%Y-%m"), "report_count": len(uris),
+                              "report_counts_by_filename_date": counts,
+                              "financial_bodies_read": False, "broker_requests": 0, "business_writes": 0},
+                             sort_keys=True))
+            return 0
         rows = []
         for uri in uris:
             stage = "report_read"

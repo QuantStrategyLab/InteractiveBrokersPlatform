@@ -12,6 +12,10 @@ on:
         description: Original past UTC report date (YYYY-MM-DD), within retention
         type: string
         required: true
+      metadata_only:
+        description: List report filename dates in the selected month; do not read report bodies
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -29,6 +33,7 @@ jobs:
     env:
       IBKR_ACCOUNT_FACTS_TARGET: ${{ inputs.target }}
       IBKR_ACCOUNT_FACTS_ARCHIVE_DATE: ${{ inputs.archive_date }}
+      IBKR_ACCOUNT_FACTS_ARCHIVE_METADATA_ONLY: ${{ inputs.metadata_only }}
       IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}
       IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON }}
       IBKR_ACCOUNT_FACTS_TARGET_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_TARGET_ID }}
