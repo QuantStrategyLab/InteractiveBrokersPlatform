@@ -1,6 +1,8 @@
 import json
 import hashlib
 
+import pytest
+
 from application import ibkr_flex_source
 from application.ibkr_flex_source import FlexReport
 from scripts import diagnose_ibkr_flex_ledger as cli
@@ -159,3 +161,77 @@ def test_cli_does_not_print_private_exception_text(monkeypatch, capsys):
     assert json.loads(output)["missing"] == ["flex_import_failed"]
     for private_value in ("secret", "DU0000000", "12345", "1.25", "token="):
         assert private_value not in output
+
+
+def _cash_report():
+    xml = ('<FlexQueryResponse type="AF"><FlexStatements count="1">'
+        '<FlexStatement accountId="DU0000000" fromDate="20260101" toDate="20260131">'
+        '<CashReport><CashReportCurrency currency="USD" endingSettledCash="678.123456" '
+        'privateKey="PRIVATE_CANARY"/></CashReport></FlexStatement></FlexStatements></FlexQueryResponse>').encode()
+    return FlexReport(content=xml, content_sha256=hashlib.sha256(xml).hexdigest())
+
+
+def test_cash_cli_one_fetch_is_independent_of_missing_twr_and_never_prints_money(monkeypatch, capsys):
+    _set_input(monkeypatch)
+    calls = []
+    def fetch(**kwargs):
+        calls.append(kwargs)
+        return _cash_report()
+    monkeypatch.setattr(ibkr_flex_source, "fetch_activity_flex_xml", fetch)
+    assert cli.main(("--cash-read-once",)) == 0
+    output = capsys.readouterr().out
+    result = json.loads(output)
+    assert len(calls) == 1
+    assert result["schema_version"] == "ibkr_flex_cash_diagnostic.v1"
+    assert result["cash_report"]["usd_field_type_counts"]["endingSettledCash"] == {"decimal_text": 1}
+    assert result["cash_report"]["spendable_cash_verified"] is False
+    assert all(v not in output for v in ("DU0000000", "678.123456", "PRIVATE_CANARY", "privateKey", "synthetic-token"))
+
+
+@pytest.mark.parametrize("change", ["digest", "period", "field", "type", "count", "boolean"])
+def test_cash_stdout_rejects_invalid_or_private_dynamic_fields(change):
+    from application.ibkr_flex_ledger import build_flex_cash_diagnostic, build_flex_ledger
+    value = build_flex_cash_diagnostic(build_flex_ledger(_cash_report(), expected_account_ids=("DU0000000",)))
+    shape = value["cash_report"]
+    if change == "digest":
+        value["source_ref"] = "PRIVATE_CANARY"
+    elif change == "period":
+        value["period"]["from"] = "PRIVATE_CANARY"
+    elif change == "field":
+        shape["usd_field_type_counts"]["PRIVATE_CANARY"] = {"text": 1}
+    elif change == "type":
+        shape["usd_field_type_counts"]["endingCash"] = {"PRIVATE_CANARY": 1}
+    elif change == "count":
+        shape["usd_field_type_counts"]["endingCash"] = {"text": 2}
+    else:
+        shape["usd_record_count"] = True
+    result = cli._validated_cash_report(value)
+    assert result["missing"] == ["flex_cash_diagnostic_result_invalid"]
+    assert "PRIVATE_CANARY" not in json.dumps(result)
+
+
+def test_cash_cli_period_mismatch_stops_and_errors_remain_private(monkeypatch, capsys):
+    _set_input(monkeypatch)
+    monkeypatch.setenv("IBKR_FLEX_EXPECTED_PERIOD_FROM", "2026-02-01")
+    monkeypatch.setenv("IBKR_FLEX_EXPECTED_PERIOD_TO", "2026-02-28")
+    monkeypatch.setattr(ibkr_flex_source, "fetch_activity_flex_xml", lambda **_: _cash_report())
+    assert cli.main(("--cash-read-once",)) == 1
+    assert json.loads(capsys.readouterr().out)["missing"] == ["expected_period_mismatch"]
+
+
+def test_cash_pending_collects_the_original_handle_without_regenerating(monkeypatch, capsys):
+    _set_input(monkeypatch)
+    request = ibkr_flex_source.FlexReportRequest(reference_code="987654321098765", token="synthetic-token")
+    calls = []
+    def pending(**_):
+        calls.append("generate")
+        raise ibkr_flex_source.FlexReportPending(request)
+    def collect(handle, **_):
+        calls.append(("collect", handle))
+        from application.ibkr_flex_ledger import build_flex_ledger
+        return build_flex_ledger(_cash_report(), expected_account_ids=("DU0000000",))
+    monkeypatch.setattr(ibkr_flex_source, "fetch_activity_flex_xml", pending)
+    monkeypatch.setattr(ibkr_flex_source, "collect_pending_activity_flex_ledger", collect)
+    assert cli.main(("--cash-read-once",)) == 0
+    assert calls == ["generate", ("collect", request)]
+    assert request.reference_code not in capsys.readouterr().out

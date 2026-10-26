@@ -77,6 +77,50 @@ _NAV_NUMERIC_FIELDS = (
     "transactionTax", "taxReceivables", "salesTax", "softDollars", "netFxTrading", "fxTranslation",
     "linkingAdjustments", "other", "endingValue", "twr",
 )
+# XML-name candidates for the official Cash Report reference, not a qualified
+# spending contract. BASE_SUMMARY is never relabelled as a native USD row.
+_CASH_REPORT_FIELDS = ("accountId", "model", "currency", "fromDate", "toDate", "reportDate",
+                       "endingCash", "endingSettledCash")
+
+
+def _cash_report_source_diagnostic(statement: ElementTree.Element) -> dict[str, Any]:
+    sections = statement.findall("CashReport")
+    rows = [row for section in sections for row in section.findall("CashReportCurrency")]
+    usd_rows = [row for row in rows if row.get("currency") == "USD"]
+    fields = {}
+    for field in _CASH_REPORT_FIELDS if usd_rows else ():
+        types = Counter()
+        for row in usd_rows:
+            value = row.get(field)
+            kind = "missing" if value is None else "empty_text" if not value else "text"
+            if field in {"endingCash", "endingSettledCash"} and value:
+                kind = _number_shape(value)["kind"] + "_text"
+            if field in {"fromDate", "toDate", "reportDate"} and value:
+                kind = "date_text" if _day(value) else "unsupported_text"
+            types[kind] += 1
+        fields[field] = dict(sorted(types.items()))
+    return {
+        "schema_version": "ibkr.flex_cash_report_source_shape.v1",
+        "section_count": len(sections), "record_count": len(rows), "usd_record_count": len(usd_rows),
+        "unsupported_record_count": sum(len(section) for section in sections) - len(rows),
+        "unknown_field_count": sum(len(set(row.attrib) - set(_CASH_REPORT_FIELDS)) for row in usd_rows),
+        "usd_field_type_counts": fields,
+        "coverage": "not_evaluated", "spendable_cash_verified": False,
+        "complete_cash_obligations_verified": False, "missing_fields_are_zero": False,
+    }
+
+
+def build_flex_cash_diagnostic(ledger: Mapping[str, Any]) -> dict[str, Any]:
+    """Fixed cash source shape only; amounts and account identifiers stay private."""
+    period = ledger["period"]
+    shape = ledger["cash_report_source_diagnostic"]
+    return {
+        "schema_version": "ibkr_flex_cash_diagnostic.v1",
+        "status": "observed_source_shape",
+        "source_ref": ledger["source_ref"],
+        "period": {key: _diagnostic_date(period.get(key)) for key in ("from", "to")},
+        "currency": "USD", "scope": "STATEMENT_PERIOD_END_ONLY", "cash_report": shape,
+    }
 
 
 def _cashflow_timezone_format(value: str | None) -> str:
@@ -276,7 +320,7 @@ def _statement(root: ElementTree.Element, expected: Collection[str]) -> ElementT
         raise FlexSourceError("IBKR Flex ledger requires exactly one statement account")
     statement = statements[0]
     account_id = statement.get("accountId", "").strip()
-    financial_rows = {"AccountInformation", "EquitySummaryByReportDateInBase", "StatementOfFundsLine", "ConversionRate", "ChangeInNAV", "Trade"}
+    financial_rows = {"AccountInformation", "EquitySummaryByReportDateInBase", "StatementOfFundsLine", "ConversionRate", "ChangeInNAV", "Trade", "CashReportCurrency"}
     if any(row.get("accountId", "").strip() not in {"", account_id} for row in statement.iter() if row.tag in financial_rows):
         error = FlexSourceError("IBKR Flex statement row account scope mismatch", endpoint="GetStatement", category="scope")
         error.safe_diagnostic["nested_account_mismatch"] = True
@@ -499,6 +543,7 @@ def build_flex_ledger(
         "executions": project_flex_executions(statement, source_ref=report.content_sha256, period=period),
         "cashflow_source_diagnostic": _cashflow_source_diagnostic(statement),
         "nav_source_diagnostic": _nav_source_diagnostic(statement),
+        "cash_report_source_diagnostic": _cash_report_source_diagnostic(statement),
         "account_ids": [account_id],
         "currency": declared_currency,
         "account_base_currency": base_currency,

@@ -268,6 +268,7 @@ def diagnose_activity_flex_ledger(
     session: requests.Session | None = None,
     allowed_report_account_ids: Collection[str] | None = None,
     collect_pending: bool = False,
+    cash_report_only: bool = False,
 ) -> dict[str, object]:
     """Read one target and return fixed status; bounded collection is opt-in."""
 
@@ -275,7 +276,8 @@ def diagnose_activity_flex_ledger(
     allowed = tuple(allowed_report_account_ids) if allowed_report_account_ids is not None else expected
     if (len(expected) != 1 or any(not isinstance(a, str) or not re.fullmatch(r"(?:U|DU)[0-9]+", a)
             for a in (*expected, *allowed)) or not allowed or len(set(allowed)) != len(allowed)
-            or not set(expected) <= set(allowed) or type(collect_pending) is not bool):
+            or not set(expected) <= set(allowed) or type(collect_pending) is not bool
+            or type(cash_report_only) is not bool):
         raise FlexSourceError("IBKR Flex diagnostic account scope is invalid")
     try:
         ledger = import_activity_flex_ledger(token=token, query_id=query_id,
@@ -287,6 +289,6 @@ def diagnose_activity_flex_ledger(
         ledger = collect_pending_activity_flex_ledger(pending.request,
             expected_account_ids=expected, session=session,
             allowed_report_account_ids=allowed_report_account_ids)
-    from application.ibkr_flex_ledger import build_flex_ledger_diagnostic
+    from application.ibkr_flex_ledger import build_flex_cash_diagnostic, build_flex_ledger_diagnostic
 
-    return build_flex_ledger_diagnostic(ledger)
+    return build_flex_cash_diagnostic(ledger) if cash_report_only else build_flex_ledger_diagnostic(ledger)

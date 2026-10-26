@@ -8,6 +8,11 @@ on:
         type: boolean
         required: false
         default: false
+      cash_source_only:
+        description: Inspect Cash Report field coverage only; never certify current spending authority
+        type: boolean
+        required: false
+        default: false
       expected_period_from:
         description: Optional expected report period start (YYYY-MM-DD), paired with the end; does not change the query
         type: string
@@ -53,8 +58,14 @@ jobs:
           IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON }}
           IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}
       - name: Read the original Flex request only and print fixed status
-        run: uv run --no-sync python -m scripts.diagnose_ibkr_flex_ledger --read-once
+        run: |
+          if [ "$CASH_SOURCE_ONLY" = "true" ]; then
+            uv run --no-sync python -m scripts.diagnose_ibkr_flex_ledger --cash-read-once
+          else
+            uv run --no-sync python -m scripts.diagnose_ibkr_flex_ledger --read-once
+          fi
         env:
+          CASH_SOURCE_ONLY: ${{ inputs.cash_source_only }}
           IBKR_FLEX_DIAGNOSTIC_ENABLED: "true"
           IBKR_FLEX_TOKEN: ${{ secrets.IBKR_FLEX_TOKEN }}
           IBKR_FLEX_QUERY_ID: ${{ secrets.IBKR_FLEX_QUERY_ID }}

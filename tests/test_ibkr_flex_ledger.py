@@ -39,6 +39,55 @@ def _statement(
     )
 
 
+def test_cash_report_shape_uses_only_target_usd_rows_without_amounts_or_qualification():
+    from application.ibkr_flex_ledger import build_flex_cash_diagnostic
+    report = _wrap(_statement('<CashReport>'
+        '<CashReportCurrency currency="BASE_SUMMARY" endingSettledCash="555.55"/>'
+        '<CashReportCurrency currency="USD" endingCash="123.456" endingSettledCash="98.765" '
+        'fromDate="20260101" toDate="20260131" reportDate="20260131" privateKey="private-value"/>'
+        '<PrivateChild privateKey="private-value"/></CashReport>'),
+        _statement('<CashReport><CashReportCurrency currency="USD" endingSettledCash="987654.321"/></CashReport>', account="DU0000001"))
+    ledger = build_flex_ledger(report, expected_account_ids=(ACCOUNT,), allowed_report_account_ids=(ACCOUNT, "DU0000001"))
+    result = build_flex_cash_diagnostic(ledger)
+    shape = result["cash_report"]
+    assert result["source_ref"] == report.content_sha256
+    assert result["period"] == {"from": "2026-01-01", "to": "2026-01-31"}
+    assert shape["record_count"] == 2 and shape["usd_record_count"] == 1
+    assert shape["unsupported_record_count"] == shape["unknown_field_count"] == 1
+    assert shape["usd_field_type_counts"]["endingSettledCash"] == {"decimal_text": 1}
+    assert shape["usd_field_type_counts"]["fromDate"] == {"date_text": 1}
+    assert shape["coverage"] == "not_evaluated"
+    assert shape["spendable_cash_verified"] is shape["complete_cash_obligations_verified"] is False
+    assert shape["missing_fields_are_zero"] is False
+    assert all(v not in json.dumps(result) for v in (ACCOUNT, "DU0000001", "123.456", "98.765", "555.55", "987654.321", "privateKey", "private-value", "PrivateChild"))
+
+
+@pytest.mark.parametrize("section,count", [("", 0), ("<CashReport/>", 1),
+    ('<CashReport><CashReportCurrency currency="BASE_SUMMARY" endingSettledCash="100"/></CashReport>', 1)])
+def test_cash_shape_distinguishes_absent_empty_and_no_native_usd(section, count):
+    shape = build_flex_ledger(_wrap(_statement(section)), expected_account_ids=(ACCOUNT,))["cash_report_source_diagnostic"]
+    assert shape["section_count"] == count and shape["usd_record_count"] == 0
+    assert shape["usd_field_type_counts"] == {}
+
+
+def test_cash_shape_preserves_duplicate_malformed_and_missing_fields():
+    report = _wrap(_statement('<CashReport>'
+        '<CashReportCurrency currency="USD" endingSettledCash="NaN" toDate="20260230"/>'
+        '<CashReportCurrency currency="USD" endingSettledCash="1e10000"/>'
+        '<CashReportCurrency currency="USD" endingCash=""/></CashReport>'))
+    shape = build_flex_ledger(report, expected_account_ids=(ACCOUNT,))["cash_report_source_diagnostic"]
+    assert shape["usd_record_count"] == 3
+    assert shape["usd_field_type_counts"]["endingSettledCash"] == {"missing": 1, "nonfinite_text": 1, "scientific_text": 1}
+    assert shape["usd_field_type_counts"]["endingCash"] == {"empty_text": 1, "missing": 2}
+    assert shape["usd_field_type_counts"]["toDate"] == {"missing": 2, "unsupported_text": 1}
+
+
+def test_cash_row_cannot_belong_to_another_approved_report_account():
+    report = _wrap(_statement('<CashReport><CashReportCurrency accountId="DU0000001" currency="USD" endingSettledCash="10"/></CashReport>'))
+    with pytest.raises(FlexSourceError):
+        build_flex_ledger(report, expected_account_ids=(ACCOUNT,), allowed_report_account_ids=(ACCOUNT, "DU0000001"))
+
+
 def test_selects_only_target_statement_from_explicitly_approved_report_scope():
     other = "DU0000001"
     report = _wrap(
