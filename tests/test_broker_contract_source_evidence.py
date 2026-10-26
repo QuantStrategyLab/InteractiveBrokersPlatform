@@ -99,6 +99,7 @@ def test_api_failures_and_program_fractional_block_are_distinct_from_account_per
 @pytest.mark.parametrize("failure", [None, "stale", "account", "revision", "metadata", "read"])
 def test_explicit_mode_reuses_one_guarded_report_read_and_does_not_disguise_unverified_sources(monkeypatch, capsys, failure):
     expected, report, metadata = report_fixture(monkeypatch)
+    report["market_exchange"] = "SMART"
     if failure == "stale": report["summary"]["account_facts"]["observed_at"] = "2000-01-01T00:00:00Z"
     elif failure == "account": report["summary"]["account_facts"]["account_ids"] = ["U00000002"]
     elif failure == "revision": report["diagnostics"]["runtime_revision"] = PRIVATE + "-other"
@@ -118,6 +119,7 @@ def test_explicit_mode_reuses_one_guarded_report_read_and_does_not_disguise_unve
     out = json.loads(capsys.readouterr().out)
     evidence = out["broker_contract_source_evidence"]
     assert evidence["status"] == ("SOURCE_INSPECTED_CONTRACT_GAPS" if failure is None else "NOT_EVALUATED")
+    assert (evidence.get("routing_observation", {}).get("status") == "SMART_REPORTED") is (failure is None)
     assert calls == (["report"] if failure == "read" else ["report", "metadata"])
     assert PRIVATE not in json.dumps(out) and "12345.6700" not in json.dumps(out)
 
@@ -190,3 +192,34 @@ def test_additional_native_settled_cash_is_visible_but_never_grants_spending_aut
     assert out["usd_cash_observation"]["spendable_cash_verified"] is False
     assert out["complete_cash_obligations_verified"] is False
     assert "73.25" not in json.dumps(out)
+
+
+@pytest.mark.parametrize("raw,state", [
+    ("SMART", "SMART_REPORTED"), ("ARCA", "OTHER_REPORTED"),
+    (None, "NULL"), ("", "INVALID"), ("SMART\n", "INVALID"),
+    (123, "INVALID"), ({"exchange": "SMART"}, "INVALID"),
+    (PRIVATE, "OTHER_REPORTED"),
+])
+def test_reported_routing_does_not_attest_order_route_or_total_fees(monkeypatch, raw, state):
+    _, report, _ = report_fixture(monkeypatch)
+    report["market_exchange"] = raw
+    before = deepcopy(report)
+    out = inspect_broker_contract_sources(report)
+    routing = out["routing_observation"]
+    assert routing == dict(status=state, source_path="market_exchange",
+        scope="RUNTIME_REPORT_CONFIGURATION_ONLY", actual_order_route_verified=False)
+    assert out["source_fields"]["market_exchange"] == (
+        "null" if raw is None else "object" if isinstance(raw, dict) else "scalar")
+    assert out["account_fee_plan_verified"] is False
+    assert set(GAPS) <= set(out["gaps"])
+    assert PRIVATE not in json.dumps(out)
+    assert report == before
+
+
+def test_missing_routing_never_uses_defaults_or_nested_guesses(monkeypatch):
+    _, report, _ = report_fixture(monkeypatch)
+    report["summary"]["market_exchange"] = "SMART"
+    report["diagnostics"]["market_exchange"] = "SMART"
+    out = inspect_broker_contract_sources(report)
+    assert out["routing_observation"]["status"] == "NOT_REPORTED"
+    assert out["source_fields"]["market_exchange"] == "missing"
