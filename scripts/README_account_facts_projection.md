@@ -41,6 +41,24 @@ must still be distinguished from actual commissions and other charges.
 
 # Zero-traffic maintenance cash observation
 
+The one-shot maintenance Job now sends one `reqAccountSummary` with group `All`
+and tags `$LEDGER:USD`, the documented [per-currency cash-tag selector](https://www.interactivebrokers.com/docs/tws-api/doc/account-portfolio-data/account-summary/account-summary-tags).
+It replaces the previous three-tag request; there is no fallback or second
+request. The producer records `request_tags` and retains only supported native
+cash fields for the selected account in USD. BASE and other currencies are
+counted for diagnosis without storing their values or treating them as USD.
+Unknown tags are not aliased to SettledCash. Missing fields remain missing;
+equal decimal repeats may share one observation, while conflicting repeats
+remain invalid. The selector does not guarantee that SettledCash is returned.
+
+Readback verifies the explicit ledger selector, the complete fixed diagnostic
+tag set and USD-only values before emitting value-free states. Archived
+three-tag reports without `request_tags` keep their existing validation and
+are not rewritten or upgraded to ledger observations. Neither path establishes
+complete obligations or spending authority. Offline tests prepare this query;
+merging the change does not execute a Job, change Gateway settings or enable a
+configuration. A new live read still needs its applicable execution authority.
+
 The one-shot maintenance Job's explicit summary read must observe the matching
 `accountSummaryEnd` callback and propagate request errors. The pinned SDK can
 otherwise resolve its request future successfully on an error. During this

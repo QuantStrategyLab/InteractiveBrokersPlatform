@@ -126,9 +126,37 @@ def test_explicit_summary_retains_source_decimal_and_target_only():
             dict(currency="USD", source_tag="SettledCash", value="0.00000001")]
         assert "PRIVATE_AMOUNT_CANARY" not in str(value)
         assert all(row["currency"] != "BASE" for row in value["broker_cash_observations"]["values"])
-        assert broker.calls == [("request", 17, "All", "SettledCash,AvailableFunds,FullAvailableFunds"), ("cancel", 17)]
+        assert value["request_tags"] == "$LEDGER:USD"
+        assert broker.calls == [("request", 17, "All", "$LEDGER:USD"), ("cancel", 17)]
         assert len(broker.accountSummaryEvent) == 0
         assert datetime.fromisoformat(value["observed_started_at"]).utcoffset() is not None
+    finally:
+        broker.loop.close()
+
+
+def test_usd_ledger_keeps_native_cash_tags_without_promoting_other_currencies_or_aliases():
+    from application.ibkr_cash_observations import inspect_cash_observations
+    rows = [dict(account="DU00000001", tag=tag, currency="USD", value="12.00000001")
+            for tag in ("CashBalance", "TotalCashBalance", "$LEDGER-CashBalance", "$LEDGER-TotalCashBalance")]
+    rows += [dict(account="DU00000001", tag="SettledCash", currency=currency, value="PRIVATE_OTHER_CURRENCY")
+             for currency in ("BASE", "EUR")]
+    rows += [dict(account="DU00000001", tag="$LEDGER-SettledCash", currency="USD", value="99"),
+             dict(account="DU00000002", tag="SettledCash", currency="USD", value="99"),
+             dict(request_id=18, account="DU00000001", tag="SettledCash", currency="USD", value="99")]
+    broker = SummaryBroker(rows)
+    try:
+        result = entry.read_account_summary_cash(broker, ["DU00000001"])
+        attachment = result["broker_cash_observations"]
+        assert result["request_tags"] == "$LEDGER:USD"
+        assert attachment["values"] == [dict(currency="USD", source_tag=tag, value="12.00000001")
+            for tag in ("$LEDGER-CashBalance", "$LEDGER-TotalCashBalance", "CashBalance", "TotalCashBalance")]
+        assert "PRIVATE_OTHER_CURRENCY" not in str(result)
+        assert result["field_diagnostics"]["SettledCash"]["base_rows"] == 1
+        assert result["field_diagnostics"]["SettledCash"]["other_currency_rows"] == 1
+        safe = inspect_cash_observations(attachment, observed_at=result["observed_finished_at"])
+        assert safe["fields"]["SettledCash"] == "MISSING"
+        assert safe["spendable_cash_verified"] is safe["complete_cash_obligations_verified"] is False
+        assert broker.calls == [("request", 17, "All", "$LEDGER:USD"), ("cancel", 17)]
     finally:
         broker.loop.close()
 
@@ -302,6 +330,7 @@ def test_real_sdk_wrapper_completes_summary_without_network(monkeypatch, amounts
         monkeypatch.setattr(broker.client, "getReqId", lambda: 19)
         def request(req, group, tags):
             calls.append((req, group, tags))
+            assert group == "All" and tags == "$LEDGER:USD"
             for amount in amounts:
                 broker.client.decoder.interpret(["63", "1", str(req), "DU00000001", "SettledCash", amount, "USD"])
             broker.client.decoder.interpret(["64", "1", str(req)])
