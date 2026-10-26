@@ -41,6 +41,13 @@ must still be distinguished from actual commissions and other charges.
 
 # Zero-traffic maintenance cash observation
 
+The one-shot maintenance Job's explicit summary read must observe the matching
+`accountSummaryEnd` callback and propagate request errors. The pinned SDK can
+otherwise resolve its request future successfully on an error. During this
+single read, `RaiseRequestErrors` is enabled and then restored, together with
+both original callbacks. Later subscription updates are excluded from the
+initial observation. No additional request or retry is introduced.
+
 The existing `primary-account-facts-readonly.yml` manual workflow keeps its
 original report-only behavior when `maintenance_source_commit` is empty. An
 explicit reviewed source SHA selects one current ready, zero-traffic candidate
