@@ -316,3 +316,93 @@ def diagnose_activity_flex_ledger(
     if cashflow_source_only:
         return build_flex_cashflow_diagnostic(ledger)
     return build_flex_cash_diagnostic(ledger) if cash_report_only else build_flex_ledger_diagnostic(ledger)
+
+
+# Fixed native schema only; never derive public field names from the report.
+CONFIGURED_COVERAGE_SECTIONS = {
+    "AccountInformation": None,
+    "ChangeInNAV": None,
+    "EquitySummaryInBase": "EquitySummaryByReportDateInBase",
+    "CashReport": "CashReportCurrency",
+    "CashTransactions": "CashTransaction",
+    "StmtFunds": "StatementOfFundsLine",
+    "Trades": "Trade",
+    "OpenPositions": "OpenPosition",
+    "ConversionRates": "ConversionRate",
+}
+CONFIGURED_COVERAGE_SLOTS = ("primary", "additional-1", "additional-2", "additional-3")
+
+
+def diagnose_configured_flex_coverage(
+    *, token: str, query_id: str, expected_account_ids: Collection[str],
+    configured_account_ids: Mapping[str, str], session: requests.Session | None = None,
+) -> dict[str, object]:
+    """Observe configured slots from one report; never project or publish facts."""
+    if (not isinstance(configured_account_ids, Mapping)
+            or set(configured_account_ids) != set(CONFIGURED_COVERAGE_SLOTS)):
+        raise FlexSourceError("IBKR Flex configured account scope is invalid")
+    allowed = tuple(configured_account_ids[slot] for slot in CONFIGURED_COVERAGE_SLOTS)
+    if (any(not isinstance(account, str) or not re.fullmatch(r"(?:U|DU)[0-9]+", account)
+            for account in allowed) or tuple(expected_account_ids) != (allowed[0],)
+            or len(set(allowed)) != len(allowed)):
+        raise FlexSourceError("IBKR Flex configured account scope is invalid")
+    try:
+        report = fetch_activity_flex_xml(token=token, query_id=query_id, session=session)
+    except FlexReportPending as pending:
+        request = pending.request
+        # Identical bounded 1019 policy to the existing diagnostic. No replacement.
+        for _ in range(5):
+            time.sleep(3)
+            try:
+                report = collect_activity_flex_xml(request, session=session)
+                break
+            except FlexReportPending as still_pending:
+                if still_pending.request != request:
+                    raise FlexSourceError("IBKR Flex pending handle changed") from None
+        else:
+            raise FlexReportPending(request) from None
+
+    verify_report_accounts(report, expected_account_ids=expected_account_ids,
+                           allowed_report_account_ids=allowed)
+    from application.ibkr_flex_ledger import build_flex_ledger
+
+    root = _xml_root(report.content, endpoint="GetStatement")
+    statements = {row.get("accountId", "").strip(): row
+                  for row in root.findall("./FlexStatements/FlexStatement")}
+    accounts = {}
+    for slot in CONFIGURED_COVERAGE_SLOTS:
+        account = configured_account_ids[slot]
+        statement = statements.get(account)
+        period = {"from": None, "to": None}
+        if statement is not None:
+            # Reuse Activity-report, unique-account and cross-account row checks.
+            ledger = build_flex_ledger(report, expected_account_ids=(account,),
+                                      allowed_report_account_ids=allowed)
+            native_rows = set(CONFIGURED_COVERAGE_SECTIONS) | {
+                name for name in CONFIGURED_COVERAGE_SECTIONS.values() if name is not None}
+            if any(row.get("accountId", "").strip() not in {"", account}
+                   for row in statement.iter() if row.tag in native_rows):
+                raise FlexSourceError("IBKR Flex statement row account scope mismatch")
+            period = {key: ledger["period"][key] for key in ("from", "to")}
+            if period["from"] and period["to"] and period["from"] > period["to"]:
+                period = {"from": None, "to": None}
+        sections = {}
+        for name, row_name in CONFIGURED_COVERAGE_SECTIONS.items():
+            containers = [] if statement is None else statement.findall(name)
+            rows = (containers if row_name is None else
+                    [row for container in containers for row in container.findall(row_name)])
+            sections[name] = {
+                "section_count": len(containers),
+                "record_count": len(rows) if containers else None,
+                "unsupported_record_count": sum(
+                    child.tag != row_name for container in containers for child in container),
+            }
+        accounts[slot] = {
+            "statement_present": statement is not None, "period": period,
+            "native_twr_field_present": (None if statement is None else
+                any("twr" in row.attrib for row in statement.findall("ChangeInNAV"))),
+            "sections": sections,
+        }
+    return {"schema_version": "ibkr_flex_configured_coverage.v1", "status": "observed_source_shape",
+            "source_ref": report.content_sha256, "period": accounts["primary"]["period"],
+            "coverage": "not_evaluated", "accounts": accounts}

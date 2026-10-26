@@ -11,7 +11,10 @@ from datetime import date
 from typing import Any
 
 from application.account_facts_target_config import account_selector, parse_additional_target_configs
-from application.ibkr_flex_source import FlexReportPending, diagnose_activity_flex_ledger
+from application.ibkr_flex_source import (
+    CONFIGURED_COVERAGE_SECTIONS, CONFIGURED_COVERAGE_SLOTS, FlexReportPending,
+    diagnose_activity_flex_ledger, diagnose_configured_flex_coverage,
+)
 from application.ibkr_flex_ledger import CASH_REPORT_MISSING_CODES
 
 
@@ -296,12 +299,72 @@ def _validated_cashflow_report(value: object) -> dict[str, Any]:
                                            "coverage": "not_evaluated", "sections": sections}}
 
 
+def _validated_coverage_report(value: object) -> dict[str, Any]:
+    """Rebuild only fixed slots, dates, booleans and bounded native-row counts."""
+    invalid = _empty_report(status="error", missing=["flex_coverage_diagnostic_result_invalid"])
+    if (not isinstance(value, dict) or value.get("schema_version") != "ibkr_flex_configured_coverage.v1"
+            or value.get("status") != "observed_source_shape" or value.get("coverage") != "not_evaluated"
+            or not isinstance(value.get("source_ref"), str)
+            or not re.fullmatch(r"[a-f0-9]{64}", value["source_ref"])
+            or not isinstance(value.get("accounts"), dict)
+            or set(value["accounts"]) != set(CONFIGURED_COVERAGE_SLOTS)):
+        return invalid
+    accounts = {}
+    for slot in CONFIGURED_COVERAGE_SLOTS:
+        row = value["accounts"][slot]
+        if (not isinstance(row, dict) or type(row.get("statement_present")) is not bool
+                or not isinstance(row.get("period"), dict) or set(row["period"]) != {"from", "to"}
+                or not isinstance(row.get("sections"), dict)
+                or set(row["sections"]) != set(CONFIGURED_COVERAGE_SECTIONS)):
+            return invalid
+        period = row["period"]
+        for key in ("from", "to"):
+            try:
+                if period[key] is not None and date.fromisoformat(period[key]).isoformat() != period[key]:
+                    return invalid
+            except (TypeError, ValueError):
+                return invalid
+        if period["from"] and period["to"] and period["from"] > period["to"]:
+            return invalid
+        present, twr = row["statement_present"], row.get("native_twr_field_present")
+        if ((present and type(twr) is not bool) or (not present and
+                (twr is not None or period != {"from": None, "to": None}))):
+            return invalid
+        sections = {}
+        for name in CONFIGURED_COVERAGE_SECTIONS:
+            section = row["sections"][name]
+            if not isinstance(section, dict):
+                return invalid
+            counts = {key: section.get(key) for key in
+                      ("section_count", "record_count", "unsupported_record_count")}
+            if any(type(counts[key]) is not int or not 0 <= counts[key] <= 8 * 1024 * 1024
+                   for key in ("section_count", "unsupported_record_count")):
+                return invalid
+            total = counts["record_count"]
+            if ((counts["section_count"] == 0 and (total is not None or counts["unsupported_record_count"] != 0))
+                    or (counts["section_count"] > 0 and
+                        (not present or type(total) is not int or not 0 <= total <= 8 * 1024 * 1024))):
+                return invalid
+            sections[name] = counts
+        accounts[slot] = {"statement_present": present, "period": dict(period),
+                          "native_twr_field_present": twr, "sections": sections}
+    if value.get("period") != accounts["primary"]["period"] or not accounts["primary"]["statement_present"]:
+        return invalid
+    return {"schema_version": "ibkr_flex_configured_coverage.v1", "status": "observed_source_shape",
+            "coverage": "not_evaluated", "source_ref": value["source_ref"],
+            "period": accounts["primary"]["period"], "accounts": accounts}
+
+
 def main(argv: Sequence[str] = ()) -> int:
     args = tuple(argv)
-    if args not in ((), ("--preflight",), ("--read-once",), ("--cash-read-once",), ("--cashflow-read-once",)):
+    coverage = args in (("--configured-account-coverage-read-once",),
+                        ("--preflight", "--configured-account-coverage-only"))
+    preflight = args in (("--preflight",), ("--preflight", "--configured-account-coverage-only"))
+    if args not in ((), ("--preflight",), ("--read-once",), ("--cash-read-once",), ("--cashflow-read-once",)
+                    ) and not coverage:
         print(json.dumps(_empty_report(status="incomplete", missing=["arguments_invalid"]), sort_keys=True))
         return 2
-    if args != ("--preflight",) and os.environ.get(_ENABLE_ENV) != "true":
+    if not preflight and os.environ.get(_ENABLE_ENV) != "true":
         print(json.dumps(_empty_report(status="disabled", missing=["flex_import_not_enabled"]), sort_keys=True))
         return 2
 
@@ -317,10 +380,12 @@ def main(argv: Sequence[str] = ()) -> int:
         missing.append("flex_query_id_missing_or_invalid")
     if account_ids is None:
         missing.append("expected_account_scope_missing_or_invalid")
+    expected_period = None
     try:
         expected_period = _expected_period()
     except ValueError:
         missing.append("expected_period_invalid")
+    request_period = None
     try:
         request_period = _cashflow_request_period()
         if request_period is not None and (args not in (("--preflight",), ("--cashflow-read-once",))
@@ -330,16 +395,31 @@ def main(argv: Sequence[str] = ()) -> int:
         missing.append("cashflow_request_period_invalid")
     try:
         allowed_accounts = _approved_report_accounts(account_ids)
+        if coverage and (allowed_accounts is None or request_period is not None):
+            raise ValueError
     except (ValueError, TypeError, RecursionError):
         missing.append("approved_report_scope_invalid")
     if missing:
         print(json.dumps(_empty_report(status="incomplete", missing=missing), sort_keys=True))
         return 2
-    if args == ("--preflight",):
+    if preflight:
         print(json.dumps(_empty_report(status="configuration_shape_valid", missing=[]), sort_keys=True))
         return 0
 
     try:
+        if coverage:
+            result = diagnose_configured_flex_coverage(
+                token=token, query_id=query_id, expected_account_ids=account_ids,
+                configured_account_ids=dict(zip(CONFIGURED_COVERAGE_SLOTS, allowed_accounts, strict=True)),
+            )
+            report = _validated_coverage_report(result)
+            if expected_period is not None and any(
+                row["statement_present"] and row["period"] != expected_period
+                for row in report.get("accounts", {}).values()
+            ):
+                report = _empty_report(status="error", missing=["expected_period_mismatch"])
+            print(json.dumps(report, sort_keys=True))
+            return 0 if report["status"] == "observed_source_shape" else 1
         kwargs = {"collect_pending": True} if args in (("--read-once",), ("--cash-read-once",), ("--cashflow-read-once",)) else {}
         if args == ("--cash-read-once",):
             kwargs["cash_report_only"] = True
