@@ -98,11 +98,19 @@ TWR，不是账户收费计划、当前已交收资金、证券/碎股权限、�
 默认期间收益诊断的行为与输出不变。此模式不要求报表具有 TWR；账户、保护范围、
 可选精确期间仍在原入口核验，嵌套 `CashReportCurrency.accountId` 若属于其他账户也拒绝。
 
-输出 `ibkr_flex_cash_diagnostic.v1`，仅含内容 SHA-256、报表期间和固定现金字段的格式计数。
+输出 `ibkr_flex_cash_diagnostic.v1`，仅含内容 SHA-256、报表期间、固定现金字段的格式计数和账户能力分类。
 `CashReport/CashReportCurrency`、`endingCash`、`endingSettledCash` 是待核的 XML 字段候选；
 只统计原生 `currency="USD"` 行，不将 `BASE_SUMMARY` 换成美元。缺段、空段、没有美元行、
 多行、坏数字和缺日期分开保留，未知字段只计数量，不输出名称或值。金额、模型名和
 账号始终不进入 stdout。字段存在及格式正确不代表日期、模型或现金资格已核清。
+
+`account_capabilities` 只读已核账户范围内的 `AccountInformation.accountCapabilities`，
+按原生 Cash、Margin、Portfolio Margin 分为 `CASH`、`MARGIN`、`PORTFOLIO_MARGIN`。
+缺值为 `MISSING`，多份账户信息为 `AMBIGUOUS`，其他文本为 `UNRECOGNIZED`，
+不输出原文，不从 `accountType`、购买力或资产金额推断。嵌套其他账户仍按原合同拒绝。
+[官方 Account Information 定义](https://www.ibkrguides.com/reportingreference/reportguide/account%20information%20trade%20allocations.htm)
+区分账户结构与现金／保证金能力；该分类仅说明本份报表中的账户属性，不证明当前类型、
+当前资金、交易许可或借款授权。它不增加报表请求，也不改变收益导入、发布和资金准入。
 
 [IBKR Cash Report 官方定义](https://www.ibkrguides.com/reportingreference/reportguide/cash%20reportfq.htm)
 中的 Ending Settled Cash 是**报表期末**的已结算现金。此诊断只观察来源结构，

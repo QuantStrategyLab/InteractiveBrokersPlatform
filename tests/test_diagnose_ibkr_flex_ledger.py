@@ -199,6 +199,53 @@ def test_cash_stdout_accepts_verified_period_end_without_current_cash_authority(
     assert result["cash_report"]["spendable_cash_verified"] is False
 
 
+@pytest.mark.parametrize("raw,expected", [("Cash", "CASH"), ("Margin", "MARGIN"),
+    ("Portfolio Margin", "PORTFOLIO_MARGIN"), ("", "MISSING"), (None, "MISSING"),
+    ("PRIVATE_CAPABILITY_CANARY", "UNRECOGNIZED")])
+def test_cash_cli_reports_only_statement_account_capability_enum(monkeypatch, capsys, raw, expected):
+    _set_input(monkeypatch)
+    report = _cash_report()
+    attribute = f' accountCapabilities="{raw}"' if raw is not None else ''
+    info = f'<AccountInformation accountId="DU0000000" accountType="Margin" currency="USD"{attribute}/>'
+    content = report.content.replace(b'<CashReport>', info.encode() + b'<CashReport>')
+    report = FlexReport(content=content, content_sha256=hashlib.sha256(content).hexdigest())
+    monkeypatch.setattr(ibkr_flex_source, "fetch_activity_flex_xml", lambda **_: report)
+    assert cli.main(("--cash-read-once",)) == 0
+    output = capsys.readouterr().out
+    value = json.loads(output)
+    assert value["account_capabilities"] == expected
+    assert value["scope"] == "STATEMENT_PERIOD_END_ONLY"
+    assert value["cash_report"]["spendable_cash_verified"] is False
+    assert all(text not in output for text in ("PRIVATE_CAPABILITY_CANARY", "DU0000000", "678.123456", "synthetic-token"))
+
+
+@pytest.mark.parametrize("foreign", [False, True])
+def test_account_capability_never_selects_first_duplicate_or_foreign_row(foreign):
+    from application.ibkr_flex_ledger import build_flex_cash_diagnostic, build_flex_ledger
+    from application.ibkr_flex_source import FlexSourceError
+    report = _cash_report()
+    info = b'<AccountInformation accountId="DU0000000" currency="USD" accountCapabilities="Cash"/>'
+    info += b'<AccountInformation accountId="DU0000001" currency="USD" accountCapabilities="Margin"/>' if foreign else info
+    content = report.content.replace(b'<CashReport>', info + b'<CashReport>')
+    report = FlexReport(content=content, content_sha256=hashlib.sha256(content).hexdigest())
+    if foreign:
+        with pytest.raises(FlexSourceError):
+            build_flex_ledger(report, expected_account_ids=("DU0000000",))
+    else:
+        result = build_flex_cash_diagnostic(build_flex_ledger(report, expected_account_ids=("DU0000000",)))
+        assert result["account_capabilities"] == "AMBIGUOUS"
+
+
+@pytest.mark.parametrize("raw", ["PRIVATE_CAPABILITY_CANARY", None, True, ["CASH"]])
+def test_cash_stdout_rejects_unvalidated_capability_values(raw):
+    from application.ibkr_flex_ledger import build_flex_cash_diagnostic, build_flex_ledger
+    value = build_flex_cash_diagnostic(build_flex_ledger(_cash_report(), expected_account_ids=("DU0000000",)))
+    value["account_capabilities"] = raw
+    result = cli._validated_cash_report(value)
+    assert result["missing"] == ["flex_cash_diagnostic_result_invalid"]
+    assert "PRIVATE_CAPABILITY_CANARY" not in json.dumps(result)
+
+
 @pytest.mark.parametrize("change", ["digest", "period", "field", "type", "count", "boolean", "cash_fact_code", "cash_fact_status"])
 def test_cash_stdout_rejects_invalid_or_private_dynamic_fields(change):
     from application.ibkr_flex_ledger import build_flex_cash_diagnostic, build_flex_ledger
