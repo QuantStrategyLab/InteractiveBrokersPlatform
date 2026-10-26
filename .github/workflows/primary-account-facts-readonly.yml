@@ -1,6 +1,6 @@
 name: Read Primary TQQQ Account Facts
 
-# Manual, single-account diagnosis. Explicit one-shot Job mode reads cash only.
+# Manual, single-account diagnosis. Job mode reads cash, API orders and metadata.
 on:
   workflow_dispatch:
     inputs:
@@ -10,7 +10,7 @@ on:
         required: false
         default: ""
       maintenance_job:
-        description: "Explicitly run one temporary cash-read Job with the verified maintenance image; no strategy or orders."
+        description: "Run one explicitly authorized temporary Job for cash, read-only API orders and TQQQ size metadata; no trading."
         type: boolean
         required: false
         default: false
