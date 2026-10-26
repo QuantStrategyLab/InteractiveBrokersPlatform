@@ -165,6 +165,17 @@ def build_flex_cash_diagnostic(ledger: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def build_flex_cashflow_diagnostic(ledger: Mapping[str, Any]) -> dict[str, Any]:
+    """Source formats only; no cash-flow values, coverage or timing inference."""
+    return {
+        "schema_version": "ibkr_flex_cashflow_diagnostic.v1",
+        "status": "observed_source_shape",
+        "source_ref": ledger["source_ref"],
+        "period": {key: _diagnostic_date(ledger["period"].get(key)) for key in ("from", "to")},
+        "cashflow_source_diagnostic": ledger["cashflow_source_diagnostic"],
+    }
+
+
 def _cashflow_timezone_format(value: str | None) -> str:
     if value is None:
         return "missing"

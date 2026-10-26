@@ -102,6 +102,20 @@ def _approved_report_accounts(expected: tuple[str, ...] | None) -> tuple[str, ..
     return allowed
 
 
+def _cashflow_request_period() -> dict[str, str] | None:
+    start = os.environ.get("IBKR_FLEX_CASHFLOW_REQUEST_FROM", "")
+    end = os.environ.get("IBKR_FLEX_CASHFLOW_REQUEST_TO", "")
+    if not start and not end:
+        return None
+    try:
+        first, last = date.fromisoformat(start), date.fromisoformat(end)
+        if first.isoformat() != start or last.isoformat() != end or not 0 <= (last - first).days <= 30:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise ValueError("cashflow_request_period_invalid") from None
+    return {"from": start, "to": end}
+
+
 def _validated_report(value: object) -> dict[str, Any]:
     """Select the only fields permitted on stdout, even if the caller changes."""
 
@@ -211,9 +225,75 @@ def _validated_cash_report(value: object) -> dict[str, Any]:
     }
 
 
+def _validated_cashflow_report(value: object) -> dict[str, Any]:
+    """Rebuild fixed public field/format counts; never forward dynamic XML keys."""
+    invalid = _empty_report(status="error", missing=["flex_cashflow_diagnostic_result_invalid"])
+    if not isinstance(value, dict):
+        return invalid
+    shape, period = value.get("cashflow_source_diagnostic"), value.get("period")
+    if (value.get("schema_version") != "ibkr_flex_cashflow_diagnostic.v1"
+            or value.get("status") != "observed_source_shape"
+            or not isinstance(value.get("source_ref"), str)
+            or not re.fullmatch(r"[a-f0-9]{64}", value["source_ref"])
+            or not isinstance(shape, dict) or not isinstance(period, dict)):
+        return invalid
+    try:
+        safe_period = {key: date.fromisoformat(period[key]).isoformat() for key in ("from", "to")}
+    except (KeyError, TypeError, ValueError):
+        return invalid
+    if (safe_period != period or safe_period["from"] > safe_period["to"]
+            or shape.get("schema_version") != "ibkr.flex_cashflow_source_shape.v1"
+            or shape.get("coverage") != "not_evaluated"
+            or not isinstance(shape.get("sections"), dict)
+            or set(shape["sections"]) != {"CashTransactions", "StmtFunds"}):
+        return invalid
+    common = {"accountId", "currency", "amount", "transactionID"}
+    optional = {"dateTime", "date", "reportDate", "settleDate", "tradeID", "clientReference",
+                "code", "levelOfDetail", "timeZone", "timezone"}
+    kinds = {"missing", "empty_text", "text", "decimal_text", "scientific_text", "nonfinite_text",
+             "oversized_text", "unsupported_text"}
+    time_kinds = {"missing", "empty_text", "date_only", "local_datetime", "utc_datetime",
+                  "offset_datetime", "named_zone_datetime", "unsupported"}
+    zone_kinds = {"missing", "empty_text", "utc_label", "numeric_offset", "abbreviation", "iana_like", "unsupported"}
+    sections = {}
+    for name in ("CashTransactions", "StmtFunds"):
+        row = shape["sections"][name]
+        required = common | ({"type", "dateTime"} if name == "CashTransactions" else {"activityCode", "date"})
+        counts = ("section_count", "record_count", "unsupported_record_count")
+        if (not isinstance(row, dict)
+                or any(type(row.get(key)) is not int or not 0 <= row[key] <= 8 * 1024 * 1024 for key in counts)):
+            return invalid
+        total = row["record_count"]
+        safe_row = {key: row[key] for key in counts}
+        maps = (("field_type_counts", required | optional, kinds),
+                ("date_time_format_counts", {"dateTime", "date", "reportDate", "settleDate"}, time_kinds),
+                ("timezone_format_counts", {"timeZone", "timezone"}, zone_kinds))
+        for key, fields, allowed in maps:
+            field_counts = row.get(key)
+            if not isinstance(field_counts, dict) or set(field_counts) != (fields if total else set()):
+                return invalid
+            safe_row[key] = {}
+            for field, formats in field_counts.items():
+                if (not isinstance(formats, dict) or not formats or set(formats) - allowed
+                        or any(type(n) is not int or not 0 < n <= total for n in formats.values())
+                        or sum(formats.values()) != total):
+                    return invalid
+                safe_row[key][field] = dict(formats)
+        missing = row.get("missing_required_fields")
+        if (not isinstance(missing, list) or any(not isinstance(field, str) or field not in required for field in missing)
+                or len(missing) != len(set(missing))):
+            return invalid
+        safe_row["missing_required_fields"] = list(missing)
+        sections[name] = safe_row
+    return {"schema_version": "ibkr_flex_cashflow_diagnostic.v1", "status": "observed_source_shape",
+            "source_ref": value["source_ref"], "period": safe_period,
+            "cashflow_source_diagnostic": {"schema_version": "ibkr.flex_cashflow_source_shape.v1",
+                                           "coverage": "not_evaluated", "sections": sections}}
+
+
 def main(argv: Sequence[str] = ()) -> int:
     args = tuple(argv)
-    if args not in ((), ("--preflight",), ("--read-once",), ("--cash-read-once",)):
+    if args not in ((), ("--preflight",), ("--read-once",), ("--cash-read-once",), ("--cashflow-read-once",)):
         print(json.dumps(_empty_report(status="incomplete", missing=["arguments_invalid"]), sort_keys=True))
         return 2
     if args != ("--preflight",) and os.environ.get(_ENABLE_ENV) != "true":
@@ -237,6 +317,13 @@ def main(argv: Sequence[str] = ()) -> int:
     except ValueError:
         missing.append("expected_period_invalid")
     try:
+        request_period = _cashflow_request_period()
+        if request_period is not None and (args not in (("--preflight",), ("--cashflow-read-once",))
+                or expected_period is not None and expected_period != request_period):
+            raise ValueError
+    except ValueError:
+        missing.append("cashflow_request_period_invalid")
+    try:
         allowed_accounts = _approved_report_accounts(account_ids)
     except (ValueError, TypeError, RecursionError):
         missing.append("approved_report_scope_invalid")
@@ -248,9 +335,13 @@ def main(argv: Sequence[str] = ()) -> int:
         return 0
 
     try:
-        kwargs = {"collect_pending": True} if args in (("--read-once",), ("--cash-read-once",)) else {}
+        kwargs = {"collect_pending": True} if args in (("--read-once",), ("--cash-read-once",), ("--cashflow-read-once",)) else {}
         if args == ("--cash-read-once",):
             kwargs["cash_report_only"] = True
+        if args == ("--cashflow-read-once",):
+            kwargs["cashflow_source_only"] = True
+            if request_period is not None:
+                kwargs["report_period"] = request_period
         if allowed_accounts is not None:
             kwargs["allowed_report_account_ids"] = allowed_accounts
         result = diagnose_activity_flex_ledger(
@@ -259,9 +350,14 @@ def main(argv: Sequence[str] = ()) -> int:
             expected_account_ids=account_ids,
             **kwargs,
         )
-        report = _validated_cash_report(result) if args == ("--cash-read-once",) else _validated_report(result)
+        if args == ("--cashflow-read-once",):
+            report = _validated_cashflow_report(result)
+        else:
+            report = _validated_cash_report(result) if args == ("--cash-read-once",) else _validated_report(result)
         if expected_period is not None and report["period"] != expected_period:
             report = _empty_report(status="error", missing=["expected_period_mismatch"])
+        if request_period is not None and report["period"] != request_period:
+            report = _empty_report(status="error", missing=["requested_period_mismatch"])
     except FlexReportPending:
         report = _empty_report(status="pending", missing=["flex_generation_pending"])
         print(json.dumps(report, sort_keys=True))
