@@ -14,7 +14,7 @@
 ## 调用方必须明确提供
 
 1. `runtime`：一个明确 dry-run、cash-only、options disabled 的人工 `LoadedStrategyRuntime`；profile 固定为 `tqqq_growth_income`，target、账户范围、账户列表、有效执行现金保留比例必须一致。固定现金保留额须显式提供并与 runtime 一致；资金合同须覆盖 max(比例 × 净值, 固定底线)，保留额由原现金适配器扣除一次。未定值不按零补齐。
-2. `portfolio_snapshot`：人工原生形状的账户快照。`packet.facts` 必须与当前平台生产函数的投影完全相同；明确全现金的人工场景可另附 `inventory_evidence`，通过独立完整性证明后使用研究投影，详见[券商事实与接线](tqqq-broker-facts.zh-CN.md)。原生期权库存必须明确为空，缺失或非空都不能被 stocks-only 投影隐去。现金证据中每个账户/币种/标签还须与该快照的原生 cash_balances 对齐，尤其单独核 `SettledCash`，不能由 `CashBalance` 代替。
+2. `portfolio_snapshot`：人工原生形状的账户快照。`packet.facts` 必须与当前平台生产函数的投影完全相同；明确全现金的人工场景可另附 `inventory_evidence`，通过独立完整性证明后使用研究投影，详见[券商事实与接线](tqqq-broker-facts.zh-CN.md)。原生期权库存必须明确为空，缺失或非空都不能被 stocks-only 投影隐去。原生现金证据的账户/币种/标签须与快照的 cash_balances 对齐；已结算金额须另有原生 `SettledCash` 或下文明确绑定的人工 Web ledger 来源，不能由 `CashBalance` 代替。
 3. `packet`：原 UES facts/account_contract、cash_evidence、execution_rules、moments、composition、risk_inputs、definition_bytes、request_id、Kelly 数学合同。当前只装配一个 TQQQ 策略及其明确证券组成；不扩为多个平台或其他策略。
 4. `event_context`：原三档完整事件政策、风险观察、日初基准、外部流量、高水位、费用后持仓周期，以及如适用的减仓和恢复证据。预算/期限/阈值、曲线或任何必需规则缺失时交 gaps。
 5. `journal`、`binding`：明确离线根目录及原 `PortfolioEventJournal`，外部保存的精确 checkpoint；初始化另需完整显式初态证明。身份必须恰为当前账户范围、当前 TQQQ 组合和当前事件政策，不能拿同账户的其他链替代。
@@ -63,6 +63,65 @@ SettledCash、AvailableFunds和FullAvailableFunds。原`cash`的选择优先级�
 - `risk_policy_sha256 = digest({"event_policy": policy, "funding_inputs_sha256": _hash(packet["risk_inputs"])})`；`digest` / `_hash` 复用原研究函数和其 dataclass 编码。
 
 这里定义的是本离线输入的冻结引用，不签发真实 release、不改变现役 release 摘要口径，也不证明真实政策发行者。配置或资金/事件模型改变须提供新的明确引用；接口不会自己补摘要或更新 checkpoint。
+
+## 资金规则与结算来源
+
+券商账户能力、策略资金规则和实际可支用额是三件事。账户为 Margin 不授予借款权限，
+也不自动切换资金规则。原生产 cash-only 路径用原生币种现金限制购买力；
+QPK `CashPolicy` 的三字段是 cash_only、reserved_cash_ratio、reserved_cash_floor_usd，
+它没有单独的结算规则字段。该旧行为保持原样，不能据此宣称已证明结算期间不会融资。
+
+本研究链继续采用冻结 UES 的
+`SETTLED_MINUS_DISJOINT_RESERVATIONS_AND_OBLIGATIONS_NO_SELL_BRIDGE`：
+只用已结算现金，扣除不重叠的保留额与其他义务，不加入预计卖出收入，不批准借款或卖出款衔接。
+`cash_policy_preview` 明确输出 `cash_rule`、`borrowing_allowed=false`、
+`sale_proceeds_bridge_allowed=false` 和 `settled_cash_source_field`。
+这是人工合同的规则说明，不是实际账户的无融资认证。
+
+`packet.cash_evidence` 可附 `web_api_ledger`，使人工 Web 来源无需冒充 TWS 原生回调。
+它沿用原11字段来源 header，额外要求：
+
+| 字段 | 合同 |
+|---|---|
+| `read_status` | `RESOLVED`；未知或读取失败拒绝 |
+| `endpoint` | 精确 `/portfolio/{accountId}/ledger` 模板，不含真实账户地址 |
+| `account_snapshot_sha256` | 原 `digest(packet.facts)`，绑定本次快照 |
+| `response` | 官方逐币种响应形状；必须有合同币种行，不从 BASE、其他币种或其他账户补值 |
+
+选定行必须有匹配的 `acctcode`、`currency`，`timestamp` 为 Unix 秒整数且与来源
+`observed_at` 相同；来源在冻结截止时刻须已可见、新鲜且有效。
+`cashbalance` 须等于本次原生现金事实，`settledcash` 则单独校验。
+缺失、null、非法、负值、冲突或错误时间单位都不能生成可支用额。
+若原生快照或其逐项捕获附件也提供 SettledCash，该观察仍须有效、唯一且与 Web 来源一致。
+来源不能覆盖已知冲突。
+
+适配器仅在内部补入冻结 UES 所需的 `SettledCash` 键，并标记
+`source_field=IBKR_WEB_API_PORTFOLIO_LEDGER.settledcash`；完整人工 Web 证据保留在同一 packet。
+该内部键不是新增的 TWS 回调，也不回写原快照或调用方输入。未绑定 Web 来源的来源标记不能跳过原生检查。
+缺少的合同 settled_cash 由原 UES 现金适配器从该证据派生；显式冲突保留并拒绝，不覆盖。
+旧原生路径仍输出 `TWS.SettledCash` 来源标识。公式、研究版本、费用与数量规则均复用原消费者。
+
+Web 来源不证明挂单、待转出和费用义务完整；原 pending_state、obligations_complete、
+reservations_disjoint、显式 reservations 和保留政策检查全部保留。
+完整来源进入原草稿指纹及来源时间集合；消费时原 UES 递归时效检查也核这份子证据，
+改变来源版本不能复用旧草稿，过期不能靠重新读取草稿刷新。
+
+本入口不请求网络、不持有认证、不注册生产消费。所有来源仍须 synthetic=true，
+人工就绪不授予配置采用或执行权限。真实 Web 采集需先满足官方 accounts/subaccounts 前置和有效会话，
+再按受保护存储流程独立验收，不能将真实响应改标人工后送入本入口。
+字段定义见 [IBKR Portfolio Ledger](https://www.interactivebrokers.com/docs/web-api/v1/endpoints/portfolio/portfolio-ledger)。
+
+### 按阶段使用检查
+
+| 阶段 | 必要输入与结果边界 |
+|---|---|
+| 原状态 `read` | 可信账户/政策身份、检查点和账链；不读取当前 TWS/Web 现金、费用或候选输入；读到 OPEN 仍禁止新增风险 |
+| 原基线信号与禁提交诊断 | 沿其自身输入逐阶段检查；本研究链的已结算来源不成为全局查询前置；阶段完成不等于完整资金批准 |
+| 本研究 `initialize`、`persist`、`preflight` | 继续完整严格资金与风险准入；保存/预检只产生人工草稿和读回结果 |
+| 真实增险或配置采用 | 本入口不提供资格；当前资金、完整相关义务、有效政策和真实消费者另行验收 |
+
+原 `broker_contract_source_evidence` 的“本报告未证明”仅描述该报告证据范围，
+不能将一个字段缺失扩成所有阶段不可执行，也不能因较早阶段成功就宣布完整试点通过。
 
 ## 复用原现金政策生成保留要求
 
