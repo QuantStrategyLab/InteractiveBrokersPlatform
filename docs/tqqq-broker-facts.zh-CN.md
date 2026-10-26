@@ -83,5 +83,11 @@
 
 已观察现金字段、可支用资金和完整资金义务分别判断。成功读取并不自动证明
 所有现金均可分配，也不启用任何策略或风险配置。
+
+隔离目录由原 writer 的基础存储前缀确定，位于其自动追加的
+platform/profile/service 目录之前。读取端同时验证该子目录，以及去除隔离
+段后仍处于原 publisher 的准确账户前缀内，不把两种前缀直接拼接。
+`maintenance_job_readback=true` 仅恢复读取已完成的固定执行报告，与新 Job
+模式互斥；以已有执行摘要验证身份，没有创建、执行或重试 Job 的路径。
 [Job YAML](https://docs.cloud.google.com/run/docs/reference/yaml/v1#job)、
 [Job 执行身份](https://docs.cloud.google.com/run/docs/container-contract#env-vars)。

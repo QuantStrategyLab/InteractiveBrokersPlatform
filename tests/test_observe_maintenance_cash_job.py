@@ -19,6 +19,8 @@ def setup():
     revision["metadata"]["labels"]["commit-sha"] = jobs.SOURCE
     revision["metadata"]["annotations"]["run.googleapis.com/network-interfaces"] = '[{"network":"synthetic-vpc","subnetwork":"synthetic-subnet"}]'
     revision["spec"]["containers"][0]["image"] = "synthetic/image@" + jobs.IMAGE_DIGEST
+    revision["spec"]["containers"][0]["env"].append(dict(name="EXECUTION_REPORT_GCS_URI", value="gs://example-bucket/tqqq_growth_income"))
+    state["serving_revision"]["spec"]["containers"][0]["env"] = copy.deepcopy(revision["spec"]["containers"][0]["env"])
     # Admission compares the full non-image runtime configuration.
     state["serving_revision"]["metadata"]["annotations"].update(revision["metadata"]["annotations"])
     state["service"]["spec"]["template"] = {key: copy.deepcopy(revision[key]) for key in ("metadata", "spec")}
@@ -130,3 +132,40 @@ def test_job_translation_preserves_env_secrets_resources_and_network():
     changed["spec"]["template"]["spec"]["template"]["spec"]["maxRetries"] = 1
     with pytest.raises(pilot.ReleaseError, match="template_readback"):
         jobs.verify_job(changed, document)
+
+
+def test_writer_child_precedes_profile_and_service_segments():
+    _, revision, expected, report = setup()
+    rows = revision["spec"]["containers"][0]["env"]
+    rows[-1]["value"] = "gs://example-bucket/reports"
+    expected["expected_report_prefix"] = "gs://example-bucket/reports/interactive_brokers/tqqq_growth_income/synthetic-service"
+    uri = "gs://example-bucket/reports/maintenance-cash/interactive_brokers/tqqq_growth_income/synthetic-service/2026-09/report.json"
+    namespace = jobs.report_namespace(revision, expected)
+    assert namespace == "gs://example-bucket/reports/maintenance-cash"
+    with pytest.raises(ValueError):
+        jobs.publisher._source_report_uri(uri, expected["expected_report_prefix"] + "/maintenance-cash")
+    result = jobs.inspect_report(report, uri, expected, job=JOB, execution=EXECUTION, started=NOW, now=NOW, namespace=namespace)
+    assert result["status"] == "OBSERVED_JOB_ONLY"
+    with pytest.raises(ValueError):
+        jobs.inspect_report(report, uri.replace("synthetic-service/", "other-service/"), expected,
+            job=JOB, execution=EXECUTION, started=NOW, now=NOW, namespace=namespace)
+
+
+def test_completed_readback_never_creates_or_executes_job(monkeypatch):
+    from scripts import read_completed_maintenance_cash_job as reader
+    state, revision, expected, report = setup()
+    cloud = Cloud(state, revision)
+    monkeypatch.setattr(reader, "RUN", "123")
+    monkeypatch.setattr(reader, "STARTED", NOW)
+    monkeypatch.setattr(reader, "EXECUTION_SHA256", jobs.observer.digest(EXECUTION))
+    def run(args, **kwargs):
+        if args[1:3] == ["logging", "read"]:
+            return json.dumps([dict(textPayload="execution_report " + URI,
+                labels={"run.googleapis.com/execution_name": EXECUTION})])
+        return cloud.run(args, **kwargs)
+    result = reader.readback(expected, {**environment(), "MAINTENANCE_SOURCE_COMMIT": jobs.SOURCE,
+        "MAINTENANCE_JOB": "false", "MAINTENANCE_JOB_READBACK": "true"}, run=run,
+        snapshot=cloud.snapshot, load_report=lambda *_, **__: report, now=lambda: NOW)
+    assert result["readback_only"] is True and result["broker_called"] is False
+    assert result["source_workflow_run"] == "123"
+    assert not any(row[1:3] == ["run", "jobs"] for row in cloud.calls)

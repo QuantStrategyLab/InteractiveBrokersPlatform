@@ -107,9 +107,26 @@ def verify_execution(execution, job, document):
     return name
 
 
-def inspect_report(report, uri, expected, *, job, execution, started, now):
+def report_namespace(revision, expected):
+    rows = revision["spec"]["containers"][0].get("env", [])
+    values = [row.get("value") for row in rows if row.get("name") == "EXECUTION_REPORT_GCS_URI"]
+    if len(values) != 1 or not isinstance(values[0], str):
+        raise pilot.ReleaseError("report_store_binding_unverified")
+    base = values[0].rstrip("/")
+    # The writer inserts its child before platform/profile/service segments;
+    # the publisher's prefix can already include those segments.
+    publisher._source_report_uri(expected["expected_report_prefix"].rstrip("/") + "/binding-check", base)
+    return base + "/maintenance-cash"
+
+
+def inspect_report(report, uri, expected, *, job, execution, started, now, namespace=None):
     """Job-only validation. Never forge a service revision for its publisher."""
-    publisher._source_report_uri(uri, expected["expected_report_prefix"].rstrip("/") + "/maintenance-cash")
+    namespace = namespace or expected["expected_report_prefix"].rstrip("/") + "/maintenance-cash"
+    publisher._source_report_uri(uri, namespace)
+    # Check the original publisher scope without changing its physical revision
+    # or publishing the Job report. Only the writer's isolation segment moves.
+    original_uri = namespace.removesuffix("/maintenance-cash") + uri[len(namespace):]
+    publisher._source_report_uri(original_uri, expected["expected_report_prefix"])
     diag, target = report.get("diagnostics", {}), report.get("runtime_target", {})
     if (report.get("schema_version") != "runtime_report.v1" or report.get("status") != "ok"
             or report.get("platform") != "interactive_brokers" or report.get("deploy_target") != "cloud_run"
@@ -164,6 +181,7 @@ def observe(expected, env, receipt, *, run=pilot.command, snapshot=pilot.snapsho
     revision = read(["run", "revisions", "describe", candidate, *common])
     observer.admit(expected, before, revision, SOURCE)
     document = job_document(revision, job, ENTRY.read_text())
+    namespace = report_namespace(revision, expected)
     if any(row.get("metadata", {}).get("name") == job for row in jobs()):
         raise pilot.ReleaseError("job_name_occupied")
     result = dict(status="STOPPED", reason="job_not_completed", source_commit=SOURCE, image_digest=IMAGE_DIGEST,
@@ -214,13 +232,13 @@ def observe(expected, env, receipt, *, run=pilot.command, snapshot=pilot.snapsho
             for row in logs:
                 match = re.search(r"execution_report (gs://[^\s]+)", row.get("textPayload", ""))
                 if match:
-                    uris.add(publisher._source_report_uri(match[1], expected["expected_report_prefix"].rstrip("/") + "/maintenance-cash"))
+                    uris.add(publisher._source_report_uri(match[1], namespace))
             if len(uris) > 1:
                 raise pilot.ReleaseError("job_report_ambiguous")
             if uris:
                 uri = uris.pop()
                 result.update(inspect_report(load_report(uri, project_id=ctx.project), uri, expected,
-                    job=job, execution=name, started=started, now=now()))
+                    job=job, execution=name, started=started, now=now(), namespace=namespace))
                 result.pop("reason", None)
                 break
             sleep(5)

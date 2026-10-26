@@ -14,6 +14,11 @@ on:
         type: boolean
         required: false
         default: false
+      maintenance_job_readback:
+        description: "Read only the already completed maintenance Job report; never execute another Job."
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -41,6 +46,7 @@ jobs:
       CLOUD_RUN_REGION: us-central1
       MAINTENANCE_SOURCE_COMMIT: ${{ inputs.maintenance_source_commit }}
       MAINTENANCE_JOB: ${{ inputs.maintenance_job }}
+      MAINTENANCE_JOB_READBACK: ${{ inputs.maintenance_job_readback }}
     steps:
       - name: Require infrastructure variables
         env:
@@ -73,10 +79,12 @@ jobs:
           source = os.environ.get("MAINTENANCE_SOURCE_COMMIT", "")
           if source and (not re.fullmatch(r"[0-9a-f]{40}", source) or os.environ["GITHUB_RUN_ATTEMPT"] != "1"):
               raise SystemExit("status=blocked reason=candidate_source_invalid")
-          if os.environ.get("MAINTENANCE_JOB") == "true":
+          if os.environ.get("MAINTENANCE_JOB") == "true" or os.environ.get("MAINTENANCE_JOB_READBACK") == "true":
               from scripts.observe_maintenance_cash_job import SOURCE
               if source != SOURCE:
                   raise SystemExit("status=blocked reason=job_source_invalid")
+          if os.environ.get("MAINTENANCE_JOB") == os.environ.get("MAINTENANCE_JOB_READBACK") == "true":
+              raise SystemExit("status=blocked reason=job_modes_conflict")
           print("status=preflight_verified scope=primary_tqqq")
           PY
 
@@ -94,12 +102,16 @@ jobs:
         run: python3 -m scripts.diagnose_account_facts_identity --broker-contract-source-evidence
 
       - name: Observe one zero-traffic maintenance cash snapshot without strategy execution
-        if: inputs.maintenance_source_commit != '' && !inputs.maintenance_job
+        if: inputs.maintenance_source_commit != '' && !inputs.maintenance_job && !inputs.maintenance_job_readback
         run: python3 -m scripts.observe_maintenance_cash
 
       - name: Observe one temporary maintenance cash Job without strategy execution
         if: inputs.maintenance_source_commit != '' && inputs.maintenance_job
         run: python3 -m scripts.observe_maintenance_cash_job
+
+      - name: Read only the completed maintenance cash Job report
+        if: inputs.maintenance_source_commit != '' && inputs.maintenance_job_readback
+        run: python3 -m scripts.read_completed_maintenance_cash_job
 
       - name: Retain only the value-free maintenance observation
         if: always() && inputs.maintenance_source_commit != ''
