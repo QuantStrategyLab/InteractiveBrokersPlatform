@@ -65,6 +65,8 @@ The explicit `scope=month-snapshots` mode checks at most 64 original reports
 from that month in the protected runner; an oversized month stops before any
 body read. Each report keeps its own original date predicates. The default
 `scope=day` remains a single-day inspection. All scopes remain read-only.
+Unexpected failures expose only an allowlisted error class and a validated
+timestamp filename; exception messages and stack traces remain suppressed.
 
 # Zero-traffic maintenance cash observation
 
