@@ -1,6 +1,7 @@
 """Synthetic configuration and IAM responses only; no cloud or broker calls."""
 from dataclasses import replace
 import json
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -111,3 +112,12 @@ def test_secret_priority_uses_only_original_selected_source():
 def test_readonly_command_allowlist_rejects_mutations_before_subprocess():
     with pytest.raises(pilot.ReleaseError, match="operation_not_readonly"):
         probe.command(("gcloud", "compute", "instances", "set-service-account"), "diagnostic_error")
+
+
+def test_native_permission_failure_is_classified_without_exposing_stderr(monkeypatch):
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 1, "",
+        "PERMISSION_DENIED private-identity private-project"))
+    with pytest.raises(probe.ReadFailure) as caught:
+        probe.command(("gcloud", "compute", "instances", "describe", "synthetic"), "gateway_instance_unavailable")
+    assert caught.value.failure_class == "permission_denied"
+    assert str(caught.value) == "gateway_instance_unavailable"

@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import subprocess
 from types import SimpleNamespace
+import urllib.error
 import urllib.request
 
 from scripts import deploy_pilot_no_traffic as pilot
@@ -30,9 +31,17 @@ def result():
         reason="diagnostic_error", observed_at=datetime.now(timezone.utc).isoformat(),
         group_configuration_observed=False, gateway_binding_verified=False,
         positive_client_id_verified=False, compute_instance_read=False,
-        iap_permission_observed=None, source_stable=False, network_path_verified=False,
+        iap_permission_observed=None, iap_http_status=None, cloud_read_failure_class=None,
+        source_stable=False, network_path_verified=False,
         runtime_ready=False, broker_called=False, image_pull_attempted=False,
         resources_created=False, configuration_changed=False, identity_changed=False)
+
+
+class ReadFailure(pilot.ReleaseError):
+    def __init__(self, reason, failure_class, http_status=None):
+        super().__init__(reason)
+        self.failure_class = failure_class
+        self.http_status = http_status
 
 
 def command(args, reason):
@@ -41,11 +50,18 @@ def command(args, reason):
         ("gcloud", "projects", "describe"), ("gcloud", "auth", "print-access-token"))
     if not any(tuple(args[:len(prefix)]) == prefix for prefix in allowed):
         raise pilot.ReleaseError("operation_not_readonly")
-    completed = subprocess.run(args, capture_output=True, text=True, timeout=30, env={**os.environ,
-        "CLOUDSDK_CORE_DISABLE_FILE_LOGGING": "true", "CLOUDSDK_CORE_LOG_HTTP": "false",
-        "CLOUDSDK_CORE_DISABLE_PROMPTS": "1"})
+    try:
+        completed = subprocess.run(args, capture_output=True, text=True, timeout=30, env={**os.environ,
+            "CLOUDSDK_CORE_DISABLE_FILE_LOGGING": "true", "CLOUDSDK_CORE_LOG_HTTP": "false",
+            "CLOUDSDK_CORE_DISABLE_PROMPTS": "1"})
+    except subprocess.TimeoutExpired:
+        raise ReadFailure(reason, "timeout") from None
     if completed.returncode or len(completed.stdout.encode()) > 4_000_000:
-        raise pilot.ReleaseError(reason)
+        detail = completed.stderr.lower()
+        category = ("api_disabled" if "service_disabled" in detail or "has not been used" in detail else
+            "permission_denied" if "permission_denied" in detail or "does not have" in detail or "required '" in detail else
+            "not_found" if "not_found" in detail or "was not found" in detail else "unclassified")
+        raise ReadFailure(reason, category)
     return completed.stdout
 
 
@@ -109,6 +125,10 @@ def check_iap(resource, token):
         if len(body) > 65536:
             raise ValueError()
         value = json.loads(body)
+    except urllib.error.HTTPError as error:
+        raise ReadFailure("iap_check_unavailable", "http_rejected", error.code) from None
+    except TimeoutError:
+        raise ReadFailure("iap_check_unavailable", "timeout") from None
     except Exception:
         raise pilot.ReleaseError("iap_check_unavailable") from None
     permissions = value.get("permissions", []) if isinstance(value, dict) else None
@@ -149,10 +169,12 @@ def diagnose(ctx, *, run=command, read=serving._read, group_reader=read_group, i
         permitted = iap(f"projects/{number}/iap_tunnel/zones/{zone}/instances/{vm_id}", token)
         if type(permitted) is not bool:
             raise pilot.ReleaseError("iap_response_invalid")
-        out.update(status="observed", iap_permission_observed=permitted,
+        out.update(status="observed", iap_permission_observed=permitted, iap_http_status=200,
             reason="static_access_observed" if permitted else "iap_permission_not_observed")
     except pilot.ReleaseError as error:
         out["reason"] = str(error) if str(error) in REASONS else "diagnostic_error"
+        if isinstance(error, ReadFailure):
+            out.update(cloud_read_failure_class=error.failure_class, iap_http_status=error.http_status)
     except Exception:
         out["reason"] = "group_configuration_invalid" if before is not None else "diagnostic_error"
     if before is not None:
