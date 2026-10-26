@@ -202,3 +202,80 @@ def test_summary_source_and_interval_are_independent_of_snapshot(failure):
         assert report["summary"]["account_facts"]["broker_cash_observations"]["values"][0]["value"] == "0"
         assert summary["broker_cash_observations"]["values"][0]["value"] == "5.0123"
         assert result["spendable_cash_verified"] is result["complete_obligations_verified"] is False
+
+
+def _funding_report():
+    _, _, expected, report = setup()
+    report["summary"]["broker_funding_inputs"] = dict(schema_version="ibkr.funding_inputs.v1",
+        account_ids=list(expected["expected_account_selector"]), source_scope="TWS_SESSION_API_ORDERS_AND_CONTRACT_METADATA",
+        snapshot_atomic=False, observed_started_at=(NOW + timedelta(seconds=1)).isoformat(),
+        orders_finished_at=(NOW + timedelta(seconds=1.2)).isoformat(),
+        observed_finished_at=(NOW + timedelta(seconds=1.5)).isoformat(), open_orders_query_completed=True,
+        open_order_count=0, contract_rules=dict(status="OBSERVED", symbol="TQQQ", currency="USD", con_id=1234,
+            minSize="1", sizeIncrement="1"), configured_quantity_step="1", complete_cash_obligations_verified=False,
+        account_fee_plan_verified=False, account_trading_permissions_verified=False)
+    return expected, report
+
+
+@pytest.mark.parametrize("step,mode", [("1", "WHOLE_SHARES"), ("2", "WHOLE_SHARES"),
+    ("0.01", "FRACTIONAL"), ("1.5", "FRACTIONAL"), (None, "UNKNOWN")])
+def test_funding_readback_preserves_empty_snapshot_without_claiming_complete_obligations(step, mode):
+    expected, report = _funding_report()
+    report["summary"]["broker_funding_inputs"]["configured_quantity_step"] = step
+    result = jobs.inspect_report(report, URI, expected, job=JOB, execution=EXECUTION, started=NOW, now=NOW)
+    safe = result["funding_inputs"]
+    assert safe["observed_api_open_order_count"] == 0 and safe["configured_quantity_mode"] == mode
+    assert safe["complete_cash_obligations_verified"] is False
+    assert safe["account_fee_plan_verified"] is safe["account_trading_permissions_verified"] is False
+    assert "con_id" not in str(safe) and expected["expected_account_selector"][0] not in str(safe)
+
+
+@pytest.mark.parametrize("change", ["account", "time", "incomplete", "count", "foreign_order", "quantity", "claim", "scope"])
+def test_funding_readback_rejects_wrong_scope_incomplete_response_and_invalid_metadata(change):
+    expected, report = _funding_report()
+    value = report["summary"]["broker_funding_inputs"]
+    if change == "account":
+        value["account_ids"] = ["DU00000099"]
+    elif change == "time":
+        value["orders_finished_at"] = (NOW + timedelta(seconds=3)).isoformat()
+    elif change == "incomplete":
+        value["open_orders_query_completed"] = False
+    elif change == "count":
+        value["open_order_count"] = 1
+    elif change == "foreign_order":
+        value.update(open_order_count=1, open_orders=[{"account": "DU00000099"}])
+    elif change == "quantity":
+        value["contract_rules"]["minSize"] = "NaN"
+    elif change == "claim":
+        value["complete_cash_obligations_verified"] = True
+    else:
+        value["source_scope"] = "WHOLE_ACCOUNT"
+    with pytest.raises(pilot.ReleaseError, match="funding_"):
+        jobs.inspect_report(report, URI, expected, job=JOB, execution=EXECUTION, started=NOW, now=NOW)
+
+
+@pytest.mark.parametrize("change", [None, "private_key", "negative", "counts", "request"])
+def test_summary_diagnostic_readback_allows_only_fixed_counts(change):
+    from application.ibkr_cash_observations import build_cash_observations
+    _, _, expected, report = setup()
+    stamp = (NOW + timedelta(seconds=1)).isoformat()
+    fields = {tag: dict(usd_rows=0, usd_invalid_values=0, usd_duplicate_rows=0, base_rows=1, other_currency_rows=0)
+              for tag in ("SettledCash", "AvailableFunds", "FullAvailableFunds")}
+    summary = dict(source_method="ibkr.reqAccountSummary", account_ids=list(expected["expected_account_selector"]),
+        query_completed=True, snapshot_atomic=False, observed_started_at=stamp, observed_finished_at=stamp,
+        broker_cash_observations=build_cash_observations([], observed_at=stamp), request_scoped=True, field_diagnostics=fields)
+    report["summary"]["broker_account_summary"] = summary
+    if change == "private_key":
+        fields["SettledCash"]["PRIVATE_CANARY"] = 1
+    elif change == "negative":
+        fields["SettledCash"]["usd_rows"] = -1
+    elif change == "counts":
+        fields["SettledCash"]["usd_invalid_values"] = 1
+    elif change == "request":
+        summary["request_scoped"] = False
+    if change is None:
+        result = jobs.inspect_report(report, URI, expected, job=JOB, execution=EXECUTION, started=NOW, now=NOW)
+        assert result["account_summary_cash_observations"]["field_diagnostics"] == fields
+    else:
+        with pytest.raises(pilot.ReleaseError, match="account_summary_diagnostic"):
+            jobs.inspect_report(report, URI, expected, job=JOB, execution=EXECUTION, started=NOW, now=NOW)

@@ -172,6 +172,49 @@ def inspect_report(report, uri, expected, *, job, execution, started, now, names
             raise pilot.ReleaseError("account_summary_fields_unverified")
         result["account_summary_cash_observations"] = dict(source_method="ibkr.reqAccountSummary",
             observed_started_at=first.isoformat(), observed_finished_at=last.isoformat(), **summary_fields)
+        diagnostic = summary.get("field_diagnostics")
+        if diagnostic is not None:
+            names = {"usd_rows", "usd_invalid_values", "usd_duplicate_rows", "base_rows", "other_currency_rows"}
+            if (summary.get("request_scoped") is not True or not isinstance(diagnostic, dict)
+                    or set(diagnostic) != {"SettledCash", "AvailableFunds", "FullAvailableFunds"}
+                    or any(not isinstance(row, dict) or set(row) != names
+                        or any(type(n) is not int or not 0 <= n <= 1000000 for n in row.values())
+                        or row["usd_invalid_values"] > row["usd_rows"]
+                        or row["usd_duplicate_rows"] != max(0, row["usd_rows"] - 1) for row in diagnostic.values())):
+                raise pilot.ReleaseError("account_summary_diagnostic_unverified")
+            result["account_summary_cash_observations"].update(request_scoped=True, field_diagnostics=diagnostic)
+    funding = report.get("summary", {}).get("broker_funding_inputs")
+    if funding is not None:
+        if (not isinstance(funding, dict) or funding.get("schema_version") != "ibkr.funding_inputs.v1"
+                or tuple(funding.get("account_ids", ())) != expected["expected_account_selector"]
+                or funding.get("source_scope") != "TWS_SESSION_API_ORDERS_AND_CONTRACT_METADATA"
+                or funding.get("snapshot_atomic") is not False or funding.get("open_orders_query_completed") is not True
+                or any(funding.get(key) is not False for key in ("complete_cash_obligations_verified",
+                    "account_fee_plan_verified", "account_trading_permissions_verified"))):
+            raise pilot.ReleaseError("funding_inputs_identity_unverified")
+        first, middle, last = [publisher._observed_timestamp(funding.get(key)) for key in (
+            "observed_started_at", "orders_finished_at", "observed_finished_at")]
+        previous = publisher._observed_timestamp(summary["observed_finished_at"]) if summary is not None else observed
+        if not begin <= observed <= previous <= first <= middle <= last <= end:
+            raise pilot.ReleaseError("funding_inputs_time_unverified")
+        count, orders = funding.get("open_order_count"), funding.get("open_orders", [])
+        if (type(count) is not int or not 0 <= count <= 1000000 or not isinstance(orders, list) or len(orders) != count
+                or any(not isinstance(row, dict) or row.get("account") not in expected["expected_account_selector"] for row in orders)):
+            raise pilot.ReleaseError("funding_orders_unverified")
+        from application.ibkr_cash_observations import _decimal
+        rules = funding.get("contract_rules")
+        if (not isinstance(rules, dict) or rules.get("status") not in {"OBSERVED", "UNAVAILABLE"}
+                or rules.get("symbol") != "TQQQ" or rules.get("currency") != "USD"):
+            raise pilot.ReleaseError("funding_quantity_rules_unverified")
+        if rules["status"] == "OBSERVED" and (type(rules.get("con_id")) is not int or rules["con_id"] <= 0
+                or any(_decimal(rules.get(key)) is None or _decimal(rules[key]) <= 0 for key in ("minSize", "sizeIncrement"))):
+            raise pilot.ReleaseError("funding_quantity_rules_unverified")
+        step = _decimal(funding.get("configured_quantity_step"))
+        mode = "UNKNOWN" if step is None or step <= 0 else "WHOLE_SHARES" if step >= 1 and step == step.to_integral_value() else "FRACTIONAL"
+        result["funding_inputs"] = dict(status="OBSERVED_SOURCE_ONLY", source_scope=funding["source_scope"],
+            observed_started_at=first.isoformat(), observed_finished_at=last.isoformat(), snapshot_atomic=False,
+            observed_api_open_order_count=count, native_quantity_rules_status=rules["status"], configured_quantity_mode=mode,
+            complete_cash_obligations_verified=False, account_fee_plan_verified=False, account_trading_permissions_verified=False)
     return result
 
 

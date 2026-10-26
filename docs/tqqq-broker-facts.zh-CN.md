@@ -114,10 +114,47 @@ BASE、缺失、非法值和重复字段仍不转换成 USD 或零。
 工程合并不执行新查询。此前获准的一次 Job 已使用并清理，新增云端
 执行须在该次费用授权明确后才派发；本节不改变工作流默认关闭状态。
 
+## 当前订单与数量元数据的单次准备
+
+维护Job入口复用原只读连接、原私有报告和对账订单格式，增加一次有10秒上限的
+`reqAllOpenOrdersAsync` 与一次 TQQQ / STK / SMART / USD 的 `reqContractDetailsAsync`。
+必须使用非零client ID，显式等查询结束，保留返回列表及仍未解决的本地缓存行，
+按对象身份避免同一行重复；缺账户的订单拒绝，其他账户不保存。此处不运行策略、
+`placeOrder`、what-if、撤单、`reqOpenOrders` 或自动绑定，也不取付费行情。
+
+原生订单保存到 `summary.broker_funding_inputs`，明确只覆盖当前TWS会话可见的API订单，
+不能覆盖其他用户名会话、尚未传送的手工订单、转账待办或所有待扣费用。
+SDK订单的默认remaining值不用于推算现金预留；没有订单也不能推断完整义务为零。
+可核的数量元数据只接受匹配的唯一合约、支持该字段的server version及正数
+`minSize`/`sizeIncrement`；旧协议默认零、未报或歧义保留UNAVAILABLE。
+这不是账户交易或碎股许可。原配置步长只分类WHOLE_SHARES/FRACTIONAL/UNKNOWN，
+不修改设置；只有实际使用碎股的分支才需要相应碎股权限，整股分支仍须核适用股票许可。
+
+账户摘要现在在原SDK callback中按reqId和账户收集，保留原callback并在所有出口恢复，
+避免不带reqId的全局事件混入其他查询。新增的固定计数区分USD缺行、重复、坏数值与
+BASE/其他币种；不回显原值、不重标币种，不择优去重，不追溯改写旧INVALID。
+
+控制端分别复核这些附件的账户、采集区间、响应完整性和原始私有保存读回，只输出
+状态、数量与来源范围。`complete_cash_obligations_verified`、实际收费及账户交易许可
+仍明确为false，不能据此放行资金、恢复或新配置。工程准备和合并不会运行Job；
+新增一次计费执行仍须有该次明确授权。
+
+[官方订单读取范围](https://interactivebrokers.github.io/tws-api/open_orders.html)、
+[只读查询不绑定订单](https://www.interactivebrokers.com/docs/tws-api/doc/orders/modifying-orders)、
+[数量字段定义](https://www.interactivebrokers.com/docs/tws-api/ref/contract-details)。
+
 ## 缺证据时最少的门户核验
 
 先选择同一账户，不选择汇总多个账户的视图。以下页面用途不同：
 
+- **用户菜单 > Settings > Account Configuration > IBKR Pricing Plan**：只查看该账户的
+  IBKR Pro/Lite及股票Tiered/Fixed方案和页面日期，不修改方案、不新增订阅；适用券商实体
+  另按账户原生材料核实。
+  原用户Tiered声明继续保留；这是补其原生来源，不要求重新猜收费。
+  [收费计划入口](https://www.ibkrguides.com/clientportal/pricingstructure.htm)。
+- **用户菜单 > Settings > Trading > Trading Permissions**：只核本次美国股票/ETF
+  的已批准状态；只有实际数量分支涉及碎股时才额外核其许可。证券元数据不等账户获准，
+  不点击Request/新增权限。[交易权限入口](https://www.ibkrguides.com/clientportal/tradingpermissions.htm)。
 - **Performance & Reports > Statements**：选 Activity、最近完整期间和
   HTML 查看，在 Cash Report 核按币种的 Ending Settled Cash、报告日期及
   费用项。它是期末事实，不能直接当当前可支用现金。
