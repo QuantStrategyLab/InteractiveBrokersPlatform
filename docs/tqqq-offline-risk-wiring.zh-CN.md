@@ -38,6 +38,20 @@ SettledCash、AvailableFunds和FullAvailableFunds。原`cash`的选择优先级�
 这是报告大小保护，不是资金或风险上限。原执行使用的数值缓存与现金选择保持原样。
 旧快照没有逐项捕获附件时，只能从原已转换的`cash_balances`投影，不能恢复被丢弃的非法值、
 被覆盖的重复项或已损失的精度。捕获的账户身份与父快照不符时拒绝该账户事实。
+
+正常快照和paper对账快照另将同次`accountValues()`中的`SettledCashByDate`、
+`SettledCashByDate-C`、`SettledCashByDate-S`原文保存为可选的
+`broker_cash_schedule_observations`（`ibkr.cash_schedule_observations.v1`）。
+该附件与七个标量字段分开，继承父快照身份和时间，沿原运行报告保存；不新增查询或存储。
+USD等明确币种与BASE分别保留，重复行不覆盖。每条原文限4096个UTF-8字节；
+空白、非字符串、无法编码或超长的原文不截断保存，而保留该字段行并省略`raw_value`。
+旧快照缺附件时不从数值缓存重建，空附件也不表示余额为零或来源查询已完整。
+
+只读来源诊断对该附件只输出OBSERVED_RAW、RAW_NOT_PRESERVED、AMBIGUOUS_ROWS或MISSING等固定状态；
+日期、金额和任意原文不进入诊断输出。原文只能保存在运行报告的受保护存储中，不能复制到公开日志。
+此附件不解释日期键、时区、当前或未来项、累计口径及费用/转出净含关系，不选择可支用金额。
+它不补齐原生SettledCash，也不改变任何资金、执行或三档研究准入。
+
 三档离线现金预检同时核原数值缓存和存在的逐项捕获来源；两者有冲突、原值无效或同字段重复时，
 即使重建了facts使其匹配，也不能保存初态或草稿。旧缓存不能覆盖这份更完整来源的否定证据。
 

@@ -84,6 +84,20 @@ def test_zero_orders_success_and_unrecognized_claims_do_not_grant_financial_auth
     assert out["source_fields"]["summary.managed_symbols"] == "array"
 
 
+def test_schedule_attachment_is_status_only_and_does_not_satisfy_scalar_settled_cash(monkeypatch):
+    from application.ibkr_cash_observations import SCHEDULE_SCHEMA
+    _, report, _ = report_fixture(monkeypatch)
+    facts = report["summary"]["account_facts"]
+    facts["broker_cash_schedule_observations"] = dict(schema_version=SCHEDULE_SCHEMA,
+        observed_at=facts["observed_at"], values=[dict(currency="USD", source_tag="SettledCashByDate", raw_value=PRIVATE)])
+    out = inspect_broker_contract_sources(report)
+    assert out["source_fields"]["summary.account_facts.broker_cash_schedule_observations"] == "object"
+    assert out["native_cash_schedule_fields"]["fields"]["SettledCashByDate"] == "OBSERVED_RAW"
+    assert out["usd_cash_observation"]["settled_tag_observed"] is False
+    assert "USD_SETTLED_CASH_NOT_OBSERVED_IN_PROJECTED_CASH" in out["gaps"]
+    assert PRIVATE not in json.dumps(out)
+
+
 def test_api_failures_and_program_fractional_block_are_distinct_from_account_permission_grants(monkeypatch):
     _, report, _ = report_fixture(monkeypatch)
     report["diagnostics"].update(failure_category="ibkr_trading_permission",
