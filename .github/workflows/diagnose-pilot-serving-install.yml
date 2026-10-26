@@ -3,6 +3,11 @@ name: Read IBKR pilot serving install identity
 on:
   workflow_dispatch:
     inputs:
+      runner_gateway_preflight:
+        description: "Read the original runner's Gateway configuration and static IAP permission only; no broker connection."
+        required: false
+        default: false
+        type: boolean
       profile:
         description: "Read exactly one TQQQ serving image; no deployment."
         required: true
@@ -28,6 +33,7 @@ jobs:
     with:
       profile: ${{ inputs.profile }}
       source_commit: ${{ inputs.source_commit }}
+      runner_gateway_preflight: ${{ inputs.runner_gateway_preflight }}
     secrets:
       DEPLOY_GATE: ${{ vars.ENABLE_GITHUB_CLOUD_RUN_DEPLOY }}
       GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}

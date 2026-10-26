@@ -8,4 +8,8 @@
 
 plugin 缺失或缺少提交 metadata 时整体保留 partial，退出码仍为 1；只要 UES distribution 的提交与 stamp 一致，独立 UES 身份仍可核实。stamp 与 distribution 冲突则明确不可用，不把冲突升级为策略版本合格。读取失败或身份漂移保留 unknown/null，不用零值或主分支版本补造。
 
-此入口没有 build、push、KEEP、deploy、IAM、Secret 内容、券商、策略或通知操作。镜像安装身份取证不授予交易、风险政策、恢复或发布权限。
+默认镜像模式没有 build、push、KEEP、deploy、IAM、Secret 内容、券商、策略或通知操作。镜像安装身份取证不授予交易、风险政策、恢复或发布权限。
+
+可选 `runner_gateway_preflight=true` 与镜像读取互斥，单独核查原平台 GitHub Linux runner 的既有能力。它从准确 serving revision 解析原 ACCOUNT_GROUP 声明；如原配置引用 Secret，仅由同一受保护 runner 的原身份读取该准确配置，沿用现有账户组解析器和 Secret 优先级。账户、配置正文、token 和底层异常不进入日志或 artifact，不把凭据转移到 Gateway VM。
+
+该模式只核单账户声明、原 Gateway 的 VM 元数据、正 client ID，以及 IAP 的 `testIamPermissions` 返回值；不打开隧道或券商 socket，不拉镜像，不导入策略或执行运行周期，不创建资源或改变 IAM/配置。返回权限未观察到不等于已实测网络拒绝；条件权限和真实隧道/端口连通性仍需各自验证。`network_path_verified` 和 `runtime_ready` 始终 false，不能据静态权限结果宣称承载已就绪。失败只输出固定阶段，当前来源在结束时再次核对稳定性。

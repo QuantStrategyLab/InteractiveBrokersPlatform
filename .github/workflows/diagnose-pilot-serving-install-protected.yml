@@ -9,6 +9,10 @@ on:
       source_commit:
         type: string
         required: true
+      runner_gateway_preflight:
+        type: boolean
+        required: false
+        default: false
     secrets:
       DEPLOY_GATE:
         required: true
@@ -75,13 +79,20 @@ jobs:
         with:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
       - name: Read one digest-pinned serving image in isolation
+        if: ${{ !inputs.runner_gateway_preflight }}
         env: *private_context
         run: uv run --no-sync python -m scripts.diagnose_pilot_serving_install --source-dir source --receipt "${RUNNER_TEMP}/pilot-serving-install.safe.json"
+      - name: Read the original runner's Gateway configuration and static access only
+        if: inputs.runner_gateway_preflight
+        env: *private_context
+        run: uv run --no-sync python -m scripts.diagnose_runner_gateway_access --receipt "${RUNNER_TEMP}/runner-gateway-access.safe.json"
       - name: Retain the fixed safe receipt only
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ibkr-pilot-serving-install-${{ github.run_id }}
-          path: ${{ runner.temp }}/pilot-serving-install.safe.json
+          path: |
+            ${{ runner.temp }}/pilot-serving-install.safe.json
+            ${{ runner.temp }}/runner-gateway-access.safe.json
           if-no-files-found: warn
           retention-days: 30
