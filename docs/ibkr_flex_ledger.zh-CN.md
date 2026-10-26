@@ -320,3 +320,22 @@ workflow `source_sha`（缺失或不合格时为 null）、总 `status` 与按�
 新的令牌别名、GCP/WIF/Gateway 或 Cloudflare 凭据，不创建调度、不发通知，不上传私有
 配置 artifact。Secret 名称元数据读取失败时可以由这个已授权入口检查现有注入配置的
 形状，但它不调用 Secret 管理 API 取值、不增加 GitHub 权限，也不证明实际凭据有效。
+
+## 日期级外部资金流水
+
+现有发布器从同一次受保护 Flex 读取中，独立发布 `StmtFunds` 的 DEP/WITH
+记录到网站 `/api/account-facts/external-flow/sync`。原生账户、币种、金额符号、日期
+和 transactionID 必须有效；模型子账、身份冲突或有误的出入金记录不采用。
+引用由账户和原生交易 ID 哈希得到，不使用报表行号，不导出原始 ID。
+分红、利息、费用、交易、结算和换汇不作为外部资金。
+
+网站合同 `external_flow.v2` 用 `time_precision: date` 和 `effective_date` 保留
+真实精度。`coverage: reported` 只表示本报表报告的流水；包括空列表在内均不证明
+完整或零流水。不得补午夜、默认时区或日内权重，不能据此强算组合 TWR。
+这份历史数据独立于余额快照，发布不会修改余额或其观察时间，已有原生 TWR 保留。
+
+原发布 workflow 的 `external_flow_only` 输入仅发布流水；可用成对
+`flow_period_from/to` 指定最多 31 天，继续共享原查询并发队列、凭据和绑定。
+`report_date` 与此模式互斥。不确定写入结果不重试；输出只含状态、数量、币种和日期。
+网站回执必须确认私有 SQLite 读回成功。日常原发布器会从同一份日报同步日期级流水，
+无需新计划、服务、密钥或权限。

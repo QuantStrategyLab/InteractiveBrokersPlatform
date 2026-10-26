@@ -17,6 +17,21 @@ on:
         type: string
         required: false
         default: ""
+      external_flow_only:
+        description: "Publish only native date-level external flow facts from the original query."
+        type: boolean
+        required: false
+        default: false
+      flow_period_from:
+        description: "Optional flow-only historical start (YYYY-MM-DD), pair with end; at most 31 days."
+        type: string
+        required: false
+        default: ""
+      flow_period_to:
+        description: "Optional flow-only historical end (YYYY-MM-DD)."
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -61,9 +76,22 @@ jobs:
         run: uv sync --frozen --no-dev
 
       - name: Generate, collect and publish once
-        run: uv run --no-sync python -m scripts.publish_ibkr_flex_period_return
+        run: |
+          publisher_args=()
+          if [ "$EXTERNAL_FLOW_ONLY" = "true" ]; then
+            publisher_args=(--cashflow-only)
+          else
+            if [ -n "$IBKR_FLOW_PERIOD_FROM$IBKR_FLOW_PERIOD_TO" ]; then
+              echo "flow_period_requires_flow_only" >&2
+              exit 2
+            fi
+          fi
+          uv run --no-sync python -m scripts.publish_ibkr_flex_period_return "${publisher_args[@]}"
         env:
           IBKR_PERIOD_RETURN_PUBLISH_ENABLED: "true"
+          EXTERNAL_FLOW_ONLY: ${{ inputs.external_flow_only }}
+          IBKR_FLOW_PERIOD_FROM: ${{ inputs.flow_period_from }}
+          IBKR_FLOW_PERIOD_TO: ${{ inputs.flow_period_to }}
           IBKR_NATIVE_RETURN_DATE: ${{ inputs.report_date }}
           IBKR_PERIOD_RETURN_TARGET_ID: ${{ secrets.IBKR_PERIOD_RETURN_TARGET_ID }}
           IBKR_PERIOD_RETURN_SOURCE_BINDING_ID: ${{ secrets.IBKR_PERIOD_RETURN_SOURCE_BINDING_ID }}

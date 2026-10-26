@@ -101,7 +101,7 @@ def _missing_executions(status):
         "changeInInterestAccruals", "advisorFees", "clientFees", "otherFees", "feesReceivables", "commissions",
         "commissionReceivables", "forexCommissions", "transactionTax", "taxReceivables", "salesTax", "softDollars",
         "netFxTrading", "fxTranslation", "linkingAdjustments", "other", "endingValue", "twr")
-    return {"status": status, "nav_change_status": "unavailable", "executions_status": "source_unavailable", "executions_diagnostic": {
+    return {"status": status, "external_flow_status": "source_unavailable", "nav_change_status": "unavailable", "executions_status": "source_unavailable", "executions_diagnostic": {
         "section_present": False, "native_record_count": 0, "field_names": [], "level_types": [],
         "missing_fields": [], "invalid_fields": [], "reason": "trades_section_missing"},
         "cashflow_source_diagnostic": {"schema_version": "ibkr.flex_cashflow_source_shape.v1", "coverage": "not_evaluated",
