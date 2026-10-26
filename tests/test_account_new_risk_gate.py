@@ -29,6 +29,7 @@ from application.account_new_risk_gate_support import (
     set_cycle_snapshot,
 )
 from application.ibkr_order_execution import submit_order_intent
+from application.rebalance_service import _snapshot_to_portfolio_view, _strategy_portfolio_view
 
 
 @pytest.fixture(autouse=True)
@@ -237,6 +238,44 @@ def test_durable_circuit_breaker_open_prohibits_new_risk():
     result = evaluate_portfolio_new_risk_admission(portfolio)
     assert result.disposition == NewRiskDisposition.NEW_RISK_PROHIBITED
     assert "CIRCUIT_BREAKER_OPEN" in result.reason_codes
+
+
+@pytest.mark.parametrize(
+    ("metadata", "reason"),
+    [
+        ({"durable_circuit_breaker_state": "OPEN"}, "CIRCUIT_BREAKER_OPEN"),
+        ({"unknown_pending_orders": True}, "RECONCILIATION_NOT_VERIFIED"),
+    ],
+)
+def test_rebalance_snapshot_risk_state_reaches_new_risk_gate(monkeypatch, metadata, reason):
+    monkeypatch.setattr(
+        "application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
+        lambda **kwargs: None,
+    )
+    snapshot = SimpleNamespace(positions=(), total_equity=5000.0, buying_power=5000.0,
+        metadata={"currency": "USD", **metadata})
+    positions, account_values = _snapshot_to_portfolio_view(snapshot)
+    _, account_values = _strategy_portfolio_view(positions, account_values, ("TQQQ",))
+    result = evaluate_account_values_new_risk_admission(account_values,
+        signal_metadata={"durable_circuit_breaker_state": "CLOSED", "unknown_pending_orders": False})
+    assert result.disposition == NewRiskDisposition.NEW_RISK_PROHIBITED
+    assert reason in result.reason_codes
+    assert result.live_authority_granted is False
+    assert snapshot.metadata == {"currency": "USD", **metadata}
+
+
+@pytest.mark.parametrize("metadata", [
+    {},
+    {"durable_circuit_breaker_state": "CLOSED", "unknown_pending_orders": False},
+])
+def test_rebalance_snapshot_preserves_absent_and_explicit_risk_fields(metadata):
+    snapshot = SimpleNamespace(positions=(), total_equity=5000.0, buying_power=5000.0,
+        metadata={"currency": "USD", **metadata})
+    _, account_values = _snapshot_to_portfolio_view(snapshot)
+    for key in ("durable_circuit_breaker_state", "unknown_pending_orders"):
+        assert (key in account_values) == (key in metadata)
+        if key in metadata:
+            assert account_values[key] == metadata[key]
 
 
 def test_build_portfolio_from_account_values_maps_equity():
