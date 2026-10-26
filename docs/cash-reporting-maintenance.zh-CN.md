@@ -38,4 +38,8 @@ claim 和日锁检查，不能把其卖出款立即用于继续增仓。只有�
 本候选的源码、离线通过、真实读取和部署分别验收。原策略、预算、风险参数及依赖锁
 不因本节改变，也不自动发布候选。
 
+组合快照若明确携带 `unknown_pending_orders` 或 `durable_circuit_breaker_state`，
+再平衡转换保留原值并交给现有新增风险保护，不被普通信号覆盖。未提供的字段保持缺失；
+该转换不读取或重置状态，也不证明真实状态来源及有效政策已经接入。
+
 [IBKR 活动订单读取范围](https://interactivebrokers.github.io/tws-api/open_orders.html)。
