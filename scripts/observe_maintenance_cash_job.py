@@ -153,9 +153,26 @@ def inspect_report(report, uri, expected, *, job, execution, started, now, names
         selected_cash=selected[0] if len(selected) == 1 else None)
     if fields["status"] != "OBSERVED_FIELDS_ONLY":
         raise pilot.ReleaseError("job_native_cash_unverified")
-    return dict(status="OBSERVED_JOB_ONLY", source_identity_verified=True, saved_readback_verified=True,
+    result = dict(status="OBSERVED_JOB_ONLY", source_identity_verified=True, saved_readback_verified=True,
         observed_at=observed.isoformat(), report_sha256=observer.digest(json.dumps(report, sort_keys=True)),
         cash_observations=fields, spendable_cash_verified=False, complete_obligations_verified=False)
+    summary = report.get("summary", {}).get("broker_account_summary")
+    if summary is not None:
+        if (not isinstance(summary, dict) or summary.get("source_method") != "ibkr.reqAccountSummary"
+                or tuple(summary.get("account_ids", ())) != expected["expected_account_selector"]
+                or summary.get("query_completed") is not True or summary.get("snapshot_atomic") is not False):
+            raise pilot.ReleaseError("account_summary_identity_unverified")
+        first, last = [publisher._observed_timestamp(summary.get(key)) for key in (
+            "observed_started_at", "observed_finished_at")]
+        if not begin <= observed <= first <= last <= end:
+            raise pilot.ReleaseError("account_summary_time_unverified")
+        summary_fields = inspect_cash_observations(summary.get("broker_cash_observations"),
+            observed_at=summary["observed_finished_at"])
+        if summary_fields["status"] != "OBSERVED_FIELDS_ONLY":
+            raise pilot.ReleaseError("account_summary_fields_unverified")
+        result["account_summary_cash_observations"] = dict(source_method="ibkr.reqAccountSummary",
+            observed_started_at=first.isoformat(), observed_finished_at=last.isoformat(), **summary_fields)
+    return result
 
 
 def observe(expected, env, receipt, *, run=pilot.command, snapshot=pilot.snapshot,

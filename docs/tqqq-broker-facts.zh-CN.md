@@ -91,3 +91,46 @@ platform/profile/service 目录之前。读取端同时验证该子目录，以�
 模式互斥；以已有执行摘要验证身份，没有创建、执行或重试 Job 的路径。
 [Job YAML](https://docs.cloud.google.com/run/docs/reference/yaml/v1#job)、
 [Job 执行身份](https://docs.cloud.google.com/run/docs/container-contract#env-vars)。
+
+## 显式账户摘要与现有现金缓存
+
+维护入口的下一次获准执行会额外请求一次
+`SettledCash,AvailableFunds,FullAvailableFunds` 账户摘要。已核实的
+`ib_insync 0.9.86` 将 `accountValues` 与账户摘要放在不同缓存中；
+现有组合快照读取前者，不能据此断言券商没有 `SettledCash`。
+摘要采用原 SDK 请求、回调和结束 future，最多等待 30 秒，不重试；
+只保留已绑定目标账户的回调，结束或失败都取消本次摘要订阅，最后断开
+原只读连接。不请求报价、订单、下单权限或新的登录。
+
+新结果保存在同一原私有报告的 `summary.broker_account_summary`，
+明确 `source_method=ibkr.reqAccountSummary`、目标账户、采集起止时间、
+查询完成状态和 `snapshot_atomic=false`，复用原现金字段附件。
+它不覆盖或合并旧快照的现金值。控制端分别验证两份来源与时间；
+BASE、缺失、非法值和重复字段仍不转换成 USD 或零。
+摘要完成仅证明这次查询返回，不能证明所有字段齐全，更不能证明完整
+挂单、未结算交易、待扣费用或在途出金已经覆盖。
+[IBKR 账户摘要请求及完成回调](https://interactivebrokers.github.io/tws-api/account_summary.html)。
+
+工程合并不执行新查询。此前获准的一次 Job 已使用并清理，新增云端
+执行须在该次费用授权明确后才派发；本节不改变工作流默认关闭状态。
+
+## 缺证据时最少的门户核验
+
+先选择同一账户，不选择汇总多个账户的视图。以下页面用途不同：
+
+- **Performance & Reports > Statements**：选 Activity、最近完整期间和
+  HTML 查看，在 Cash Report 核按币种的 Ending Settled Cash、报告日期及
+  费用项。它是期末事实，不能直接当当前可支用现金。
+  [生成报表](https://www.ibkrguides.com/clientportal/performanceandstatements/runstatement.htm)、
+  [Cash Report 字段](https://www.ibkrguides.com/reportingreference/reportguide/cashreport_default.htm)。
+- **Trade > Orders & Trades**：核当前挂单、未完全成交和状态未知的订单，
+  不修改或取消订单。股票策略列表为空不代表全账户无挂单。
+  [订单页面](https://www.ibkrguides.com/clientportal/trade/vieworders.htm)。
+- **Transfer & Pay > Transaction Status & History**：核待处理转出、转账、
+  账单支付和其他资金请求；必要时调整日期范围，保留截止时间。
+  [资金请求页面](https://www.ibkrguides.com/clientportal/transferandpay/transhist.htm)。
+
+当前已有 Flex 查询和凭据配置不等这些页面都能被现有 API 覆盖。
+口头“没有待办”、历史收益诊断成功、某段期末现金或无受管订单，均不能
+替代同账户、币种和截止时间的原生明细及不重复扣减核验。原始资料只进入
+已批准的私有通道；不粘贴到聊天、不新增公开样例或下载到本机。

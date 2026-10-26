@@ -169,3 +169,36 @@ def test_completed_readback_never_creates_or_executes_job(monkeypatch):
     assert result["readback_only"] is True and result["broker_called"] is False
     assert result["source_workflow_run"] == "123"
     assert not any(row[1:3] == ["run", "jobs"] for row in cloud.calls)
+
+
+@pytest.mark.parametrize("failure", [None, "identity", "method", "incomplete", "before_snapshot", "after_report", "invalid_fields"])
+def test_summary_source_and_interval_are_independent_of_snapshot(failure):
+    _, _, expected, report = setup()
+    start, finish = NOW + timedelta(seconds=1), NOW + timedelta(seconds=1.5)
+    summary = dict(source_method="ibkr.reqAccountSummary", account_ids=list(expected["expected_account_selector"]),
+        query_completed=True, snapshot_atomic=False, observed_started_at=start.isoformat(), observed_finished_at=finish.isoformat(),
+        broker_cash_observations=dict(schema_version="ibkr.cash_observations.v1", observed_at=finish.isoformat(),
+            values=[dict(currency="USD", source_tag="SettledCash", value="5.0123")]))
+    report["summary"]["broker_account_summary"] = summary
+    if failure == "identity":
+        summary["account_ids"] = ["DU00000099"]
+    elif failure == "method":
+        summary["source_method"] = "accountValues"
+    elif failure == "incomplete":
+        summary["query_completed"] = False
+    elif failure == "before_snapshot":
+        summary["observed_started_at"] = NOW.isoformat()
+    elif failure == "after_report":
+        summary["observed_finished_at"] = (NOW + timedelta(seconds=3)).isoformat()
+    elif failure == "invalid_fields":
+        summary["broker_cash_observations"]["values"][0]["value"] = "NaN"
+    if failure is not None:
+        with pytest.raises(pilot.ReleaseError, match="account_summary"):
+            jobs.inspect_report(report, URI, expected, job=JOB, execution=EXECUTION, started=NOW, now=NOW)
+    else:
+        result = jobs.inspect_report(report, URI, expected, job=JOB, execution=EXECUTION, started=NOW, now=NOW)
+        assert result["account_summary_cash_observations"]["fields"]["SettledCash"] == "OBSERVED"
+        assert result["cash_observations"]["fields"]["SettledCash"] == "OBSERVED"
+        assert report["summary"]["account_facts"]["broker_cash_observations"]["values"][0]["value"] == "0"
+        assert summary["broker_cash_observations"]["values"][0]["value"] == "5.0123"
+        assert result["spendable_cash_verified"] is result["complete_obligations_verified"] is False
