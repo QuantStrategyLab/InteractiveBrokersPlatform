@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       publish_once:
-        description: "One configured Flex generation, bounded collection of the same pending handle, and one QRS publish."
+        description: "One configured Flex generation, bounded collection of the same pending handle, and scoped QRS publishes."
         type: boolean
         required: false
         default: false
@@ -19,6 +19,11 @@ on:
         default: ""
       external_flow_only:
         description: "Publish only native date-level external flow facts from the original query."
+        type: boolean
+        required: false
+        default: false
+      additional_returns_only:
+        description: "Publish only explicitly configured additional-account native returns from one report; no primary, trades or cash-flow writes."
         type: boolean
         required: false
         default: false
@@ -79,17 +84,25 @@ jobs:
         run: |
           publisher_args=()
           if [ "$EXTERNAL_FLOW_ONLY" = "true" ]; then
+            if [ "$ADDITIONAL_RETURNS_ONLY" = "true" ]; then
+              echo "return_and_flow_modes_conflict" >&2
+              exit 2
+            fi
             publisher_args=(--cashflow-only)
           else
             if [ -n "$IBKR_FLOW_PERIOD_FROM$IBKR_FLOW_PERIOD_TO" ]; then
               echo "flow_period_requires_flow_only" >&2
               exit 2
             fi
+            if [ "$ADDITIONAL_RETURNS_ONLY" = "true" ]; then
+              publisher_args=(--additional-returns-only)
+            fi
           fi
           uv run --no-sync python -m scripts.publish_ibkr_flex_period_return "${publisher_args[@]}"
         env:
           IBKR_PERIOD_RETURN_PUBLISH_ENABLED: "true"
           EXTERNAL_FLOW_ONLY: ${{ inputs.external_flow_only }}
+          ADDITIONAL_RETURNS_ONLY: ${{ inputs.additional_returns_only }}
           IBKR_FLOW_PERIOD_FROM: ${{ inputs.flow_period_from }}
           IBKR_FLOW_PERIOD_TO: ${{ inputs.flow_period_to }}
           IBKR_NATIVE_RETURN_DATE: ${{ inputs.report_date }}
@@ -100,6 +113,7 @@ jobs:
           IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON: ${{ secrets.IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON }}
           IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON }}
           IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}
+          IBKR_PERIOD_RETURN_ADDITIONAL_ACCOUNT_KEYS_JSON: ${{ secrets.IBKR_PERIOD_RETURN_ADDITIONAL_ACCOUNT_KEYS_JSON }}
           IBKR_FLEX_TOKEN: ${{ secrets.IBKR_FLEX_TOKEN }}
           IBKR_FLEX_QUERY_ID: ${{ secrets.IBKR_FLEX_QUERY_ID }}
           IBKR_ACCOUNT_FACTS_SYNC_TOKEN: ${{ secrets.IBKR_ACCOUNT_FACTS_SYNC_TOKEN }}
