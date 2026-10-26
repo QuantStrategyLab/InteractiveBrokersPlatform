@@ -32,6 +32,7 @@ from application.ibkr_flex_source import (
 )
 from application.ibkr_flex_executions import _day, _local_time, _number_shape, project_flex_executions
 from application.ibkr_period_return import NAV_CHANGE_COMPONENT_FIELDS
+from application.ibkr_external_flow import project_flex_external_flows
 
 
 SCHEMA_VERSION = "ibkr_flex_ledger.v1"
@@ -604,6 +605,7 @@ def build_flex_ledger(
         "period": period,
         "ending_valuation": ending_valuation,
         "external_flows": external_flows,
+        "external_flow_facts": project_flex_external_flows(statement, period=period),
         "net_external_flow": net_external_flow,
         "fee_lines": fee_lines,
         "fee_total": fee_total,

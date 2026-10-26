@@ -28,6 +28,7 @@ from application.ibkr_period_return import (
     PeriodReturnError, build_ibkr_period_return, validate_period_return_scope,
 )
 from application.ibkr_flex_executions import build_ibkr_executions
+from application.ibkr_external_flow import build_ibkr_external_flow
 from scripts.publish_account_facts_from_report import _NoRedirect, _additional_target_configs, _selector
 
 
@@ -36,6 +37,7 @@ from scripts.console_config import console_base_url
 
 SYNC_URL = console_base_url() + "/api/account-facts/period-return/sync"
 EXECUTIONS_SYNC_URL = console_base_url() + "/api/account-facts/executions/sync"
+EXTERNAL_FLOW_SYNC_URL = console_base_url() + "/api/account-facts/external-flow/sync"
 _ACK_LIMIT = 8192
 _TOKEN_ALIASES = (
     "ACCOUNT_FACTS_SYNC_TOKEN", "SCHWAB_ACCOUNT_FACTS_SYNC_TOKEN", "FIRSTRADE_ACCOUNT_FACTS_SYNC_TOKEN",
@@ -249,6 +251,83 @@ def publish_executions(payload: Mapping[str, Any], *, sync_token: str, expected_
         return "sync_unknown"
 
 
+def publish_external_flow(payload, *, sync_token, expected_account_key):
+    """One independent POST of date-only facts, with bounded, fixed ACK readback."""
+    request = Request(EXTERNAL_FLOW_SYNC_URL, data=json.dumps(payload, separators=(",", ":")).encode(),
+        headers={"Authorization": f"Bearer {sync_token}", "Content-Type": "application/json",
+                 "User-Agent": "QSL-IBKR-ExternalFlow/1.0"}, method="POST")
+    expected_count = len({r["source_ref"] for w in payload["externalFlow"]["windows"] for r in w["records"]})
+    try:
+        opener = build_opener(ProxyHandler({}), _NoRedirect())
+        with opener.open(request, timeout=15) as response:
+            if response.status != 200:
+                return "sync_rejected" if 300 <= response.status < 500 else "sync_unknown"
+            body = response.read(_ACK_LIMIT + 1)
+            if not isinstance(body, bytes) or len(body) > _ACK_LIMIT:
+                return "sync_unknown"
+            ack = json.loads(body, object_pairs_hook=_unique_keys)
+            if (not isinstance(ack, dict) or set(ack) != {"ok", "stored", "unchanged", "account_key", "window_count", "record_count", "readback_verified"}
+                    or ack.get("ok") is not True or ack.get("stored") is not True or ack.get("readback_verified") is not True
+                    or type(ack.get("unchanged")) is not bool or ack.get("account_key") != expected_account_key
+                    or type(ack.get("record_count")) is not int or ack["record_count"] != expected_count
+                    or type(ack.get("window_count")) is not int or ack["window_count"] != len(payload["externalFlow"]["windows"])):
+                return "sync_unknown"
+            return "unchanged" if ack["unchanged"] else "published"
+    except HTTPError as exc:
+        return "sync_rejected" if 300 <= exc.code < 500 else "sync_unknown"
+    except Exception:
+        return "sync_unknown"
+
+
+def _external_flow_result(ledger, config):
+    if (ledger.get("external_flow_facts") or {}).get("status") != "available":
+        return {"external_flow_status": "source_unavailable"}
+    try:
+        payload = build_ibkr_external_flow(ledger, **{key: config[key] for key in (
+            "target_id", "source_binding_id", "account_scope", "expected_account_ids")})
+        windows = payload["externalFlow"]["windows"]
+        return {"external_flow_status": publish_external_flow(payload, sync_token=config["sync_token"], expected_account_key=config["account_key"]),
+                "external_flow_period": ledger["external_flow_facts"]["period"],
+                "external_flow_record_count": len({r["source_ref"] for w in windows for r in w["records"]}),
+                "external_flow_currencies": sorted(w["currency"] for w in windows), "external_flow_time_precision": "date",
+                "external_flow_coverage": "reported"}
+    except Exception:
+        return {"external_flow_status": "projection_rejected"}
+
+
+def _cashflow_only():
+    """Use the original protected query/lane; never publish balances, TWR or trades."""
+    status = "disabled"
+    if os.environ.get("IBKR_PERIOD_RETURN_PUBLISH_ENABLED") != "true":
+        print(json.dumps({"external_flow_status": status})); return 2
+    try:
+        config = _config(os.environ)
+        start = os.environ.get("IBKR_FLOW_PERIOD_FROM", "")
+        end = os.environ.get("IBKR_FLOW_PERIOD_TO", "")
+        if (bool(start) != bool(end) or config.get("report_date")
+                or start and (date.fromisoformat(start).isoformat() != start or date.fromisoformat(end).isoformat() != end
+                              or not 0 <= (date.fromisoformat(end) - date.fromisoformat(start)).days < 31)):
+            raise ValueError
+        if start:
+            config["report_period"] = {"from": start, "to": end}
+    except Exception:
+        print(json.dumps({"external_flow_status": "configuration_incomplete"})); return 2
+    try:
+        with requests.Session() as session:
+            session.trust_env = False
+            ledger = _collect_configured_ledger(config, session)
+        if config.get("report_period") and {k: ledger["period"][k] for k in ("from", "to")} != config["report_period"]:
+            result = {"external_flow_status": "historical_period_mismatch"}
+        else:
+            result = _external_flow_result(ledger, config)
+    except FlexReportPending:
+        result = {"external_flow_status": "flex_pending"}
+    except Exception:
+        result = {"external_flow_status": "flex_import_failed"}
+    print(json.dumps(result, sort_keys=True))
+    return 0 if result["external_flow_status"] in {"published", "unchanged"} else 1
+
+
 def _execution_result(ledger, config, observed_at):
     """Status/shape only: raw execution values never enter stdout."""
     projection = ledger.get("executions") or {}
@@ -274,6 +353,11 @@ def _collect_configured_ledger(config, session):
     accounts = tuple(config["expected_account_ids"])
     allowed = config.get("allowed_report_account_ids")
     try:
+        if config.get("report_period"):
+            request = request_activity_flex_report(token=config["flex_token"], query_id=config["query_id"],
+                session=session, from_date=config["report_period"]["from"], to_date=config["report_period"]["to"])
+            return import_activity_flex_ledger_from_request(request, expected_account_ids=accounts,
+                session=session, allowed_report_account_ids=allowed)
         if config.get("report_date"):
             request = request_activity_flex_report(token=config["flex_token"], query_id=config["query_id"],
                 session=session, from_date=config["report_date"], to_date=config["report_date"])
@@ -290,6 +374,8 @@ def _collect_configured_ledger(config, session):
 
 
 def main(argv: Sequence[str] = ()) -> int:
+    if tuple(argv) == ("--cashflow-only",):
+        return _cashflow_only()
     diagnostics = {}
     if tuple(argv) == ("--preflight",):
         result = _configuration_preflight(os.environ)
@@ -344,7 +430,10 @@ def main(argv: Sequence[str] = ()) -> int:
                         kwargs = {"historical": True} if config.get("report_date") else {}
                         status = publish_period_return(payload, sync_token=config["sync_token"], expected_account_key=config["account_key"], **kwargs)
                 diagnostics.update(_execution_result(ledger, config, observed_at))
+                diagnostics.update(_external_flow_result(ledger, config))
     print(json.dumps({"status": status, **diagnostics}, sort_keys=True))
+    if diagnostics.get("external_flow_status") in {"sync_unknown", "sync_rejected", "projection_rejected"}:
+        return 1
     if diagnostics.get("executions_status") in {"sync_unknown", "sync_rejected", "projection_rejected", "historical_period_mismatch"}:
         return 1
     return 0 if status in {"published", "unchanged"} else 2 if status in {"disabled", "configuration_incomplete"} else 1
