@@ -1497,6 +1497,28 @@ class LoadedStrategyRuntime:
         )
         if safe_haven_symbol:
             metadata["safe_haven_symbol"] = str(safe_haven_symbol)
+        if self.profile == "tqqq_growth_income":
+            policy = self.runtime_settings.trusted_runtime_risk_policy
+            budget_policy = policy.get("tqqq_budget_guard") if isinstance(policy, Mapping) else None
+            if budget_policy is not None:
+                metadata["tqqq_budget_policy"] = budget_policy
+                if not isinstance(budget_policy, Mapping) or budget_policy.get("enabled", False) is not False:
+                    target = self.runtime_settings.runtime_target
+                    snapshot_metadata = getattr(portfolio_snapshot, "metadata", {})
+                    metadata.update(
+                        tqqq_budget_snapshot=(
+                            snapshot_metadata.get("tqqq_budget_snapshot") if isinstance(snapshot_metadata, Mapping) else None
+                        ),
+                        tqqq_budget_decision_at=run_as_of,
+                        tqqq_budget_runtime_binding={
+                            "account_scope": str(target.account_scope or "") if target is not None else "",
+                            "account_hash": snapshot_metadata.get("account_hash") if isinstance(snapshot_metadata, Mapping) else None,
+                            "runtime_scope": str(target.service_name or target.deployment_selector or "") if target is not None else "",
+                            "strategy_profile": self.profile,
+                            "ues_revision": _installed_ues_revision(),
+                            "execution_mode": str(target.execution_mode or "") if target is not None else "",
+                        },
+                    )
         benchmark_symbol = market_inputs.get("benchmark_symbol")
         if benchmark_symbol:
             metadata["benchmark_symbol"] = str(benchmark_symbol)
