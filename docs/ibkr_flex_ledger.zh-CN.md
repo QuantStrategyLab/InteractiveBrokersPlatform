@@ -73,6 +73,25 @@ stdout 仍为固定 `ibkr_flex_diagnostic.v1`。`available` 仅表示目标报�
 TWR，不是账户收费计划、当前已交收资金、证券/碎股权限、全部资金义务或配置资格通过。
 原始 XML、金额、账户、token、ReferenceCode 和异常正文均不输出；此处没有补出风险数字。
 
+### 只核现金报表字段
+
+同一手动工作流显式设置 `read_once=true`、`cash_source_only=true` 时，调用
+`--cash-read-once`，只生成一次报表；待生成时只对原句柄作有界等待，不另起替代查询、不发布。
+默认期间收益诊断的行为与输出不变。此模式不要求报表具有 TWR；账户、保护范围、
+可选精确期间仍在原入口核验，嵌套 `CashReportCurrency.accountId` 若属于其他账户也拒绝。
+
+输出 `ibkr_flex_cash_diagnostic.v1`，仅含内容 SHA-256、报表期间和固定现金字段的格式计数。
+`CashReport/CashReportCurrency`、`endingCash`、`endingSettledCash` 是待核的 XML 字段候选；
+只统计原生 `currency="USD"` 行，不将 `BASE_SUMMARY` 换成美元。缺段、空段、没有美元行、
+多行、坏数字和缺日期分开保留，未知字段只计数量，不输出名称或值。金额、模型名和
+账号始终不进入 stdout。字段存在及格式正确不代表日期、模型或现金资格已核清。
+
+[IBKR Cash Report 官方定义](https://www.ibkrguides.com/reportingreference/reportguide/cash%20reportfq.htm)
+中的 Ending Settled Cash 是**报表期末**的已结算现金。此诊断只观察来源结构，
+`coverage=not_evaluated`、`spendable_cash_verified=false`、
+`complete_cash_obligations_verified=false`，缺失不计零。它不能替代当前资金快照，
+不能证明挂单、在途转出或待扣费用已完整净含，也不授予配置或交易资格。
+
 `build_flex_ledger` 先复用 `ibkr_flex_source.verify_report_accounts` 复核账户范围，
 再解析。目标账户必须恰有一份 `FlexStatement`，其他报表账户必须在显式允许集合内；
 账户缺失、未准入、多余或重复时抛 `FlexSourceError`，不返回部分事实。

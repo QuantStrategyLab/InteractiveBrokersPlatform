@@ -163,8 +163,8 @@ def test_real_sdk_wrapper_completes_summary_without_network(monkeypatch):
         monkeypatch.setattr(broker.client, "getReqId", lambda: 19)
         def request(req, group, tags):
             calls.append((req, group, tags))
-            broker.wrapper.accountSummary(req, "DU00000001", "SettledCash", "40.0123", "USD")
-            broker.wrapper.accountSummaryEnd(req)
+            broker.client.decoder.interpret(["63", "1", str(req), "DU00000001", "SettledCash", "40.0123", "USD"])
+            broker.client.decoder.interpret(["64", "1", str(req)])
         monkeypatch.setattr(broker.client, "reqAccountSummary", request)
         monkeypatch.setattr(broker.client, "cancelAccountSummary", lambda req: calls.append(("cancel", req)))
         value = entry.read_account_summary_cash(broker, ["DU00000001"])

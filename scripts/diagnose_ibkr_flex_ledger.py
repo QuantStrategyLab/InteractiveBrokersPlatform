@@ -155,9 +155,57 @@ def _validated_report(value: object) -> dict[str, Any]:
     }
 
 
+def _validated_cash_report(value: object) -> dict[str, Any]:
+    """Rebuild only fixed keys, bounded counts, dates and a content digest."""
+    invalid = _empty_report(status="error", missing=["flex_cash_diagnostic_result_invalid"])
+    if not isinstance(value, dict):
+        return invalid
+    shape, period = value.get("cash_report"), value.get("period")
+    if (value.get("schema_version") != "ibkr_flex_cash_diagnostic.v1"
+            or value.get("status") != "observed_source_shape"
+            or not isinstance(value.get("source_ref"), str)
+            or not re.fullmatch(r"[a-f0-9]{64}", value["source_ref"])
+            or not isinstance(shape, dict) or not isinstance(period, dict)):
+        return invalid
+    try:
+        safe_period = {key: date.fromisoformat(period[key]).isoformat() for key in ("from", "to")}
+    except (KeyError, TypeError, ValueError):
+        return invalid
+    if (safe_period != period or safe_period["from"] > safe_period["to"]
+            or shape.get("schema_version") != "ibkr.flex_cash_report_source_shape.v1"):
+        return invalid
+    count_keys = ("section_count", "record_count", "usd_record_count", "unsupported_record_count", "unknown_field_count")
+    if any(type(shape.get(key)) is not int or not 0 <= shape[key] <= 8 * 1024 * 1024 for key in count_keys):
+        return invalid
+    counts = {key: shape[key] for key in count_keys}
+    fields = shape.get("usd_field_type_counts")
+    names = {"accountId", "model", "currency", "fromDate", "toDate", "reportDate", "endingCash", "endingSettledCash"}
+    kinds = {"missing", "empty_text", "text", "date_text", "unsupported_text", "decimal_text",
+             "scientific_text", "nonfinite_text", "oversized_text"}
+    if (counts["usd_record_count"] > counts["record_count"] or not isinstance(fields, dict)
+            or set(fields) != (names if counts["usd_record_count"] else set())):
+        return invalid
+    safe_fields = {}
+    for name, types in fields.items():
+        if (not isinstance(types, dict) or not types or set(types) - kinds
+                or any(type(n) is not int or n <= 0 or n > counts["usd_record_count"] for n in types.values())
+                or sum(types.values()) != counts["usd_record_count"]):
+            return invalid
+        safe_fields[name] = dict(types)
+    return {
+        "schema_version": "ibkr_flex_cash_diagnostic.v1", "status": "observed_source_shape",
+        "source_ref": value["source_ref"], "period": safe_period,
+        "currency": "USD", "scope": "STATEMENT_PERIOD_END_ONLY",
+        "cash_report": {"schema_version": "ibkr.flex_cash_report_source_shape.v1", **counts,
+            "usd_field_type_counts": safe_fields, "coverage": "not_evaluated",
+            "spendable_cash_verified": False, "complete_cash_obligations_verified": False,
+            "missing_fields_are_zero": False},
+    }
+
+
 def main(argv: Sequence[str] = ()) -> int:
     args = tuple(argv)
-    if args not in ((), ("--preflight",), ("--read-once",)):
+    if args not in ((), ("--preflight",), ("--read-once",), ("--cash-read-once",)):
         print(json.dumps(_empty_report(status="incomplete", missing=["arguments_invalid"]), sort_keys=True))
         return 2
     if args != ("--preflight",) and os.environ.get(_ENABLE_ENV) != "true":
@@ -192,7 +240,9 @@ def main(argv: Sequence[str] = ()) -> int:
         return 0
 
     try:
-        kwargs = {"collect_pending": True} if args == ("--read-once",) else {}
+        kwargs = {"collect_pending": True} if args in (("--read-once",), ("--cash-read-once",)) else {}
+        if args == ("--cash-read-once",):
+            kwargs["cash_report_only"] = True
         if allowed_accounts is not None:
             kwargs["allowed_report_account_ids"] = allowed_accounts
         result = diagnose_activity_flex_ledger(
@@ -201,7 +251,7 @@ def main(argv: Sequence[str] = ()) -> int:
             expected_account_ids=account_ids,
             **kwargs,
         )
-        report = _validated_report(result)
+        report = _validated_cash_report(result) if args == ("--cash-read-once",) else _validated_report(result)
         if expected_period is not None and report["period"] != expected_period:
             report = _empty_report(status="error", missing=["expected_period_mismatch"])
     except FlexReportPending:
@@ -216,7 +266,7 @@ def main(argv: Sequence[str] = ()) -> int:
         return 1
 
     print(json.dumps(report, sort_keys=True))
-    return 0 if report["status"] == "available" else 1
+    return 0 if report["status"] in {"available", "observed_source_shape"} else 1
 
 
 if __name__ == "__main__":
