@@ -171,6 +171,100 @@ def test_completed_readback_never_creates_or_executes_job(monkeypatch):
     assert not any(row[1:3] == ["run", "jobs"] for row in cloud.calls)
 
 
+def summary_log_case(monkeypatch):
+    from scripts import read_completed_maintenance_cash_job as reader
+    _, _, expected, report = setup()
+    first, last = NOW, NOW + timedelta(seconds=2)
+    report["summary"]["broker_account_summary"] = dict(
+        observed_started_at=first.isoformat(), observed_finished_at=last.isoformat())
+    monkeypatch.setattr(reader, "SUMMARY_RUN", "123")
+    monkeypatch.setattr(reader, "SUMMARY_EXECUTION_SHA256", jobs.observer.digest(EXECUTION))
+    monkeypatch.setattr(reader, "SUMMARY_REPORT_SHA256", jobs.observer.digest(json.dumps(report, sort_keys=True)))
+    monkeypatch.setattr(reader, "SUMMARY_LOG_START", (NOW - timedelta(minutes=1)).isoformat())
+    monkeypatch.setattr(reader, "SUMMARY_LOG_END", (NOW + timedelta(minutes=1)).isoformat())
+    env = dict(environment(), MAINTENANCE_SOURCE_COMMIT="", MAINTENANCE_JOB="false",
+        MAINTENANCE_JOB_READBACK="false", MAINTENANCE_COMPLETED_SUMMARY_LOGS="true", CLOUD_RUN_REGION="us-central1")
+    def log(message, seconds):
+        return dict(timestamp=(NOW + timedelta(seconds=seconds)).isoformat(), textPayload=message,
+            resource=dict(type="cloud_run_job", labels=dict(job_name=JOB,
+                project_id=expected["expected_project_id"], location=env["CLOUD_RUN_REGION"])),
+            labels={"run.googleapis.com/execution_name": EXECUTION})
+    rows = [log("Error 321, reqId 19: PRIVATE_MESSAGE USD 4999.33", 1),
+        log("account updates for PRIVATE_ACCOUNT request timed out", -1),
+        log("execution_report " + URI, 3)]
+    return reader, expected, env, report, rows
+
+
+@pytest.mark.parametrize("failure", [None, "execution", "project", "region", "time", "report_hash", "account", "uri", "empty"])
+def test_summary_log_read_is_fixed_scoped_historical_and_value_free(monkeypatch, failure):
+    reader, expected, env, report, rows = summary_log_case(monkeypatch)
+    if failure == "execution": rows[0]["labels"]["run.googleapis.com/execution_name"] = "wrong"
+    elif failure == "project": rows[0]["resource"]["labels"]["project_id"] = "other"
+    elif failure == "region": rows[0]["resource"]["labels"]["location"] = "other"
+    elif failure == "time": rows[0]["timestamp"] = (NOW + timedelta(days=1)).isoformat()
+    elif failure == "report_hash": report["private_value"] = "PRIVATE_MESSAGE"
+    elif failure == "account": expected["expected_account_selector"] = ("DU00000099",)
+    elif failure == "uri": rows[-1]["textPayload"] = "execution_report gs://other/maintenance-cash/report.json"
+    elif failure == "empty": rows = []
+    calls = []
+    def run(args, **kwargs):
+        calls.append(args)
+        assert args[:3] == ["gcloud", "logging", "read"]
+        assert '--limit=1000' in args and '--order=asc' in args
+        return json.dumps(rows)
+    def read(uri, **kwargs):
+        calls.append("report")
+        assert uri == URI
+        return report
+    if failure:
+        with pytest.raises((pilot.ReleaseError, ValueError)):
+            reader.summary_log_evidence(expected, env, run=run, load_report=read)
+        return
+    result = reader.summary_log_evidence(expected, env, run=run, load_report=read)
+    assert result["status"] == "HISTORICAL_LOGS_INSPECTED"
+    assert result["sdk_error_codes"] == result["summary_interval_error_codes"] == [321]
+    assert result["account_update_timeout_entry_count"] == 1
+    assert result["log_entry_count"] == 3 and len(calls) == 2
+    for key in ("exact_summary_request_error_attribution_verified", "historical_summary_end_verified",
+        "current_funds_verified", "broker_called", "job_create_requested", "job_execute_requested", "configuration_write_requested"):
+        assert result[key] is False
+    text = json.dumps(result)
+    assert all(value not in text for value in ("PRIVATE_MESSAGE", "PRIVATE_ACCOUNT", "4999.33", URI, EXECUTION))
+
+
+@pytest.mark.parametrize("change", [{"MAINTENANCE_JOB": "true"}, {"MAINTENANCE_JOB_READBACK": "true"},
+    {"MAINTENANCE_SOURCE_COMMIT": jobs.SOURCE}, {"GITHUB_RUN_ATTEMPT": "2"}, {"GITHUB_REF": "refs/heads/other"}])
+def test_summary_logs_reject_unadmitted_modes_before_any_read(monkeypatch, change):
+    reader, expected, env, _, _ = summary_log_case(monkeypatch)
+    def forbidden(*_, **__):
+        pytest.fail("invalid mode must not reach a cloud read")
+    with pytest.raises(pilot.ReleaseError, match="summary_logs_dispatch_not_admitted"):
+        reader.summary_log_evidence(expected, {**env, **change}, run=forbidden, load_report=forbidden)
+
+
+@pytest.mark.parametrize("conflict", [None, "MAINTENANCE_JOB", "MAINTENANCE_JOB_READBACK", "MAINTENANCE_SOURCE_COMMIT"])
+def test_summary_log_workflow_preflight_excludes_all_execution_modes(monkeypatch, capsys, conflict):
+    from pathlib import Path
+    from textwrap import dedent
+    from scripts import diagnose_account_facts_identity as identity
+    workflow = Path(".github/workflows/primary-account-facts-readonly.yml").read_text()
+    body = dedent(workflow.split("python3 - <<'PY'\n", 1)[1].split("\n          PY", 1)[0])
+    monkeypatch.setattr(identity, "resolve_expected", lambda: dict(expected_report_prefix="gs://example/tqqq_growth_income"))
+    for key, value in dict(MAINTENANCE_COMPLETED_SUMMARY_LOGS="true", MAINTENANCE_SOURCE_COMMIT="",
+            MAINTENANCE_JOB="false", MAINTENANCE_JOB_READBACK="false", GITHUB_RUN_ATTEMPT="1").items():
+        monkeypatch.setenv(key, value)
+    if conflict:
+        monkeypatch.setenv(conflict, jobs.SOURCE if conflict == "MAINTENANCE_SOURCE_COMMIT" else "true")
+        with pytest.raises(SystemExit, match="summary_logs_modes_conflict"):
+            exec(body, {})
+    else:
+        exec(body, {})
+        assert "preflight_verified" in capsys.readouterr().out
+    assert "if: inputs.completed_summary_logs" in workflow
+    assert "if: inputs.maintenance_source_commit == '' && !inputs.completed_summary_logs" in workflow
+    assert "scripts.read_completed_maintenance_cash_job --summary-logs" in workflow
+
+
 @pytest.mark.parametrize("failure", [None, "identity", "method", "incomplete", "before_snapshot", "after_report", "invalid_fields"])
 def test_summary_source_and_interval_are_independent_of_snapshot(failure):
     _, _, expected, report = setup()
