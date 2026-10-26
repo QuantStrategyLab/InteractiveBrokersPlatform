@@ -68,7 +68,9 @@ def inspect_report(report, *, uri: str, expected: dict, day: date) -> dict:
     projected = publisher.project_ibkr_account_facts_history(
         report, source_report_uri=uri, **expected,
     )
-    safe = {"report_name": uri.rsplit("/", 1)[-1]}
+    safe = {"report_name": uri.rsplit("/", 1)[-1],
+            "snapshot_present": (isinstance(report, dict) and isinstance(report.get("summary"), dict)
+                                 and isinstance(report["summary"].get("account_facts"), dict))}
     if projected.get("status") == "skipped":
         safe.update(projected)
         if (projected.get("reason") == "runtime_target_mismatch"
@@ -83,6 +85,8 @@ def inspect_report(report, *, uri: str, expected: dict, day: date) -> dict:
             if candidate.get("status") != "skipped" and candidate["observation_date"] == day.isoformat():
                 safe["historical_candidate"] = {**projection_metadata(candidate),
                                                 "receiver_admission_verified": False}
+            else:
+                safe["historical_candidate_rejection"] = candidate.get("reason", "archive_observation_date_mismatch")
         return safe
     if projected["observation_date"] != day.isoformat():
         return {**safe, "status": "skipped", "reason": "archive_observation_date_mismatch"}

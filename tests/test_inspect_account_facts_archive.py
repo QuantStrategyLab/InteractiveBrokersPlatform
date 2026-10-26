@@ -29,6 +29,7 @@ def test_retention_inclusive_boundary():
 def test_projection_retains_original_identity_and_exports_no_financial_body():
     result = archive.inspect_report(_report(), uri=URI, expected=EXPECTED, day=DAY)
     assert result["status"] == "verified"
+    assert result["snapshot_present"] is True
     assert result["net_assets_available"] is True
     assert len(result["projection_sha256"]) == 64
     encoded = json.dumps(result)
@@ -63,6 +64,9 @@ def test_alternate_revision_preview_preserves_all_other_guards(mutation):
     result = archive.inspect_report(report, uri=URI, expected=EXPECTED, day=day)
     assert result["status"] == "skipped"
     assert "historical_candidate" not in result
+    if mutation == "facts":
+        assert result["snapshot_present"] is False
+        assert result["historical_candidate_rejection"] == "account_facts_invalid"
 
 
 def test_original_observation_date_cannot_be_relabeled():
