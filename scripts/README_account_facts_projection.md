@@ -39,6 +39,18 @@ configuration, not an executed order route, an account fee-plan attestation or
 a complete fee estimate. A Tiered pricing reference and SMART configuration
 must still be distinguished from actual commissions and other charges.
 
+# Archived account-facts inspection
+
+`inspect-account-facts-archive.yml` is a manual read-only diagnostic for one
+existing additional-account slot and one past UTC date within the receiver's
+retention window. It lists at most 64 exact report names below the protected
+prefix and applies the original pure account-facts projector without replacing
+the revision, account identity or observation time. Its output contains only
+names, dates, fixed skip reasons, availability flags and opaque hashes. An empty
+listing remains distinct from a read failure. No ingress token, publisher,
+notification, broker request, source adoption or business write is involved.
+An inspected archive is not evidence that its daily row was published.
+
 # Zero-traffic maintenance cash observation
 
 The one-shot maintenance Job now sends one `reqAccountSummary` with group `All`
