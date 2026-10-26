@@ -81,8 +81,10 @@ class SummaryBroker:
         from eventkit import Event
         self.accountSummaryEvent = Event()
         self.wrapper = SimpleNamespace(acctSummary={}, startReq=self.start,
+            accountSummaryEnd=lambda req: self.future.set_result(None),
             accountSummary=lambda req, account, tag, value, currency: self.accountSummaryEvent.emit(
                 SimpleNamespace(account=account, tag=tag, value=value, currency=currency)))
+        self.RaiseRequestErrors = False
         self.client = SimpleNamespace(getReqId=lambda: 17, reqAccountSummary=self.request,
                                       cancelAccountSummary=lambda req: self.calls.append(("cancel", req)))
         self.rows, self.failure, self.calls = rows, failure, []
@@ -102,7 +104,7 @@ class SummaryBroker:
         for row in self.rows:
             self.wrapper.accountSummary(row.get("request_id", req), row["account"], row["tag"], row["value"], row["currency"])
         if self.failure != "timeout":
-            self.future.set_result(None)  # The SDK completes on accountSummaryEnd.
+            self.wrapper.accountSummaryEnd(req)
 
     def _run(self, awaitable):
         return self.loop.run_until_complete(awaitable)
@@ -294,6 +296,8 @@ def test_real_sdk_wrapper_completes_summary_without_network(monkeypatch, amounts
     try:
         broker = IB()
         broker.wrapper.accounts = ["DU00000001"]
+        original_end = broker.wrapper.accountSummaryEnd
+        original_error_policy = broker.RaiseRequestErrors
         calls = []
         monkeypatch.setattr(broker.client, "getReqId", lambda: 19)
         def request(req, group, tags):
@@ -301,6 +305,8 @@ def test_real_sdk_wrapper_completes_summary_without_network(monkeypatch, amounts
             for amount in amounts:
                 broker.client.decoder.interpret(["63", "1", str(req), "DU00000001", "SettledCash", amount, "USD"])
             broker.client.decoder.interpret(["64", "1", str(req)])
+            # A subsequent subscription update is not part of the initial snapshot.
+            broker.client.decoder.interpret(["63", "1", str(req), "DU00000001", "SettledCash", "9999", "USD"])
         monkeypatch.setattr(broker.client, "reqAccountSummary", request)
         monkeypatch.setattr(broker.client, "cancelAccountSummary", lambda req: calls.append(("cancel", req)))
         value = entry.read_account_summary_cash(broker, ["DU00000001"])
@@ -311,7 +317,50 @@ def test_real_sdk_wrapper_completes_summary_without_network(monkeypatch, amounts
             assert value["broker_cash_observations"]["invalid_fields"] == [dict(currency="USD", source_tag="SettledCash")]
             assert "values" not in value["broker_cash_observations"]
         assert calls[-1] == ("cancel", 19) and len(calls) == 2
+        assert broker.wrapper.accountSummaryEnd == original_end
+        assert broker.RaiseRequestErrors is original_error_policy
         assert not broker.wrapper._futures and len(broker.accountSummaryEvent) == 0
+    finally:
+        loop.close()
+        asyncio.set_event_loop(previous)
+
+
+@pytest.mark.parametrize("original_policy", [False, True])
+@pytest.mark.parametrize("failure", ["request_error", "error_then_end", "completion_without_end", "other_end"])
+def test_real_sdk_request_completion_requires_matching_end_and_no_error(monkeypatch, original_policy, failure):
+    from ib_insync import IB
+    from ib_insync.wrapper import RequestError
+    from ib_insync.util import getLoop
+    previous = getLoop()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        broker = IB()
+        broker.wrapper.accounts = ["DU00000001"]
+        broker.RaiseRequestErrors = original_policy
+        original_summary = broker.wrapper.accountSummary
+        original_end = broker.wrapper.accountSummaryEnd
+        calls = []
+        monkeypatch.setattr(broker.client, "getReqId", lambda: 19)
+        def request(req, group, tags):
+            calls.append("request")
+            broker.client.decoder.interpret(["63", "1", str(req), "DU00000001", "AvailableFunds", "50", "USD"])
+            if failure in {"completion_without_end", "other_end"}:
+                if failure == "other_end":
+                    broker.client.decoder.interpret(["64", "1", str(req + 1)])
+                broker.wrapper._endReq(req)
+            else:
+                broker.wrapper.error(req, 321, "SYNTHETIC_REQUEST_ERROR", "")
+                if failure == "error_then_end":
+                    broker.client.decoder.interpret(["64", "1", str(req)])
+        monkeypatch.setattr(broker.client, "reqAccountSummary", request)
+        monkeypatch.setattr(broker.client, "cancelAccountSummary", lambda req: calls.append("cancel"))
+        with pytest.raises(ValueError if failure in {"completion_without_end", "other_end"} else RequestError):
+            entry.read_account_summary_cash(broker, ["DU00000001"])
+        assert broker.RaiseRequestErrors is original_policy
+        assert broker.wrapper.accountSummary == original_summary
+        assert broker.wrapper.accountSummaryEnd == original_end
+        assert calls == ["request", "cancel"] and not broker.wrapper._futures
     finally:
         loop.close()
         asyncio.set_event_loop(previous)

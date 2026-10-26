@@ -17,7 +17,8 @@ def read_account_summary_cash(ib, account_ids, *, timeout_seconds=30,
 
     The pinned SDK fills accountValues and acctSummary separately. Listen to
     request-scoped callbacks before its cache overwrites duplicate fields, and require
-    accountSummaryEnd via the SDK future. All is the API's summary group; rows
+    the matching accountSummaryEnd callback and SDK error propagation. All is
+    the API's summary group; rows
     for other managed accounts are neither buffered nor persisted. Identical
     decimal repeats within this request may share one observation; conflicting
     values remain invalid rather than choosing the first, last or larger value.
@@ -28,26 +29,41 @@ def read_account_summary_cash(ib, account_ids, *, timeout_seconds=30,
             or account_ids[0] not in ib.managedAccounts() or ib.wrapper.acctSummary
             or not 0 < timeout_seconds <= 30):
         raise ValueError("account_summary_source_not_fresh_or_scoped")
-    rows = []
+    rows, ended = [], False
     started = clock().isoformat()
     req_id = ib.client.getReqId()
     original = ib.wrapper.accountSummary
+    original_end = ib.wrapper.accountSummaryEnd
+    original_error_policy = ib.RaiseRequestErrors
     tags = ("SettledCash", "AvailableFunds", "FullAvailableFunds")
     def collect(request_id, account, tag, value, currency):
         # The SDK event drops reqId. Its decoder resolves this wrapper method
         # per message, so preserve the original SDK callback and scope here.
-        if request_id == req_id and account == account_ids[0] and tag in tags:
+        if not ended and request_id == req_id and account == account_ids[0] and tag in tags:
             rows.append(SimpleNamespace(account=account, tag=tag, value=value, currency=currency))
         original(request_id, account, tag, value, currency)
+    def collect_end(request_id):
+        nonlocal ended
+        if request_id == req_id:
+            ended = True
+        original_end(request_id)
     future = None
     ib.wrapper.accountSummary = collect
+    ib.wrapper.accountSummaryEnd = collect_end
+    # With the SDK default False, request errors also resolve startReq's
+    # future successfully. Completion alone is not accountSummaryEnd proof.
+    ib.RaiseRequestErrors = True
     try:
         future = ib.wrapper.startReq(req_id)
         ib.client.reqAccountSummary(req_id, "All", "SettledCash,AvailableFunds,FullAvailableFunds")
         ib._run(asyncio.wait_for(future, timeout=timeout_seconds))
+        if not ended:
+            raise ValueError("account_summary_end_not_observed")
         finished = clock().isoformat()
     finally:
         ib.wrapper.accountSummary = original
+        ib.wrapper.accountSummaryEnd = original_end
+        ib.RaiseRequestErrors = original_error_policy
         if future is not None and not future.done():
             future.cancel()
         ib.client.cancelAccountSummary(req_id)
