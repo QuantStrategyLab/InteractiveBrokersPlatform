@@ -27,9 +27,9 @@ def archive_day(value: str, *, now: datetime) -> date:
     return day
 
 
-def report_uris(*, day: date, expected: dict, now: datetime, metadata_only: bool = False) -> list[str]:
+def report_uris(*, day: date, expected: dict, now: datetime, whole_month: bool = False) -> list[str]:
     prefix = expected["expected_report_prefix"].rstrip("/")
-    filename_prefix = day.strftime("%Y%m" if metadata_only else "%Y%m%dT")
+    filename_prefix = day.strftime("%Y%m" if whole_month else "%Y%m%dT")
     match = f"{prefix}/{day:%Y-%m}/{filename_prefix}*.json"
     result = subprocess.run(
         ["gcloud", "storage", "ls", match, "--project", expected["expected_project_id"]],
@@ -40,7 +40,7 @@ def report_uris(*, day: date, expected: dict, now: datetime, metadata_only: bool
             return []
         raise ArchiveError("archive_listing_failed")
     lines = result.stdout.splitlines()
-    if len(result.stdout) > 1024 * 1024 or len(lines) > (2048 if metadata_only else 64):
+    if len(result.stdout) > 1024 * 1024 or len(lines) > (2048 if whole_month else 64):
         raise ArchiveError("archive_listing_limit")
     uris = set()
     for uri in lines:
@@ -108,11 +108,11 @@ def main() -> int:
         day = archive_day(os.environ.get("IBKR_ACCOUNT_FACTS_ARCHIVE_DATE", ""), now=now)
         expected = identity.resolve_expected()
         stage = "listing"
-        mode = os.environ.get("IBKR_ACCOUNT_FACTS_ARCHIVE_METADATA_ONLY", "false")
-        if mode not in {"true", "false"}:
+        mode = os.environ.get("IBKR_ACCOUNT_FACTS_ARCHIVE_MODE", "day")
+        if mode not in {"day", "month-metadata", "month-snapshots"}:
             raise ArchiveError("archive_mode_invalid")
-        uris = report_uris(day=day, expected=expected, now=now, metadata_only=mode == "true")
-        if mode == "true":
+        uris = report_uris(day=day, expected=expected, now=now, whole_month=mode != "day")
+        if mode == "month-metadata":
             counts = {}
             for uri in uris:
                 stamp = datetime.strptime(uri.rsplit("/", 1)[-1], "%Y%m%dT%H%M%SZ.json")
@@ -124,13 +124,23 @@ def main() -> int:
                               "financial_bodies_read": False, "broker_requests": 0, "business_writes": 0},
                              sort_keys=True))
             return 0
+        if len(uris) > 64:
+            raise ArchiveError("archive_read_limit")
         rows = []
         for uri in uris:
+            report_day = datetime.strptime(uri.rsplit("/", 1)[-1], "%Y%m%dT%H%M%SZ.json").date()
+            try:
+                archive_day(report_day.isoformat(), now=now)
+            except ArchiveError:
+                rows.append({"report_name": uri.rsplit("/", 1)[-1], "status": "skipped",
+                             "reason": "archive_date_outside_retention"})
+                continue
             stage = "report_read"
             report = publisher._load_gcs_report(uri, project_id=expected["expected_project_id"])
             stage = "projection"
-            rows.append(inspect_report(report, uri=uri, expected=expected, day=day))
-        result = {"status": "inspected", "slot": slot, "date": day.isoformat(),
+            rows.append(inspect_report(report, uri=uri, expected=expected, day=report_day if mode == "month-snapshots" else day))
+        result = {"status": "inspected", "slot": slot,
+                  **({"month": day.strftime("%Y-%m")} if mode == "month-snapshots" else {"date": day.isoformat()}),
                   "report_count": len(rows), "records": rows,
                   "broker_requests": 0, "business_writes": 0}
         print(json.dumps(result, sort_keys=True))

@@ -113,7 +113,7 @@ def test_month_inventory_confines_listing_and_never_reads_financial_bodies(monke
     monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
     monkeypatch.setenv("IBKR_ACCOUNT_FACTS_TARGET", "additional-2")
     monkeypatch.setenv("IBKR_ACCOUNT_FACTS_ARCHIVE_DATE", "2026-09-30")
-    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_ARCHIVE_METADATA_ONLY", "true")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_ARCHIVE_MODE", "month-metadata")
     monkeypatch.setattr(archive.identity, "resolve_expected", lambda: EXPECTED)
     monkeypatch.setattr(archive.publisher, "_load_gcs_report", lambda *a, **k: pytest.fail("financial read"))
     calls = []
@@ -134,4 +134,57 @@ def test_month_inventory_rejects_other_month(monkeypatch):
     monkeypatch.setattr(archive.subprocess, "run", lambda *a, **k:
                         SimpleNamespace(returncode=0, stderr="", stdout=URI.replace("2026-09/20260930", "2026-08/20260830") + "\n"))
     with pytest.raises(archive.ArchiveError, match="archive_listing_invalid"):
-        archive.report_uris(day=DAY, expected=EXPECTED, now=NOW, metadata_only=True)
+        archive.report_uris(day=DAY, expected=EXPECTED, now=NOW, whole_month=True)
+
+
+@pytest.mark.parametrize("over_limit", [False, True])
+def test_month_snapshot_inspection_retains_dates_and_read_bound(monkeypatch, capsys, over_limit):
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz):
+            return NOW
+
+    monkeypatch.setattr(archive, "datetime", FixedDatetime)
+    for key, value in {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main",
+                       "IBKR_ACCOUNT_FACTS_TARGET": "additional-2",
+                       "IBKR_ACCOUNT_FACTS_ARCHIVE_DATE": "2026-09-30",
+                       "IBKR_ACCOUNT_FACTS_ARCHIVE_MODE": "month-snapshots"}.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(archive.identity, "resolve_expected", lambda: EXPECTED)
+    uris = [URI] * 65 if over_limit else [URI, URI.replace("20260930", "20260929")]
+    monkeypatch.setattr(archive, "report_uris", lambda **k: uris)
+    reads = []
+
+    def loaded(uri, **kwargs):
+        reads.append(uri)
+        return _report()
+
+    monkeypatch.setattr(archive.publisher, "_load_gcs_report", loaded)
+    assert archive.main() == (1 if over_limit else 0)
+    result = json.loads(capsys.readouterr().out)
+    if over_limit:
+        assert result["reason"] == "archive_read_limit"
+        assert reads == []
+    else:
+        assert len(reads) == 2
+        assert result["records"][0]["observation_date"] == "2026-09-30"
+        assert result["records"][1]["reason"] == "archive_observation_date_mismatch"
+
+
+def test_month_inspection_does_not_read_todays_report_as_history(monkeypatch, capsys):
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz):
+            return NOW
+
+    monkeypatch.setattr(archive, "datetime", FixedDatetime)
+    for key, value in {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main",
+                       "IBKR_ACCOUNT_FACTS_TARGET": "additional-2",
+                       "IBKR_ACCOUNT_FACTS_ARCHIVE_DATE": "2026-10-23",
+                       "IBKR_ACCOUNT_FACTS_ARCHIVE_MODE": "month-snapshots"}.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(archive.identity, "resolve_expected", lambda: EXPECTED)
+    monkeypatch.setattr(archive, "report_uris", lambda **k: [URI.replace("2026-09/20260930", "2026-10/20261026")])
+    monkeypatch.setattr(archive.publisher, "_load_gcs_report", lambda *a, **k: pytest.fail("today is not archive history"))
+    assert archive.main() == 0
+    assert json.loads(capsys.readouterr().out)["records"][0]["reason"] == "archive_date_outside_retention"
