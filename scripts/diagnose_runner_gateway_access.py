@@ -1,6 +1,7 @@
 """Read the original platform runner's declared Gateway binding and static IAP access.
 
-Uses its existing identity only. No socket, broker call, image pull or resource write.
+Uses its existing identity only. An optional direct TCP check sends no protocol data.
+No broker call, image pull or resource write.
 Private configuration and native-client output remain inside the protected runner.
 """
 from __future__ import annotations
@@ -13,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import re
+import socket
 import subprocess
 from types import SimpleNamespace
 import urllib.error
@@ -26,7 +28,8 @@ REASONS = serving.REASONS | frozenset({"group_declaration_unavailable", "group_s
     "group_configuration_invalid", "gateway_binding_invalid", "gateway_instance_unavailable",
     "gateway_instance_invalid", "project_number_unavailable", "iap_check_unavailable",
     "iap_response_invalid", "iap_permission_not_observed", "static_access_observed",
-    "direct_gateway_declaration_observed"})
+    "direct_gateway_declaration_observed", "tcp_check_requires_direct_route",
+    "gateway_tcp_connected", "gateway_tcp_not_connected"})
 
 
 def result():
@@ -34,6 +37,8 @@ def result():
         reason="diagnostic_error", observed_at=datetime.now(timezone.utc).isoformat(),
         group_configuration_observed=False, gateway_binding_verified=False,
         binding_checks={}, gateway_address_route=None,
+        gateway_tcp_probe_attempted=False, gateway_tcp_connected=None, tcp_failure_class=None,
+        broker_protocol_sent=False,
         positive_client_id_verified=False, compute_instance_read=False,
         iap_permission_observed=None, iap_http_status=None, cloud_read_failure_class=None,
         source_stable=False, network_path_verified=False,
@@ -71,7 +76,7 @@ def command(args, reason):
 
 def read_group(ctx, rows, run):
     from runtime_config_support import (first_non_empty, load_account_group_config,
-        resolve_account_group, resolve_execution_backend, resolve_ib_gateway_mode)
+        resolve_account_group, resolve_execution_backend, resolve_ib_gateway_mode, resolve_ib_gateway_port)
 
     def secret(name, version="latest"):
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,255}", name) or not re.fullmatch(r"latest|[1-9][0-9]*", version):
@@ -115,6 +120,8 @@ def read_group(ctx, rows, run):
         execution_backend=resolve_execution_backend(
             group.execution_backend or declaration("IBKR_EXECUTION_BACKEND")),
         ib_gateway_mode=resolve_ib_gateway_mode(group.ib_gateway_mode),
+        ib_gateway_port=resolve_ib_gateway_port(group.ib_gateway_port if group.ib_gateway_port is not None
+            else declaration("IB_GATEWAY_PORT"), gateway_mode=resolve_ib_gateway_mode(group.ib_gateway_mode)),
         ib_gateway_zone=first_non_empty(group.ib_gateway_zone,
             declaration("IB_GATEWAY_ZONE") if not group.ib_gateway_zone else None) or "")
 
@@ -148,7 +155,29 @@ def check_iap(resource, token):
     return PERMISSION in permissions
 
 
-def diagnose(ctx, *, run=command, read=serving._read, group_reader=read_group, iap=check_iap):
+def check_direct_tcp(host, port):
+    try:
+        # No send/recv, API handshake, authentication, retry, or alternative route.
+        addresses = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        if not addresses:
+            return False, "name_resolution_failed"
+        family, kind, protocol, _, address = addresses[0]
+        with socket.socket(family, kind, protocol) as connection:
+            connection.settimeout(5)
+            connection.connect(address)
+            return True, None
+    except socket.gaierror:
+        return False, "name_resolution_failed"
+    except TimeoutError:
+        return False, "timeout"
+    except ConnectionRefusedError:
+        return False, "connection_refused"
+    except OSError:
+        return False, "network_error"
+
+
+def diagnose(ctx, *, run=command, read=serving._read, group_reader=read_group, iap=check_iap,
+             direct_tcp=False, tcp=check_direct_tcp):
     out = result()
     before = None
     try:
@@ -173,13 +202,26 @@ def diagnose(ctx, *, run=command, read=serving._read, group_reader=read_group, i
         out["gateway_binding_verified"] = True
         if not zone:
             out.update(status="observed", reason="direct_gateway_declaration_observed")
+            if direct_tcp:
+                if not out["positive_client_id_verified"] or type(group.ib_gateway_port) is not int or not 1 <= group.ib_gateway_port <= 65535:
+                    raise pilot.ReleaseError("gateway_binding_invalid")
+                out["gateway_tcp_probe_attempted"] = True
+                connected, failure = tcp(instance, group.ib_gateway_port)
+                if type(connected) is not bool or failure not in (None, "name_resolution_failed", "timeout", "connection_refused", "network_error") or connected != (failure is None):
+                    raise pilot.ReleaseError("diagnostic_error")
+                out.update(gateway_tcp_connected=connected, tcp_failure_class=failure,
+                    reason="gateway_tcp_connected" if connected else "gateway_tcp_not_connected")
+        elif direct_tcp:
+            raise pilot.ReleaseError("tcp_check_requires_direct_route")
         else:
             observe_vm_iap(out, project, zone, instance, run, iap)
     except pilot.ReleaseError as error:
+        out["status"] = "unavailable"
         out["reason"] = str(error) if str(error) in REASONS else "diagnostic_error"
         if isinstance(error, ReadFailure):
             out.update(cloud_read_failure_class=error.failure_class, iap_http_status=error.http_status)
     except Exception:
+        out["status"] = "unavailable"
         out["reason"] = "group_configuration_invalid" if before is not None else "diagnostic_error"
     if before is not None:
         try:
@@ -244,11 +286,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--receipt", type=Path, required=True)
     parser.add_argument("--configuration-reference-only", action="store_true")
+    parser.add_argument("--direct-tcp", action="store_true")
     args = parser.parse_args(argv)
     out = result()
     try:
         ctx = pilot.context(os.environ)
-        out = configuration_reference(ctx) if args.configuration_reference_only else diagnose(ctx)
+        if args.configuration_reference_only and args.direct_tcp:
+            raise pilot.ReleaseError("dispatch_not_admitted")
+        out = configuration_reference(ctx) if args.configuration_reference_only else diagnose(ctx, direct_tcp=args.direct_tcp)
     except Exception:
         out["reason"] = "dispatch_not_admitted"
     args.receipt.write_text(json.dumps(out, sort_keys=True) + "\n")

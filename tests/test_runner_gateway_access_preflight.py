@@ -3,6 +3,7 @@ from dataclasses import replace
 import json
 import hashlib
 import subprocess
+import socket
 from types import SimpleNamespace
 
 import pytest
@@ -20,10 +21,11 @@ def context():
 def group():
     return AccountGroupConfig(ib_gateway_project_id="synthetic-gateway", ib_gateway_zone="us-central1-a",
         ib_gateway_instance_name="synthetic-vm", ib_gateway_mode="live", ib_client_id=7,
-        service_name="synthetic-service", account_ids=("U1",))
+        ib_gateway_port=4001, service_name="synthetic-service", account_ids=("U1",))
 
 
-def inspect(*, configured=None, permission=True, failure=None, drift=False):
+def inspect(*, configured=None, permission=True, failure=None, drift=False, direct_tcp=False,
+            tcp=lambda *a: pytest.fail("TCP requires explicit opt-in")):
     calls = []
     reads = []
 
@@ -49,7 +51,7 @@ def inspect(*, configured=None, permission=True, failure=None, drift=False):
         return permission
 
     out = probe.diagnose(context(), read=read, run=run,
-        group_reader=lambda *args: configured or group(), iap=iap)
+        group_reader=lambda *args: configured or group(), iap=iap, direct_tcp=direct_tcp, tcp=tcp)
     return out, calls, reads
 
 
@@ -121,6 +123,77 @@ def test_binding_failures_are_reported_independently_without_private_values():
     assert "U2" not in json.dumps(out)
 
 
+@pytest.mark.parametrize("connected,failure", [(True, None), (False, "timeout")])
+def test_opt_in_tcp_checks_only_original_direct_address_once(connected, failure):
+    calls = []
+    def tcp(host, port):
+        calls.append((host, port))
+        return connected, failure
+    configured = replace(group(), ib_gateway_project_id=None, ib_gateway_zone=None,
+        ib_gateway_instance_name="192.0.2.1")
+    out, native_calls, _ = inspect(configured=configured, direct_tcp=True, tcp=tcp)
+    assert calls == [("192.0.2.1", 4001)] and not native_calls
+    assert out["status"] == "observed" and out["gateway_tcp_probe_attempted"]
+    assert out["gateway_tcp_connected"] is connected and out["tcp_failure_class"] == failure
+    assert not out["broker_protocol_sent"] and not out["broker_called"]
+    assert not out["runtime_ready"] and not out["network_path_verified"]
+    assert "192.0.2.1" not in json.dumps(out)
+
+
+@pytest.mark.parametrize("changes", [dict(ib_client_id=0), dict(account_ids=("U2",)),
+    dict(ib_gateway_port=0), dict(ib_gateway_port=65536), dict(ib_gateway_port=True)])
+def test_tcp_rejects_invalid_isolation_binding_before_socket(changes):
+    configured = replace(group(), ib_gateway_project_id=None, ib_gateway_zone=None, **changes)
+    out, native_calls, _ = inspect(configured=configured, direct_tcp=True)
+    assert out["status"] == "unavailable" and out["reason"] == "gateway_binding_invalid"
+    assert not out["gateway_tcp_probe_attempted"] and not native_calls
+
+
+def test_tcp_never_falls_back_to_a_vm_or_iap_route():
+    out, native_calls, _ = inspect(direct_tcp=True)
+    assert out["status"] == "unavailable" and out["reason"] == "tcp_check_requires_direct_route"
+    assert not native_calls and not out["gateway_tcp_probe_attempted"]
+
+
+def test_tcp_probe_closes_socket_without_sending_or_receiving_protocol(monkeypatch):
+    events = []
+    class Connection:
+        def __enter__(self):
+            events.append("opened")
+            return self
+        def __exit__(self, *args):
+            events.append("closed")
+        def settimeout(self, timeout):
+            assert timeout == 5
+        def connect(self, address):
+            assert address == ("192.0.2.1", 4001)
+            events.append("connected")
+    def resolve(host, port, *, type):
+        assert host == "synthetic.example.invalid" and port == 4001 and type == socket.SOCK_STREAM
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.2.1", 4001)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.2.2", 4001))]
+    def connection(family, kind, protocol):
+        assert (family, kind, protocol) == (socket.AF_INET, socket.SOCK_STREAM, 6)
+        return Connection()
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    monkeypatch.setattr(socket, "socket", connection)
+    assert probe.check_direct_tcp("synthetic.example.invalid", 4001) == (True, None)
+    assert events == ["opened", "connected", "closed"]
+
+
+@pytest.mark.parametrize("error,category", [(socket.gaierror("private-host"), "name_resolution_failed"),
+    (TimeoutError("private-host"), "timeout"), (ConnectionRefusedError("private-host"), "connection_refused"),
+    (OSError("private-host"), "network_error")])
+def test_tcp_failure_is_fixed_class_without_details_or_retry(monkeypatch, error, category):
+    calls = []
+    def connect(*args, **kwargs):
+        calls.append(True)
+        raise error
+    monkeypatch.setattr(socket, "getaddrinfo", connect)
+    assert probe.check_direct_tcp("synthetic.example.invalid", 4001) == (False, category)
+    assert calls == [True]
+
+
 def test_missing_compute_permission_stops_without_token_or_iap_retry():
     out, calls, reads = inspect(failure="gateway_instance_unavailable")
     assert out["reason"] == "gateway_instance_unavailable"
@@ -157,11 +230,13 @@ def test_group_reader_applies_original_zone_and_backend_fallbacks(declared_backe
     rows = [dict(name="ACCOUNT_GROUP", value="synthetic"),
         dict(name="IB_ACCOUNT_GROUP_CONFIG_JSON", value=json.dumps(payload)),
         dict(name="IB_GATEWAY_ZONE", value="us-central1-a"),
+        dict(name="IB_GATEWAY_PORT", value="4003"),
         dict(name="IBKR_EXECUTION_BACKEND", value="gateway")]
     selected = probe.read_group(context(), rows, lambda *a: pytest.fail("no secret read"))
     assert selected.ib_gateway_zone == "us-central1-a"
     assert selected.ib_gateway_project_id is None
     assert selected.execution_backend == "gateway"
+    assert selected.ib_gateway_port == 4003
 
 
 def test_group_values_take_priority_without_reading_unused_secret_fallbacks():
@@ -212,3 +287,12 @@ def test_reference_only_refuses_unresolved_secret_declarations():
     out = probe.configuration_reference(context(), read=lambda *a, **k: {"group_declarations": rows},
         run=lambda *a: pytest.fail("must not fetch an unresolved declaration"))
     assert out["status"] == "unavailable" and out["reference_sha256"] is None
+
+
+def test_reference_only_and_tcp_modes_reject_before_configuration_read(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(pilot, "context", lambda *a: context())
+    monkeypatch.setattr(probe, "configuration_reference", lambda *a: pytest.fail("no reference read"))
+    monkeypatch.setattr(probe, "diagnose", lambda *a, **k: pytest.fail("no configuration or TCP read"))
+    path = tmp_path / "safe.json"
+    assert probe.main(["--configuration-reference-only", "--direct-tcp", "--receipt", str(path)]) == 1
+    assert json.loads(capsys.readouterr().out)["reason"] == "dispatch_not_admitted"

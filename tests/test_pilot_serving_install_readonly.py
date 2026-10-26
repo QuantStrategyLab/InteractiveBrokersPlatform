@@ -256,5 +256,9 @@ def test_workflow_uses_single_protected_target_original_identity_and_deployment_
     assert "path: |\n            ${{ runner.temp }}/pilot-serving-install.safe.json\n            ${{ runner.temp }}/runner-gateway-access.safe.json" in callee
     assert "if: ${{ !inputs.runner_gateway_preflight }}" in callee
     assert "if: inputs.runner_gateway_preflight" in callee
+    assert "gateway_tcp_preflight:" in wrapper and "default: false" in wrapper
+    assert "gateway_tcp_preflight: ${{ inputs.gateway_tcp_preflight }}" in wrapper
+    assert callee.index("gateway_tcp_mode_invalid=true") < callee.index("google-github-actions/auth")
+    assert "--direct-tcp --receipt" in callee
     for forbidden in ("docker build", "docker push", "refresh_artifact_registry_keep", "sync_env", "approve_traffic", "approve_scheduler", "secrets versions access"):
         assert forbidden not in callee

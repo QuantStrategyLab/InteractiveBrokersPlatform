@@ -14,6 +14,8 @@ plugin 缺失或缺少提交 metadata 时整体保留 partial，退出码仍为 
 
 该模式沿用原入口的 backend/zone 回退和 project 默认值。配置含 zone 时读取原 Gateway 的 VM 元数据及 IAP `testIamPermissions`；无 zone、无显式 Gateway project 时保留原直连地址语义，只记录声明，不查 VM/IAP。显式 project 缺 zone 仍按原入口拒绝。账户范围、live 模式、地址与 client ID 等条件分别输出固定布尔值，原值不输出。原配置的 client ID 为零不阻止无券商连接的元数据检查；正 client ID 独立记录，后续隔离连接仍须满足它。
 
-该模式不打开隧道或券商 socket，不拉镜像，不导入策略或执行运行周期，不创建资源或改变 IAM/配置。返回权限未观察到不等于已实测网络拒绝；条件权限和真实隧道/端口连通性仍需各自验证。`network_path_verified` 和 `runtime_ready` 始终 false，不能据声明或静态权限结果宣称承载已就绪。失败只输出固定阶段和条件，当前来源在结束时再次核对稳定性。
+默认检查不打开隧道或券商 socket，不拉镜像，不导入策略或执行运行周期，不创建资源或改变 IAM/配置。返回权限未观察到不等于已实测网络拒绝；条件权限和真实隧道/端口连通性仍需各自验证。`network_path_verified` 和 `runtime_ready` 始终 false，不能据声明或静态权限结果宣称承载已就绪。失败只输出固定阶段和条件，当前来源在结束时再次核对稳定性。
+
+`gateway_tcp_preflight=true` 默认关闭，仅能与 runner 模式一起使用，且与引用摘要模式互斥。原声明必须通过单账户/live 绑定、正 client ID 和端口检查，并采用原直连路线；否则不打开 socket，不尝试其他地址、VM/IAP、身份或端口。它仅对原配置 host/port 解析出的首个地址发起一次 TCP 连接，连接等待上限 5 秒，成功后立即关闭；不发送或读取任何券商协议，不认证、读取账户或调用 SDK。port 沿用账户组优先、`IB_GATEWAY_PORT` 回退和 live/paper 默认值。安全结果只新增 nullable `gateway_tcp_connected`、是否尝试及固定失败类别，不输出地址、端口或底层异常。结果只代表该次地址/端口尝试，仍不代表券商身份、其他解析地址、隔离运行时或完整周期已通过。
 
 同时指定 `configuration_reference_only=true` 时只核来源摘要：要求 ACCOUNT_GROUP 和配置 Secret 名称均为明确字面声明，返回准确 `projects/.../secrets/...` 引用的 SHA256。它不重试已失败的 payload 读取，不取 Secret 内容、VM、token 或 IAP，不执行 IAM。只在云端解析原声明；用于将受保护现役引用与管理客户端已有定位作准确比较，不把引用名或配置正文放入产物。不支持的声明形状保持 unavailable。
