@@ -18,6 +18,7 @@ GAPS = (
 )
 # These are actual producer paths, not a search for guessed financial keys.
 PATHS = (
+    "market_exchange",
     "summary.account_facts.cash", "summary.account_facts.broker_reported_positions",
     "summary.account_facts.broker_cash_observations",
     "summary.managed_symbols", "summary.execution_status", "summary.no_op_reason",
@@ -46,6 +47,11 @@ def inspect_broker_contract_sources(report):
     if not isinstance(report, Mapping) or report.get("schema_version") != "runtime_report.v1":
         raise ValueError("BROKER_SOURCE_REPORT_SCHEMA_REQUIRED")
     fields = {path: _field(report, path)[0] for path in PATHS}
+    routing_kind, exchange = _field(report, "market_exchange")
+    routing_status = "NOT_REPORTED" if routing_kind == "missing" else "NULL" if routing_kind == "null" else "INVALID"
+    if (isinstance(exchange, str) and exchange and len(exchange) <= 64
+            and exchange == exchange.strip() and exchange.isprintable()):
+        routing_status = "SMART_REPORTED" if exchange == "SMART" else "OTHER_REPORTED"
     _, cash = _field(report, "summary.account_facts.cash")
     cash_tag, cash_status = None, "NOT_OBSERVED"
     if isinstance(cash, list):
@@ -78,6 +84,8 @@ def inspect_broker_contract_sources(report):
         gaps.append("USD_SETTLED_CASH_NOT_OBSERVED_IN_PROJECTED_CASH")
     return dict(schema_version=SCHEMA, status="SOURCE_INSPECTED_CONTRACT_GAPS",
         scope="SINGLE_RUNTIME_REPORT_ONLY", source_fields=fields,
+        routing_observation=dict(status=routing_status, source_path="market_exchange",
+            scope="RUNTIME_REPORT_CONFIGURATION_ONLY", actual_order_route_verified=False),
         native_cash_fields=native,
         usd_cash_observation=dict(status=cash_status, source_tag=cash_tag,
             settled_tag_observed=settled_observed, spendable_cash_verified=False),

@@ -29,6 +29,16 @@ The explicit paper-liquidation rehearsal also carries optional account facts fro
 `report_stop_reason` exposes only an allowlisted category already declared by the same report, after existing envelope, provenance and scope checks pass. A skipped report may declare `already_running`, `market_closed` or `ibkr_fractional_equity_api_unsupported`; an error may declare `strategy_execution_blocked`, `strategy_deadline`, `ibkr_gateway_unavailable`, `ibkr_trading_permission` or `ibkr_portfolio_snapshot`. Unknown categories become fixed `unclassified_skip`/`unclassified_error`; contradictory status/reason fields become `invalid_stop_context`. Preflight, failed reads, unproven scope, pending/unrecognized status and unexpected optional errors remain `unknown`. `no_declared_stop` means only an `ok` report has neither stop field.
 
 The category is a report declaration, not independent proof of the running process, the reason account facts were omitted, gateway credentials, account ownership or financial accuracy. It exposes no free text, error bodies, counts or private values. The same report is reused without additional cloud or broker reads; original stages, projection guard and CLI exit remain unchanged.
+
+The `--broker-contract-source-evidence` mode also classifies the producer's
+top-level `market_exchange` as `SMART_REPORTED`, `OTHER_REPORTED`,
+`NOT_REPORTED`, `NULL` or `INVALID`, after the original identity and freshness
+checks. It exposes no raw exchange value and does not fill missing routing
+from source-code defaults or nested guesses. This is the report's routing
+configuration, not an executed order route, an account fee-plan attestation or
+a complete fee estimate. A Tiered pricing reference and SMART configuration
+must still be distinguished from actual commissions and other charges.
+
 # Zero-traffic maintenance cash observation
 
 The existing `primary-account-facts-readonly.yml` manual workflow keeps its
