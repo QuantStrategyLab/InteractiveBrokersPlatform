@@ -281,9 +281,15 @@ def test_cli_uses_existing_slot_identity_and_never_a_report(monkeypatch, capsys)
     mock_reads(monkeypatch)
     monkeypatch.setattr(diagnostic.identity, 'resolve_expected', expected)
     monkeypatch.setenv('CLOUD_RUN_REGION', 'us-central1')
+    # A real timestamp can coincidentally contain the private-number sentinel
+    # (e.g. seconds 50.03); keep the whole-output privacy assertion deterministic.
+    original = diagnostic.diagnose_cash_settings
+    monkeypatch.setattr(diagnostic, 'diagnose_cash_settings',
+        lambda *args, **kwargs: original(*args, now=NOW, **kwargs))
     assert diagnostic.main(['--strategy-profile', 'artificial_profile']) == 0
     out = json.loads(capsys.readouterr().out)
     assert out['status'] == 'OBSERVED'
+    assert out['observed_at'] == NOW.isoformat()
     assert_unarmed(out)
 
 
