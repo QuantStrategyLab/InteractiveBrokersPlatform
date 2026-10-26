@@ -30,6 +30,8 @@ def test_minimum_notional_is_recorded_at_each_actual_skip_without_changing_broke
     class FakeIB:
         def openTrades(self):
             return []
+
+        reqAllOpenOrders = openTrades
         def fills(self):
             return []
         def accountValues(self):
