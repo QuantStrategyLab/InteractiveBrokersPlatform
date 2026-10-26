@@ -122,7 +122,8 @@ def test_explicit_summary_retains_source_decimal_and_target_only():
         assert value["broker_cash_observations"]["values"] == [
             dict(currency="USD", source_tag="AvailableFunds", value="3.14"),
             dict(currency="USD", source_tag="SettledCash", value="0.00000001")]
-        assert "PRIVATE_AMOUNT_CANARY" not in str(value) and "900" not in str(value)
+        assert "PRIVATE_AMOUNT_CANARY" not in str(value)
+        assert all(row["currency"] != "BASE" for row in value["broker_cash_observations"]["values"])
         assert broker.calls == [("request", 17, "All", "SettledCash,AvailableFunds,FullAvailableFunds"), ("cancel", 17)]
         assert len(broker.accountSummaryEvent) == 0
         assert datetime.fromisoformat(value["observed_started_at"]).utcoffset() is not None
@@ -146,8 +147,32 @@ def test_summary_failure_never_retries_or_retains_subscription(failure):
         broker.loop.close()
 
 
-def test_summary_duplicate_native_fields_stay_invalid():
-    rows = [dict(account="DU00000001", tag="SettledCash", currency="USD", value="1")] * 2
+@pytest.mark.parametrize("amounts", [
+    ["1", "1"], ["1", "1.00"], ["-0", "0.00"], ["-2", "-2.00"], ["0.00000001", "1e-8"],
+])
+def test_summary_identical_repeats_are_one_observation_not_spending_authority(amounts):
+    from application.ibkr_cash_observations import inspect_cash_observations
+    rows = [dict(account="DU00000001", tag="SettledCash", currency="USD", value=amount) for amount in amounts]
+    broker = SummaryBroker(rows)
+    try:
+        value = entry.read_account_summary_cash(broker, ["DU00000001"])
+        attachment = value["broker_cash_observations"]
+        assert len(attachment["values"]) == 1 and "invalid_fields" not in attachment
+        out = inspect_cash_observations(attachment, observed_at=value["observed_finished_at"])
+        assert out["fields"]["SettledCash"] == "OBSERVED"
+        assert out["spendable_cash_verified"] is out["complete_cash_obligations_verified"] is False
+        assert value["field_diagnostics"]["SettledCash"] == dict(usd_rows=2, usd_invalid_values=0,
+            usd_duplicate_rows=1, base_rows=0, other_currency_rows=0)
+    finally:
+        broker.loop.close()
+
+
+@pytest.mark.parametrize("amounts", [
+    ["1", "2"], ["1", "2", "1"], ["1", "1.00000000000000000001"],
+    ["1", None, "1"], ["NaN", "1"], ["1", "NaN"],
+])
+def test_summary_conflicting_or_invalid_repeats_stay_invalid(amounts):
+    rows = [dict(account="DU00000001", tag="SettledCash", currency="USD", value=amount) for amount in amounts]
     broker = SummaryBroker(rows)
     try:
         value = entry.read_account_summary_cash(broker, ["DU00000001"])
@@ -258,7 +283,9 @@ def test_unsupported_or_default_size_fields_never_become_rules(version, minimum,
         broker.loop.close()
 
 
-def test_real_sdk_wrapper_completes_summary_without_network(monkeypatch):
+@pytest.mark.parametrize("amounts,valid", [(["40.0123"], True), (["40.0123", "40.012300"], True),
+    (["40.0123", "40.0124", "40.0123"], False)])
+def test_real_sdk_wrapper_completes_summary_without_network(monkeypatch, amounts, valid):
     from ib_insync import IB
     from ib_insync.util import getLoop
     previous = getLoop()
@@ -271,13 +298,18 @@ def test_real_sdk_wrapper_completes_summary_without_network(monkeypatch):
         monkeypatch.setattr(broker.client, "getReqId", lambda: 19)
         def request(req, group, tags):
             calls.append((req, group, tags))
-            broker.client.decoder.interpret(["63", "1", str(req), "DU00000001", "SettledCash", "40.0123", "USD"])
+            for amount in amounts:
+                broker.client.decoder.interpret(["63", "1", str(req), "DU00000001", "SettledCash", amount, "USD"])
             broker.client.decoder.interpret(["64", "1", str(req)])
         monkeypatch.setattr(broker.client, "reqAccountSummary", request)
         monkeypatch.setattr(broker.client, "cancelAccountSummary", lambda req: calls.append(("cancel", req)))
         value = entry.read_account_summary_cash(broker, ["DU00000001"])
         assert value["query_completed"] is True
-        assert value["broker_cash_observations"]["values"] == [dict(currency="USD", source_tag="SettledCash", value="40.0123")]
+        if valid:
+            assert value["broker_cash_observations"]["values"] == [dict(currency="USD", source_tag="SettledCash", value="40.0123")]
+        else:
+            assert value["broker_cash_observations"]["invalid_fields"] == [dict(currency="USD", source_tag="SettledCash")]
+            assert "values" not in value["broker_cash_observations"]
         assert calls[-1] == ("cancel", 19) and len(calls) == 2
         assert not broker.wrapper._futures and len(broker.accountSummaryEvent) == 0
     finally:
