@@ -49,7 +49,7 @@ def command(args, reason, *, env=None):
     return image_identity._command(args, reason, env=child_env)
 
 
-def _read(ctx, run):
+def _read(ctx, run, *, include_group_declarations=False):
     common = (f"--project={ctx.project}", f"--region={ctx.region}", "--format=json")
     service = pilot._json(run(("gcloud", "run", "services", "describe", ctx.service, *common), "source_read_failed"))
     if not isinstance(service, dict) or service.get("metadata", {}).get("name") != ctx.service:
@@ -64,7 +64,14 @@ def _read(ctx, run):
     if any(target.get(key) != ctx.target.get(key) for key in pilot.IDENTITY_FIELDS):
         raise pilot.ReleaseError("inventory_serving_mismatch")
     image, _ = image_identity.immutable_image(revision)
-    return {"serving": serving, "traffic": traffic, "target": target, "image": image}
+    out = {"serving": serving, "traffic": traffic, "target": target, "image": image}
+    if include_group_declarations:
+        keys = {"ACCOUNT_GROUP", "IB_ACCOUNT_GROUP_CONFIG_JSON", "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME"}
+        containers = revision.get("spec", {}).get("containers", [])
+        if len(containers) != 1 or not isinstance(containers[0].get("env"), list):
+            raise pilot.ReleaseError("configuration_incomplete")
+        out["group_declarations"] = [row for row in containers[0]["env"] if row.get("name") in keys]
+    return out
 
 
 def _release_revision(target):

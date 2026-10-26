@@ -225,6 +225,17 @@ def test_probe_is_original_isolated_stdlib_metadata_code():
     assert names == {"json", "pathlib", "re", "importlib"}
 
 
+def test_group_declaration_projection_excludes_unrelated_credentials(chain):
+    for revision in chain["revisions"]:
+        revision["spec"]["containers"][0]["env"].extend([
+            {"name": "ACCOUNT_GROUP", "value": "synthetic"},
+            {"name": "TELEGRAM_TOKEN", "value": PRIVATE},
+        ])
+    observed = reader._read(chain["ctx"], reader.command, include_group_declarations=True)
+    assert observed["group_declarations"] == [{"name": "ACCOUNT_GROUP", "value": "synthetic"}]
+    assert PRIVATE not in json.dumps(observed)
+
+
 def test_workflow_uses_single_protected_target_original_identity_and_deployment_lock():
     wrapper = (ROOT / ".github/workflows/diagnose-pilot-serving-install.yml").read_text()
     callee = (ROOT / ".github/workflows/diagnose-pilot-serving-install-protected.yml").read_text()
@@ -238,6 +249,8 @@ def test_workflow_uses_single_protected_target_original_identity_and_deployment_
     assert callee.index("--preflight") < callee.index("google-github-actions/auth")
     assert "--source-dir source" in callee and "path: source" in callee
     assert callee.count("actions/upload-artifact") == 1
-    assert "path: ${{ runner.temp }}/pilot-serving-install.safe.json" in callee
+    assert "path: |\n            ${{ runner.temp }}/pilot-serving-install.safe.json\n            ${{ runner.temp }}/runner-gateway-access.safe.json" in callee
+    assert "if: ${{ !inputs.runner_gateway_preflight }}" in callee
+    assert "if: inputs.runner_gateway_preflight" in callee
     for forbidden in ("docker build", "docker push", "refresh_artifact_registry_keep", "sync_env", "approve_traffic", "approve_scheduler", "secrets versions access"):
         assert forbidden not in callee
