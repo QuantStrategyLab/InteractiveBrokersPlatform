@@ -6,6 +6,7 @@ Private configuration and native-client output remain inside the protected runne
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -24,13 +25,15 @@ PERMISSION = "iap.tunnelInstances.accessViaIAP"
 REASONS = serving.REASONS | frozenset({"group_declaration_unavailable", "group_secret_unavailable",
     "group_configuration_invalid", "gateway_binding_invalid", "gateway_instance_unavailable",
     "gateway_instance_invalid", "project_number_unavailable", "iap_check_unavailable",
-    "iap_response_invalid", "iap_permission_not_observed", "static_access_observed"})
+    "iap_response_invalid", "iap_permission_not_observed", "static_access_observed",
+    "direct_gateway_declaration_observed"})
 
 
 def result():
     return dict(schema_version="ibkr.runner_gateway_access_preflight.v1", status="unavailable",
         reason="diagnostic_error", observed_at=datetime.now(timezone.utc).isoformat(),
         group_configuration_observed=False, gateway_binding_verified=False,
+        binding_checks={}, gateway_address_route=None,
         positive_client_id_verified=False, compute_instance_read=False,
         iap_permission_observed=None, iap_http_status=None, cloud_read_failure_class=None,
         source_stable=False, network_path_verified=False,
@@ -67,7 +70,8 @@ def command(args, reason):
 
 
 def read_group(ctx, rows, run):
-    from runtime_config_support import load_account_group_config, resolve_account_group
+    from runtime_config_support import (first_non_empty, load_account_group_config,
+        resolve_account_group, resolve_execution_backend, resolve_ib_gateway_mode)
 
     def secret(name, version="latest"):
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,255}", name) or not re.fullmatch(r"latest|[1-9][0-9]*", version):
@@ -102,11 +106,17 @@ def read_group(ctx, rows, run):
             return SimpleNamespace(payload=SimpleNamespace(data=value.encode()))
 
     secret_name = declaration("IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME")
-    return load_account_group_config(project_id=ctx.project,
+    group = load_account_group_config(project_id=ctx.project,
         account_group=resolve_account_group(declaration("ACCOUNT_GROUP")),
         raw_json=None if secret_name else declaration("IB_ACCOUNT_GROUP_CONFIG_JSON"),
         secret_name=secret_name,
         secret_client_factory=NativeSecretClient)
+    return replace(group,
+        execution_backend=resolve_execution_backend(
+            group.execution_backend or declaration("IBKR_EXECUTION_BACKEND")),
+        ib_gateway_mode=resolve_ib_gateway_mode(group.ib_gateway_mode),
+        ib_gateway_zone=first_non_empty(group.ib_gateway_zone,
+            declaration("IB_GATEWAY_ZONE") if not group.ib_gateway_zone else None) or "")
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -145,33 +155,26 @@ def diagnose(ctx, *, run=command, read=serving._read, group_reader=read_group, i
         before = read(ctx, run, include_group_declarations=True)
         group = group_reader(ctx, before["group_declarations"], run)
         out["group_configuration_observed"] = True
-        project, zone, instance = group.ib_gateway_project_id, group.ib_gateway_zone, group.ib_gateway_instance_name
-        if (group.execution_backend not in (None, "gateway") or group.ib_gateway_mode != "live"
-                or tuple(group.account_ids) != tuple(ctx.target["account_selector"])
-                or type(group.ib_client_id) is not int or group.ib_client_id <= 0
-                or not isinstance(project, str) or not re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]", project)
-                or not isinstance(zone, str) or not re.fullmatch(r"[a-z]+(?:-[a-z]+)*[0-9]+-[a-z]", zone)
-                or not isinstance(instance, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,62}", instance)):
+        project = group.ib_gateway_project_id or ctx.project
+        zone, instance = group.ib_gateway_zone or "", group.ib_gateway_instance_name
+        checks = dict(backend_gateway=group.execution_backend in (None, "gateway"),
+            mode_live=group.ib_gateway_mode == "live",
+            account_scope_exact=tuple(group.account_ids) == tuple(ctx.target["account_selector"]),
+            client_id_valid=type(group.ib_client_id) is int and group.ib_client_id >= 0,
+            project_valid=isinstance(project, str) and bool(re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]", project)),
+            project_zone_consistent=not group.ib_gateway_project_id or bool(zone),
+            zone_valid=isinstance(zone, str) and (not zone or bool(re.fullmatch(r"[a-z]+(?:-[a-z]+)*[0-9]+-[a-z]", zone))),
+            host_valid=isinstance(instance, str) and bool(instance.strip()) and (
+                not zone or bool(re.fullmatch(r"[a-z][a-z0-9-]{0,62}", instance))))
+        out.update(binding_checks=checks, gateway_address_route="gce" if zone else "direct",
+            positive_client_id_verified=type(group.ib_client_id) is int and group.ib_client_id > 0)
+        if not all(checks.values()):
             raise pilot.ReleaseError("gateway_binding_invalid")
-        out.update(gateway_binding_verified=True, positive_client_id_verified=True)
-        vm = pilot._json(run(("gcloud", "compute", "instances", "describe", instance,
-            f"--project={project}", f"--zone={zone}", "--format=json"), "gateway_instance_unavailable"))
-        vm_id = str(vm.get("id", ""))
-        if vm.get("name") != instance or vm.get("status") != "RUNNING" or not re.fullmatch(r"[0-9]+", vm_id):
-            raise pilot.ReleaseError("gateway_instance_invalid")
-        out["compute_instance_read"] = True
-        number = run(("gcloud", "projects", "describe", project, "--format=value(projectNumber)"),
-            "project_number_unavailable").strip()
-        if not re.fullmatch(r"[0-9]+", number):
-            raise pilot.ReleaseError("project_number_unavailable")
-        token = run(("gcloud", "auth", "print-access-token", "--quiet"), "iap_check_unavailable").strip()
-        if not token or len(token) > 8192 or "\n" in token or "\r" in token:
-            raise pilot.ReleaseError("iap_check_unavailable")
-        permitted = iap(f"projects/{number}/iap_tunnel/zones/{zone}/instances/{vm_id}", token)
-        if type(permitted) is not bool:
-            raise pilot.ReleaseError("iap_response_invalid")
-        out.update(status="observed", iap_permission_observed=permitted, iap_http_status=200,
-            reason="static_access_observed" if permitted else "iap_permission_not_observed")
+        out["gateway_binding_verified"] = True
+        if not zone:
+            out.update(status="observed", reason="direct_gateway_declaration_observed")
+        else:
+            observe_vm_iap(out, project, zone, instance, run, iap)
     except pilot.ReleaseError as error:
         out["reason"] = str(error) if str(error) in REASONS else "diagnostic_error"
         if isinstance(error, ReadFailure):
@@ -186,6 +189,27 @@ def diagnose(ctx, *, run=command, read=serving._read, group_reader=read_group, i
         except Exception:
             out.update(status="unavailable", reason="source_read_failed")
     return out
+
+
+def observe_vm_iap(out, project, zone, instance, run, iap):
+    vm = pilot._json(run(("gcloud", "compute", "instances", "describe", instance,
+        f"--project={project}", f"--zone={zone}", "--format=json"), "gateway_instance_unavailable"))
+    vm_id = str(vm.get("id", ""))
+    if vm.get("name") != instance or vm.get("status") != "RUNNING" or not re.fullmatch(r"[0-9]+", vm_id):
+        raise pilot.ReleaseError("gateway_instance_invalid")
+    out["compute_instance_read"] = True
+    number = run(("gcloud", "projects", "describe", project, "--format=value(projectNumber)"),
+        "project_number_unavailable").strip()
+    if not re.fullmatch(r"[0-9]+", number):
+        raise pilot.ReleaseError("project_number_unavailable")
+    token = run(("gcloud", "auth", "print-access-token", "--quiet"), "iap_check_unavailable").strip()
+    if not token or len(token) > 8192 or "\n" in token or "\r" in token:
+        raise pilot.ReleaseError("iap_check_unavailable")
+    permitted = iap(f"projects/{number}/iap_tunnel/zones/{zone}/instances/{vm_id}", token)
+    if type(permitted) is not bool:
+        raise pilot.ReleaseError("iap_response_invalid")
+    out.update(status="observed", iap_permission_observed=permitted, iap_http_status=200,
+        reason="static_access_observed" if permitted else "iap_permission_not_observed")
 
 
 def configuration_reference(ctx, *, run=command, read=serving._read):
