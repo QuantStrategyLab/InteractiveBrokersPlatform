@@ -188,7 +188,18 @@ def test_cash_cli_one_fetch_is_independent_of_missing_twr_and_never_prints_money
     assert all(v not in output for v in ("DU0000000", "678.123456", "PRIVATE_CANARY", "privateKey", "synthetic-token"))
 
 
-@pytest.mark.parametrize("change", ["digest", "period", "field", "type", "count", "boolean"])
+def test_cash_stdout_accepts_verified_period_end_without_current_cash_authority():
+    from application.ibkr_flex_ledger import build_flex_cash_diagnostic, build_flex_ledger
+    report = _cash_report()
+    content = report.content.replace(b'currency="USD" endingSettledCash=',
+        b'accountId="DU0000000" model="" fromDate="20260101" toDate="20260131" currency="USD" endingCash="0" endingSettledCash=')
+    report = FlexReport(content=content, content_sha256=hashlib.sha256(content).hexdigest())
+    result = cli._validated_cash_report(build_flex_cash_diagnostic(build_flex_ledger(report, expected_account_ids=("DU0000000",))))
+    assert result["period_cash"] == {"status": "available_period_end", "missing": []}
+    assert result["cash_report"]["spendable_cash_verified"] is False
+
+
+@pytest.mark.parametrize("change", ["digest", "period", "field", "type", "count", "boolean", "cash_fact_code", "cash_fact_status"])
 def test_cash_stdout_rejects_invalid_or_private_dynamic_fields(change):
     from application.ibkr_flex_ledger import build_flex_cash_diagnostic, build_flex_ledger
     value = build_flex_cash_diagnostic(build_flex_ledger(_cash_report(), expected_account_ids=("DU0000000",)))
@@ -203,8 +214,12 @@ def test_cash_stdout_rejects_invalid_or_private_dynamic_fields(change):
         shape["usd_field_type_counts"]["endingCash"] = {"PRIVATE_CANARY": 1}
     elif change == "count":
         shape["usd_field_type_counts"]["endingCash"] = {"text": 2}
-    else:
+    elif change == "boolean":
         shape["usd_record_count"] = True
+    elif change == "cash_fact_code":
+        value["period_cash"]["missing"] = ["PRIVATE_CANARY"]
+    else:
+        value["period_cash"]["status"] = "available_period_end"
     result = cli._validated_cash_report(value)
     assert result["missing"] == ["flex_cash_diagnostic_result_invalid"]
     assert "PRIVATE_CANARY" not in json.dumps(result)
