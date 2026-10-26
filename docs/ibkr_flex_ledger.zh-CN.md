@@ -39,6 +39,20 @@ safe_status = diagnose_activity_flex_ledger(
 
 ### 独立只读诊断与同请求领取
 
+手动 workflow `diagnose-ibkr-flex-readonly.yml` 的
+`configured_account_coverage_only` 默认关闭。启用时仍需 `read_once=true`，
+并与现金、现金流模式互斥；不接受现金流请求日期范围。预检要求既有 primary 与三项
+additional 配置完整有效，expected 仍必须恰好等于 primary，不新增账户权限或更改 Query。
+该模式只生成一次原已配置查询，1019 时沿用同 handle 的有限领取，不额外为每户请求报表。
+纯内存复用同一份 XML，沿用 Activity 报告、唯一账户、批准集合和行账户隔离校验；仅输出
+`primary`、`additional-1/2/3` 固定槽的 statement 存在、规范日期、固定原生 section 行数和
+TWR 字段是否存在。账户未出现时日期与 TWR 标记为 null；缺 section 的 record_count 为
+null；存在的 section 按已识别原生记录计数，可为 0。未知子记录另外计数，不输出字段名或值，
+存在未知子记录时不能据此认定该段为空。
+可选预期期间对每个实际出现的账户校验。输出 `coverage=not_evaluated`，字段存在或记录数
+不证明收益可算、数据完整或账户已发布。该路径不调用业务投影 POST，不保存 XML、
+领取句柄或原生账户 ID，也不改变原期间收益发布器及调度。
+
 继续使用原 `scripts.diagnose_ibkr_flex_ledger`，不经过期间收益发布器，也不要求 QRS
 target、source binding 或同步令牌。无参数调用保持原来的一次生成、一次领取；默认
 `IBKR_FLEX_DIAGNOSTIC_ENABLED` 未精确设为 `true` 时仍不请求。
