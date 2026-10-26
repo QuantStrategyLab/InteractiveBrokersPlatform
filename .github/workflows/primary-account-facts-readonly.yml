@@ -1,6 +1,6 @@
 name: Read Primary TQQQ Account Facts
 
-# Manual, single-account diagnosis. Optional candidate mode calls only /probe.
+# Manual, single-account diagnosis. Explicit one-shot Job mode reads cash only.
 on:
   workflow_dispatch:
     inputs:
@@ -9,6 +9,11 @@ on:
         type: string
         required: false
         default: ""
+      maintenance_job:
+        description: "Explicitly run one temporary cash-read Job with the verified maintenance image; no strategy or orders."
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -35,6 +40,7 @@ jobs:
       IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR: ${{ secrets.IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR }}
       CLOUD_RUN_REGION: us-central1
       MAINTENANCE_SOURCE_COMMIT: ${{ inputs.maintenance_source_commit }}
+      MAINTENANCE_JOB: ${{ inputs.maintenance_job }}
     steps:
       - name: Require infrastructure variables
         env:
@@ -67,6 +73,10 @@ jobs:
           source = os.environ.get("MAINTENANCE_SOURCE_COMMIT", "")
           if source and (not re.fullmatch(r"[0-9a-f]{40}", source) or os.environ["GITHUB_RUN_ATTEMPT"] != "1"):
               raise SystemExit("status=blocked reason=candidate_source_invalid")
+          if os.environ.get("MAINTENANCE_JOB") == "true":
+              from scripts.observe_maintenance_cash_job import SOURCE
+              if source != SOURCE:
+                  raise SystemExit("status=blocked reason=job_source_invalid")
           print("status=preflight_verified scope=primary_tqqq")
           PY
 
@@ -84,8 +94,12 @@ jobs:
         run: python3 -m scripts.diagnose_account_facts_identity --broker-contract-source-evidence
 
       - name: Observe one zero-traffic maintenance cash snapshot without strategy execution
-        if: inputs.maintenance_source_commit != ''
+        if: inputs.maintenance_source_commit != '' && !inputs.maintenance_job
         run: python3 -m scripts.observe_maintenance_cash
+
+      - name: Observe one temporary maintenance cash Job without strategy execution
+        if: inputs.maintenance_source_commit != '' && inputs.maintenance_job
+        run: python3 -m scripts.observe_maintenance_cash_job
 
       - name: Retain only the value-free maintenance observation
         if: always() && inputs.maintenance_source_commit != ''
