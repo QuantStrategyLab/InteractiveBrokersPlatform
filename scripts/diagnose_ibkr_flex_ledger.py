@@ -208,6 +208,10 @@ def _validated_cash_report(value: object) -> dict[str, Any]:
             return invalid
         safe_fields[name] = dict(types)
     facts = value.get("period_cash")
+    capabilities = value.get("account_capabilities", "MISSING")
+    if (not isinstance(capabilities, str)
+            or capabilities not in {"CASH", "MARGIN", "PORTFOLIO_MARGIN", "MISSING", "AMBIGUOUS", "UNRECOGNIZED"}):
+        return invalid
     if (not isinstance(facts, dict) or facts.get("status") not in {"available_period_end", "incomplete"}
             or not isinstance(facts.get("missing"), list)
             or any(not isinstance(code, str) or code not in CASH_REPORT_MISSING_CODES for code in facts["missing"])
@@ -217,6 +221,7 @@ def _validated_cash_report(value: object) -> dict[str, Any]:
         "schema_version": "ibkr_flex_cash_diagnostic.v1", "status": "observed_source_shape",
         "source_ref": value["source_ref"], "period": safe_period,
         "currency": "USD", "scope": "STATEMENT_PERIOD_END_ONLY",
+        "account_capabilities": capabilities,
         "period_cash": {"status": facts["status"], "missing": sorted(set(facts["missing"]))},
         "cash_report": {"schema_version": "ibkr.flex_cash_report_source_shape.v1", **counts,
             "usd_field_type_counts": safe_fields, "coverage": "not_evaluated",

@@ -162,6 +162,7 @@ def build_flex_cash_diagnostic(ledger: Mapping[str, Any]) -> dict[str, Any]:
         "source_ref": ledger["source_ref"],
         "period": {key: _diagnostic_date(period.get(key)) for key in ("from", "to")},
         "currency": "USD", "scope": "STATEMENT_PERIOD_END_ONLY", "cash_report": shape,
+        "account_capabilities": ledger.get("account_capabilities", "MISSING"),
         "period_cash": {key: ledger["period_cash_facts"][key] for key in ("status", "missing")},
     }
 
@@ -413,6 +414,13 @@ def build_flex_ledger(
     information = statement.find("AccountInformation")
     raw_currency = information.get("currency") if information is not None else ""
     base_currency = (raw_currency or "").strip().upper() or None
+    # AccountType describes the account structure, not cash/margin capability.
+    capabilities = "MISSING"
+    if len(statement.findall("AccountInformation")) > 1:
+        capabilities = "AMBIGUOUS"
+    elif information is not None and (raw := information.get("accountCapabilities", "").strip()):
+        capabilities = {"CASH": "CASH", "MARGIN": "MARGIN", "PORTFOLIO MARGIN": "PORTFOLIO_MARGIN"}.get(
+            raw.upper(), "UNRECOGNIZED")
 
     period = {
         "from": _iso_date(statement.get("fromDate")),
@@ -602,6 +610,7 @@ def build_flex_ledger(
         "account_ids": [account_id],
         "currency": declared_currency,
         "account_base_currency": base_currency,
+        "account_capabilities": capabilities,
         "period": period,
         "ending_valuation": ending_valuation,
         "external_flows": external_flows,
