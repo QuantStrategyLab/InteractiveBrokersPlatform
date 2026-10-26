@@ -12,6 +12,7 @@ from typing import Any
 
 from application.account_facts_target_config import account_selector, parse_additional_target_configs
 from application.ibkr_flex_source import FlexReportPending, diagnose_activity_flex_ledger
+from application.ibkr_flex_ledger import CASH_REPORT_MISSING_CODES
 
 
 _SCHEMA_VERSION = "ibkr_flex_diagnostic.v1"
@@ -192,10 +193,17 @@ def _validated_cash_report(value: object) -> dict[str, Any]:
                 or sum(types.values()) != counts["usd_record_count"]):
             return invalid
         safe_fields[name] = dict(types)
+    facts = value.get("period_cash")
+    if (not isinstance(facts, dict) or facts.get("status") not in {"available_period_end", "incomplete"}
+            or not isinstance(facts.get("missing"), list)
+            or any(not isinstance(code, str) or code not in CASH_REPORT_MISSING_CODES for code in facts["missing"])
+            or (facts["status"] == "available_period_end") != (not facts["missing"])):
+        return invalid
     return {
         "schema_version": "ibkr_flex_cash_diagnostic.v1", "status": "observed_source_shape",
         "source_ref": value["source_ref"], "period": safe_period,
         "currency": "USD", "scope": "STATEMENT_PERIOD_END_ONLY",
+        "period_cash": {"status": facts["status"], "missing": sorted(set(facts["missing"]))},
         "cash_report": {"schema_version": "ibkr.flex_cash_report_source_shape.v1", **counts,
             "usd_field_type_counts": safe_fields, "coverage": "not_evaluated",
             "spendable_cash_verified": False, "complete_cash_obligations_verified": False,

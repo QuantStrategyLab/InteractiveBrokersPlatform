@@ -81,6 +81,47 @@ _NAV_NUMERIC_FIELDS = (
 # spending contract. BASE_SUMMARY is never relabelled as a native USD row.
 _CASH_REPORT_FIELDS = ("accountId", "model", "currency", "fromDate", "toDate", "reportDate",
                        "endingCash", "endingSettledCash")
+CASH_REPORT_MISSING_CODES = frozenset({"cash_report_structure_ambiguous", "usd_cash_row_missing",
+    "usd_cash_row_ambiguous", "cash_row_account_unverified", "cash_row_model_scope_unverified",
+    "cash_period_mismatch", "cash_report_date_mismatch", "endingCash_missing_or_invalid",
+    "endingSettledCash_missing_or_invalid"})
+
+
+def _period_cash_facts(statement: ElementTree.Element, *, source_ref: str, period: Mapping[str, Any]) -> dict[str, Any]:
+    """Private native period-end cash, never a current spending balance."""
+    account = statement.get("accountId", "").strip()
+    result = {"schema_version": "ibkr.flex_period_cash.v1", "status": "incomplete",
+        "source_ref": source_ref, "account_ids": [account], "currency": "USD",
+        "period": {key: period[key] for key in ("from", "to")},
+        "scope": "STATEMENT_PERIOD_END_ONLY", "values": None, "missing": [],
+        "spendable_cash_verified": False, "complete_cash_obligations_verified": False}
+    sections = statement.findall("CashReport")
+    rows = [row for section in sections for row in section.findall("CashReportCurrency")]
+    usd = [row for row in rows if row.get("currency") == "USD"]
+    missing = result["missing"]
+    if len(sections) != 1 or any(row.tag != "CashReportCurrency" or len(row) for section in sections for row in section):
+        missing.append("cash_report_structure_ambiguous")
+    if len(usd) != 1:
+        missing.append("usd_cash_row_missing" if not usd else "usd_cash_row_ambiguous")
+        return result
+    row = usd[0]
+    if row.get("accountId") != account:
+        missing.append("cash_row_account_unverified")
+    if row.get("model") != "":
+        missing.append("cash_row_model_scope_unverified")
+    if (not period["from"] or not period["to"] or period["from"] > period["to"]
+            or any(_day(row.get(key)) != period[label] or _day(statement.get(key)) != period[label]
+                   for key, label in (("fromDate", "from"), ("toDate", "to")))):
+        missing.append("cash_period_mismatch")
+    if row.get("reportDate") not in (None, "") and _day(row.get("reportDate")) != period["to"]:
+        missing.append("cash_report_date_mismatch")
+    for field in ("endingCash", "endingSettledCash"):
+        value = row.get(field)
+        if not isinstance(value, str) or value != value.strip() or _number_shape(value)["kind"] != "decimal":
+            missing.append(field + "_missing_or_invalid")
+    if not missing:
+        result.update(status="available_period_end", values={field: row.get(field) for field in ("endingCash", "endingSettledCash")})
+    return result
 
 
 def _cash_report_source_diagnostic(statement: ElementTree.Element) -> dict[str, Any]:
@@ -120,6 +161,7 @@ def build_flex_cash_diagnostic(ledger: Mapping[str, Any]) -> dict[str, Any]:
         "source_ref": ledger["source_ref"],
         "period": {key: _diagnostic_date(period.get(key)) for key in ("from", "to")},
         "currency": "USD", "scope": "STATEMENT_PERIOD_END_ONLY", "cash_report": shape,
+        "period_cash": {key: ledger["period_cash_facts"][key] for key in ("status", "missing")},
     }
 
 
@@ -544,6 +586,7 @@ def build_flex_ledger(
         "cashflow_source_diagnostic": _cashflow_source_diagnostic(statement),
         "nav_source_diagnostic": _nav_source_diagnostic(statement),
         "cash_report_source_diagnostic": _cash_report_source_diagnostic(statement),
+        "period_cash_facts": _period_cash_facts(statement, source_ref=report.content_sha256, period=period),
         "account_ids": [account_id],
         "currency": declared_currency,
         "account_base_currency": base_currency,

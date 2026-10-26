@@ -88,6 +88,59 @@ def test_cash_row_cannot_belong_to_another_approved_report_account():
         build_flex_ledger(report, expected_account_ids=(ACCOUNT,), allowed_report_account_ids=(ACCOUNT, "DU0000001"))
 
 
+def _native_cash_row(**overrides):
+    attrs = {"accountId": ACCOUNT, "currency": "USD", "model": "", "fromDate": "20260101",
+             "toDate": "20260131", "endingCash": "12.000000000000001", "endingSettledCash": "-2.000000000000002"}
+    attrs.update(overrides)
+    return '<CashReportCurrency ' + ' '.join(f'{key}="{value}"' for key, value in attrs.items() if value is not None) + '/>'
+
+
+def test_native_period_cash_preserves_sign_precision_and_original_dates_without_current_authority():
+    from application.ibkr_flex_ledger import build_flex_cash_diagnostic
+    report = _wrap(_statement('<CashReport>' + _native_cash_row() + '</CashReport>'))
+    ledger = build_flex_ledger(report, expected_account_ids=(ACCOUNT,))
+    facts = ledger["period_cash_facts"]
+    assert facts["status"] == "available_period_end" and facts["missing"] == []
+    assert facts["source_ref"] == report.content_sha256 and facts["account_ids"] == [ACCOUNT]
+    assert facts["values"] == {"endingCash": "12.000000000000001", "endingSettledCash": "-2.000000000000002"}
+    assert facts["period"] == {"from": "2026-01-01", "to": "2026-01-31"}
+    assert facts["spendable_cash_verified"] is facts["complete_cash_obligations_verified"] is False
+    safe = build_flex_cash_diagnostic(ledger)
+    assert safe["period_cash"] == {"status": "available_period_end", "missing": []}
+    assert all(value not in json.dumps(safe) for value in (ACCOUNT, *facts["values"].values()))
+
+
+@pytest.mark.parametrize("override,reason", [
+    ({"currency": "BASE_SUMMARY"}, "usd_cash_row_missing"),
+    ({"accountId": None}, "cash_row_account_unverified"),
+    ({"model": None}, "cash_row_model_scope_unverified"),
+    ({"model": "private-model"}, "cash_row_model_scope_unverified"),
+    ({"fromDate": None}, "cash_period_mismatch"),
+    ({"toDate": "20260130"}, "cash_period_mismatch"),
+    ({"toDate": "20260131;120000"}, "cash_period_mismatch"),
+    ({"reportDate": "20260201"}, "cash_report_date_mismatch"),
+    ({"endingSettledCash": None}, "endingSettledCash_missing_or_invalid"),
+    ({"endingSettledCash": "NaN"}, "endingSettledCash_missing_or_invalid"),
+    ({"endingSettledCash": "1e99999"}, "endingSettledCash_missing_or_invalid"),
+    ({"endingCash": " 12 "}, "endingCash_missing_or_invalid"),
+])
+def test_period_cash_rejects_unverified_scope_dates_and_values(override, reason):
+    report = _wrap(_statement('<CashReport>' + _native_cash_row(**override) + '</CashReport>'))
+    facts = build_flex_ledger(report, expected_account_ids=(ACCOUNT,))["period_cash_facts"]
+    assert facts["status"] == "incomplete" and facts["values"] is None
+    assert reason in facts["missing"]
+
+
+@pytest.mark.parametrize("section,reason", [
+    ('<CashReport>{row}{row}</CashReport>', "usd_cash_row_ambiguous"),
+    ('<CashReport>{row}</CashReport><CashReport/>', "cash_report_structure_ambiguous"),
+    ('<CashReport>{row}<PrivateRow/></CashReport>', "cash_report_structure_ambiguous"),
+])
+def test_period_cash_never_chooses_one_of_duplicate_or_unknown_rows(section, reason):
+    facts = build_flex_ledger(_wrap(_statement(section.format(row=_native_cash_row()))), expected_account_ids=(ACCOUNT,))["period_cash_facts"]
+    assert facts["values"] is None and reason in facts["missing"]
+
+
 def test_selects_only_target_statement_from_explicitly_approved_report_scope():
     other = "DU0000001"
     report = _wrap(
