@@ -1,0 +1,73 @@
+name: Recover Archived Account Facts
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Existing configured additional-account slot
+        type: choice
+        required: true
+        options: [additional-2, additional-3]
+      action:
+        description: Preview, seal an existing receiver history-source request, or append reviewed days
+        type: choice
+        default: preview
+        options: [preview, seal-source, publish]
+      reports_json:
+        description: At most 31 reviewed entries with report_name, source_sha256 and projection_sha256
+        type: string
+        required: true
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: account-facts-archive
+  cancel-in-progress: false
+jobs:
+  recover:
+    if: ${{ github.ref == 'refs/heads/main' && github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      QSL_CONSOLE_BASE_URL: ${{ vars.QSL_CONSOLE_BASE_URL }}
+      IBKR_ACCOUNT_FACTS_TARGET: ${{ inputs.target }}
+      IBKR_ARCHIVE_ACTION: ${{ inputs.action }}
+      IBKR_ARCHIVE_REPORTS_JSON: ${{ inputs.reports_json }}
+      IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}
+      IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON }}
+      IBKR_ACCOUNT_FACTS_TARGET_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_TARGET_ID }}
+      IBKR_ACCOUNT_FACTS_REPORT_PREFIX: ${{ secrets.IBKR_ACCOUNT_FACTS_REPORT_PREFIX }}
+      IBKR_PERIOD_RETURN_ADDITIONAL_ACCOUNT_KEYS_JSON: ${{ secrets.IBKR_PERIOD_RETURN_ADDITIONAL_ACCOUNT_KEYS_JSON }}
+      ACCOUNT_FACTS_RECOVERY_PUBLIC_KEYS_JSON: ${{ inputs.action == 'seal-source' && secrets.ACCOUNT_FACTS_RECOVERY_PUBLIC_KEYS_JSON || '' }}
+      IBKR_ACCOUNT_FACTS_SYNC_TOKEN: ${{ inputs.action == 'publish' && secrets.IBKR_ACCOUNT_FACTS_SYNC_TOKEN || '' }}
+      CLOUD_RUN_REGION: ${{ secrets.ACCOUNT_FACTS_RECOVERY_CLOUD_REGION }}
+    steps:
+      - name: Require infrastructure variables
+        env:
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          QSL_CONSOLE_BASE_URL: ${{ vars.QSL_CONSOLE_BASE_URL }}
+        run: |
+          set -euo pipefail
+          for name in IBKR_DEPLOY_SERVICE_ACCOUNT QSL_CONSOLE_BASE_URL; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is required" >&2
+              exit 2
+            fi
+          done
+      - uses: actions/checkout@v6
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.ACCOUNT_FACTS_RECOVERY_WIF_PROVIDER }}
+          service_account: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Install existing encryption tool only for source request sealing
+        if: inputs.action == 'seal-source'
+        run: python3 -m pip install --disable-pip-version-check --quiet --target "$RUNNER_TEMP/seal-python" PyNaCl==1.5.0
+      - name: Recover only the reviewed archive scope
+        run: PYTHONPATH="$RUNNER_TEMP/seal-python:$GITHUB_WORKSPACE" python3 -m scripts.publish_account_facts_archive
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: inputs.action == 'seal-source'
+        with:
+          name: account-facts-archive-source-sealed
+          path: ${{ runner.temp }}/account-facts-archive-source-sealed.json
+          if-no-files-found: error
+          retention-days: 1

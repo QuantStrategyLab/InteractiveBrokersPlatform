@@ -68,6 +68,37 @@ body read. Each report keeps its own original date predicates. The default
 Unexpected failures expose only an allowlisted error class and a validated
 timestamp filename; exception messages and stack traces remain suppressed.
 
+# Reviewed archive recovery
+
+`publish-account-facts-archive.yml` is a manual main-only, first-attempt tool.
+The default `preview` accepts at most 31 timestamp filenames with independently
+reviewed source and projection hashes. Every original report is reprojected
+against the same protected project/service/account/deployment tuple, its own
+declared revision and observation date. The original deployed revision must
+still be readable and have an immutable image and the exact matching runtime
+target. Missing provenance or any changed projection stops before writes.
+
+`seal-source` produces only a GitHub-public-key-encrypted request for the
+existing receiver `IBKR_ACCOUNT_FACTS_SOURCE_ROTATION_JSON` contract. Its current
+source stays unchanged and only the selected same-account historical IDs are
+requested. The existing receiver CAS workflow and a separate readback must
+admit the request; sealing does not change a binding.
+
+`publish` uses the existing platform ingress token only on the explicit
+`/api/account-facts/history/sync` endpoint. All records qualify before the first
+POST. Each day is sent once, in date order, and the exact historical/latest-
+unchanged/account/target/date/time ACK is required before continuing. A conflict
+or unknown outcome stops without retry. The receiver alone admits sources and
+inserts missing days; existing rows, latest, positions, returns, executions and
+external flows are never replaced. Original decimal values and timestamps stay
+in the protected runner. No broker, deployment, notification, IAM or automatic
+schedule is involved, and the ordinary 36-hour freshness window is unchanged.
+
+This workflow's manifest contains only filenames and opaque hashes. Only the
+encrypted source request is retained as a one-day artifact; financial payloads
+and credentials are not logged or uploaded. Successful ACKs still need the
+authenticated read-model and latest-isolation acceptance check.
+
 # Zero-traffic maintenance cash observation
 
 The one-shot maintenance Job now sends one `reqAccountSummary` with group `All`
