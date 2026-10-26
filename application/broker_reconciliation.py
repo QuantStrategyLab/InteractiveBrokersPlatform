@@ -13,6 +13,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import math
 import os
 from typing import Any
 
@@ -216,20 +217,47 @@ def _sorted_records(records: Iterable[Mapping[str, object]]) -> list[dict[str, o
     return sorted((dict(record) for record in records), key=lambda record: repr(sorted(record.items())))
 
 
-def _load_all_open_trades(ib: Any) -> tuple[Any, ...]:
+def load_read_only_open_trades(ib: Any) -> tuple[Any, ...]:
+    """Read one completed all-client snapshot, retaining unresolved cache rows.
+
+    This is the blocking ib_insync API, not the native fire-and-forget method.
+    An empty local cache or a missing response cannot establish an empty book.
+    Cached active trades remain conservative evidence until terminal updates or
+    reconciliation resolve them; this reader never cancels or binds orders.
+    """
     request_all_open_orders = getattr(ib, "reqAllOpenOrders", None)
     open_trades = getattr(ib, "openTrades", None)
     if not callable(request_all_open_orders) or not callable(open_trades):
         raise IBKRReconciliationReadError(
             "IBKR reconciliation requires read-only all-open-orders support."
         )
+    original_timeout = getattr(ib, "RequestTimeout", 0)
+    original_raise_errors = getattr(ib, "RaiseRequestErrors", False)
     try:
-        request_all_open_orders()
-        return tuple(open_trades() or ())
-    except Exception as exc:
+        timeout = float(original_timeout)
+    except (TypeError, ValueError):
+        timeout = 0.0
+    # An operational read deadline, not a financial risk threshold. Preserve a
+    # shorter existing deadline and restore both SDK settings on every exit.
+    timeout = min(timeout, 10.0) if math.isfinite(timeout) and timeout > 0 else 10.0
+    try:
+        ib.RequestTimeout = timeout
+        ib.RaiseRequestErrors = True
+        snapshot = request_all_open_orders()
+        cached = open_trades()
+        if not isinstance(snapshot, (list, tuple)) or not isinstance(cached, (list, tuple)):
+            raise IBKRReconciliationReadError("IBKR open-order snapshot is incomplete.")
+        # ib_insync returns the same Trade objects through both surfaces. Do
+        # not count those objects twice, or discard a locally pending submit
+        # merely because it was absent from this point-in-time response.
+        return tuple({id(trade): trade for trade in (*snapshot, *cached)}.values())
+    except Exception:
         raise IBKRReconciliationReadError(
             "IBKR reconciliation could not load all active orders."
-        ) from exc
+        ) from None
+    finally:
+        ib.RequestTimeout = original_timeout
+        ib.RaiseRequestErrors = original_raise_errors
 
 
 def _load_recent_executions(ib: Any) -> tuple[Any, ...]:
@@ -340,7 +368,7 @@ def collect_read_only_reconciliation_observations(
     )
     open_orders = [
         record
-        for trade in _load_all_open_trades(ib)
+        for trade in load_read_only_open_trades(ib)
         if (record := _normalise_open_trade(trade, selected_account_ids=selected_account_ids)) is not None
     ]
     executions = [

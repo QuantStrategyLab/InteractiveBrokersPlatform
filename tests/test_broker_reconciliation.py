@@ -10,6 +10,7 @@ from application.broker_reconciliation import (
     IBKRReconciliationReadError,
     build_reconciliation_candidate,
     collect_read_only_reconciliation_observations,
+    load_read_only_open_trades,
 )
 from quant_platform_kit.common.live_continuity import runtime_target_fingerprint
 from quant_platform_kit.common.runtime_target import build_runtime_target
@@ -80,15 +81,17 @@ def _fill(*, account_id: str = "U123"):
 class _IB:
     def __init__(self) -> None:
         self.open_orders_requested = 0
+        self._orders = [_trade(), _trade(account_id="U999")]
 
     def managedAccounts(self):
         return ["U123", "U999"]
 
     def reqAllOpenOrders(self):
         self.open_orders_requested += 1
+        return self.openTrades()
 
     def openTrades(self):
-        return [_trade(), _trade(account_id="U999")]
+        return self._orders
 
     def reqExecutions(self):
         return [_fill(), _fill(account_id="U999")]
@@ -425,3 +428,115 @@ def test_candidate_can_only_pass_with_all_matching_private_digests(tmp_path) -> 
 
     assert candidate.permits_active_lkg is True
     assert candidate.recovery_blockers == ()
+
+
+def test_all_client_response_is_read_even_when_cache_is_empty() -> None:
+    class OtherClientOnly(_IB):
+        def reqAllOpenOrders(self):
+            self.open_orders_requested += 1
+            return [_trade()]
+
+        def openTrades(self):
+            return []
+
+    ib = OtherClientOnly()
+    observations = collect_read_only_reconciliation_observations(
+        ib, account_ids=("U123",),
+        fetch_portfolio_snapshot=lambda *_a, **_k: _snapshot(),
+        market_currency="USD", cash_only_execution=True,
+    )
+    assert ib.open_orders_requested == 1
+    assert len(observations.open_orders) == 1
+    assert observations.open_orders[0]["account"] == "U123"
+
+
+@pytest.mark.parametrize("response", [None, {}, "empty"])
+def test_incomplete_all_client_response_never_means_empty(response) -> None:
+    ib = SimpleNamespace(reqAllOpenOrders=lambda: response, openTrades=lambda: [])
+    with pytest.raises(IBKRReconciliationReadError, match="all active orders"):
+        load_read_only_open_trades(ib)
+
+
+@pytest.mark.parametrize("original,expected", [(0, 10), (2, 2), (60, 10), (-1, 10), (float("inf"), 10)])
+@pytest.mark.parametrize("failure", [False, True])
+def test_order_read_has_bounded_timeout_and_restores_sdk_settings(original, expected, failure) -> None:
+    calls = []
+    ib = SimpleNamespace(RequestTimeout=original, RaiseRequestErrors=False, openTrades=lambda: [])
+
+    def read():
+        calls.append((ib.RequestTimeout, ib.RaiseRequestErrors))
+        if failure:
+            raise TimeoutError("synthetic private diagnostic")
+        return []
+
+    ib.reqAllOpenOrders = read
+    if failure:
+        with pytest.raises(IBKRReconciliationReadError) as error:
+            load_read_only_open_trades(ib)
+        assert "synthetic private diagnostic" not in str(error.value)
+        assert error.value.__suppress_context__ is True
+    else:
+        assert load_read_only_open_trades(ib) == ()
+    assert calls == [(expected, True)]
+    assert ib.RequestTimeout == original
+    assert ib.RaiseRequestErrors is False
+
+
+def test_snapshot_and_cache_do_not_duplicate_trade_objects_or_release_pending() -> None:
+    observed = _trade()
+    unconfirmed = _trade(account_id="U999")
+    ib = SimpleNamespace(
+        reqAllOpenOrders=lambda: [observed], openTrades=lambda: [observed, unconfirmed],
+    )
+    assert load_read_only_open_trades(ib) == (observed, unconfirmed)
+
+
+@pytest.mark.parametrize("complete", [True, False])
+def test_pinned_sdk_order_future_waits_for_end_without_network(monkeypatch, complete):
+    import asyncio
+    from ib_insync import IB, Order, OrderState, OrderStatus, Stock, Trade
+
+    loop = asyncio.new_event_loop()
+    try:
+        previous = asyncio.get_event_loop_policy().get_event_loop()
+    except RuntimeError:
+        previous = None
+    asyncio.set_event_loop(loop)
+    calls = []
+    ib = IB()
+    ib.client.clientId = 7
+    ib.RequestTimeout = 0.01
+    ib.RaiseRequestErrors = False
+    cached = Trade(Stock("MSFT", "SMART", "USD"), Order(account="DU00000003"),
+                   OrderStatus(status="PendingSubmit"), [], [])
+    ib.wrapper.trades["unconfirmed"] = cached
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("order reader must not connect, write or bind orders")
+
+    for name in ("connect", "reqOpenOrders", "reqAutoOpenOrders", "placeOrder", "cancelOrder"):
+        monkeypatch.setattr(ib.client, name, forbidden)
+
+    def request():
+        calls.append("all_orders")
+        assert ib.RaiseRequestErrors is True
+        if complete:
+            ib.wrapper.openOrder(8, Stock("TQQQ", "SMART", "USD"),
+                Order(orderId=8, clientId=99, account="DU00000003", permId=91),
+                OrderState(status="Submitted"))
+            loop.call_soon(ib.wrapper.openOrderEnd)
+
+    monkeypatch.setattr(ib.client, "reqAllOpenOrders", request)
+    try:
+        if complete:
+            rows = load_read_only_open_trades(ib)
+            assert len(rows) == 2 and cached in rows
+            assert {row.contract.symbol for row in rows} == {"TQQQ", "MSFT"}
+        else:
+            with pytest.raises(IBKRReconciliationReadError, match="all active orders"):
+                load_read_only_open_trades(ib)
+        assert calls == ["all_orders"]
+        assert ib.RequestTimeout == 0.01 and ib.RaiseRequestErrors is False
+    finally:
+        loop.close()
+        asyncio.set_event_loop(previous)
