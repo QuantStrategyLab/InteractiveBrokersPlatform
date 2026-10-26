@@ -111,6 +111,9 @@ reservations_disjoint、显式 reservations 和保留政策检查全部保留。
 再按受保护存储流程独立验收，不能将真实响应改标人工后送入本入口。
 字段定义见 [IBKR Portfolio Ledger](https://www.interactivebrokers.com/docs/web-api/v1/endpoints/portfolio/portfolio-ledger)。
 
+一次性真实来源采集的准备和操作要求见[Web ledger只读采集](web-ledger-capture.md)。
+该独立工具只保存受保护的真实来源投影，不进入本人工研究入口，也不自动取得资金或采用资格。
+
 ### 按阶段使用检查
 
 | 阶段 | 必要输入与结果边界 |
