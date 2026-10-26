@@ -23,6 +23,14 @@ projection; disabled targets stay disabled. Do not infer private identities.
 The producer aggregates every unique cycle in the completed 06:00 SGT window;
 missing evidence is unknown, never zero. No new collector or scheduler is added.
 
+Before uploading a legacy `primary-live` projection, the existing scheduled
+producer reads the exact configured service's serving revision metadata. Once
+that revision enables unified routing with the same slot, candidate namespace
+and complete notification identity, the legacy projection stays local so it
+cannot overwrite the runtime's cumulative candidate. Unknown writer state
+stops that upload. Other target slots keep their existing path. This check
+reads cloud metadata only and never invokes a strategy or broker endpoint.
+
 No deployment, variable application, IAM, secret or live message is authorized
 by this PR. Source adoption and delivery require separate approved release work.
 

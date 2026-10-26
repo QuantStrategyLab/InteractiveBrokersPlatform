@@ -157,6 +157,18 @@ jobs:
             python3 scripts/digest_candidates_store.py summarize --path "$CANDIDATES_PATH"
             exit 0
           fi
+          if [[ "$STORE_TARGET" == "primary-live" ]]; then
+            if uv run --no-sync python -m scripts.digest_writer_ownership; then
+              echo "The primary runtime owns this digest slot; keeping the legacy projection local."
+              exit 0
+            else
+              ownership_status=$?
+              if [[ "$ownership_status" != "1" ]]; then
+                echo "::error::Primary notification writer could not be verified; no upload."
+                exit "$ownership_status"
+              fi
+            fi
+          fi
           object="$(python3 scripts/digest_candidates_store.py object-uri --path "$CANDIDATES_PATH" --platform ibkr --target "$STORE_TARGET" --uri "$DIGEST_CANDIDATES_GCS_URI")"
           if [[ -z "$object" ]]; then
             echo "No single-day candidate rows; nothing uploaded."
