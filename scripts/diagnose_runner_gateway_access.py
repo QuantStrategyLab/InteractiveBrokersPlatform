@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -187,13 +188,43 @@ def diagnose(ctx, *, run=command, read=serving._read, group_reader=read_group, i
     return out
 
 
+def configuration_reference(ctx, *, run=command, read=serving._read):
+    """Attest the selected literal reference without retrying any payload access."""
+    out = dict(schema_version="ibkr.runner_config_reference.v1", status="unavailable",
+        reason="configuration_reference_unavailable", reference_sha256=None, source_stable=False,
+        secret_payload_read=False, iam_changed=False, broker_called=False)
+    try:
+        before = read(ctx, run, include_group_declarations=True)
+        rows = before["group_declarations"]
+        def literal(name):
+            found = [row for row in rows if row.get("name") == name]
+            if len(found) != 1 or "valueFrom" in found[0] or not isinstance(found[0].get("value"), str):
+                raise ValueError()
+            return found[0]["value"]
+        name = literal("IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME")
+        if not literal("ACCOUNT_GROUP").strip() or not re.fullmatch(r"[A-Za-z0-9_-]{1,255}", name):
+            raise ValueError()
+        reference = f"projects/{ctx.project}/secrets/{name}"
+        out["reference_sha256"] = hashlib.sha256(reference.encode()).hexdigest()
+        out["source_stable"] = read(ctx, run, include_group_declarations=True) == before
+        if out["source_stable"]:
+            out.update(status="observed", reason="literal_configuration_reference_observed")
+        else:
+            out["reason"] = "serving_changed_during_probe"
+    except Exception:
+        pass
+    return out
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--receipt", type=Path, required=True)
+    parser.add_argument("--configuration-reference-only", action="store_true")
     args = parser.parse_args(argv)
     out = result()
     try:
-        out = diagnose(pilot.context(os.environ))
+        ctx = pilot.context(os.environ)
+        out = configuration_reference(ctx) if args.configuration_reference_only else diagnose(ctx)
     except Exception:
         out["reason"] = "dispatch_not_admitted"
     args.receipt.write_text(json.dumps(out, sort_keys=True) + "\n")

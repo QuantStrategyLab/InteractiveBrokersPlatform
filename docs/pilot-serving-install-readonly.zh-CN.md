@@ -13,3 +13,5 @@ plugin 缺失或缺少提交 metadata 时整体保留 partial，退出码仍为 
 可选 `runner_gateway_preflight=true` 与镜像读取互斥，单独核查原平台 GitHub Linux runner 的既有能力。它从准确 serving revision 解析原 ACCOUNT_GROUP 声明；如原配置引用 Secret，仅由同一受保护 runner 的原身份读取该准确配置，沿用现有账户组解析器和 Secret 优先级。账户、配置正文、token 和底层异常不进入日志或 artifact，不把凭据转移到 Gateway VM。
 
 该模式只核单账户声明、原 Gateway 的 VM 元数据、正 client ID，以及 IAP 的 `testIamPermissions` 返回值；不打开隧道或券商 socket，不拉镜像，不导入策略或执行运行周期，不创建资源或改变 IAM/配置。返回权限未观察到不等于已实测网络拒绝；条件权限和真实隧道/端口连通性仍需各自验证。`network_path_verified` 和 `runtime_ready` 始终 false，不能据静态权限结果宣称承载已就绪。失败只输出固定阶段，当前来源在结束时再次核对稳定性。
+
+同时指定 `configuration_reference_only=true` 时只核来源摘要：要求 ACCOUNT_GROUP 和配置 Secret 名称均为明确字面声明，返回准确 `projects/.../secrets/...` 引用的 SHA256。它不重试已失败的 payload 读取，不取 Secret 内容、VM、token 或 IAP，不执行 IAM。只在云端解析原声明；用于将受保护现役引用与管理客户端已有定位作准确比较，不把引用名或配置正文放入产物。不支持的声明形状保持 unavailable。

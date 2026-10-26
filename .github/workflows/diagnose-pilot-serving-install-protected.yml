@@ -3,6 +3,10 @@ name: Read IBKR pilot serving install identity (protected execution)
 on:
   workflow_call:
     inputs:
+      configuration_reference_only:
+        type: boolean
+        required: false
+        default: false
       profile:
         type: string
         required: true
@@ -62,7 +66,11 @@ jobs:
           IBKR_ARTIFACT_REGISTRY_ROLLBACK_DIGESTS: ${{ secrets.IBKR_ARTIFACT_REGISTRY_ROLLBACK_DIGESTS }}
           PILOT_PROFILE: ${{ inputs.profile }}
           PILOT_SOURCE_COMMIT: ${{ inputs.source_commit }}
-        run: uv run --no-sync python -m scripts.diagnose_pilot_serving_install --preflight --bootstrap-identity --receipt "${RUNNER_TEMP}/pilot-serving-install.safe.json"
+        run: |
+          if [ "${{ inputs.configuration_reference_only }}" = true ] && [ "${{ inputs.runner_gateway_preflight }}" != true ]; then
+            echo 'configuration_reference_mode_invalid=true'; exit 1
+          fi
+          uv run --no-sync python -m scripts.diagnose_pilot_serving_install --preflight --bootstrap-identity --receipt "${RUNNER_TEMP}/pilot-serving-install.safe.json"
       - name: Checkout exact lockfile comparison source
         uses: actions/checkout@v6
         with:
@@ -85,7 +93,12 @@ jobs:
       - name: Read the original runner's Gateway configuration and static access only
         if: inputs.runner_gateway_preflight
         env: *private_context
-        run: uv run --no-sync python -m scripts.diagnose_runner_gateway_access --receipt "${RUNNER_TEMP}/runner-gateway-access.safe.json"
+        run: |
+          if [ "${{ inputs.configuration_reference_only }}" = true ]; then
+            uv run --no-sync python -m scripts.diagnose_runner_gateway_access --configuration-reference-only --receipt "${RUNNER_TEMP}/runner-gateway-access.safe.json"
+          else
+            uv run --no-sync python -m scripts.diagnose_runner_gateway_access --receipt "${RUNNER_TEMP}/runner-gateway-access.safe.json"
+          fi
       - name: Retain the fixed safe receipt only
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

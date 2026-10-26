@@ -1,6 +1,7 @@
 """Synthetic configuration and IAM responses only; no cloud or broker calls."""
 from dataclasses import replace
 import json
+import hashlib
 import subprocess
 from types import SimpleNamespace
 
@@ -121,3 +122,28 @@ def test_native_permission_failure_is_classified_without_exposing_stderr(monkeyp
         probe.command(("gcloud", "compute", "instances", "describe", "synthetic"), "gateway_instance_unavailable")
     assert caught.value.failure_class == "permission_denied"
     assert str(caught.value) == "gateway_instance_unavailable"
+
+
+def test_reference_only_attests_exact_source_without_secret_or_other_cloud_reads():
+    rows = [dict(name="ACCOUNT_GROUP", value="synthetic"),
+        dict(name="IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME", value="private-configuration")]
+    reads = []
+    def read(ctx, run, **kwargs):
+        reads.append(True)
+        return {"group_declarations": rows}
+    out = probe.configuration_reference(context(), read=read,
+        run=lambda *a: pytest.fail("no payload, token, VM, IAM or other native command"))
+    assert out["status"] == "observed" and out["source_stable"]
+    assert out["reference_sha256"] == hashlib.sha256(
+        b"projects/synthetic-project/secrets/private-configuration").hexdigest()
+    assert "private-configuration" not in json.dumps(out)
+    assert out["secret_payload_read"] is False and out["iam_changed"] is False
+    assert len(reads) == 2
+
+
+def test_reference_only_refuses_unresolved_secret_declarations():
+    rows = [dict(name="ACCOUNT_GROUP", value="synthetic"),
+        dict(name="IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME", valueFrom={"secretKeyRef": {"name": "private", "key": "latest"}})]
+    out = probe.configuration_reference(context(), read=lambda *a, **k: {"group_declarations": rows},
+        run=lambda *a: pytest.fail("must not fetch an unresolved declaration"))
+    assert out["status"] == "unavailable" and out["reference_sha256"] is None
