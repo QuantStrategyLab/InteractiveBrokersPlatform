@@ -13,6 +13,21 @@ on:
         type: boolean
         required: false
         default: false
+      cashflow_source_only:
+        description: Inspect cash-transaction field and time formats only; do not publish
+        type: boolean
+        required: false
+        default: false
+      cashflow_period_from:
+        description: Optional cash-flow source request start (YYYY-MM-DD); pair with end, at most 31 days
+        type: string
+        required: false
+        default: ""
+      cashflow_period_to:
+        description: Optional cash-flow source request end (YYYY-MM-DD); no query-template change
+        type: string
+        required: false
+        default: ""
       expected_period_from:
         description: Optional expected report period start (YYYY-MM-DD), paired with the end; does not change the query
         type: string
@@ -40,6 +55,8 @@ jobs:
     env:
       IBKR_FLEX_EXPECTED_PERIOD_FROM: ${{ inputs.expected_period_from }}
       IBKR_FLEX_EXPECTED_PERIOD_TO: ${{ inputs.expected_period_to }}
+      IBKR_FLEX_CASHFLOW_REQUEST_FROM: ${{ inputs.cashflow_period_from }}
+      IBKR_FLEX_CASHFLOW_REQUEST_TO: ${{ inputs.cashflow_period_to }}
     steps:
       - name: Checkout approved main source
         uses: actions/checkout@v6
@@ -50,8 +67,15 @@ jobs:
       - name: Install locked runtime dependencies
         run: uv sync --frozen --no-dev
       - name: Validate the exact target and optional period without requests
-        run: uv run --no-sync python -m scripts.diagnose_ibkr_flex_ledger --preflight
+        run: |
+          if [ "$CASH_SOURCE_ONLY" = "true" ] && [ "$CASHFLOW_SOURCE_ONLY" = "true" ]; then
+            echo "conflicting_diagnostic_modes" >&2
+            exit 2
+          fi
+          uv run --no-sync python -m scripts.diagnose_ibkr_flex_ledger --preflight
         env:
+          CASH_SOURCE_ONLY: ${{ inputs.cash_source_only }}
+          CASHFLOW_SOURCE_ONLY: ${{ inputs.cashflow_source_only }}
           IBKR_FLEX_TOKEN: ${{ secrets.IBKR_FLEX_TOKEN }}
           IBKR_FLEX_QUERY_ID: ${{ secrets.IBKR_FLEX_QUERY_ID }}
           IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON: ${{ secrets.IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON }}
@@ -59,13 +83,16 @@ jobs:
           IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}
       - name: Read the original Flex request only and print fixed status
         run: |
-          if [ "$CASH_SOURCE_ONLY" = "true" ]; then
+          if [ "$CASHFLOW_SOURCE_ONLY" = "true" ]; then
+            uv run --no-sync python -m scripts.diagnose_ibkr_flex_ledger --cashflow-read-once
+          elif [ "$CASH_SOURCE_ONLY" = "true" ]; then
             uv run --no-sync python -m scripts.diagnose_ibkr_flex_ledger --cash-read-once
           else
             uv run --no-sync python -m scripts.diagnose_ibkr_flex_ledger --read-once
           fi
         env:
           CASH_SOURCE_ONLY: ${{ inputs.cash_source_only }}
+          CASHFLOW_SOURCE_ONLY: ${{ inputs.cashflow_source_only }}
           IBKR_FLEX_DIAGNOSTIC_ENABLED: "true"
           IBKR_FLEX_TOKEN: ${{ secrets.IBKR_FLEX_TOKEN }}
           IBKR_FLEX_QUERY_ID: ${{ secrets.IBKR_FLEX_QUERY_ID }}
