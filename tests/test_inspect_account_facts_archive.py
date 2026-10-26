@@ -48,6 +48,20 @@ def test_revision_mismatch_is_not_rebound_for_history():
     assert "older-revision-canary" not in json.dumps(result)
 
 
+@pytest.mark.parametrize("revision", [None, "", " private-canary "])
+def test_missing_or_invalid_original_revision_remains_skipped(revision):
+    report = _report()
+    if revision is None:
+        del report["diagnostics"]["runtime_revision"]
+    else:
+        report["diagnostics"]["runtime_revision"] = revision
+    result = archive.inspect_report(report, uri=URI, expected=EXPECTED, day=DAY)
+    assert result["status"] == "skipped"
+    assert result["reason"] == "runtime_target_mismatch"
+    assert "historical_candidate" not in result
+    assert "private-canary" not in json.dumps(result)
+
+
 @pytest.mark.parametrize("mutation", ["account", "scope", "receipt", "facts", "date"])
 def test_alternate_revision_preview_preserves_all_other_guards(mutation):
     report = _report()
@@ -188,3 +202,31 @@ def test_month_inspection_does_not_read_todays_report_as_history(monkeypatch, ca
     monkeypatch.setattr(archive.publisher, "_load_gcs_report", lambda *a, **k: pytest.fail("today is not archive history"))
     assert archive.main() == 0
     assert json.loads(capsys.readouterr().out)["records"][0]["reason"] == "archive_date_outside_retention"
+
+
+def test_unexpected_error_exports_no_exception_message(monkeypatch, capsys):
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz):
+            return NOW
+
+    monkeypatch.setattr(archive, "datetime", FixedDatetime)
+    for key, value in {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main",
+                       "IBKR_ACCOUNT_FACTS_TARGET": "additional-2",
+                       "IBKR_ACCOUNT_FACTS_ARCHIVE_DATE": "2026-09-30",
+                       "IBKR_ACCOUNT_FACTS_ARCHIVE_MODE": "day"}.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(archive.identity, "resolve_expected", lambda: EXPECTED)
+    monkeypatch.setattr(archive, "report_uris", lambda **k: [URI])
+    monkeypatch.setattr(archive.publisher, "_load_gcs_report", lambda *a, **k: _report())
+
+    def unexpected(*a, **k):
+        raise KeyError("PRIVATE_FINANCIAL_CANARY")
+
+    monkeypatch.setattr(archive, "inspect_report", unexpected)
+    assert archive.main() == 1
+    output = capsys.readouterr().out
+    assert "PRIVATE_FINANCIAL_CANARY" not in output
+    result = json.loads(output)
+    assert result["error_type"] == "KeyError"
+    assert result["report_name"] == "20260930T010000Z.json"

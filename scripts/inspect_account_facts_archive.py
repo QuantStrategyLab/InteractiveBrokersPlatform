@@ -73,14 +73,16 @@ def inspect_report(report, *, uri: str, expected: dict, day: date) -> dict:
                                  and isinstance(report["summary"].get("account_facts"), dict))}
     if projected.get("status") == "skipped":
         safe.update(projected)
+        declared_revision = publisher._exact_text(report.get("diagnostics", {}).get("runtime_revision")) \
+            if isinstance(report, dict) and isinstance(report.get("diagnostics"), dict) else ""
         if (projected.get("reason") == "runtime_target_mismatch"
-                and projected.get("mismatched_fields") == ["runtime_revision"]):
+                and projected.get("mismatched_fields") == ["runtime_revision"] and declared_revision):
             # Preview only: establish whether the original report has otherwise
             # valid same-account facts under its declared revision. Preserve the
             # configured-source rejection; a hash does not admit this source.
             candidate = publisher.project_ibkr_account_facts_history(
                 report, source_report_uri=uri,
-                **{**expected, "expected_runtime_revision": report["diagnostics"]["runtime_revision"]},
+                **{**expected, "expected_runtime_revision": declared_revision},
             )
             if candidate.get("status") != "skipped" and candidate["observation_date"] == day.isoformat():
                 safe["historical_candidate"] = {**projection_metadata(candidate),
@@ -97,6 +99,7 @@ def inspect_report(report, *, uri: str, expected: dict, day: date) -> dict:
 
 def main() -> int:
     stage = "context"
+    report_name = None
     try:
         if (os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
                 or os.environ.get("GITHUB_REF") != "refs/heads/main"):
@@ -128,6 +131,7 @@ def main() -> int:
             raise ArchiveError("archive_read_limit")
         rows = []
         for uri in uris:
+            report_name = uri.rsplit("/", 1)[-1]
             report_day = datetime.strptime(uri.rsplit("/", 1)[-1], "%Y%m%dT%H%M%SZ.json").date()
             try:
                 archive_day(report_day.isoformat(), now=now)
@@ -149,8 +153,13 @@ def main() -> int:
         reason = exc.reason if isinstance(exc, publisher._ProjectionError) else str(exc)
         print(json.dumps({"status": "stopped", "stage": stage, "reason": reason}))
         return 1
-    except Exception:
-        print(json.dumps({"status": "stopped", "stage": stage, "reason": "archive_inspection_failed"}))
+    except Exception as exc:
+        error_type = type(exc).__name__
+        print(json.dumps({"status": "stopped", "stage": stage, "reason": "archive_inspection_failed",
+                          "error_type": error_type if error_type in {
+                              "KeyError", "TypeError", "ValueError", "AttributeError", "OverflowError",
+                          } else "other",
+                          "report_name": report_name if publisher._REPORT_RUN_ID.fullmatch(report_name or "") else None}))
         return 1
 
 
