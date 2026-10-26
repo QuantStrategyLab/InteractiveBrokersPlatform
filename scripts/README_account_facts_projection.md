@@ -50,10 +50,21 @@ names, dates, fixed skip reasons, availability flags and opaque hashes. An empty
 listing remains distinct from a read failure. No ingress token, publisher,
 notification, broker request, source adoption or business write is involved.
 An inspected archive is not evidence that its daily row was published.
-The optional `metadata_only` mode lists up to 2,048 report filenames in the
+The optional `scope=month-metadata` mode lists up to 2,048 report filenames in the
 selected month and reports counts by filename date, without reading financial
 bodies. Filename dates establish archive availability only, not observation
 dates or financial validity. It does not silently truncate an oversized listing.
+When only the configured runtime revision differs, the reader may emit a
+`historical_candidate` hash after validating all remaining original report,
+account, receipt, snapshot and date predicates against the declared revision.
+The original `skipped` result remains unchanged and receiver admission is
+explicitly unverified. Compare the hash with the protected receiver's admitted
+historical sources separately; this preview never authorizes a source rotation
+or publishes the report.
+The explicit `scope=month-snapshots` mode checks at most 64 original reports
+from that month in the protected runner; an oversized month stops before any
+body read. Each report keeps its own original date predicates. The default
+`scope=day` remains a single-day inspection. All scopes remain read-only.
 
 # Zero-traffic maintenance cash observation
 

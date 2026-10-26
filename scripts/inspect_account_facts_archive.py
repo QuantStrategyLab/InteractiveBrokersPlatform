@@ -27,9 +27,9 @@ def archive_day(value: str, *, now: datetime) -> date:
     return day
 
 
-def report_uris(*, day: date, expected: dict, now: datetime, metadata_only: bool = False) -> list[str]:
+def report_uris(*, day: date, expected: dict, now: datetime, whole_month: bool = False) -> list[str]:
     prefix = expected["expected_report_prefix"].rstrip("/")
-    filename_prefix = day.strftime("%Y%m" if metadata_only else "%Y%m%dT")
+    filename_prefix = day.strftime("%Y%m" if whole_month else "%Y%m%dT")
     match = f"{prefix}/{day:%Y-%m}/{filename_prefix}*.json"
     result = subprocess.run(
         ["gcloud", "storage", "ls", match, "--project", expected["expected_project_id"]],
@@ -40,7 +40,7 @@ def report_uris(*, day: date, expected: dict, now: datetime, metadata_only: bool
             return []
         raise ArchiveError("archive_listing_failed")
     lines = result.stdout.splitlines()
-    if len(result.stdout) > 1024 * 1024 or len(lines) > (2048 if metadata_only else 64):
+    if len(result.stdout) > 1024 * 1024 or len(lines) > (2048 if whole_month else 64):
         raise ArchiveError("archive_listing_limit")
     uris = set()
     for uri in lines:
@@ -55,24 +55,44 @@ def report_uris(*, day: date, expected: dict, now: datetime, metadata_only: bool
     return sorted(uris, reverse=True)
 
 
+def projection_metadata(projected: dict) -> dict:
+    payload = publisher.prepare_sync_payload(projected)
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return {"observation_date": projected["observation_date"],
+            "source_binding_id_sha256": hashlib.sha256(projected["source_binding"]["id"].encode()).hexdigest(),
+            "projection_sha256": hashlib.sha256(encoded).hexdigest(),
+            "net_assets_available": projected["broker_reported_balances"][0]["net_assets"] is not None}
+
+
 def inspect_report(report, *, uri: str, expected: dict, day: date) -> dict:
     projected = publisher.project_ibkr_account_facts_history(
         report, source_report_uri=uri, **expected,
     )
-    safe = {"report_name": uri.rsplit("/", 1)[-1]}
+    safe = {"report_name": uri.rsplit("/", 1)[-1],
+            "snapshot_present": (isinstance(report, dict) and isinstance(report.get("summary"), dict)
+                                 and isinstance(report["summary"].get("account_facts"), dict))}
     if projected.get("status") == "skipped":
         safe.update(projected)
+        if (projected.get("reason") == "runtime_target_mismatch"
+                and projected.get("mismatched_fields") == ["runtime_revision"]):
+            # Preview only: establish whether the original report has otherwise
+            # valid same-account facts under its declared revision. Preserve the
+            # configured-source rejection; a hash does not admit this source.
+            candidate = publisher.project_ibkr_account_facts_history(
+                report, source_report_uri=uri,
+                **{**expected, "expected_runtime_revision": report["diagnostics"]["runtime_revision"]},
+            )
+            if candidate.get("status") != "skipped" and candidate["observation_date"] == day.isoformat():
+                safe["historical_candidate"] = {**projection_metadata(candidate),
+                                                "receiver_admission_verified": False}
+            else:
+                safe["historical_candidate_rejection"] = candidate.get("reason", "archive_observation_date_mismatch")
         return safe
     if projected["observation_date"] != day.isoformat():
         return {**safe, "status": "skipped", "reason": "archive_observation_date_mismatch"}
     # The original pure projector enforces the full report/runtime/account
     # identity and timestamp interval. No expected revision or clock is replaced.
-    payload = publisher.prepare_sync_payload(projected)
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    return {**safe, "status": "verified", "observation_date": projected["observation_date"],
-            "source_binding_id_sha256": hashlib.sha256(projected["source_binding"]["id"].encode()).hexdigest(),
-            "projection_sha256": hashlib.sha256(encoded).hexdigest(),
-            "net_assets_available": projected["broker_reported_balances"][0]["net_assets"] is not None}
+    return {**safe, "status": "verified", **projection_metadata(projected)}
 
 
 def main() -> int:
@@ -88,11 +108,11 @@ def main() -> int:
         day = archive_day(os.environ.get("IBKR_ACCOUNT_FACTS_ARCHIVE_DATE", ""), now=now)
         expected = identity.resolve_expected()
         stage = "listing"
-        mode = os.environ.get("IBKR_ACCOUNT_FACTS_ARCHIVE_METADATA_ONLY", "false")
-        if mode not in {"true", "false"}:
+        mode = os.environ.get("IBKR_ACCOUNT_FACTS_ARCHIVE_MODE", "day")
+        if mode not in {"day", "month-metadata", "month-snapshots"}:
             raise ArchiveError("archive_mode_invalid")
-        uris = report_uris(day=day, expected=expected, now=now, metadata_only=mode == "true")
-        if mode == "true":
+        uris = report_uris(day=day, expected=expected, now=now, whole_month=mode != "day")
+        if mode == "month-metadata":
             counts = {}
             for uri in uris:
                 stamp = datetime.strptime(uri.rsplit("/", 1)[-1], "%Y%m%dT%H%M%SZ.json")
@@ -104,13 +124,23 @@ def main() -> int:
                               "financial_bodies_read": False, "broker_requests": 0, "business_writes": 0},
                              sort_keys=True))
             return 0
+        if len(uris) > 64:
+            raise ArchiveError("archive_read_limit")
         rows = []
         for uri in uris:
+            report_day = datetime.strptime(uri.rsplit("/", 1)[-1], "%Y%m%dT%H%M%SZ.json").date()
+            try:
+                archive_day(report_day.isoformat(), now=now)
+            except ArchiveError:
+                rows.append({"report_name": uri.rsplit("/", 1)[-1], "status": "skipped",
+                             "reason": "archive_date_outside_retention"})
+                continue
             stage = "report_read"
             report = publisher._load_gcs_report(uri, project_id=expected["expected_project_id"])
             stage = "projection"
-            rows.append(inspect_report(report, uri=uri, expected=expected, day=day))
-        result = {"status": "inspected", "slot": slot, "date": day.isoformat(),
+            rows.append(inspect_report(report, uri=uri, expected=expected, day=report_day if mode == "month-snapshots" else day))
+        result = {"status": "inspected", "slot": slot,
+                  **({"month": day.strftime("%Y-%m")} if mode == "month-snapshots" else {"date": day.isoformat()}),
                   "report_count": len(rows), "records": rows,
                   "broker_requests": 0, "business_writes": 0}
         print(json.dumps(result, sort_keys=True))
