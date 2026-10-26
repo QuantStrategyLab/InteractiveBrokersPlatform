@@ -19,6 +19,11 @@ on:
         type: boolean
         required: false
         default: false
+      completed_summary_logs:
+        description: "Read the fixed completed cash Job's existing logs and report; never connect to a broker or execute a Job."
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -47,6 +52,7 @@ jobs:
       MAINTENANCE_SOURCE_COMMIT: ${{ inputs.maintenance_source_commit }}
       MAINTENANCE_JOB: ${{ inputs.maintenance_job }}
       MAINTENANCE_JOB_READBACK: ${{ inputs.maintenance_job_readback }}
+      MAINTENANCE_COMPLETED_SUMMARY_LOGS: ${{ inputs.completed_summary_logs }}
     steps:
       - name: Require infrastructure variables
         env:
@@ -77,6 +83,9 @@ jobs:
           if "tqqq_growth_income" not in parts:
               raise SystemExit("status=blocked reason=primary_profile_mismatch")
           source = os.environ.get("MAINTENANCE_SOURCE_COMMIT", "")
+          if os.environ.get("MAINTENANCE_COMPLETED_SUMMARY_LOGS") == "true" and (
+              source or os.environ.get("MAINTENANCE_JOB") == "true" or os.environ.get("MAINTENANCE_JOB_READBACK") == "true"):
+              raise SystemExit("status=blocked reason=summary_logs_modes_conflict")
           if source and (not re.fullmatch(r"[0-9a-f]{40}", source) or os.environ["GITHUB_RUN_ATTEMPT"] != "1"):
               raise SystemExit("status=blocked reason=candidate_source_invalid")
           if os.environ.get("MAINTENANCE_JOB") == "true" or os.environ.get("MAINTENANCE_JOB_READBACK") == "true":
@@ -98,7 +107,7 @@ jobs:
         uses: google-github-actions/setup-gcloud@v3
 
       - name: Read the existing report and service identity without publishing
-        if: inputs.maintenance_source_commit == ''
+        if: inputs.maintenance_source_commit == '' && !inputs.completed_summary_logs
         run: python3 -m scripts.diagnose_account_facts_identity --broker-contract-source-evidence
 
       - name: Observe one zero-traffic maintenance cash snapshot without strategy execution
@@ -113,8 +122,12 @@ jobs:
         if: inputs.maintenance_source_commit != '' && inputs.maintenance_job_readback
         run: python3 -m scripts.read_completed_maintenance_cash_job
 
+      - name: Inspect only the fixed completed summary logs and report
+        if: inputs.completed_summary_logs
+        run: python3 -m scripts.read_completed_maintenance_cash_job --summary-logs
+
       - name: Retain only the value-free maintenance observation
-        if: always() && inputs.maintenance_source_commit != ''
+        if: always() && (inputs.maintenance_source_commit != '' || inputs.completed_summary_logs)
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: maintenance-cash-${{ github.run_id }}

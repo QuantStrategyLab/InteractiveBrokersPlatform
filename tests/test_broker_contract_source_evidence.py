@@ -144,7 +144,7 @@ def test_primary_workflow_keeps_default_report_read_and_explicit_candidate_mode(
     assert "github.ref == 'refs/heads/main'" in workflow and "workflow_dispatch:" in workflow
     assert "schedule:" not in workflow
     assert "if: inputs.maintenance_source_commit == ''" in workflow
-    assert "if: always() && inputs.maintenance_source_commit != ''" in workflow
+    assert "if: always() && (inputs.maintenance_source_commit != '' || inputs.completed_summary_logs)" in workflow
     assert "path: ${{ runner.temp }}/maintenance-cash.safe.json" in workflow
     assert workflow.count("uses: google-github-actions/auth@") == 1
     assert "IBKR_FLEX_TOKEN" not in workflow and "probe-live-permission" not in workflow

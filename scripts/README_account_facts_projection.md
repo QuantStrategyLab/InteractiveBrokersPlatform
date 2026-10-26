@@ -48,6 +48,15 @@ single read, `RaiseRequestErrors` is enabled and then restored, together with
 both original callbacks. Later subscription updates are excluded from the
 initial observation. No additional request or retry is introduced.
 
+The manual `completed_summary_logs` mode instead reads only an already completed
+execution's existing logs and digest-verified private report. It is exclusive
+with candidate and Job modes and uses the same protected account scope. Only
+fixed status, counts, numeric SDK error codes and opaque source hashes leave
+the runner. Its bounded historical interval is not current cash evidence;
+an absent parsed error does not prove the request succeeded, and interval
+coincidence does not establish the summary request ID. It never creates or
+executes a Job, connects to a broker, changes settings or republishes funds.
+
 The existing `primary-account-facts-readonly.yml` manual workflow keeps its
 original report-only behavior when `maintenance_source_commit` is empty. An
 explicit reviewed source SHA selects one current ready, zero-traffic candidate
