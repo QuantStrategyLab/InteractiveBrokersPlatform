@@ -373,3 +373,56 @@ def test_summary_diagnostic_readback_allows_only_fixed_counts(change):
     else:
         with pytest.raises(pilot.ReleaseError, match="account_summary_diagnostic"):
             jobs.inspect_report(report, URI, expected, job=JOB, execution=EXECUTION, started=NOW, now=NOW)
+
+
+@pytest.mark.parametrize("amounts,state", [(["0"], "OBSERVED"), (["-1.00000001"], "OBSERVED"),
+    ([], "MISSING"), (["1", "2", "1"], "INVALID")])
+def test_usd_ledger_reader_saved_report_and_safe_readback(tmp_path, amounts, state):
+    from scripts.maintenance_cash_job_entry import read_account_summary_cash
+    from tests.test_maintenance_cash_job_entry import SummaryBroker
+    _, _, expected, report = setup()
+    account = expected["expected_account_selector"][0]
+    rows = [dict(account=account, tag="SettledCash", currency="USD", value=amount) for amount in amounts]
+    rows.append(dict(account=account, tag="CashBalance", currency="USD", value="50.01234567"))
+    broker = SummaryBroker(rows)
+    broker.managedAccounts = lambda: [account]
+    try:
+        report["summary"]["broker_account_summary"] = read_account_summary_cash(broker, [account],
+            clock=lambda: NOW + timedelta(seconds=1))
+        archive = tmp_path / "synthetic-report.json"
+        archive.write_text(json.dumps(report))
+        result = jobs.inspect_report(json.loads(archive.read_text()), URI, expected,
+            job=JOB, execution=EXECUTION, started=NOW, now=NOW)
+        safe = result["account_summary_cash_observations"]
+        assert safe["request_tags"] == "$LEDGER:USD"
+        assert safe["fields"]["SettledCash"] == state
+        assert safe["fields"]["CashBalance"] == "OBSERVED"
+        assert result["spendable_cash_verified"] is result["complete_obligations_verified"] is False
+        assert safe["spendable_cash_verified"] is safe["complete_cash_obligations_verified"] is False
+        assert "50.01234567" not in json.dumps(result) and account not in json.dumps(result)
+        assert broker.calls == [("request", 17, "All", "$LEDGER:USD"), ("cancel", 17)]
+    finally:
+        broker.loop.close()
+
+
+@pytest.mark.parametrize("change", ["all_currencies", "base_currency", "no_diagnostic", "legacy_diagnostic", "unscoped", "foreign_value"])
+def test_usd_ledger_readback_rejects_wrong_query_or_currency_scope(change):
+    from application.ibkr_cash_observations import TAGS, build_cash_observations
+    _, _, expected, report = setup()
+    stamp = (NOW + timedelta(seconds=1)).isoformat()
+    fields = {tag: dict(usd_rows=0, usd_invalid_values=0, usd_duplicate_rows=0, base_rows=0, other_currency_rows=0)
+              for tag in TAGS}
+    summary = dict(source_method="ibkr.reqAccountSummary", request_tags="$LEDGER:USD",
+        account_ids=list(expected["expected_account_selector"]), query_completed=True, snapshot_atomic=False,
+        observed_started_at=stamp, observed_finished_at=stamp, request_scoped=True,
+        broker_cash_observations=build_cash_observations([], observed_at=stamp), field_diagnostics=fields)
+    report["summary"]["broker_account_summary"] = summary
+    if change == "all_currencies": summary["request_tags"] = "$LEDGER:ALL"
+    elif change == "base_currency": summary["request_tags"] = "$LEDGER"
+    elif change == "no_diagnostic": summary.pop("field_diagnostics")
+    elif change == "legacy_diagnostic": fields.pop("CashBalance")
+    elif change == "unscoped": summary["request_scoped"] = False
+    else:
+        summary["broker_cash_observations"]["values"] = [dict(currency="EUR", source_tag="SettledCash", value="99")]
+    with pytest.raises(pilot.ReleaseError, match="account_summary"):
+        jobs.inspect_report(report, URI, expected, job=JOB, execution=EXECUTION, started=NOW, now=NOW)

@@ -147,7 +147,7 @@ def inspect_report(report, uri, expected, *, job, execution, started, now, names
     if not started <= begin <= observed <= end <= now + timedelta(minutes=5) or begin < now - timedelta(minutes=10):
         raise pilot.ReleaseError("job_report_time_unverified")
     cash = publisher._project_cash(facts.get("cash"))
-    from application.ibkr_cash_observations import inspect_cash_observations
+    from application.ibkr_cash_observations import TAGS, inspect_cash_observations
     selected = [row for row in cash if row["currency"] == "USD"]
     fields = inspect_cash_observations(facts.get("broker_cash_observations"), observed_at=facts["observed_at"],
         selected_cash=selected[0] if len(selected) == 1 else None)
@@ -166,6 +166,9 @@ def inspect_report(report, uri, expected, *, job, execution, started, now, names
             "observed_started_at", "observed_finished_at")]
         if not begin <= observed <= first <= last <= end:
             raise pilot.ReleaseError("account_summary_time_unverified")
+        ledger_usd = summary.get("request_tags") == "$LEDGER:USD"
+        if "request_tags" in summary and not ledger_usd:
+            raise pilot.ReleaseError("account_summary_query_unverified")
         summary_fields = inspect_cash_observations(summary.get("broker_cash_observations"),
             observed_at=summary["observed_finished_at"])
         if summary_fields["status"] != "OBSERVED_FIELDS_ONLY":
@@ -173,10 +176,17 @@ def inspect_report(report, uri, expected, *, job, execution, started, now, names
         result["account_summary_cash_observations"] = dict(source_method="ibkr.reqAccountSummary",
             observed_started_at=first.isoformat(), observed_finished_at=last.isoformat(), **summary_fields)
         diagnostic = summary.get("field_diagnostics")
+        if ledger_usd:
+            values = summary["broker_cash_observations"]
+            if diagnostic is None or any(row["currency"] != "USD" for key in ("values", "invalid_fields")
+                    for row in values.get(key, [])):
+                raise pilot.ReleaseError("account_summary_ledger_scope_unverified")
+            result["account_summary_cash_observations"]["request_tags"] = "$LEDGER:USD"
         if diagnostic is not None:
             names = {"usd_rows", "usd_invalid_values", "usd_duplicate_rows", "base_rows", "other_currency_rows"}
+            tags = TAGS if ledger_usd else {"SettledCash", "AvailableFunds", "FullAvailableFunds"}
             if (summary.get("request_scoped") is not True or not isinstance(diagnostic, dict)
-                    or set(diagnostic) != {"SettledCash", "AvailableFunds", "FullAvailableFunds"}
+                    or set(diagnostic) != tags
                     or any(not isinstance(row, dict) or set(row) != names
                         or any(type(n) is not int or not 0 <= n <= 1000000 for n in row.values())
                         or row["usd_invalid_values"] > row["usd_rows"]

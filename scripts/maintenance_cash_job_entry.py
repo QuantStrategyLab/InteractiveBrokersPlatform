@@ -13,17 +13,17 @@ from types import SimpleNamespace
 
 def read_account_summary_cash(ib, account_ids, *, timeout_seconds=30,
                               clock=lambda: datetime.now(timezone.utc)):
-    """One explicit SDK summary, retaining only the selected account's rows.
+    """One USD ledger summary, retaining only the selected account's USD rows.
 
     The pinned SDK fills accountValues and acctSummary separately. Listen to
     request-scoped callbacks before its cache overwrites duplicate fields, and require
     the matching accountSummaryEnd callback and SDK error propagation. All is
-    the API's summary group; rows
+    the API's summary group; $LEDGER:USD selects per-currency cash tags. Rows
     for other managed accounts are neither buffered nor persisted. Identical
     decimal repeats within this request may share one observation; conflicting
     values remain invalid rather than choosing the first, last or larger value.
     """
-    from application.ibkr_cash_observations import capture_cash_observation_rows, build_cash_observations, _decimal_text
+    from application.ibkr_cash_observations import TAGS, capture_cash_observation_rows, build_cash_observations, _decimal_text
     if (not isinstance(account_ids, (tuple, list)) or len(account_ids) != 1
             or not re.fullmatch(r"(?:U|DU)[0-9]+", account_ids[0])
             or account_ids[0] not in ib.managedAccounts() or ib.wrapper.acctSummary
@@ -35,7 +35,8 @@ def read_account_summary_cash(ib, account_ids, *, timeout_seconds=30,
     original = ib.wrapper.accountSummary
     original_end = ib.wrapper.accountSummaryEnd
     original_error_policy = ib.RaiseRequestErrors
-    tags = ("SettledCash", "AvailableFunds", "FullAvailableFunds")
+    tags = tuple(sorted(TAGS))
+    request_tags = "$LEDGER:USD"
     def collect(request_id, account, tag, value, currency):
         # The SDK event drops reqId. Its decoder resolves this wrapper method
         # per message, so preserve the original SDK callback and scope here.
@@ -55,7 +56,7 @@ def read_account_summary_cash(ib, account_ids, *, timeout_seconds=30,
     ib.RaiseRequestErrors = True
     try:
         future = ib.wrapper.startReq(req_id)
-        ib.client.reqAccountSummary(req_id, "All", "SettledCash,AvailableFunds,FullAvailableFunds")
+        ib.client.reqAccountSummary(req_id, "All", request_tags)
         ib._run(asyncio.wait_for(future, timeout=timeout_seconds))
         if not ended:
             raise ValueError("account_summary_end_not_observed")
@@ -76,6 +77,10 @@ def read_account_summary_cash(ib, account_ids, *, timeout_seconds=30,
             other_currency_rows=sum(row.currency not in {"USD", "BASE"} for row in values))
     observations = {}
     for row in rows:
+        # Counts can diagnose unexpected currencies, but their values cannot
+        # become USD observations or a conversion of the base-currency ledger.
+        if row.currency != "USD":
+            continue
         key = row.account, row.currency, row.tag
         amount = _decimal_text(row.value)
         if key not in observations:
@@ -85,7 +90,7 @@ def read_account_summary_cash(ib, account_ids, *, timeout_seconds=30,
             if amount is None or previous.value is None or Decimal(amount) != Decimal(previous.value):
                 # Once ambiguous, a later repeat cannot revive this field.
                 previous.value = None
-    return dict(source_method="ibkr.reqAccountSummary", account_ids=list(account_ids),
+    return dict(source_method="ibkr.reqAccountSummary", request_tags=request_tags, account_ids=list(account_ids),
         request_scoped=True, field_diagnostics=diagnostics,
         query_completed=True, snapshot_atomic=False, observed_started_at=started,
         observed_finished_at=finished, broker_cash_observations=build_cash_observations(
