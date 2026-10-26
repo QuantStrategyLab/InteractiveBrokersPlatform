@@ -8,6 +8,11 @@ on:
         type: boolean
         required: false
         default: false
+      configured_account_coverage_only:
+        description: Inspect fixed section counts and dates by protected configured slot; never publish
+        type: boolean
+        required: false
+        default: false
       cash_source_only:
         description: Inspect Cash Report field coverage only; never certify current spending authority
         type: boolean
@@ -68,12 +73,21 @@ jobs:
         run: uv sync --frozen --no-dev
       - name: Validate the exact target and optional period without requests
         run: |
-          if [ "$CASH_SOURCE_ONLY" = "true" ] && [ "$CASHFLOW_SOURCE_ONLY" = "true" ]; then
+          selected_modes=0
+          for enabled in "$CASH_SOURCE_ONLY" "$CASHFLOW_SOURCE_ONLY" "$CONFIGURED_ACCOUNT_COVERAGE_ONLY"; do
+            if [ "$enabled" = "true" ]; then selected_modes=$((selected_modes + 1)); fi
+          done
+          if [ "$selected_modes" -gt 1 ]; then
             echo "conflicting_diagnostic_modes" >&2
             exit 2
           fi
-          uv run --no-sync python -m scripts.diagnose_ibkr_flex_ledger --preflight
+          preflight_args=(--preflight)
+          if [ "$CONFIGURED_ACCOUNT_COVERAGE_ONLY" = "true" ]; then
+            preflight_args+=(--configured-account-coverage-only)
+          fi
+          uv run --no-sync python -m scripts.diagnose_ibkr_flex_ledger "${preflight_args[@]}"
         env:
+          CONFIGURED_ACCOUNT_COVERAGE_ONLY: ${{ inputs.configured_account_coverage_only }}
           CASH_SOURCE_ONLY: ${{ inputs.cash_source_only }}
           CASHFLOW_SOURCE_ONLY: ${{ inputs.cashflow_source_only }}
           IBKR_FLEX_TOKEN: ${{ secrets.IBKR_FLEX_TOKEN }}
@@ -83,7 +97,9 @@ jobs:
           IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}
       - name: Read the original Flex request only and print fixed status
         run: |
-          if [ "$CASHFLOW_SOURCE_ONLY" = "true" ]; then
+          if [ "$CONFIGURED_ACCOUNT_COVERAGE_ONLY" = "true" ]; then
+            uv run --no-sync python -m scripts.diagnose_ibkr_flex_ledger --configured-account-coverage-read-once
+          elif [ "$CASHFLOW_SOURCE_ONLY" = "true" ]; then
             uv run --no-sync python -m scripts.diagnose_ibkr_flex_ledger --cashflow-read-once
           elif [ "$CASH_SOURCE_ONLY" = "true" ]; then
             uv run --no-sync python -m scripts.diagnose_ibkr_flex_ledger --cash-read-once
@@ -91,6 +107,7 @@ jobs:
             uv run --no-sync python -m scripts.diagnose_ibkr_flex_ledger --read-once
           fi
         env:
+          CONFIGURED_ACCOUNT_COVERAGE_ONLY: ${{ inputs.configured_account_coverage_only }}
           CASH_SOURCE_ONLY: ${{ inputs.cash_source_only }}
           CASHFLOW_SOURCE_ONLY: ${{ inputs.cashflow_source_only }}
           IBKR_FLEX_DIAGNOSTIC_ENABLED: "true"
