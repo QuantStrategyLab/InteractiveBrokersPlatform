@@ -3,6 +3,11 @@ name: Read IBKR pilot serving install identity
 on:
   workflow_dispatch:
     inputs:
+      configuration_reference_only:
+        description: "Only attest the literal configuration Secret reference hash; never access its payload."
+        required: false
+        default: false
+        type: boolean
       runner_gateway_preflight:
         description: "Read the original runner's Gateway configuration and static IAP permission only; no broker connection."
         required: false
@@ -34,6 +39,7 @@ jobs:
       profile: ${{ inputs.profile }}
       source_commit: ${{ inputs.source_commit }}
       runner_gateway_preflight: ${{ inputs.runner_gateway_preflight }}
+      configuration_reference_only: ${{ inputs.configuration_reference_only }}
     secrets:
       DEPLOY_GATE: ${{ vars.ENABLE_GITHUB_CLOUD_RUN_DEPLOY }}
       GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
