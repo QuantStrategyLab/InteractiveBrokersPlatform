@@ -3,6 +3,10 @@ name: Read IBKR pilot serving install identity (protected execution)
 on:
   workflow_call:
     inputs:
+      gateway_tcp_preflight:
+        type: boolean
+        required: false
+        default: false
       configuration_reference_only:
         type: boolean
         required: false
@@ -70,6 +74,9 @@ jobs:
           if [ "${{ inputs.configuration_reference_only }}" = true ] && [ "${{ inputs.runner_gateway_preflight }}" != true ]; then
             echo 'configuration_reference_mode_invalid=true'; exit 1
           fi
+          if [ "${{ inputs.gateway_tcp_preflight }}" = true ] && { [ "${{ inputs.runner_gateway_preflight }}" != true ] || [ "${{ inputs.configuration_reference_only }}" = true ]; }; then
+            echo 'gateway_tcp_mode_invalid=true'; exit 1
+          fi
           uv run --no-sync python -m scripts.diagnose_pilot_serving_install --preflight --bootstrap-identity --receipt "${RUNNER_TEMP}/pilot-serving-install.safe.json"
       - name: Checkout exact lockfile comparison source
         uses: actions/checkout@v6
@@ -90,12 +97,14 @@ jobs:
         if: ${{ !inputs.runner_gateway_preflight }}
         env: *private_context
         run: uv run --no-sync python -m scripts.diagnose_pilot_serving_install --source-dir source --receipt "${RUNNER_TEMP}/pilot-serving-install.safe.json"
-      - name: Read the original runner's Gateway configuration and static access only
+      - name: Read the original runner's Gateway binding and optional direct TCP reachability
         if: inputs.runner_gateway_preflight
         env: *private_context
         run: |
           if [ "${{ inputs.configuration_reference_only }}" = true ]; then
             uv run --no-sync python -m scripts.diagnose_runner_gateway_access --configuration-reference-only --receipt "${RUNNER_TEMP}/runner-gateway-access.safe.json"
+          elif [ "${{ inputs.gateway_tcp_preflight }}" = true ]; then
+            uv run --no-sync python -m scripts.diagnose_runner_gateway_access --direct-tcp --receipt "${RUNNER_TEMP}/runner-gateway-access.safe.json"
           else
             uv run --no-sync python -m scripts.diagnose_runner_gateway_access --receipt "${RUNNER_TEMP}/runner-gateway-access.safe.json"
           fi

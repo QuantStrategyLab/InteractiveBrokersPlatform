@@ -67,7 +67,7 @@ def _read(ctx, run, *, include_group_declarations=False):
     out = {"serving": serving, "traffic": traffic, "target": target, "image": image}
     if include_group_declarations:
         keys = {"ACCOUNT_GROUP", "IB_ACCOUNT_GROUP_CONFIG_JSON", "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME",
-            "IBKR_EXECUTION_BACKEND", "IB_GATEWAY_ZONE"}
+            "IBKR_EXECUTION_BACKEND", "IB_GATEWAY_ZONE", "IB_GATEWAY_PORT"}
         containers = revision.get("spec", {}).get("containers", [])
         if len(containers) != 1 or not isinstance(containers[0].get("env"), list):
             raise pilot.ReleaseError("configuration_incomplete")
