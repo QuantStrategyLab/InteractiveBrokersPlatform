@@ -50,6 +50,10 @@ names, dates, fixed skip reasons, availability flags and opaque hashes. An empty
 listing remains distinct from a read failure. No ingress token, publisher,
 notification, broker request, source adoption or business write is involved.
 An inspected archive is not evidence that its daily row was published.
+The optional `metadata_only` mode lists up to 2,048 report filenames in the
+selected month and reports counts by filename date, without reading financial
+bodies. Filename dates establish archive availability only, not observation
+dates or financial validity. It does not silently truncate an oversized listing.
 
 # Zero-traffic maintenance cash observation
 
