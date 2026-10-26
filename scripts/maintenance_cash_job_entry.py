@@ -7,6 +7,7 @@ import os
 import re
 import asyncio
 from datetime import datetime, timezone
+from decimal import Decimal
 from types import SimpleNamespace
 
 
@@ -17,7 +18,9 @@ def read_account_summary_cash(ib, account_ids, *, timeout_seconds=30,
     The pinned SDK fills accountValues and acctSummary separately. Listen to
     request-scoped callbacks before its cache overwrites duplicate fields, and require
     accountSummaryEnd via the SDK future. All is the API's summary group; rows
-    for other managed accounts are neither buffered nor persisted.
+    for other managed accounts are neither buffered nor persisted. Identical
+    decimal repeats within this request may share one observation; conflicting
+    values remain invalid rather than choosing the first, last or larger value.
     """
     from application.ibkr_cash_observations import capture_cash_observation_rows, build_cash_observations, _decimal_text
     if (not isinstance(account_ids, (tuple, list)) or len(account_ids) != 1
@@ -55,11 +58,22 @@ def read_account_summary_cash(ib, account_ids, *, timeout_seconds=30,
         diagnostics[tag] = dict(usd_rows=len(usd), usd_invalid_values=sum(_decimal_text(row.value) is None for row in usd),
             usd_duplicate_rows=max(0, len(usd) - 1), base_rows=sum(row.currency == "BASE" for row in values),
             other_currency_rows=sum(row.currency not in {"USD", "BASE"} for row in values))
+    observations = {}
+    for row in rows:
+        key = row.account, row.currency, row.tag
+        amount = _decimal_text(row.value)
+        if key not in observations:
+            observations[key] = SimpleNamespace(account=row.account, currency=row.currency, tag=row.tag, value=amount)
+        else:
+            previous = observations[key]
+            if amount is None or previous.value is None or Decimal(amount) != Decimal(previous.value):
+                # Once ambiguous, a later repeat cannot revive this field.
+                previous.value = None
     return dict(source_method="ibkr.reqAccountSummary", account_ids=list(account_ids),
         request_scoped=True, field_diagnostics=diagnostics,
         query_completed=True, snapshot_atomic=False, observed_started_at=started,
         observed_finished_at=finished, broker_cash_observations=build_cash_observations(
-            capture_cash_observation_rows(rows, account_ids=tuple(account_ids)), observed_at=finished))
+            capture_cash_observation_rows(observations.values(), account_ids=tuple(account_ids)), observed_at=finished))
 
 
 def read_native_funding_inputs(ib, account_ids, *, configured_quantity_step, timeout_seconds=10,
