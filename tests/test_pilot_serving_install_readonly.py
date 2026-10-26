@@ -229,10 +229,14 @@ def test_group_declaration_projection_excludes_unrelated_credentials(chain):
     for revision in chain["revisions"]:
         revision["spec"]["containers"][0]["env"].extend([
             {"name": "ACCOUNT_GROUP", "value": "synthetic"},
+            {"name": "IB_GATEWAY_ZONE", "value": "us-central1-a"},
+            {"name": "IBKR_EXECUTION_BACKEND", "value": "gateway"},
             {"name": "TELEGRAM_TOKEN", "value": PRIVATE},
         ])
     observed = reader._read(chain["ctx"], reader.command, include_group_declarations=True)
-    assert observed["group_declarations"] == [{"name": "ACCOUNT_GROUP", "value": "synthetic"}]
+    assert observed["group_declarations"] == [{"name": "ACCOUNT_GROUP", "value": "synthetic"},
+        {"name": "IB_GATEWAY_ZONE", "value": "us-central1-a"},
+        {"name": "IBKR_EXECUTION_BACKEND", "value": "gateway"}]
     assert PRIVATE not in json.dumps(observed)
 
 

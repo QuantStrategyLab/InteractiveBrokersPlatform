@@ -73,12 +73,52 @@ def test_missing_static_permission_stays_distinct_from_a_network_failure():
     assert not out["network_path_verified"]
 
 
-@pytest.mark.parametrize("changes", [dict(ib_client_id=0), dict(ib_client_id=True),
+@pytest.mark.parametrize("changes", [dict(ib_client_id=True),
     dict(account_ids=("U2",)), dict(ib_gateway_mode="paper"), dict(ib_gateway_project_id="bad;project")])
 def test_wrong_account_or_invalid_binding_stops_before_vm_or_iam(changes):
     out, calls, _ = inspect(configured=replace(group(), **changes))
     assert out["reason"] == "gateway_binding_invalid"
     assert not calls
+
+
+@pytest.mark.parametrize("host", ["192.0.2.1", "synthetic.example.invalid"])
+def test_original_direct_host_skips_vm_and_iap_without_claiming_connectivity(host):
+    out, calls, _ = inspect(configured=replace(group(), ib_gateway_project_id=None,
+        ib_gateway_zone=None, ib_gateway_instance_name=host))
+    assert out["status"] == "observed" and out["gateway_binding_verified"]
+    assert out["reason"] == "direct_gateway_declaration_observed"
+    assert out["gateway_address_route"] == "direct" and not calls
+    assert out["iap_permission_observed"] is None
+    assert not out["network_path_verified"] and not out["runtime_ready"]
+    assert host not in json.dumps(out)
+
+
+def test_original_default_project_is_used_for_zoned_instance():
+    out, calls, _ = inspect(configured=replace(group(), ib_gateway_project_id=None))
+    assert out["status"] == "observed"
+    assert "--project=synthetic-project" in calls[0]
+    assert calls[1][3] == "synthetic-project"
+
+
+def test_explicit_project_without_zone_matches_original_source_rejection():
+    out, calls, _ = inspect(configured=replace(group(), ib_gateway_zone=None))
+    assert out["reason"] == "gateway_binding_invalid" and not calls
+    assert out["binding_checks"]["project_zone_consistent"] is False
+
+
+def test_zero_client_id_does_not_block_readonly_metadata_but_is_not_ready_for_isolation():
+    out, calls, _ = inspect(configured=replace(group(), ib_client_id=0))
+    assert out["status"] == "observed" and len(calls) == 3
+    assert out["binding_checks"]["client_id_valid"]
+    assert not out["positive_client_id_verified"] and not out["runtime_ready"]
+
+
+def test_binding_failures_are_reported_independently_without_private_values():
+    out, _, _ = inspect(configured=replace(group(), account_ids=("U2",), ib_client_id=0))
+    assert out["binding_checks"]["account_scope_exact"] is False
+    assert out["binding_checks"]["client_id_valid"] is True
+    assert not out["positive_client_id_verified"]
+    assert "U2" not in json.dumps(out)
 
 
 def test_missing_compute_permission_stops_without_token_or_iap_retry():
@@ -95,7 +135,7 @@ def test_source_drift_overrides_a_successful_static_check():
 
 def test_secret_priority_uses_only_original_selected_source():
     payload = json.dumps({"groups": {"synthetic": {
-        "ib_gateway_instance_name": "synthetic-vm", "account_ids": ["U1"]}}})
+        "ib_gateway_instance_name": "synthetic-vm", "ib_gateway_mode": "live", "account_ids": ["U1"]}}})
     rows = [dict(name="ACCOUNT_GROUP", value="synthetic"),
         dict(name="IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME", value="selected-config"),
         dict(name="IB_ACCOUNT_GROUP_CONFIG_JSON", valueFrom={"secretKeyRef": {"name": "unused-config", "key": "latest"}})]
@@ -108,6 +148,31 @@ def test_secret_priority_uses_only_original_selected_source():
 
     selected = probe.read_group(context(), rows, run)
     assert selected.account_ids == ("U1",) and len(calls) == 1
+
+
+@pytest.mark.parametrize("declared_backend", [None, "gateway"])
+def test_group_reader_applies_original_zone_and_backend_fallbacks(declared_backend):
+    payload = {"groups": {"synthetic": {"ib_gateway_instance_name": "synthetic-vm",
+        "ib_gateway_mode": "live", "execution_backend": declared_backend, "account_ids": ["U1"]}}}
+    rows = [dict(name="ACCOUNT_GROUP", value="synthetic"),
+        dict(name="IB_ACCOUNT_GROUP_CONFIG_JSON", value=json.dumps(payload)),
+        dict(name="IB_GATEWAY_ZONE", value="us-central1-a"),
+        dict(name="IBKR_EXECUTION_BACKEND", value="gateway")]
+    selected = probe.read_group(context(), rows, lambda *a: pytest.fail("no secret read"))
+    assert selected.ib_gateway_zone == "us-central1-a"
+    assert selected.ib_gateway_project_id is None
+    assert selected.execution_backend == "gateway"
+
+
+def test_group_values_take_priority_without_reading_unused_secret_fallbacks():
+    payload = {"groups": {"synthetic": {"ib_gateway_instance_name": "synthetic-vm",
+        "ib_gateway_mode": "live", "ib_gateway_zone": "us-central1-a", "execution_backend": "gateway"}}}
+    rows = [dict(name="ACCOUNT_GROUP", value="synthetic"),
+        dict(name="IB_ACCOUNT_GROUP_CONFIG_JSON", value=json.dumps(payload))]
+    rows += [dict(name=name, valueFrom={"secretKeyRef": {"name": "unused", "key": "latest"}})
+        for name in ("IB_GATEWAY_ZONE", "IBKR_EXECUTION_BACKEND")]
+    selected = probe.read_group(context(), rows, lambda *a: pytest.fail("unused secret fallback"))
+    assert selected.ib_gateway_zone == "us-central1-a" and selected.execution_backend == "gateway"
 
 
 def test_readonly_command_allowlist_rejects_mutations_before_subprocess():
