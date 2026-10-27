@@ -131,7 +131,11 @@ def protected_baseline(before, current):
 def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=request, pause=time.sleep, progress=None):
     out = result() if progress is None else progress
     before = snapshot(ctx, run)
-    pilot.validate_baseline(ctx, before)
+    pilot._no_manual_scaling(before["service"])
+    pilot._verify_ingress_projection(before["service"], before["serving_revision"])
+    actual_target = pilot._runtime_target(before["serving_revision"])
+    if any(actual_target.get(key) != ctx.target.get(key) for key in pilot.IDENTITY_FIELDS):
+        raise pilot.ReleaseError("inventory_serving_mismatch")
     def adapt(args, reason):
         return run(list(args), stage=reason)
     source = serving._read(ctx, adapt, include_group_declarations=True)

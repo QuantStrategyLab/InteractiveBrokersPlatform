@@ -99,6 +99,14 @@ def test_network_observation_requires_exact_restore_and_delete_readbacks(lifecyc
         "restore_dry_run_failed", "deployment_dry_run_failed", "deployment_response_unknown", "restore_response_unknown"]
 
 
+def test_unused_template_can_differ_and_is_restored_without_becoming_probe_input(lifecycle):
+    for state in (lifecycle.before, lifecycle.current):
+        state["service"]["spec"]["template"]["spec"]["containers"][0]["env"][1]["value"] = "synthetic-pending-change"
+    out = lifecycle.execute()
+    assert out["baseline_unchanged"] and out["configuration_restored"] and out["revision_deleted"]
+    assert lifecycle.current["service"]["spec"]["template"]["spec"]["containers"][0]["env"][1]["value"] == "synthetic-pending-change"
+
+
 @pytest.mark.parametrize("stage", ["restore_dry_run_failed", "deployment_dry_run_failed"])
 def test_dry_run_rejection_never_deploys_or_invokes(lifecycle, stage):
     lifecycle.fail = stage
