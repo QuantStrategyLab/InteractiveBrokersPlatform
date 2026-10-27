@@ -44,6 +44,7 @@ from application.runtime_broker_adapters import (
 from application.runtime_composer import build_runtime_composer
 from application.runtime_deadline import (
     RuntimeDeadlineExceeded,
+    classify_runtime_deadline_stage,
     enforce_runtime_deadline,
     recycle_current_process_after_response,
 )
@@ -1927,19 +1928,31 @@ def _handle_dry_run_with_deadline(
                 report_collector=reports,
             )
     except RuntimeDeadlineExceeded as exc:
+        timeout_stage = classify_runtime_deadline_stage(exc)
+        if reports:
+            diagnostics = reports[-1].setdefault("diagnostics", {})
+            if isinstance(diagnostics, dict):
+                diagnostics["timeout_stage"] = timeout_stage
         _persist_dry_run_report_with_grace(reports, timeout_context=True)
+        deadline_event = {
+            "severity": "ERROR",
+            "event": "strategy_cycle_deadline_exceeded",
+            "message": "IBKR strategy dry-run exceeded its application deadline",
+            "service_name": SERVICE_NAME or os.getenv("K_SERVICE"),
+            "strategy_profile": STRATEGY_PROFILE,
+            "timeout_seconds": IBKR_DRY_RUN_DEADLINE_SECONDS,
+            "timeout_stage": timeout_stage,
+            "worker_recycle_required": True,
+            "worker_recycle_scheduled": recycle_on_timeout,
+        }
+        if reports and reports[-1].get("run_id"):
+            deadline_event["run_id"] = reports[-1]["run_id"]
+        trace_id = request.headers.get("X-Cloud-Trace-Context", "").partition("/")[0]
+        if PROJECT_ID and re.fullmatch(r"[0-9a-f]{32}", trace_id):
+            deadline_event["logging.googleapis.com/trace"] = f"projects/{PROJECT_ID}/traces/{trace_id}"
         print(
             json.dumps(
-                {
-                    "severity": "ERROR",
-                    "event": "strategy_cycle_deadline_exceeded",
-                    "message": str(exc),
-                    "service_name": SERVICE_NAME or os.getenv("K_SERVICE"),
-                    "strategy_profile": STRATEGY_PROFILE,
-                    "timeout_seconds": IBKR_DRY_RUN_DEADLINE_SECONDS,
-                    "worker_recycle_required": True,
-                    "worker_recycle_scheduled": recycle_on_timeout,
-                },
+                deadline_event,
                 ensure_ascii=False,
                 separators=(",", ":"),
             ),
