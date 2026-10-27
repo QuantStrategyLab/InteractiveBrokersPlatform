@@ -727,6 +727,27 @@ def test_existing_standard_headers_are_preserved_and_fingerprinted(case, content
     assert before['state_sha256'] != after['state_sha256']
 
 
+@pytest.mark.parametrize('body,accepted', [(None, True), ('', True), ('e30=', True),
+    ('bnVsbA==', False), ('W10=', False), ('eyJmb28iOjF9', False), ('{}', False)])
+def test_existing_probe_body_only_accepts_empty_or_exact_empty_json(case, body, accepted):
+    case['bridge']['httpTarget']['body'] = body
+    if accepted:
+        result = probe.existing_bridge(case['expected'], case['service']['status']['url'],
+            read_json=lambda *_: [deepcopy(case['bridge'])])
+        assert result['httpTarget']['body'] == body
+    else:
+        with pytest.raises(probe.ProbeError, match='scheduler_bridge_binding_unverified'):
+            case['state'](case['expected'])
+
+
+def test_existing_empty_json_body_is_unchanged_and_fingerprinted(case):
+    before, _ = case['state'](case['expected'])
+    case['bridge']['httpTarget']['body'] = 'e30='
+    after, _ = case['state'](case['expected'])
+    assert case['bridge']['httpTarget']['body'] == 'e30='
+    assert before['state_sha256'] != after['state_sha256']
+
+
 @pytest.mark.parametrize('fault,qualified', [(None, True), ('missing_finished', False),
     ('duplicate_started', False), ('last_attempt_changed', False), ('config_changed', False),
     ('pre_attempt_timestamp', False)])

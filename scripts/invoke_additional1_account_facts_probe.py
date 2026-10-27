@@ -110,7 +110,7 @@ def existing_bridge(expected, url, *, read_json=image._json_command):
             or oidc.get("audience") != url or not isinstance(email, str)
             or re.fullmatch(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.gserviceaccount\.com", email) is None
             or target.get("oauthToken")
-            or target.get("body") not in (None, "")
+            or target.get("body") not in (None, "", "e30=")  # Exact base64 {} only.
             or job.get("attemptDeadline") != "180s"):
         raise ProbeError("scheduler_bridge_binding_unverified")
     headers = target.get("headers", {})
