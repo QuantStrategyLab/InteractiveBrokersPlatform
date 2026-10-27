@@ -145,6 +145,16 @@ def protected_baseline(before, current):
         raise pilot.ReleaseError("production_baseline_changed")
 
 
+def probe_configuration(template):
+    config = pilot._configuration(template)
+    annotations = config["metadata"]["annotations"]
+    # Cloud Run omits the enabled (false disabled flag) default in its response.
+    # Normalize only that representation on the probe, never production state.
+    if annotations.get("run.googleapis.com/health-check-disabled") == "false":
+        annotations.pop("run.googleapis.com/health-check-disabled")
+    return config
+
+
 def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=request, pause=time.sleep, progress=None):
     out = result() if progress is None else progress
     before = snapshot(ctx, run)
@@ -170,7 +180,9 @@ def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=requ
     out["restore_dry_run_verified"] = True
     validated = api(service_url + "?dryRun=all", method="PUT", token=token, body=desired, stage="deployment_dry_run_failed")
     actual, expected = pilot._configuration(validated["spec"]["template"]), pilot._configuration(desired["spec"]["template"])
-    if actual != expected:
+    out["deployment_health_check_defaulted"] = (
+        "run.googleapis.com/health-check-disabled" not in actual["metadata"]["annotations"])
+    if probe_configuration(validated["spec"]["template"]) != probe_configuration(desired["spec"]["template"]):
         ac, ec = actual["spec"]["containers"][0], expected["spec"]["containers"][0]
         aa, ea = actual["metadata"]["annotations"], expected["metadata"]["annotations"]
         health = "run.googleapis.com/health-check-disabled"
@@ -209,7 +221,7 @@ def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=requ
             pause(2)
         else:
             raise pilot.ReleaseError("candidate_not_ready")
-        if pilot._configuration(current["service"]["spec"]["template"]) != pilot._configuration(desired["spec"]["template"]):
+        if probe_configuration(current["service"]["spec"]["template"]) != probe_configuration(desired["spec"]["template"]):
             raise pilot.ReleaseError("candidate_configuration_changed")
         out["candidate_ready"] = True
         filter_text = ('resource.type="cloud_run_revision" AND resource.labels.revision_name="' + candidate
@@ -245,7 +257,7 @@ def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=requ
         try:
             current = snapshot(ctx, run)
             protected_baseline(before, current)
-            if pilot._configuration(current["service"]["spec"]["template"]) != pilot._configuration(desired["spec"]["template"]):
+            if probe_configuration(current["service"]["spec"]["template"]) != probe_configuration(desired["spec"]["template"]):
                 raise pilot.ReleaseError("cleanup_concurrent_change")
             backup["metadata"]["resourceVersion"] = current["service"]["metadata"]["resourceVersion"]
             out["restore_attempted"] = True

@@ -16,4 +16,4 @@
 
 前次运行已结束但清理未完成时，可在相同入口同时指定 `isolated_network_preflight=true` 和 `isolated_cleanup_run_id=<前次 run ID>`。该模式不部署、不恢复模板或读取账户组 Secret，只定位该次派生名称，并核准确原镜像、标准库代码摘要、命令、仅 host/port 的环境和 min=0/max=1。只有当前模板、latestCreated/latestReady、全部流量和 tags 均不引用它，且删除前基线再次稳定，才删除这一版本并读取 404。当前模板与其命名的原 revision 是否一致单独报告；它不是保留已证无用临时资源的前置。原执行身份和正常配置不替换。
 
-恢复时比较现役版本的不可变运行配置及镜像、完整模板、流量、IAM、Scheduler 和服务全局设置；不把 revision 的 resourceVersion、条件更新时间及生成的 URL 投影作为业务配置。固定布尔项分别记录这些比较，实际配置或身份变化仍拒绝。若宽范围恢复复核失败，资源清理仍按上面的直接条件独立尝试一次；不重试未知删除结果，也不将资源删除成功写成原配置复核通过。部署启动检查见[官方文档](https://docs.cloud.google.com/run/docs/deploying)。
+恢复时比较现役版本的不可变运行配置及镜像、完整模板、流量、IAM、Scheduler 和服务全局设置；不把 revision 的 resourceVersion、条件更新时间及生成的 URL 投影作为业务配置。固定布尔项分别记录这些比较，实际配置或身份变化仍拒绝。若宽范围恢复复核失败，资源清理仍按上面的直接条件独立尝试一次；不重试未知删除结果，也不将资源删除成功写成原配置复核通过。平台回读会省略表示默认启用的 `health-check-disabled=false`；仅在临时探针比较中将这两种表示等价，显式 true 和所有其他差异仍拒绝，生产基线比较不作此转换。部署启动检查见[官方文档](https://docs.cloud.google.com/run/docs/deploying)。
