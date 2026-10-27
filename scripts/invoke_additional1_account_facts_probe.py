@@ -26,7 +26,7 @@ from scripts import publish_account_facts_from_report as publisher
 
 # The probe, synchronous deadline cleanup and image CMD were reviewed at this
 # exact deployed source. A different source needs a fresh review, not a fallback.
-REVIEWED_SOURCE = "1595957e388a1d29914a13075d210016c8848404"
+REVIEWED_SOURCE = "f9ace60a88b622ec8ffa0d65d22d063d38129ebf"
 CMD = static.REVIEWED_IMAGE_CMD
 FINGERPRINTS = {"serving_revision_sha256", "source_sha", "target_sha256", "state_sha256", "canonical_url_sha256",
                 "source_evidence_sha256"}

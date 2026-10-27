@@ -532,3 +532,30 @@ def test_workflow_native_auth_is_same_identity_and_only_after_prepare():
     assert 'ACCOUNT_FACTS_PROBE_ID_TOKEN: ${{ steps.invocation_auth.outputs.id_token }}' in text[final:]
     assert 'continue-on-error' not in text
     assert 'print-identity-token' not in Path('scripts/invoke_additional1_account_facts_probe.py').read_text()
+
+
+@pytest.mark.parametrize('where', ['revision', 'static_evidence'])
+def test_previous_reviewed_source_is_not_a_second_allowed_source(case, where):
+    previous = '1595957e388a1d29914a13075d210016c8848404'
+    if where == 'revision':
+        case['revision']['metadata']['labels']['commit-sha'] = previous
+        with pytest.raises(probe.ProbeError, match='source_not_reviewed'):
+            case['state'](case['expected'])
+    else:
+        evidence = _static_evidence(case['expected'])
+        evidence['matched_candidate_sha'] = previous
+        with pytest.raises(probe.ProbeError, match='static_source_unverified'):
+            probe.preflight(case['expected'], {}, source_evidence='static_source', state=case['state'],
+                            static_provenance=lambda _: evidence)
+
+
+def test_previous_source_fingerprints_cannot_prepare_native_auth(native_invocation, monkeypatch, capsys):
+    case = native_invocation
+    reviewed = {**case['hashes'], 'source_sha': '1595957e388a1d29914a13075d210016c8848404'}
+    monkeypatch.setenv('ACCOUNT_FACTS_PROBE_REVIEWED_FINGERPRINTS', json.dumps(reviewed))
+    monkeypatch.setattr(probe, 'invoke_once', lambda *_a, **_k: pytest.fail('old source cannot invoke'))
+    assert probe.main(['--prepare-invocation-auth']) == 1
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt['reason'] == 'reviewed_fingerprints_changed'
+    assert receipt['http_attempted'] is False and receipt['http_attempts'] == 0
+    assert not case['output'].exists()
