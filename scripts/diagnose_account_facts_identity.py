@@ -513,7 +513,11 @@ def _source_deploy_receipt(image, *, run_id: str, selected_source: str, digest: 
     if (not isinstance(listing, Mapping) or type(listing.get("total_count")) is not int
         or not isinstance(listing.get("jobs"), list) or listing["total_count"] != len(listing["jobs"])):
         raise publisher._ProjectionError("deployment_job_unverified")
-    jobs = [j for j in listing["jobs"] if isinstance(j, Mapping) and j.get("name") == "Deploy / Sync Cloud Run"]
+    # GitHub prefixes the called job name with the reusable workflow caller's
+    # job name. Admit only the two observed layouts, with the same step/log
+    # provenance checks below; arbitrary suffix matching is not sufficient.
+    deploy_names = {"Deploy / Sync Cloud Run", "Deploy / Sync Cloud Run / Deploy / Sync Cloud Run"}
+    jobs = [j for j in listing["jobs"] if isinstance(j, Mapping) and j.get("name") in deploy_names]
     if len(jobs) != 1:
         raise publisher._ProjectionError("deployment_job_unverified")
     job = jobs[0]
