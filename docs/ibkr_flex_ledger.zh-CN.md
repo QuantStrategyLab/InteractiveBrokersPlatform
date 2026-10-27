@@ -380,3 +380,48 @@ workflow `source_sha`（缺失或不合格时为 null）、总 `status` 与按�
 `report_date` 与此模式互斥。不确定写入结果不重试；输出只含状态、数量、币种和日期。
 网站回执必须确认私有 SQLite 读回成功。日常原发布器会从同一份日报同步日期级流水，
 无需新计划、服务、密钥或权限。
+
+## 原生成交来源只读诊断
+
+现有 `diagnose-ibkr-flex-readonly.yml` 的 `execution_source_only` 默认关闭，
+与其他三种诊断模式互斥。只复用同一 Query、令牌和受保护账户绑定，不更改查询模板。
+需同时提供 `read_once=true`、`execution_source_only=true` 及成对
+`expected_period_from/to`；此模式中日期既用于实际 `SendRequest` 的 `fd/td`，
+也严格校验返回期间，最多 31 天。其他模式中 expected 日期仍只作返回值断言。
+本次截图来源核验的批准窗口是 **2026-10-01 至 2026-10-27**，cashflow 日期输入留空。
+
+对应 CLI 为 `--preflight --execution-source-only`（只检查配置，不请求网络）和
+`--execution-read-once`。实际读取仍要求 `IBKR_FLEX_DIAGNOSTIC_ENABLED=true`；
+原有单目标账户、已批准关联账户、Activity 报告、期间和每行账户/日期保护均保留。
+没有 Trades 或缺少可比较的字段时仅报告已观察到的形状，不证明完整或零成交。
+
+实际副作用是生成一份临时 Flex 报告、消耗服务请求配额，并在 runner 内存中读取 XML；
+不等于完全无副作用。原文、原生 ID、金额和备注仅留在该受保护进程内存；不上传 artifact，
+不写账户配置、网站、云存储或运行状态，不续期券商登录，不调用策略、下单或通知。
+一次运行只 `SendRequest` 一次，先等 1 秒再领取；仅在 1019 时每隔 3 秒领取同一
+reference，最多合计 6 次 `GetStatement`（总计最多 7 次服务请求）。其他错误立即停止，
+不替换句柄、不更换凭据、不扩大窗口。结束后不持久保存句柄；仍 pending、限流、令牌过期、
+身份或期间不符、无效原生日期、坏 XML、超出 8 MiB/10,000 行限制均须停止并评估结果。
+共享并发队列不会保证上一任务的配额已恢复；1018 不自动重试，也不重跑 pending job。
+
+输出为封闭 `ibkr_flex_execution_source.v1`：固定计数、字段存在性、日期分布，以及最多
+32 个经济字段相似组的本次比较哈希。每次在内存中新建 256-bit 随机域，用 HMAC 隔离
+所有涉及原生身份、经济字段或费用的比较；随机域不写输出，不可跨运行关联或据金额字典
+反查。`source_ref` 保留整份报告的 SHA256，不能用它推断单条成交身份。
+不输出原始账号、ID、证券名称、时间、数量、价格、费用或自由文本。
+`fee_comparison` 为 `same`、`different` 或 `unknown`；缺费项或币种不能宣称费用一致。
+原生 ID 重复/冲突、点号后数字不同的前缀族候选、CA/CO 与 orig* 非零信号分别计数，
+相似组另列原生 ID 数、族候选数和显式更正信号数。
+
+`coverage=not_evaluated`、`publication_authority_granted=false` 和
+`correction_resolution=not_applied` 始终保留：相同价量时间不证明重复，前缀族也不证明
+Flex 中的更正关系。缺少 notes/orig* 的行有独立 unknown 计数，不借用 TWS 合同推断。
+这次新生成的报告只能提供新的来源证据，不能冒称它就是旧截图的原报告，也不证明网站已恢复。
+业务成交投影器及 `SHA256(accountId|ibExecID)` 身份规则保持不变。
+
+一手资料：[SendRequest](https://www.interactivebrokers.com/docs/web-api/api-reference/send-request)
+说明生成报告、日期参数和请求频率；[GetStatement](https://www.interactivebrokers.com/docs/web-api/api-reference/get-statement)
+说明原 reference 领取；[Flex 错误码](https://www.ibkrguides.com/complianceportal/flex3error.htm)
+区分 pending、限流与凭据错误；[Flex Trades 字段](https://www.ibkrguides.com/reportingreference/reportguide/tradesfq.htm)
+列出原生执行/原始交易与费用字段。[TWS Execution](https://www.interactivebrokers.com/docs/tws-api/ref/execution)
+描述该 API 的 ID 更正规则，本诊断只将它用作候选线索，不当作 Flex 自动去重合同。

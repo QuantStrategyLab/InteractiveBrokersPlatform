@@ -270,6 +270,7 @@ def diagnose_activity_flex_ledger(
     collect_pending: bool = False,
     cash_report_only: bool = False,
     cashflow_source_only: bool = False,
+    execution_source_only: bool = False,
     report_period: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     """Read one target and return fixed status; bounded collection is opt-in."""
@@ -280,11 +281,12 @@ def diagnose_activity_flex_ledger(
             for a in (*expected, *allowed)) or not allowed or len(set(allowed)) != len(allowed)
             or not set(expected) <= set(allowed) or type(collect_pending) is not bool
             or type(cash_report_only) is not bool or type(cashflow_source_only) is not bool
-            or (cash_report_only and cashflow_source_only)):
+            or type(execution_source_only) is not bool
+            or sum((cash_report_only, cashflow_source_only, execution_source_only)) > 1):
         raise FlexSourceError("IBKR Flex diagnostic account scope is invalid")
     if report_period is not None:
         try:
-            if (not cashflow_source_only or not isinstance(report_period, Mapping)
+            if (not (cashflow_source_only or execution_source_only) or not isinstance(report_period, Mapping)
                     or set(report_period) != {"from", "to"}):
                 raise ValueError
             start, end = (date.fromisoformat(report_period[key]) for key in ("from", "to"))
@@ -293,6 +295,34 @@ def diagnose_activity_flex_ledger(
                 raise ValueError
         except (TypeError, ValueError):
             raise FlexSourceError("IBKR Flex diagnostic period is invalid") from None
+    if execution_source_only:
+        if report_period is None:
+            raise FlexSourceError("IBKR Flex execution diagnostic requires an explicit period")
+        request = request_activity_flex_report(token=token, query_id=query_id, session=session,
+            from_date=report_period["from"], to_date=report_period["to"])
+        # Space every call on this single request; only 1019 permits more reads.
+        time.sleep(1)
+        for attempt in range(6):
+            try:
+                report = collect_activity_flex_xml(request, session=session)
+                break
+            except FlexReportPending as pending:
+                if pending.request != request:
+                    raise FlexSourceError("IBKR Flex pending handle changed") from None
+                if not collect_pending or attempt == 5:
+                    raise
+                time.sleep(3)
+        from application.ibkr_flex_ledger import build_flex_ledger
+        from application.ibkr_flex_executions import diagnose_flex_execution_source
+
+        ledger = build_flex_ledger(report, expected_account_ids=expected,
+            allowed_report_account_ids=allowed_report_account_ids)
+        if any(ledger["period"].get(key) != report_period[key] for key in ("from", "to")):
+            raise FlexSourceError("IBKR Flex diagnostic period mismatch")
+        root = _xml_root(report.content, endpoint="GetStatement")
+        statement = next(s for s in root.findall("./FlexStatements/FlexStatement")
+                         if s.get("accountId", "").strip() == expected[0])
+        return diagnose_flex_execution_source(statement, source_ref=report.content_sha256, period=report_period)
     try:
         if report_period is None:
             ledger = import_activity_flex_ledger(token=token, query_id=query_id,
