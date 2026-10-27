@@ -104,18 +104,22 @@ def _state(expected, *, read_service=identity._read_cloud_run_metadata,
     if source != REVIEWED_SOURCE:
         raise ProbeError("source_not_reviewed")
     template = service.get("spec", {}).get("template", {})
-    for node in (template, revision):
+    for node, concurrency_reason, scale_reason in (
+        (template, "template_concurrency_unverified", "template_max_scale_unverified"),
+        (revision, "revision_concurrency_unverified", "revision_max_scale_unverified"),
+    ):
         if (type(node.get("spec", {}).get("containerConcurrency")) is not int
-                or node["spec"]["containerConcurrency"] != 1
-                or node.get("metadata", {}).get("annotations", {}).get("autoscaling.knative.dev/maxScale") != "1"):
-            raise ProbeError("same_service_serialization_unverified")
+                or node["spec"]["containerConcurrency"] != 1):
+            raise ProbeError(concurrency_reason)
+        if node.get("metadata", {}).get("annotations", {}).get("autoscaling.knative.dev/maxScale") != "1":
+            raise ProbeError(scale_reason)
     # A service-level cap, if present, cannot contradict its revision cap.
     if service.get("metadata", {}).get("annotations", {}).get("run.googleapis.com/maxScale", "1") != "1":
-        raise ProbeError("same_service_serialization_unverified")
+        raise ProbeError("service_max_scale_conflict")
     try:
         commands._no_manual_scaling(service)
     except commands.ReleaseError:
-        raise ProbeError("same_service_serialization_unverified") from None
+        raise ProbeError("manual_scaling_unverified") from None
     containers = template.get("spec", {}).get("containers")
     if not isinstance(containers, list) or len(containers) != 1:
         raise ProbeError("service_template_invalid")

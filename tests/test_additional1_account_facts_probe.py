@@ -292,3 +292,69 @@ def test_configuration_change_during_static_read_stops_before_invocation(case):
     with pytest.raises(probe.ProbeError, match='configuration_changed_during_preflight'):
         probe.preflight(case['expected'], {}, source_evidence='static_source', state=state,
                         static_provenance=lambda _: _static_evidence(case['expected']))
+
+
+@pytest.mark.parametrize('fault,reason', [
+    ('template_concurrency', 'template_concurrency_unverified'),
+    ('revision_concurrency', 'revision_concurrency_unverified'),
+    ('template_maxscale', 'template_max_scale_unverified'),
+    ('revision_maxscale', 'revision_max_scale_unverified'),
+    ('service_cap', 'service_max_scale_conflict'),
+    ('manual_scaling', 'manual_scaling_unverified'),
+])
+def test_real_serialization_failure_has_only_precise_safe_reason(case, monkeypatch, tmp_path, capsys, fault, reason):
+    template, revision, service = case['service']['spec']['template'], case['revision'], case['service']
+    if fault.endswith('concurrency'):
+        node = template if fault.startswith('template') else revision
+        node['spec']['containerConcurrency'] = PRIVATE
+    elif fault.endswith('maxscale'):
+        node = template if fault.startswith('template') else revision
+        node['metadata']['annotations']['autoscaling.knative.dev/maxScale'] = PRIVATE
+    elif fault == 'service_cap':
+        service['metadata']['annotations'] = {'run.googleapis.com/maxScale': PRIVATE}
+    else:
+        service['metadata']['annotations'] = {'run.googleapis.com/scalingMode': PRIVATE}
+    with pytest.raises(probe.ProbeError) as error:
+        case['state'](case['expected'])
+    assert str(error.value) == reason
+    for key, value in dict(GITHUB_REF='refs/heads/main', GITHUB_EVENT_NAME='workflow_dispatch',
+        GITHUB_RUN_ATTEMPT='1', GITHUB_REPOSITORY=probe.identity._SOURCE_REPOSITORY,
+        IBKR_ACCOUNT_FACTS_TARGET='additional-1', RUNNER_TEMP=str(tmp_path),
+        ACCOUNT_FACTS_PROBE_MODE='preflight', ACCOUNT_FACTS_PROBE_REVIEWED_FINGERPRINTS='{}',
+        ACCOUNT_FACTS_PROBE_SOURCE_EVIDENCE='static_source').items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(probe.identity, 'resolve_expected', lambda: case['expected'])
+    original_preflight = probe.preflight
+    def preflight(expected, receipt, **kwargs):
+        return original_preflight(expected, receipt, state=case['state'],
+            static_provenance=lambda *_args, **_kwargs: pytest.fail('must stop before static source'), **kwargs)
+    monkeypatch.setattr(probe, 'preflight', preflight)
+    monkeypatch.setattr(probe, 'invoke_once', lambda *_args, **_kwargs: pytest.fail('must not invoke'))
+    assert probe.main([]) == 1
+    stdout = capsys.readouterr().out
+    receipt = json.loads((tmp_path / 'additional1-probe.safe.json').read_text())
+    assert receipt['status'] == 'blocked' and receipt['reason'] == reason
+    assert receipt['http_attempted'] is False and receipt['http_attempts'] == 0
+    for private in (PRIVATE, 'synthetic-service', 'U00000001', 'https://', 'containerConcurrency', 'maxScale'):
+        assert private not in stdout
+        assert private not in json.dumps(receipt)
+
+
+@pytest.mark.parametrize('node_name', ['template', 'revision'])
+@pytest.mark.parametrize('value', [2, '1', True, None])
+def test_concurrency_non_one_or_non_integer_still_rejected(case, node_name, value):
+    node = case['revision'] if node_name == 'revision' else case['service']['spec']['template']
+    node['spec']['containerConcurrency'] = value
+    with pytest.raises(probe.ProbeError) as error:
+        case['state'](case['expected'])
+    assert str(error.value) == node_name + '_concurrency_unverified'
+
+
+@pytest.mark.parametrize('node_name', ['template', 'revision'])
+@pytest.mark.parametrize('value', [None, 1, '2'])
+def test_missing_or_non_string_one_maxscale_still_rejected(case, node_name, value):
+    node = case['revision'] if node_name == 'revision' else case['service']['spec']['template']
+    node['metadata']['annotations']['autoscaling.knative.dev/maxScale'] = value
+    with pytest.raises(probe.ProbeError) as error:
+        case['state'](case['expected'])
+    assert str(error.value) == node_name + '_max_scale_unverified'
