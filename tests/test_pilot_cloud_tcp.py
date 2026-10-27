@@ -63,6 +63,8 @@ def lifecycle(monkeypatch):
             reply = copy.deepcopy(body)
             if stage == "deployment_dry_run_failed" and state.fail == "canonical_health_flag":
                 reply["spec"]["template"]["metadata"]["annotations"].pop("run.googleapis.com/health-check-disabled")
+            if stage == "deployment_dry_run_failed" and state.fail == "disabled_health_flag":
+                reply["spec"]["template"]["metadata"]["annotations"]["run.googleapis.com/health-check-disabled"] = "true"
             return reply
         if method == "PUT":
             if body["spec"]["template"]["metadata"]["name"] == SERVING:
@@ -75,6 +77,8 @@ def lifecycle(monkeypatch):
                     state.current["serving_revision"]["metadata"]["resourceVersion"] = "controller-change"
             else:
                 service = copy.deepcopy(body)
+                if state.fail == "canonical_health_flag":
+                    service["spec"]["template"]["metadata"]["annotations"].pop("run.googleapis.com/health-check-disabled")
                 candidate = body["spec"]["template"]["metadata"]["name"]
                 service["metadata"]["resourceVersion"] = "2"
                 service["status"] = {**copy.deepcopy(before["service"]["status"]),
@@ -175,15 +179,23 @@ def test_measurement_read_failure_still_restores_and_deletes_without_iam_change(
 
 
 def test_dry_run_mismatch_records_only_fixed_field_comparisons_and_never_deploys(lifecycle):
-    lifecycle.fail = "canonical_health_flag"
+    lifecycle.fail = "disabled_health_flag"
     with pytest.raises(pilot.ReleaseError, match="deployment_dry_run_mismatch"):
         lifecycle.execute()
     checks = lifecycle.progress["deployment_template_checks"]
     assert not checks["annotations_equal"] and checks["non_health_annotations_equal"]
-    assert checks["health_flag_absent"] and not checks["health_flag_enabled"]
+    assert not checks["health_flag_absent"] and not checks["health_flag_enabled"]
     assert checks["container_equal"] and checks["other_spec_equal"]
     assert all(type(value) is bool for value in checks.values())
     assert not lifecycle.progress["deployment_attempted"] and lifecycle.current == lifecycle.before
+
+
+def test_server_default_health_check_passes_without_changing_production_comparison(lifecycle):
+    lifecycle.fail = "canonical_health_flag"
+    out = lifecycle.execute()
+    assert out["deployment_health_check_defaulted"] and out["deployment_dry_run_verified"]
+    assert out["candidate_ready"] and out["measurement_read"] and out["revision_deleted"]
+    assert out["baseline_unchanged"] and out["configuration_restored"]
 
 
 def test_unknown_deployment_is_not_retried_and_only_exact_owned_template_is_restored(lifecycle):
