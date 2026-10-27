@@ -3,6 +3,10 @@ name: Deploy IBKR pilot without traffic (protected execution)
 on:
   workflow_call:
     inputs:
+      isolated_network_preflight:
+        type: boolean
+        required: false
+        default: false
       profile:
         type: string
         required: true
@@ -33,7 +37,7 @@ jobs:
   release:
     if: github.ref == 'refs/heads/main' && github.run_attempt == 1 && github.event_name == 'workflow_dispatch' && github.repository == 'QuantStrategyLab/InteractiveBrokersPlatform'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: ${{ inputs.isolated_network_preflight && 15 || 25 }}
     env:
       CLOUDSDK_CORE_DISABLE_FILE_LOGGING: "true"
       CLOUDSDK_CORE_LOG_HTTP: "false"
@@ -75,8 +79,13 @@ jobs:
         with:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
       - name: Build and publish one image without traffic
+        if: ${{ !inputs.isolated_network_preflight }}
         env: *private_context
         run: uv run --no-sync python -m scripts.deploy_pilot_no_traffic --source-dir source --receipt "${RUNNER_TEMP}/pilot-release.safe.json"
+      - name: Test the original cloud network without application or broker code
+        if: inputs.isolated_network_preflight
+        env: *private_context
+        run: uv run --no-sync python -m scripts.run_pilot_cloud_tcp --receipt "${RUNNER_TEMP}/pilot-release.safe.json"
       - name: Retain the fixed safe receipt only
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
