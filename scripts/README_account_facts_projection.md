@@ -211,7 +211,8 @@ A changed source requires review of the actual path before updating that list.
    OIDC identity and configuration hashes in `additional1-probe.safe.json`.
    Preflight uniquely matches the existing Scheduler to the verified canonical
    service URL plus `/probe`: enabled, POST, audience equal to the canonical URL,
-   Google service-account OIDC identity, no custom body/headers (the standard
+   Google service-account OIDC identity, an empty body or exact empty JSON object
+   `{}` (base64-encoded by Scheduler), and no custom headers (the standard
    `Content-Type: application/json` or `application/octet-stream` and default
    Scheduler User-Agent are allowed unchanged), 180-second
    deadline, zero retry count and zero maximum retry duration. Its complete
