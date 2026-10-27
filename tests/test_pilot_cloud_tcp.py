@@ -29,7 +29,8 @@ def lifecycle(monkeypatch):
     group = AccountGroupConfig(execution_backend="gateway", ib_gateway_instance_name="192.0.2.1",
         ib_gateway_mode="live", ib_client_id=7, ib_gateway_port=4001, account_ids=tuple(ctx.target["account_selector"]))
     state = SimpleNamespace(current=copy.deepcopy(before), before=before, ctx=ctx, group=group,
-        calls=[], fail=None, drift=False, log_reads=0)
+        calls=[], fail=None, drift=False, log_reads=0, progress=cloud.result(),
+        ready_pointer_stays_serving=False, controller_revision_change=False)
     monkeypatch.setattr(cloud.serving, "_read", lambda *a, **k: {"group_declarations": []})
     monkeypatch.setattr(cloud.gateway, "read_group", lambda *a, **k: state.group)
 
@@ -37,6 +38,10 @@ def lifecycle(monkeypatch):
         return copy.deepcopy(state.current)
 
     def run(args, **kwargs):
+        if args[:4] == ["gcloud", "run", "revisions", "describe"]:
+            revision = copy.deepcopy(state.current["service"]["spec"]["template"])
+            revision["status"] = {"conditions": [{"type": "Ready", "status": "True"}]}
+            return json.dumps(revision)
         if args[:3] == ["gcloud", "logging", "read"]:
             state.log_reads += 1
             if state.fail == "measurement_log_unavailable":
@@ -63,13 +68,16 @@ def lifecycle(monkeypatch):
                 state.current["service"]["metadata"]["resourceVersion"] = "3"
                 if state.fail == "latest_pointer_retained":
                     state.current["service"]["status"]["latestCreatedRevisionName"] = previous_latest
+                if state.controller_revision_change:
+                    state.current["serving_revision"]["metadata"]["resourceVersion"] = "controller-change"
             else:
                 service = copy.deepcopy(body)
                 candidate = body["spec"]["template"]["metadata"]["name"]
                 service["metadata"]["resourceVersion"] = "2"
                 service["status"] = {**copy.deepcopy(before["service"]["status"]),
-                    "latestCreatedRevisionName": candidate, "latestReadyRevisionName": candidate,
-                    "traffic": [dict(row, **({"url": "https://synthetic-tag.run.app"} if row.get("tag") else {}))
+                    "latestCreatedRevisionName": candidate,
+                    "latestReadyRevisionName": SERVING if state.ready_pointer_stays_serving else candidate,
+                    "traffic": [dict(row, **({"url": "https://" + row["tag"] + "---synthetic.run.app"} if row.get("tag") else {}))
                         for row in body["spec"]["traffic"]]}
                 state.current["service"] = service
                 state.current["traffic"], _ = pilot._traffic(service)
@@ -82,7 +90,7 @@ def lifecycle(monkeypatch):
         return {}
 
     state.execute = lambda: cloud.execute(ctx, "123", run=run, snapshot=snapshot, api=api,
-        pause=lambda _: None)
+        pause=lambda _: None, progress=state.progress)
     return state
 
 
@@ -107,12 +115,37 @@ def test_unused_template_can_differ_and_is_restored_without_becoming_probe_input
     assert lifecycle.current["service"]["spec"]["template"]["spec"]["containers"][0]["env"][1]["value"] == "synthetic-pending-change"
 
 
+def test_ready_exact_revision_is_usable_even_when_service_latest_ready_stays_old(lifecycle):
+    lifecycle.ready_pointer_stays_serving = True
+    out = lifecycle.execute()
+    assert out["candidate_ready"]
+    assert out["measurement_read"] and out["revision_deleted"]
+
+
+def test_controller_revision_version_is_diagnostic_not_runtime_configuration(lifecycle):
+    lifecycle.controller_revision_change = True
+    out = lifecycle.execute()
+    assert out["baseline_unchanged"] and out["configuration_restored"] and out["revision_deleted"]
+    assert all(out["restoration_checks"].values())
+
+
+def test_generated_url_annotation_does_not_hide_ingress_or_financial_configuration_changes(lifecycle):
+    current = copy.deepcopy(lifecycle.before)
+    current["service"]["metadata"]["annotations"]["run.googleapis.com/urls"] = '["https://synthetic-tag.run.app"]'
+    assert all(cloud.baseline_checks(lifecycle.before, current).values())
+    current["service"]["metadata"]["annotations"]["run.googleapis.com/ingress"] = "all"
+    assert not cloud.baseline_checks(lifecycle.before, current)["global_configuration_equal"]
+    current = copy.deepcopy(lifecycle.before)
+    current["serving_revision"]["spec"]["containers"][0]["env"][1]["value"] = "changed-private-field"
+    assert not cloud.baseline_checks(lifecycle.before, current)["serving_configuration_equal"]
+
+
 @pytest.mark.parametrize("stage", ["restore_dry_run_failed", "deployment_dry_run_failed"])
 def test_dry_run_rejection_never_deploys_or_invokes(lifecycle, stage):
     lifecycle.fail = stage
     with pytest.raises(cloud.CloudError, match=stage):
         lifecycle.execute()
-    assert all("dry_run" in stage for _, stage in lifecycle.calls)
+    assert all("dry_run" in stage for method, stage in lifecycle.calls if method == "PUT")
     assert lifecycle.current == lifecycle.before
 
 
@@ -155,13 +188,40 @@ def test_restored_template_is_not_enough_to_delete_latest_revision(lifecycle):
     assert not out["latest_revision_released"] and not out["revision_delete_attempted"]
 
 
+def test_failed_restore_comparison_can_clean_resource_without_claiming_restoration(lifecycle, monkeypatch):
+    check = cloud.protected_baseline
+    def compare(before, current):
+        if current["service"]["metadata"]["resourceVersion"] == "3":
+            raise pilot.ReleaseError("production_baseline_changed")
+        check(before, current)
+    def cleanup(*args, progress, **kwargs):
+        progress.update(revision_delete_attempted=True, revision_deleted=True, baseline_unchanged=True)
+    monkeypatch.setattr(cloud, "protected_baseline", compare)
+    monkeypatch.setattr(cloud, "cleanup_existing", cleanup)
+    out = lifecycle.execute()
+    assert out["cleanup_stage"] == "restore_readback_mismatch" and out["status"] == "unavailable"
+    assert not out["configuration_restored"] and not out["baseline_unchanged"]
+    assert out["revision_deleted"] and out["resource_cleanup_baseline_unchanged"]
+
+
+def test_unknown_delete_is_never_retried_by_resource_cleanup(lifecycle, monkeypatch):
+    lifecycle.fail = "revision_delete_unknown"
+    def cleanup(*args, **kwargs):
+        pytest.fail("an attempted delete must not be retried")
+    monkeypatch.setattr(cloud, "cleanup_existing", cleanup)
+    out = lifecycle.execute()
+    assert out["revision_delete_attempted"] and not out["revision_deleted"]
+    assert out["cleanup_stage"] == "revision_delete_unknown"
+    assert sum(method == "DELETE" for method, _ in lifecycle.calls) == 1
+
+
 @pytest.mark.parametrize("changes", [dict(ib_client_id=0), dict(account_ids=("U2",)),
     dict(ib_gateway_zone="us-central1-a"), dict(ib_gateway_port=0)])
 def test_invalid_binding_stops_before_cloud_mutation(lifecycle, changes):
     lifecycle.group = replace(lifecycle.group, **changes)
     with pytest.raises(pilot.ReleaseError, match="direct_binding_unverified"):
         lifecycle.execute()
-    assert not lifecycle.calls
+    assert not any(method in ("PUT", "DELETE") for method, _ in lifecycle.calls)
 
 
 def test_probe_template_has_no_account_environment_or_application_entrypoint(lifecycle):
@@ -169,6 +229,7 @@ def test_probe_template_has_no_account_environment_or_application_entrypoint(lif
     template = body["spec"]["template"]
     assert template["metadata"]["annotations"]["autoscaling.knative.dev/minScale"] == "0"
     assert template["metadata"]["annotations"]["autoscaling.knative.dev/maxScale"] == "1"
+    assert template["metadata"]["annotations"]["run.googleapis.com/health-check-disabled"] == "false"
     assert template["spec"]["serviceAccountName"] == "synthetic-runtime"
     container = template["spec"]["containers"][0]
     assert container["command"] == ["/usr/local/bin/python"]
@@ -179,11 +240,19 @@ def test_probe_template_has_no_account_environment_or_application_entrypoint(lif
     assert all(not row.get("latestRevision") for row in body["spec"]["traffic"])
 
 
+def test_probe_explicitly_enables_deployment_startup_check_without_changing_original(lifecycle):
+    source = lifecycle.before["serving_revision"]["metadata"]["annotations"]
+    source["run.googleapis.com/health-check-disabled"] = "true"
+    body, _, _ = cloud.prepared(lifecycle.ctx, lifecycle.before, lifecycle.group, "123")
+    assert body["spec"]["template"]["metadata"]["annotations"]["run.googleapis.com/health-check-disabled"] == "false"
+    assert source["run.googleapis.com/health-check-disabled"] == "true"
+
+
 def test_dynamic_latest_traffic_is_rejected_before_deployment(lifecycle):
     lifecycle.current["service"]["spec"]["traffic"] = [{"latestRevision": True, "percent": 100}]
     with pytest.raises(pilot.ReleaseError, match="latest_traffic_restore_unverified"):
         lifecycle.execute()
-    assert not lifecycle.calls
+    assert not any(method in ("PUT", "DELETE") for method, _ in lifecycle.calls)
 
 
 def test_probe_contains_stdlib_imports_and_no_application_or_file_writes():
