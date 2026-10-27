@@ -313,12 +313,12 @@ def diagnose_activity_flex_ledger(
                     raise
                 time.sleep(3)
         from application.ibkr_flex_ledger import build_flex_ledger
-        from application.ibkr_flex_executions import diagnose_flex_execution_source
+        from application.ibkr_flex_executions import FlexExecutionsError, diagnose_flex_execution_source
 
         ledger = build_flex_ledger(report, expected_account_ids=expected,
             allowed_report_account_ids=allowed_report_account_ids)
         if any(ledger["period"].get(key) != report_period[key] for key in ("from", "to")):
-            raise FlexSourceError("IBKR Flex diagnostic period mismatch")
+            raise FlexExecutionsError("execution_source_period_mismatch")
         root = _xml_root(report.content, endpoint="GetStatement")
         statement = next(s for s in root.findall("./FlexStatements/FlexStatement")
                          if s.get("accountId", "").strip() == expected[0])

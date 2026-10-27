@@ -260,3 +260,93 @@ def test_fee_comparison_preserves_all_native_decimal_digits():
     result = diagnostic(trade(ibCommission="-123456789012.123456789012345678"),
                         trade(ibExecID="another.id", ibCommission="-123456789012.123456789012345679"))
     assert result["economic_similarity_groups"][0]["fee_comparison"] == "different"
+
+
+@pytest.mark.parametrize("endpoint,code", [("SendRequest", "1014"), ("GetStatement", "1012"), ("GetStatement", "1018")])
+def test_cli_retains_safe_permanent_provider_error_without_retries(monkeypatch, capsys, endpoint, code):
+    configure(monkeypatch)
+    monkeypatch.setattr(source.time, "sleep", lambda _: None)
+    error = f"<FlexStatementResponse><Status>Fail</Status><ErrorCode>{code}</ErrorCode><ErrorMessage>{TOKEN}/{REFERENCE}/{ACCOUNT}/private-body</ErrorMessage></FlexStatementResponse>".encode()
+    session = Session(error) if endpoint == "SendRequest" else Session(SEND, error)
+    def diagnose(**kwargs):
+        return source.diagnose_activity_flex_ledger(session=session, **kwargs)
+    monkeypatch.setattr(cli, "diagnose_activity_flex_ledger", diagnose)
+    assert cli.main(("--execution-read-once",)) == 1
+    output = capsys.readouterr().out
+    result = json.loads(output)
+    assert result["missing"] == ["flex_import_failed"]
+    assert result["source_endpoint"] == endpoint
+    assert result["source_failure_kind"] == "provider"
+    assert result["provider_error_code"] == code
+    assert result["failure_stage"] == ("send_request" if endpoint == "SendRequest" else "get_statement")
+    assert len(session.calls) == (1 if endpoint == "SendRequest" else 2)
+    for private in (TOKEN, REFERENCE, ACCOUNT, "private-body", "FlexSourceError"):
+        assert private not in output
+
+
+def test_safe_error_projection_rejects_malicious_fields_and_types():
+    private = "private-token/amount/account"
+    output = cli._safe_source_failure({"source_endpoint": private, "source_failure_kind": private,
+        "provider_error_code": private, "http_status": True, "reported_account_count": True,
+        "unknown_account_count": -1, "target_accounts_present": private, "nested_account_mismatch": 1,
+        "failure_stage": private, "private-key": private, "raw_xml": private})
+    assert output == {}
+    assert cli._safe_source_failure({"source_endpoint": "GetStatement", "source_failure_kind": []}) == {
+        "source_endpoint": "GetStatement"}
+    assert cli._safe_source_failure(None) == {}
+    assert cli._safe_source_failure({"source_endpoint": "GetStatement", "source_failure_kind": "scope",
+        "reported_account_count": 4, "target_accounts_present": False, "nested_account_mismatch": True,
+        "raw_xml": private}) == {"source_endpoint": "GetStatement", "source_failure_kind": "scope",
+        "reported_account_count": 4, "target_accounts_present": False, "nested_account_mismatch": True,
+        "failure_stage": "verify_report"}
+    assert cli._safe_source_failure({"source_endpoint": "SendRequest", "source_failure_kind": "http",
+        "http_status": 503}) == {"source_endpoint": "SendRequest", "source_failure_kind": "http",
+        "http_status": 503, "failure_stage": "send_request"}
+
+
+@pytest.mark.parametrize("code", ["execution_source_period_invalid", "execution_source_rows_unsupported",
+    "execution_source_record_limit", "execution_source_account_mismatch", "execution_source_date_invalid",
+    "execution_source_period_mismatch"])
+def test_cli_keeps_only_six_literal_execution_errors(monkeypatch, capsys, code):
+    from application.ibkr_flex_executions import FlexExecutionsError
+    configure(monkeypatch)
+    def fail(**_):
+        raise FlexExecutionsError(code)
+    monkeypatch.setattr(cli, "diagnose_activity_flex_ledger", fail)
+    assert cli.main(("--execution-read-once",)) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["missing"] == [code]
+    assert result["failure_stage"] == ("verify_period" if code == "execution_source_period_mismatch" else "execution_shape")
+
+
+@pytest.mark.parametrize("kind", ["runtime", "execution", "source"])
+def test_cli_unknown_errors_never_print_exception_text_type_or_handle(monkeypatch, capsys, kind):
+    from application.ibkr_flex_executions import FlexExecutionsError
+    configure(monkeypatch)
+    def fail(**_):
+        text = f"private-error:{TOKEN}:{REFERENCE}:{ACCOUNT}"
+        if kind == "source":
+            error = source.FlexSourceError(text)
+            error.safe_diagnostic = {"unexpected-field": text, "failure_stage": text, "provider_error_code": text}
+            raise error
+        raise (FlexExecutionsError(text) if kind == "execution" else RuntimeError(text))
+    monkeypatch.setattr(cli, "diagnose_activity_flex_ledger", fail)
+    assert cli.main(("--execution-read-once",)) == 1
+    output = capsys.readouterr().out
+    result = json.loads(output)
+    assert result["missing"] == ["flex_import_failed"] and "failure_stage" not in result
+    for private in (TOKEN, REFERENCE, ACCOUNT, "private-error", "RuntimeError", "FlexExecutionsError", "FlexSourceError"):
+        assert private not in output
+
+
+def test_cli_retains_actual_report_period_rejection_stage(monkeypatch, capsys):
+    configure(monkeypatch)
+    monkeypatch.setattr(source.time, "sleep", lambda _: None)
+    session = Session(SEND, report(trade()).replace(b'toDate="20261027"', b'toDate="20261026"'))
+    monkeypatch.setattr(cli, "diagnose_activity_flex_ledger",
+                        lambda **kwargs: source.diagnose_activity_flex_ledger(session=session, **kwargs))
+    assert cli.main(("--execution-read-once",)) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["missing"] == ["execution_source_period_mismatch"]
+    assert result["failure_stage"] == "verify_period"
+    assert len(session.calls) == 2
