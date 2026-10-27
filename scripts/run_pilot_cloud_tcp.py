@@ -176,6 +176,8 @@ def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=requ
         health = "run.googleapis.com/health-check-disabled"
         out["deployment_template_checks"] = dict(
             labels_equal=actual["metadata"]["labels"] == expected["metadata"]["labels"],
+            non_build_labels_equal={k: v for k, v in actual["metadata"]["labels"].items() if k not in pilot.BUILD_LABELS} ==
+                {k: v for k, v in expected["metadata"]["labels"].items() if k not in pilot.BUILD_LABELS},
             annotations_equal=aa == ea,
             non_health_annotations_equal={k: v for k, v in aa.items() if k != health} == {k: v for k, v in ea.items() if k != health},
             health_flag_enabled=aa.get(health) == "false", health_flag_absent=health not in aa,
