@@ -49,6 +49,14 @@ jobs:
       CLOUDSDK_CORE_LOG_HTTP: 'false'
       CLOUDSDK_CORE_DISABLE_PROMPTS: '1'
     steps:
+      - name: Require infrastructure variables
+        env:
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$IBKR_DEPLOY_SERVICE_ACCOUNT" ]; then
+            echo '::error::IBKR_DEPLOY_SERVICE_ACCOUNT is required' >&2
+            exit 2
+          fi
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.sha }}
@@ -58,14 +66,6 @@ jobs:
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
       - name: Install frozen native configuration reader dependencies
         run: uv sync --frozen --no-dev
-      - name: Require the existing identity
-        env:
-          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
-        run: |
-          if [ -z "$IBKR_DEPLOY_SERVICE_ACCOUNT" ]; then
-            echo 'status=blocked reason=existing_identity_unavailable'
-            exit 2
-          fi
       - name: Authenticate with the original protected recovery identity
         uses: google-github-actions/auth@v3
         with:
