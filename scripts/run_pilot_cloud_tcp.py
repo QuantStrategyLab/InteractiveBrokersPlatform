@@ -248,6 +248,81 @@ def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=requ
     return out
 
 
+def cleanup_existing(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=request, progress=None):
+    """Remove only an owned, unused, non-latest probe; never deploy or restore."""
+    out = result() if progress is None else progress
+    out["schema_version"] = "ibkr.cloud_tcp_cleanup.v1"
+    out.update(baseline_scope="cleanup_before_after", traffic_restored=None,
+        configuration_check_scope="current_template_vs_named_existing_revision", configuration_restored=None)
+    before = snapshot(ctx, run)
+    target = pilot._runtime_target(before["serving_revision"])
+    if any(target.get(key) != ctx.target.get(key) for key in pilot.IDENTITY_FIELDS):
+        raise pilot.ReleaseError("inventory_serving_mismatch")
+    candidate = ctx.service + "-p" + hashlib.sha256(run_id.encode()).hexdigest()[:8]
+    revision = pilot._json(run(["gcloud", "run", "revisions", "describe", candidate,
+        f"--project={ctx.project}", f"--region={ctx.region}", "--format=json"], stage="cleanup_revision_unavailable"))
+    base, container = identity.immutable_image(revision)
+    code_hash = hashlib.sha256(Path(__file__).with_name("pilot_cloud_tcp_server.py").read_bytes()).hexdigest()
+    args = container.get("args", [])
+    annotations = revision.get("metadata", {}).get("annotations", {})
+    if (revision.get("metadata", {}).get("name") != candidate or not base.endswith("@" + BASE)
+            or container.get("command") != ["/usr/local/bin/python"] or len(args) != 4
+            or args[:3] != ["-I", "-S", "-c"] or hashlib.sha256(args[3].encode()).hexdigest() != code_hash
+            or {row.get("name") for row in container.get("env", [])} != {"PILOT_TCP_HOST", "PILOT_TCP_PORT"}
+            or annotations.get("autoscaling.knative.dev/minScale") not in (None, "0")
+            or annotations.get("autoscaling.knative.dev/maxScale") != "1"):
+        raise pilot.ReleaseError("cleanup_ownership_unverified")
+    status = before["service"].get("status", {})
+    template = before["service"]["spec"]["template"]
+    if (any(row["revision"] == candidate for row in before["traffic"])
+            or template.get("metadata", {}).get("name") == candidate
+            or candidate in (status.get("latestCreatedRevisionName"), status.get("latestReadyRevisionName"))):
+        raise pilot.ReleaseError("cleanup_revision_still_referenced")
+    out.update(binding_verified=True, probe_code_sha256=code_hash, latest_revision_released=True,
+        source_stable=True, stage="owned_unused_revision_verified")
+    # Inspect restoration separately; a comparison failure must not retain an
+    # otherwise proven unused probe. No original financial configuration is emitted.
+    name = template.get("metadata", {}).get("name")
+    if isinstance(name, str) and pilot.NAME.fullmatch(name):
+        try:
+            original = pilot._json(run(["gcloud", "run", "revisions", "describe", name,
+                f"--project={ctx.project}", f"--region={ctx.region}", "--format=json"], stage="restored_revision_unavailable"))
+            actual, expected = pilot._configuration(template), pilot._configuration(original)
+            ac, ec = actual["spec"]["containers"][0], expected["spec"]["containers"][0]
+            out["restored_template_checks"] = dict(metadata_equal=actual["metadata"] == expected["metadata"],
+                spec_equal=actual["spec"] == expected["spec"], env_equal=ac.get("env") == ec.get("env"),
+                image_equal=ac.get("image") == ec.get("image"))
+            out["configuration_restored"] = actual == expected
+        except Exception:
+            out["restored_template_checks"] = None
+    token = run(["gcloud", "auth", "print-access-token", "--quiet"], stage="original_identity_unavailable").strip()
+    url = (f"https://{ctx.region}-run.googleapis.com/apis/serving.knative.dev/v1/namespaces/{ctx.project}"
+        + "/revisions/" + candidate)
+    # Recheck the direct deletion conditions after reads, before the one mutation.
+    fresh = snapshot(ctx, run)
+    pilot.unchanged(before, fresh)
+    if (pilot._configuration(before["service"]["spec"]["template"]) != pilot._configuration(fresh["service"]["spec"]["template"])
+            or fresh["service"]["spec"]["template"].get("metadata", {}).get("name") == candidate
+            or candidate in (fresh["service"].get("status", {}).get("latestCreatedRevisionName"),
+                fresh["service"].get("status", {}).get("latestReadyRevisionName"))):
+        raise pilot.ReleaseError("cleanup_revision_still_referenced")
+    out["revision_delete_attempted"] = True
+    api(url, method="DELETE", token=token, stage="revision_delete_unknown")
+    try:
+        api(url, method="GET", token=token, stage="revision_delete_readback")
+    except CloudError as error:
+        if error.http_status != 404:
+            raise
+        out["revision_deleted"] = True
+    if not out["revision_deleted"]:
+        raise pilot.ReleaseError("revision_delete_unverified")
+    after = snapshot(ctx, run)
+    pilot.unchanged(before, after)
+    out.update(status="observed", stage="owned_revision_deleted", baseline_unchanged=True,
+        traffic_unchanged=True)
+    return out
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--receipt", type=Path, required=True)
@@ -255,7 +330,13 @@ def main(argv=None):
     out = result()
     try:
         ctx = pilot.context(os.environ)
-        out = execute(ctx, os.environ["GITHUB_RUN_ID"], progress=out)
+        cleanup_id = os.environ.get("PILOT_CLEANUP_RUN_ID", "")
+        if cleanup_id:
+            if not cleanup_id.isdigit() or int(cleanup_id) <= 0 or cleanup_id == os.environ["GITHUB_RUN_ID"]:
+                raise pilot.ReleaseError("cleanup_run_id_invalid")
+            out = cleanup_existing(ctx, cleanup_id, progress=out)
+        else:
+            out = execute(ctx, os.environ["GITHUB_RUN_ID"], progress=out)
     except CloudError as error:
         out.update(stage=str(error), cloud_http_status=error.http_status)
     except pilot.ReleaseError as error:
