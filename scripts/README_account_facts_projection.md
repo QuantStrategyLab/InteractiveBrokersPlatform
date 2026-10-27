@@ -12,6 +12,15 @@ The workflow publisher is disabled by default. A manual run must select the gene
 
 All private target mapping is supplied by protected Secrets rather than public workflow values: `IBKR_ACCOUNT_FACTS_REPORT_PREFIX`, `IBKR_ACCOUNT_FACTS_TARGET_ID`, `IBKR_ACCOUNT_FACTS_PROJECT_ID`, `IBKR_ACCOUNT_FACTS_SERVICE_NAME`, `IBKR_ACCOUNT_FACTS_RUNTIME_REVISION`, `IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE`, `IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON`, and `IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR`. `IBKR_ACCOUNT_FACTS_SYNC_TOKEN` remains the dedicated publisher credential; `IBKR_ACCOUNT_FACTS_SYNC_URL` remains an exact-match protected variable. Missing or malformed mapping, an absent account-facts observation, stale observation, or any metadata mismatch stops without POST.
 
+The existing publisher job explicitly enables optional positions for `primary-live`
+and `additional-1` through `additional-3`. It forwards only `stocks_only` rows
+already accepted by the same report projector, including optional native average
+cost; it makes no extra broker read. This scope does not establish a complete
+account or all-asset inventory. Missing or invalid positions remain omitted, and
+an empty list requires the existing explicit completeness evidence rather than
+being inferred from missing fields. All source, identity and freshness guards
+still apply independently of this transport opt-in.
+
 Publishing requires the exact configured sync endpoint and dedicated `secrets.IBKR_ACCOUNT_FACTS_SYNC_TOKEN`. It makes one HTTPS POST attempt without redirects or retries, and prints fixed status/reason codes only. The publisher reports only the transport/storage result; daily automatic refresh is accepted only after a later natural runtime report carries a newer original `account_facts.observed_at`. Replaying an unchanged report is not evidence of an automatic refresh. This publisher does not use the legacy execution-evidence token.
 
 The existing read-only `diagnose_account_facts_identity.py` also reports `account_facts_stages` from the same in-memory report. Its original projection, mismatch fields, protected revision expectation and CLI exit gate remain authoritative and unchanged. A revision mismatch still rejects the report. The additional stages do not substitute a report revision into that expectation, construct a publishable history record, make another cloud read, or publish anything.
