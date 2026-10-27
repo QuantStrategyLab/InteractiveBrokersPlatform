@@ -19,6 +19,45 @@ class RuntimeDeadlineExceeded(BaseException):
     """
 
 
+# Ordered from the most specific blocking operation to its enclosing phase.
+# Only fixed labels leave the traceback; never serialize frames or exceptions.
+_DEADLINE_STAGES = (
+    ("contract_qualification", {("ib_insync.ib", "qualifyContracts")}),
+    ("execution_state_write", {
+        ("quant_platform_kit.common.execution_state", "record_marker"),
+        ("quant_platform_kit.common.execution_state", "claim_marker"),
+    }),
+    ("execution_dedup_read", {
+        ("quant_platform_kit.common.execution_state", "has_marker"),
+        ("quant_platform_kit.common.execution_state", "has_prior_execution_report"),
+    }),
+    ("market_quote", {("application.execution_service", "get_market_prices")}),
+    ("historical_price_fallback", {("strategy_runtime", "_build_historical_close_map")}),
+    ("historical_data", {
+        ("application.runtime_strategy_adapters", "get_historical_close"),
+        ("application.runtime_strategy_adapters", "get_historical_candles"),
+    }),
+    ("portfolio_snapshot", {("application.ibkr_portfolio", "fetch_portfolio_snapshot")}),
+    ("broker_connection", {("application.runtime_broker_adapters", "connect_ib")}),
+    ("strategy_evaluation", {("strategy_runtime", "evaluate")}),
+)
+
+
+def classify_runtime_deadline_stage(exc: BaseException) -> str:
+    """Identify an observed enclosing operation, or keep the stage unknown."""
+    if not isinstance(exc, RuntimeDeadlineExceeded):
+        return "unknown"
+    observed = set()
+    frame = exc.__traceback__
+    while frame is not None:
+        observed.add((frame.tb_frame.f_globals.get("__name__"), frame.tb_frame.f_code.co_name))
+        frame = frame.tb_next
+    for stage, functions in _DEADLINE_STAGES:
+        if observed.intersection(functions):
+            return stage
+    return "unknown"
+
+
 @contextlib.contextmanager
 def enforce_runtime_deadline(seconds: int, *, operation: str) -> Iterator[None]:
     """Interrupt main-thread work on POSIX before Cloud Run kills the worker."""
