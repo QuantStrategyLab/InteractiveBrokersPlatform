@@ -43,6 +43,7 @@ from application.runtime_broker_adapters import (
 from application.runtime_composer import build_runtime_composer
 from application.runtime_deadline import (
     RuntimeDeadlineExceeded,
+    classify_runtime_deadline_qualification_caller,
     classify_runtime_deadline_stage,
     enforce_runtime_deadline,
     recycle_current_process_after_response,
@@ -1884,10 +1885,12 @@ def _handle_dry_run_with_deadline(
             )
     except RuntimeDeadlineExceeded as exc:
         timeout_stage = classify_runtime_deadline_stage(exc)
+        qualification_caller = classify_runtime_deadline_qualification_caller(exc)
         if reports:
             diagnostics = reports[-1].setdefault("diagnostics", {})
             if isinstance(diagnostics, dict):
                 diagnostics["timeout_stage"] = timeout_stage
+                diagnostics["timeout_qualification_caller"] = qualification_caller
         _persist_dry_run_report_with_grace(reports, timeout_context=True)
         deadline_event = {
             "severity": "ERROR",
@@ -1897,6 +1900,7 @@ def _handle_dry_run_with_deadline(
             "strategy_profile": STRATEGY_PROFILE,
             "timeout_seconds": IBKR_DRY_RUN_DEADLINE_SECONDS,
             "timeout_stage": timeout_stage,
+            "timeout_qualification_caller": qualification_caller,
             "worker_recycle_required": True,
             "worker_recycle_scheduled": recycle_on_timeout,
         }

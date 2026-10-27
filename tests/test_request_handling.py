@@ -288,15 +288,17 @@ def test_handle_dry_run_returns_service_unavailable_before_platform_timeout(stra
 
 
 @pytest.mark.parametrize("trace_header", ["a" * 32 + "/1;o=1", "SYNTHETIC_PRIVATE_HEADER"])
+@pytest.mark.parametrize("stage,caller", [("market_quote", "unknown"), ("contract_qualification", "quote")])
 def test_handle_dry_run_deadline_from_strategy_persists_once_and_recycles(
-    strategy_module, monkeypatch, capsys, trace_header,
+    strategy_module, monkeypatch, capsys, trace_header, stage, caller,
 ):
     observed = {"persist_calls": 0, "recycles": 0}
 
     monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace(run_id="run-001"))
     report = {"status": "pending", "run_id": "run-001"}
     monkeypatch.setattr(strategy_module, "build_execution_report", lambda *_args, **_kwargs: report)
-    monkeypatch.setattr(strategy_module, "classify_runtime_deadline_stage", lambda _exc: "market_quote")
+    monkeypatch.setattr(strategy_module, "classify_runtime_deadline_stage", lambda _exc: stage)
+    monkeypatch.setattr(strategy_module, "classify_runtime_deadline_qualification_caller", lambda _exc: caller)
     monkeypatch.setattr(strategy_module, "PROJECT_ID", "synthetic-project")
     monkeypatch.setattr(strategy_module, "is_market_open_now", lambda **_kwargs: True)
     monkeypatch.setattr(strategy_module, "load_strategy_plugin_signals", lambda: ((), None))
@@ -329,11 +331,13 @@ def test_handle_dry_run_deadline_from_strategy_persists_once_and_recycles(
     assert body == "Error"
     assert observed["persist_calls"] == 1
     assert observed["recycles"] == 1
-    assert report["diagnostics"]["timeout_stage"] == "market_quote"
+    assert report["diagnostics"]["timeout_stage"] == stage
+    assert report["diagnostics"]["timeout_qualification_caller"] == caller
     output = capsys.readouterr().out
     events = [json.loads(line) for line in output.splitlines() if line.startswith('{"severity"')]
     event = next(item for item in events if item.get("event") == "strategy_cycle_deadline_exceeded")
-    assert event["timeout_stage"] == "market_quote"
+    assert event["timeout_stage"] == stage
+    assert event["timeout_qualification_caller"] == caller
     assert event["run_id"] == "run-001"
     if trace_header.startswith("a" * 32):
         assert event["logging.googleapis.com/trace"] == "projects/synthetic-project/traces/" + "a" * 32
