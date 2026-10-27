@@ -12,11 +12,11 @@ from typing import Any
 
 from application.account_facts_target_config import account_selector, parse_additional_target_configs
 from application.ibkr_flex_source import (
-    CONFIGURED_COVERAGE_SECTIONS, CONFIGURED_COVERAGE_SLOTS, FlexReportPending,
+    CONFIGURED_COVERAGE_SECTIONS, CONFIGURED_COVERAGE_SLOTS, FlexReportPending, FlexSourceError,
     diagnose_activity_flex_ledger, diagnose_configured_flex_coverage,
 )
 from application.ibkr_flex_ledger import CASH_REPORT_MISSING_CODES
-from application.ibkr_flex_executions import EXECUTION_SOURCE_FIELDS
+from application.ibkr_flex_executions import EXECUTION_SOURCE_FIELDS, FlexExecutionsError
 
 
 _SCHEMA_VERSION = "ibkr_flex_diagnostic.v1"
@@ -436,6 +436,40 @@ def _validated_execution_report(value: object) -> dict[str, Any]:
             "omitted_similarity_group_count": omitted}
 
 
+def _safe_source_failure(value: object) -> dict[str, Any]:
+    """Project existing structured errors only; never serialize an exception."""
+    if not isinstance(value, dict):
+        return {}
+    result = {}
+    endpoint = value.get("source_endpoint")
+    kind = value.get("source_failure_kind")
+    if isinstance(endpoint, str) and endpoint in {"SendRequest", "GetStatement"}:
+        result["source_endpoint"] = endpoint
+    if isinstance(kind, str) and kind in {"http", "transport", "xml", "provider", "size", "scope", "format"}:
+        result["source_failure_kind"] = kind
+    code, status = value.get("provider_error_code"), value.get("http_status")
+    if isinstance(code, str) and re.fullmatch(r"1[0-9]{3}", code):
+        result["provider_error_code"] = code
+    if type(status) is int and 100 <= status <= 599:
+        result["http_status"] = status
+    for key in ("reported_account_count", "reported_unique_account_count", "target_statement_count",
+                "target_period_count", "unknown_account_count"):
+        number = value.get(key)
+        if type(number) is int and 0 <= number <= 8 * 1024 * 1024:
+            result[key] = number
+    for key in ("target_accounts_present", "nested_account_mismatch"):
+        if type(value.get(key)) is bool:
+            result[key] = value[key]
+    endpoint, kind = result.get("source_endpoint"), result.get("source_failure_kind")
+    if endpoint == "SendRequest":
+        result["failure_stage"] = "send_request"
+    elif endpoint == "GetStatement" and kind in {"scope", "format"}:
+        result["failure_stage"] = "verify_report"
+    elif endpoint == "GetStatement" and kind in {"http", "transport", "xml", "provider", "size"}:
+        result["failure_stage"] = "get_statement"
+    return result
+
+
 def main(argv: Sequence[str] = ()) -> int:
     args = tuple(argv)
     coverage = args in (("--configured-account-coverage-read-once",),
@@ -538,6 +572,20 @@ def main(argv: Sequence[str] = ()) -> int:
         report = _empty_report(status="pending", missing=["flex_generation_pending"])
         print(json.dumps(report, sort_keys=True))
         return 1
+    except FlexSourceError as error:
+        report = _empty_report(status="error", missing=["flex_import_failed"])
+        report.update(_safe_source_failure(error.safe_diagnostic))
+    except FlexExecutionsError as error:
+        # Only these literal codes belong to this pure diagnostic. No str(error),
+        # traceback, class name or native value may enter the public receipt.
+        code = error.args[0] if len(error.args) == 1 else None
+        allowed = {"execution_source_period_invalid", "execution_source_rows_unsupported",
+                   "execution_source_record_limit", "execution_source_account_mismatch",
+                   "execution_source_date_invalid", "execution_source_period_mismatch"}
+        report = _empty_report(status="error", missing=["flex_import_failed"])
+        if type(code) is str and code in allowed:
+            report.update(missing=[code], failure_stage="verify_period" if code == "execution_source_period_mismatch"
+                          else "execution_shape")
     except Exception:
         # Never print exception text: SDK/request exceptions may carry query
         # URLs, account identifiers, amounts or broker return values.
