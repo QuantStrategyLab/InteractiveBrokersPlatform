@@ -142,7 +142,7 @@ def test_http_is_once_no_maintenance_header_and_unknown_outcome_is_not_retried(o
             if outcome in {'redirect', 'error'}:
                 raise HTTPError(request.full_url, 302 if outcome == 'redirect' else 500, PRIVATE, {}, BytesIO(PRIVATE.encode()))
             return Response()
-    probe.invoke_once('https://synthetic.run.app', receipt, run=lambda *_args, **_kwargs: PRIVATE,
+    probe.invoke_once('https://synthetic.run.app', receipt, token=PRIVATE,
         opener=Client(), record=lambda: records.append(deepcopy(receipt)))
     assert len(calls) == 1
     assert receipt['http_attempts'] == 1
@@ -203,12 +203,12 @@ def test_invalid_dispatch_stops_before_reading_private_configuration(monkeypatch
         probe.context('preflight', {})
 
 
-def test_token_failure_stops_without_http_or_secret_error_output():
-    def fail(*_args, **_kwargs):
-        raise RuntimeError(PRIVATE)
+@pytest.mark.parametrize('token', [None, '', 'contains whitespace', 'newline\n', 'control\x00'])
+def test_token_failure_stops_without_http_or_secret_error_output(token):
     receipt = {}
     with pytest.raises(probe.ProbeError, match='existing_invocation_identity_unavailable') as error:
-        probe.invoke_once('https://synthetic.run.app', receipt, run=fail)
+        probe.invoke_once('https://synthetic.run.app', receipt, token=token,
+                          opener=type('Forbidden', (), {'open': lambda *_a, **_k: pytest.fail('must not send HTTP')})())
     assert str(error.value) == 'existing_invocation_identity_unavailable'
     assert not receipt
 
@@ -388,3 +388,147 @@ def test_larger_service_cap_keeps_revision_and_manual_guards(case, fault, reason
     with pytest.raises(probe.ProbeError) as error:
         case['state'](case['expected'])
     assert str(error.value) == reason
+
+
+@pytest.fixture
+def native_invocation(case, monkeypatch, tmp_path):
+    hashes, _ = case['state'](case['expected'])
+    hashes['source_evidence_sha256'] = probe.sha('static_source')
+    for key, value in dict(GITHUB_REF='refs/heads/main', GITHUB_EVENT_NAME='workflow_dispatch',
+        GITHUB_RUN_ATTEMPT='1', GITHUB_REPOSITORY=probe.identity._SOURCE_REPOSITORY,
+        IBKR_ACCOUNT_FACTS_TARGET='additional-1', RUNNER_TEMP=str(tmp_path),
+        GITHUB_OUTPUT=str(tmp_path / 'step-output'), ACCOUNT_FACTS_PROBE_MODE='invoke',
+        ACCOUNT_FACTS_PROBE_SOURCE_EVIDENCE='static_source',
+        ACCOUNT_FACTS_PROBE_REVIEWED_FINGERPRINTS=json.dumps(hashes)).items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv('ACCOUNT_FACTS_PROBE_ID_TOKEN', raising=False)
+    monkeypatch.setattr(probe.identity, 'resolve_expected', lambda: case['expected'])
+    original_preflight = probe.preflight
+    calls = []
+    def preflight(expected, receipt, **kwargs):
+        calls.append('full_preflight')
+        return original_preflight(expected, receipt, state=case['state'],
+            static_provenance=lambda _: _static_evidence(expected), **kwargs)
+    monkeypatch.setattr(probe, 'preflight', preflight)
+    case.update(hashes=hashes, output=tmp_path / 'step-output',
+                receipt=tmp_path / 'additional1-probe.safe.json', preflight_calls=calls)
+    return case
+
+
+def test_prepare_auth_exports_masked_audience_only_after_full_exact_preflight(native_invocation, monkeypatch, capsys):
+    case = native_invocation
+    monkeypatch.setattr(probe, 'invoke_once', lambda *_a, **_k: pytest.fail('prepare cannot invoke'))
+    original_get = probe.os.environ.get
+    def get(key, *args):
+        assert key != 'ACCOUNT_FACTS_PROBE_ID_TOKEN', 'prepare must not read an invocation token'
+        return original_get(key, *args)
+    monkeypatch.setattr(probe.os.environ, 'get', get)
+    assert probe.main(['--prepare-invocation-auth']) == 0
+    stdout = capsys.readouterr().out.splitlines()
+    audience = 'https://synthetic-service-abc-uc.a.run.app'
+    assert stdout[0] == '::add-mask::' + audience
+    assert case['output'].read_text() == 'invocation_audience=' + audience + '\n'
+    receipt = json.loads(case['receipt'].read_text())
+    assert receipt['status'] == 'invocation_auth_prepared'
+    assert receipt['fingerprints'] == case['hashes'] and all(receipt['checks'].values())
+    assert receipt['http_attempted'] is False and receipt['http_attempts'] == 0
+    assert audience not in json.dumps(receipt)
+    assert case['preflight_calls'] == ['full_preflight']
+
+
+@pytest.mark.parametrize('phase', ['prepare', 'invoke'])
+def test_changed_fingerprints_stop_before_audience_or_token_read(native_invocation, monkeypatch, capsys, phase):
+    case = native_invocation
+    case['service']['metadata']['annotations'] = {'run.googleapis.com/maxScale': '10'}
+    monkeypatch.setattr(probe, 'invoke_once', lambda *_a, **_k: pytest.fail('must not invoke'))
+    original_get = probe.os.environ.get
+    def get(key, *args):
+        assert key != 'ACCOUNT_FACTS_PROBE_ID_TOKEN', 'changed fingerprints must stop before token read'
+        return original_get(key, *args)
+    monkeypatch.setattr(probe.os.environ, 'get', get)
+    assert probe.main(['--prepare-invocation-auth'] if phase == 'prepare' else []) == 1
+    assert json.loads(capsys.readouterr().out)['reason'] == 'reviewed_fingerprints_changed'
+    assert not case['output'].exists()
+    assert json.loads(case['receipt'].read_text())['http_attempted'] is False
+
+
+def test_normal_preflight_does_not_prepare_audience_or_read_native_token(native_invocation, monkeypatch, capsys):
+    case = native_invocation
+    monkeypatch.setenv('ACCOUNT_FACTS_PROBE_MODE', 'preflight')
+    monkeypatch.setenv('ACCOUNT_FACTS_PROBE_REVIEWED_FINGERPRINTS', '{}')
+    original_get = probe.os.environ.get
+    def get(key, *args):
+        assert key != 'ACCOUNT_FACTS_PROBE_ID_TOKEN'
+        return original_get(key, *args)
+    monkeypatch.setattr(probe.os.environ, 'get', get)
+    assert probe.main([]) == 0
+    assert json.loads(capsys.readouterr().out)['status'] == 'preflight_verified'
+    assert not case['output'].exists()
+    assert probe.main(['--prepare-invocation-auth']) == 1
+    assert json.loads(capsys.readouterr().out)['reason'] == 'invocation_auth_requires_invoke'
+
+
+def test_native_auth_missing_stops_at_zero_http_after_reverification(native_invocation, capsys):
+    case = native_invocation
+    assert probe.main([]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output['reason'] == 'existing_invocation_identity_unavailable'
+    assert output['http_attempted'] is False and output['http_attempts'] == 0
+    assert case['preflight_calls'] == ['full_preflight']
+
+
+def test_native_id_token_is_only_in_one_http_header_after_reverification(native_invocation, monkeypatch, capsys):
+    case, requests = native_invocation, []
+    assert probe.main(['--prepare-invocation-auth']) == 0
+    capsys.readouterr()
+    monkeypatch.setenv('ACCOUNT_FACTS_PROBE_ID_TOKEN', PRIVATE)
+    class Response:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def read(self, _): return b'Probe OK'
+    class Client:
+        def open(self, request, **kwargs):
+            requests.append(request)
+            assert request.get_header('Authorization') == 'Bearer ' + PRIVATE
+            assert json.loads(case['receipt'].read_text())['http_attempted'] is True
+            return Response()
+    original_invoke = probe.invoke_once
+    monkeypatch.setattr(probe, 'invoke_once', lambda *args, **kwargs:
+                        original_invoke(*args, **kwargs, opener=Client()))
+    assert probe.main([]) == 0
+    stdout = capsys.readouterr().out
+    assert len(requests) == 1 and case['preflight_calls'] == ['full_preflight', 'full_preflight']
+    assert PRIVATE not in stdout + case['receipt'].read_text() + case['output'].read_text()
+    receipt = json.loads(case['receipt'].read_text())
+    assert receipt['http_attempted'] is True and receipt['http_attempts'] == 1
+    assert receipt['facts_verified'] is False and receipt['published'] is False
+
+
+@pytest.mark.parametrize('url', ['https://synthetic.run.app\nINJECT=value', 'https://synthetic.run.app\r',
+    'https://synthetic.run.app\x00'])
+def test_prepare_cannot_inject_private_workflow_command_or_output(tmp_path, monkeypatch, capsys, url):
+    output = tmp_path / 'step-output'
+    monkeypatch.setenv('GITHUB_OUTPUT', str(output))
+    with pytest.raises(probe.ProbeError, match='canonical_url_invalid'):
+        probe.prepare_invocation_auth(url, {})
+    assert not output.exists() and capsys.readouterr().out == ''
+
+
+def test_workflow_native_auth_is_same_identity_and_only_after_prepare():
+    text = Path('.github/workflows/additional1-account-facts-probe.yml').read_text()
+    prepared = text.index('id: prepare_invocation_auth')
+    native = text.index('id: invocation_auth')
+    final = text.index('Reverify reviewed fingerprints and invoke once')
+    assert prepared < native < final
+    native_step = text[native:final]
+    assert "if: ${{ inputs.mode == 'invoke' }}" in text[prepared:native]
+    assert 'uses: google-github-actions/auth@v3' in native_step
+    assert 'workload_identity_provider: ${{ secrets.ACCOUNT_FACTS_RECOVERY_WIF_PROVIDER }}' in native_step
+    assert 'service_account: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}' in native_step
+    assert 'token_format: id_token' in native_step
+    assert 'id_token_audience: ${{ steps.prepare_invocation_auth.outputs.invocation_audience }}' in native_step
+    assert 'create_credentials_file: false' in native_step and 'export_environment_variables: false' in native_step
+    assert 'ACCOUNT_FACTS_PROBE_ID_TOKEN: ${{ steps.invocation_auth.outputs.id_token }}' in text[final:]
+    assert 'continue-on-error' not in text
+    assert 'print-identity-token' not in Path('scripts/invoke_additional1_account_facts_probe.py').read_text()
