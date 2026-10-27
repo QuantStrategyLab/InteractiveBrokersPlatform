@@ -101,7 +101,7 @@ def prepared(ctx, before, group, run_id):
     for key in (pilot.INGRESS_ANNOTATION,):
         template["metadata"]["annotations"].pop(key, None)
     template["metadata"]["annotations"].update({"autoscaling.knative.dev/minScale": "0",
-        "autoscaling.knative.dev/maxScale": "1"})
+        "autoscaling.knative.dev/maxScale": "1", "run.googleapis.com/health-check-disabled": "false"})
     spec = template["spec"]
     if spec.get("volumes") or len(spec.get("containers", [])) != 1:
         raise pilot.ReleaseError("container_isolation_unverified")
@@ -118,13 +118,28 @@ def prepared(ctx, before, group, run_id):
     return out, candidate, hashlib.sha256(code.encode()).hexdigest()
 
 
+def global_configuration(service):
+    metadata = pilot._metadata(service)
+    # Cloud Run generates this URL projection; routing is compared separately.
+    metadata["annotations"].pop("run.googleapis.com/urls", None)
+    return metadata
+
+
+def baseline_checks(before, current):
+    traffic = current["traffic"]
+    return dict(serving_equal=before["serving"] == current["serving"],
+        serving_configuration_equal=pilot._configuration(before["serving_revision"]) == pilot._configuration(current["serving_revision"]),
+        serving_image_equal=identity.immutable_image(before["serving_revision"])[0] == identity.immutable_image(current["serving_revision"])[0],
+        iam_equal=before["iam"] == current["iam"], scheduler_equal=before["scheduler"] == current["scheduler"],
+        traffic_equal=traffic == before["traffic"],
+        service_spec_equal={k: v for k, v in before["service"]["spec"].items() if k not in ("template", "traffic")} ==
+            {k: v for k, v in current["service"]["spec"].items() if k not in ("template", "traffic")},
+        global_configuration_equal=global_configuration(before["service"]) == global_configuration(current["service"]))
+
+
 def protected_baseline(before, current):
-    if any(before[key] != current[key] for key in ("serving", "serving_revision", "iam", "scheduler")):
+    if not all(baseline_checks(before, current).values()):
         raise pilot.ReleaseError("production_baseline_changed")
-    if current["traffic"] != before["traffic"]:
-        raise pilot.ReleaseError("production_traffic_changed")
-    if pilot._metadata(before["service"]) != pilot._metadata(current["service"]):
-        raise pilot.ReleaseError("global_configuration_changed")
 
 
 def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=request, pause=time.sleep, progress=None):
@@ -155,7 +170,9 @@ def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=requ
         raise pilot.ReleaseError("deployment_dry_run_mismatch")
     out["deployment_dry_run_verified"] = True
     fresh = snapshot(ctx, run)
-    pilot.unchanged(before, fresh)
+    protected_baseline(before, fresh)
+    if pilot._configuration(before["service"]["spec"]["template"]) != pilot._configuration(fresh["service"]["spec"]["template"]):
+        raise pilot.ReleaseError("production_baseline_changed")
     if before["service"]["metadata"].get("resourceVersion") != fresh["service"]["metadata"].get("resourceVersion"):
         raise pilot.ReleaseError("production_baseline_changed")
     out["source_stable"] = True
@@ -166,7 +183,11 @@ def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=requ
         for _ in range(20):
             current = snapshot(ctx, run)
             protected_baseline(before, current)
-            if current["service"].get("status", {}).get("latestReadyRevisionName") == candidate:
+            revision = pilot._json(run(["gcloud", "run", "revisions", "describe", candidate,
+                f"--project={ctx.project}", f"--region={ctx.region}", "--format=json"], stage="candidate_read_unavailable"))
+            if revision.get("metadata", {}).get("name") != candidate:
+                raise pilot.ReleaseError("candidate_identity_unverified")
+            if pilot._ready(revision):
                 break
             pause(2)
         else:
@@ -215,7 +236,8 @@ def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=requ
             for _ in range(20):
                 restored_state = snapshot(ctx, run)
                 try:
-                    pilot.unchanged(before, restored_state)
+                    out["restoration_checks"] = baseline_checks(before, restored_state)
+                    protected_baseline(before, restored_state)
                     if pilot._configuration(restored_state["service"]["spec"]["template"]) != pilot._configuration(before["service"]["spec"]["template"]):
                         raise pilot.ReleaseError("restore_readback_mismatch")
                     out.update(configuration_restored=True, traffic_restored=True, baseline_unchanged=True)
@@ -245,6 +267,17 @@ def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=requ
             out.update(status="unavailable", cleanup_stage=str(error))
         except Exception:
             out.update(status="unavailable", cleanup_stage="cleanup_unverified")
+        if out["restore_attempted"] and not out["revision_delete_attempted"]:
+            recovery = result()
+            try:
+                cleanup_existing(ctx, run_id, run=run, snapshot=snapshot, api=api, progress=recovery)
+            except pilot.ReleaseError as error:
+                out["resource_cleanup_stage"] = str(error)
+            except Exception:
+                out["resource_cleanup_stage"] = "unverified"
+            out["revision_delete_attempted"] = recovery["revision_delete_attempted"]
+            out["revision_deleted"] = recovery["revision_deleted"]
+            out["resource_cleanup_baseline_unchanged"] = recovery["baseline_unchanged"]
     return out
 
 
@@ -266,6 +299,7 @@ def cleanup_existing(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot,
     args = container.get("args", [])
     annotations = revision.get("metadata", {}).get("annotations", {})
     if (revision.get("metadata", {}).get("name") != candidate or not base.endswith("@" + BASE)
+            or revision.get("metadata", {}).get("deletionTimestamp")
             or container.get("command") != ["/usr/local/bin/python"] or len(args) != 4
             or args[:3] != ["-I", "-S", "-c"] or hashlib.sha256(args[3].encode()).hexdigest() != code_hash
             or {row.get("name") for row in container.get("env", [])} != {"PILOT_TCP_HOST", "PILOT_TCP_PORT"}
@@ -282,7 +316,7 @@ def cleanup_existing(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot,
         source_stable=True, stage="owned_unused_revision_verified")
     # Inspect restoration separately; a comparison failure must not retain an
     # otherwise proven unused probe. No original financial configuration is emitted.
-    name = template.get("metadata", {}).get("name")
+    name = template.get("metadata", {}).get("name") or status.get("latestCreatedRevisionName")
     if isinstance(name, str) and pilot.NAME.fullmatch(name):
         try:
             original = pilot._json(run(["gcloud", "run", "revisions", "describe", name,
