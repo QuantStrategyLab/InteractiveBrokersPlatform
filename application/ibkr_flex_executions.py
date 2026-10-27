@@ -7,6 +7,9 @@ Missing/ambiguous rows invalidate only this projection, not native account TWR.
 from __future__ import annotations
 
 import hashlib
+import hmac
+import json
+import secrets
 import re
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime, timezone
@@ -92,6 +95,131 @@ def _correction(row: ElementTree.Element) -> bool:
         if value and not (re.fullmatch(r"0+(?:\.0+)?", value) or value == "0000-00-00"):
             return True
     return False
+
+
+# Closed diagnostic schema: raw IDs, amounts and notes never leave this helper.
+EXECUTION_SOURCE_FIELDS = ("ibExecID", "tradeID", "dateTime", "ibCommission", "ibCommissionCurrency",
+                           "taxes", "notes", *_ORIGINAL_FIELDS)
+
+
+def diagnose_flex_execution_source(
+    statement: ElementTree.Element, *, source_ref: str, period: Mapping[str, str],
+) -> dict[str, Any]:
+    """Inspect native evidence only; never resolve corrections or change records.
+
+    Every comparison digest has a fresh private 256-bit domain, discarded on
+    return. It cannot be correlated with a different run or brute-forced from
+    public low-entropy amounts. A matching economic tuple is not an identity.
+    """
+    start, end = _day(period.get("from")), _day(period.get("to"))
+    if (not start or not end or start > end or (date.fromisoformat(end) - date.fromisoformat(start)).days > 30
+            or not isinstance(source_ref, str) or not _HASH.fullmatch(source_ref)):
+        raise FlexExecutionsError("execution_source_period_invalid")
+    sections = statement.findall("Trades")
+    if len(sections) > 1 or any(child.tag != "Trade" for section in sections for child in section):
+        raise FlexExecutionsError("execution_source_rows_unsupported")
+    rows = sections[0].findall("Trade") if sections else []
+    if len(rows) > 10000:
+        raise FlexExecutionsError("execution_source_record_limit")
+    nonce = secrets.token_bytes(32)
+
+    def digest(domain, values):
+        body = json.dumps([domain, values], ensure_ascii=True, separators=(",", ":")).encode()
+        return hmac.new(nonce, body, hashlib.sha256).hexdigest()
+
+    def canonical(number):
+        # Strip textual trailing zeros without Decimal.normalize() context rounding.
+        return "0" if Decimal(number) == 0 else number.rstrip("0").rstrip(".") if "." in number else number
+
+    counts = {key: 0 for key in ("execution_rows", "other_level_rows", "missing_identity_rows",
+        "economic_fields_unknown_rows", "explicit_correction_signal_rows", "notes_correction_signal_rows",
+        "original_reference_signal_rows", "notes_unknown_rows",
+        "original_fields_unknown_rows", "repeated_identity_groups", "identity_conflict_groups",
+        "suffix_family_candidate_groups")}
+    fields = {key: {"present": 0, "nonempty": 0} for key in EXECUTION_SOURCE_FIELDS}
+    dates, identities, families, economics = {}, {}, {}, {}
+    account = statement.get("accountId", "").strip()
+    for row in rows:
+        if row.get("accountId") != account:
+            raise FlexExecutionsError("execution_source_account_mismatch")
+        day = _day(row.get("tradeDate"))
+        if not day or not start <= day <= end:
+            raise FlexExecutionsError("execution_source_date_invalid")
+        dates[day] = dates.get(day, 0) + 1
+        for key, coverage in fields.items():
+            coverage["present"] += key in row.attrib
+            coverage["nonempty"] += bool(row.get(key, "").strip())
+        if row.get("levelOfDetail") != "EXECUTION":
+            counts["other_level_rows"] += 1
+            continue
+        counts["execution_rows"] += 1
+        counts["notes_unknown_rows"] += "notes" not in row.attrib
+        counts["original_fields_unknown_rows"] += any(key not in row.attrib for key in _ORIGINAL_FIELDS)
+        counts["explicit_correction_signal_rows"] += _correction(row)
+        counts["notes_correction_signal_rows"] += bool(
+            {token.casefold() for token in re.split(r"[,;\s]+", row.get("notes", ""))} & {"ca", "co"})
+        counts["original_reference_signal_rows"] += any(
+            value and not (re.fullmatch(r"0+(?:\.0+)?", value) or value == "0000-00-00")
+            for key in _ORIGINAL_FIELDS for value in [row.get(key, "").strip()])
+        native_id = row.get("ibExecID")
+        if not _text(native_id, 256):
+            counts["missing_identity_rows"] += 1
+            native_id = None
+        else:
+            # Include all native attributes in the private conflict comparison.
+            identities.setdefault(native_id, set()).add(digest("native-row", sorted(row.attrib.items())))
+            prefix, separator, suffix = native_id.rpartition(".")
+            if separator and prefix and suffix.isdigit():
+                families.setdefault(prefix, set()).add(native_id)
+        quantity, price = _number(row.get("quantity")), _number(row.get("tradePrice"))
+        raw_time = row.get("dateTime")
+        local_time = _local_time(raw_time, day) if raw_time else None
+        if (quantity is None or price is None or local_time is None
+                or row.get("buySell") not in {"BUY", "SELL"}
+                or not _text(row.get("symbol"), 64) or not _text(row.get("assetCategory"), 16)
+                or not _CURRENCY.fullmatch(row.get("currency", ""))):
+            counts["economic_fields_unknown_rows"] += 1
+            continue
+        # Decimal normalization only compares native values; never sums or exports them.
+        economic = digest("economic", [day, local_time, row.get("symbol"), row.get("assetCategory"),
+            row.get("buySell"), canonical(quantity), canonical(price), row.get("currency")])
+        group = economics.setdefault(economic, {"date": day, "rows": 0, "ids": set(), "families": {}, "corrections": 0, "fees": set(), "unknown": 0})
+        group["rows"] += 1
+        group["corrections"] += _correction(row)
+        if native_id:
+            group["ids"].add(digest("identity", native_id))
+            prefix, separator, suffix = native_id.rpartition(".")
+            if separator and prefix and suffix.isdigit():
+                group["families"].setdefault(prefix, set()).add(native_id)
+        fee_values = [_number(row.get(key), fee=True) for key in ("ibCommission", "taxes")]
+        fee_currency = row.get("ibCommissionCurrency", "")
+        if any(value is None for value in fee_values) or not _CURRENCY.fullmatch(fee_currency):
+            group["unknown"] += 1
+        else:
+            group["fees"].add(digest("fees", [*(canonical(value) for value in fee_values), fee_currency]))
+    # Counts of repeated native IDs include exact repeats as well as conflicts.
+    identity_occurrences = {}
+    for row in rows:
+        if row.get("levelOfDetail") == "EXECUTION" and _text(row.get("ibExecID"), 256):
+            native_id = row.get("ibExecID")
+            identity_occurrences[native_id] = identity_occurrences.get(native_id, 0) + 1
+    counts["repeated_identity_groups"] = sum(value > 1 for value in identity_occurrences.values())
+    counts["identity_conflict_groups"] = sum(len(value) > 1 for value in identities.values())
+    counts["suffix_family_candidate_groups"] = sum(len(value) > 1 for value in families.values())
+    similar = sorted((key, value) for key, value in economics.items() if value["rows"] > 1)
+    groups = [{"comparison_sha256": key, "date": group["date"], "record_count": group["rows"],
+               "distinct_native_id_count": len(group["ids"]),
+               "suffix_family_candidate_groups": sum(len(ids) > 1 for ids in group["families"].values()),
+               "explicit_correction_signal_rows": group["corrections"],
+               "fee_comparison": "different" if len(group["fees"]) > 1 else "unknown" if group["unknown"] else "same"}
+              for key, group in similar[:32]]
+    return {"schema_version": "ibkr_flex_execution_source.v1", "status": "observed_source_shape",
+            "period": {"from": start, "to": end}, "source_ref": source_ref,
+            "report_evidence": "newly_generated_report", "coverage": "not_evaluated",
+            "publication_authority_granted": False, "correction_resolution": "not_applied",
+            "section_present": bool(sections), "native_record_count": len(rows),
+            "field_counts": fields, "counts": counts, "date_counts": dates,
+            "economic_similarity_groups": groups, "omitted_similarity_group_count": max(0, len(similar) - 32)}
 
 
 def project_flex_executions(
