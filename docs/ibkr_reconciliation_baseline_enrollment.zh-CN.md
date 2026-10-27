@@ -50,16 +50,42 @@ Gateway 配置验证账户和券商 `what-if` 写入口，随后断开连接；�
 
 `application.ibkr_flex_source` 仅提供 IBKR 官方 Flex Web Service v3 的一次性、只读
 XML Activity 报表获取和账户范围校验。它固定访问 IBKR 的 SendRequest/GetStatement，
-不跟随响应中的 URL 或 HTTP 重定向；令牌只从受限调用方传入，不写日志、命令参数、
-文件或候选回执。请求失败和报表尚未生成时不自动重试。报表原文只在内存中返回，
-不能保存到本机或公开 artifact。
+不跟随响应中的 URL 或 HTTP 重定向；令牌只从受限调用方的既有受保护存储传入，
+不写日志、命令参数、公开文件或候选回执。一次生成后若遇到报表尚未就绪，
+既有诊断只按同一句柄有限领取，不重新生成请求；其他错误立即停止。
+报表原文只在批准的内存或私有存储中处理，不能保存到本机或公开 artifact。
 
-若目标已进入 `RECONCILE_ONLY` 且选择以 Flex 报表作为独立来源，须在券商门户由所属用户名创建 XML Activity Flex Query，覆盖
-期末持仓、结算现金、成交、现金变动及相关公司行动，并启用 Flex Web Service。访问令牌
-应由用户在门户生成后存入该目标的私有 Secret Manager，Query ID 可作为目标配置；
-不要把令牌发到聊天、GitHub secret、仓库变量或命令行。当前生产项目尚无这两项配置，
-本模块未接入 `/reconcile` 或启用交易；`ACTIVE_LKG` 目标的正常运行不依赖此模块。
-门户配置参见 [IBKR Flex Web Service 官方说明](https://www.interactivebrokers.com/docs/web-api/flex-web-service/client-portal-configuration)。
+既有账户事实和收益发布链路已经有 Flex Token、Query ID 与受保护账户选择配置。
+`Check IBKR Flex Configuration` 只检查这些配置的形状；
+`Diagnose IBKR Flex Without Publishing` 的 `configured_account_coverage_only`
+只报告固定账户槽、日期和 section 计数。配置存在不代表报表已覆盖恢复需要的资料，
+也不代表独立报表已接入 `/reconcile` 或可以启用交易。
+`ACTIVE_LKG` 目标的正常运行不依赖这条冻结基线来源链路。
+
+若 `RECONCILE_ONLY` 目标仍缺少必要 section，先在原 Query 所属用户名的
+Client Portal 中新增专用 XML Activity Flex Query，保留现有网站使用的 Query。
+查询覆盖、账户范围和期间应与待核对基线一致，按下表准备字段：
+
+| Section | 需要核对的内容 |
+| --- | --- |
+| Account Information | 原生账户身份、基础币种与报告期间，用于与已有受保护选择器核对。 |
+| [Open Positions](https://www.ibkrguides.com/reportingreference/reportguide/open%20positionsfq.htm) | 报告日期、币种、资产类型、合约标识、数量及乘数；明确 Summary/Lot 层级，避免重复统计。 |
+| [Cash Report](https://www.ibkrguides.com/reportingreference/reportguide/cash%20reportfq.htm) | 各币种 From/To Date、Ending Cash 和 Ending Settled Cash；两种余额分别核验。 |
+| [Trades](https://www.ibkrguides.com/reportingreference/reportguide/tradesfq.htm) | Executions 明细、原生交易/订单标识、成交及目标结算日期、数量、现金与佣金币种；保留源提供的 Order Reference。 |
+| [Cash Transactions](https://www.ibkrguides.com/reportingreference/reportguide/cash%20transactionsfq.htm) | 日期时间、币种、金额与类型，保留源提供的交易标识；未知标识或时间语义不能自行补齐。 |
+| [Corporate Actions](https://www.ibkrguides.com/reportingreference/reportguide/corporate%20actionsfq.htm) | 报告/事件日期、合约、币种、类型、数量及原生 Transaction ID，用于解释非交易持仓和现金变化。 |
+
+Section 缺失保留 unknown，不能直接解释为零持仓或零成交；显式空 section 也须核对查询
+选项和报告覆盖。期末 Settled Cash 不能替代当前可支用现金或全部挂单义务。
+新增 Query 完成后，先用受保护入口只读检查来源、账户及期间；不要直接替换旧 Query，
+也不要把新 Query 的原始值或访问令牌贴到聊天、PR 或日志。
+继续复用已经批准的令牌存储及消费路径；只有实际需要新令牌时，才由所属用户名在门户
+生成并存入指定私有 Secret Manager，不因增加报表 section 自动更换凭据。
+
+Query 模板管理需要原所属用户名直接登录 Client Portal，Flex Web Service 的
+SendRequest/GetStatement 不能完成模板编辑，参见
+[IBKR 门户配置说明](https://www.interactivebrokers.com/docs/web-api/flex-web-service/client-portal-configuration)
+和[创建查询说明](https://www.interactivebrokers.com/docs/web-api/flex-web-service/client-portal-configuration/create-a-flex-query)。
 
 Flex 报表与 Gateway 当前状态是两份不同的券商视图，但报表摘要本身仍不是内部订单/现金
 账本，也不包含可靠的全部当前挂单。首次需要核对报表覆盖期、账户、期初/期末持仓与
