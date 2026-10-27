@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from io import BytesIO
 import json
+import re
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 
