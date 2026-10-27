@@ -259,6 +259,7 @@ def test_handle_dry_run_post_uses_dry_run_override(strategy_module, monkeypatch)
     assert observed["dry_run_only_override"] is True
     assert observed["events"][0][0] == "strategy_cycle_received"
     assert observed["events"][0][1]["execution_window"] == "dry_run"
+    assert "timeout_stage" not in observed["report"].get("diagnostics", {})
 
 
 def test_handle_dry_run_returns_service_unavailable_before_platform_timeout(strategy_module, monkeypatch):
@@ -286,11 +287,17 @@ def test_handle_dry_run_returns_service_unavailable_before_platform_timeout(stra
     assert observed["recycles"] == 1
 
 
-def test_handle_dry_run_deadline_from_strategy_persists_once_and_recycles(strategy_module, monkeypatch):
+@pytest.mark.parametrize("trace_header", ["a" * 32 + "/1;o=1", "SYNTHETIC_PRIVATE_HEADER"])
+def test_handle_dry_run_deadline_from_strategy_persists_once_and_recycles(
+    strategy_module, monkeypatch, capsys, trace_header,
+):
     observed = {"persist_calls": 0, "recycles": 0}
 
     monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace(run_id="run-001"))
-    monkeypatch.setattr(strategy_module, "build_execution_report", lambda *_args, **_kwargs: {"status": "pending"})
+    report = {"status": "pending", "run_id": "run-001"}
+    monkeypatch.setattr(strategy_module, "build_execution_report", lambda *_args, **_kwargs: report)
+    monkeypatch.setattr(strategy_module, "classify_runtime_deadline_stage", lambda _exc: "market_quote")
+    monkeypatch.setattr(strategy_module, "PROJECT_ID", "synthetic-project")
     monkeypatch.setattr(strategy_module, "is_market_open_now", lambda **_kwargs: True)
     monkeypatch.setattr(strategy_module, "load_strategy_plugin_signals", lambda: ((), None))
     monkeypatch.setattr(strategy_module, "attach_strategy_plugin_report", lambda *_args, **_kwargs: None)
@@ -299,7 +306,7 @@ def test_handle_dry_run_deadline_from_strategy_persists_once_and_recycles(strate
         strategy_module,
         "run_strategy_core",
         lambda **_kwargs: (_ for _ in ()).throw(
-            strategy_module.RuntimeDeadlineExceeded("strategy deadline exceeded")
+            strategy_module.RuntimeDeadlineExceeded("SYNTHETIC_PRIVATE_EXCEPTION")
         ),
     )
     monkeypatch.setattr(
@@ -313,13 +320,27 @@ def test_handle_dry_run_deadline_from_strategy_persists_once_and_recycles(strate
         lambda: observed.__setitem__("recycles", observed["recycles"] + 1),
     )
 
-    with strategy_module.app.test_request_context("/dry-run", method="POST"):
+    with strategy_module.app.test_request_context(
+        "/dry-run", method="POST", headers={"X-Cloud-Trace-Context": trace_header},
+    ):
         body, status = strategy_module.handle_dry_run()
 
     assert status == 503
     assert body == "Error"
     assert observed["persist_calls"] == 1
     assert observed["recycles"] == 1
+    assert report["diagnostics"]["timeout_stage"] == "market_quote"
+    output = capsys.readouterr().out
+    events = [json.loads(line) for line in output.splitlines() if line.startswith('{"severity"')]
+    event = next(item for item in events if item.get("event") == "strategy_cycle_deadline_exceeded")
+    assert event["timeout_stage"] == "market_quote"
+    assert event["run_id"] == "run-001"
+    if trace_header.startswith("a" * 32):
+        assert event["logging.googleapis.com/trace"] == "projects/synthetic-project/traces/" + "a" * 32
+    else:
+        assert "logging.googleapis.com/trace" not in event
+    assert "SYNTHETIC_PRIVATE_EXCEPTION" not in json.dumps(event)
+    assert "SYNTHETIC_PRIVATE_HEADER" not in json.dumps(event)
 
 
 def test_handle_dry_run_deadline_during_plugin_setup_persists_report(strategy_module, monkeypatch):
