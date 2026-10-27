@@ -207,26 +207,53 @@ A changed source requires review of the actual path before updating that list.
    one-thread command). The existing native group reader checks the configured
    positive client ID, Gateway backend and physical account selector. It reads
    only the declared private group configuration using existing permissions.
-2. Review all safe `checks` and the six `fingerprints` in
-   `additional1-probe.safe.json`. Coordinate deployment/configuration writers
-   during the operation. Then dispatch a new explicit `mode=invoke`, passing
-   exactly that `fingerprints` object as `reviewed_fingerprints` and retain the
-   same `source_evidence`. Its hash is included in the reviewed fingerprints;
-   changing the evidence method cannot reuse the other preflight. The runner
-   repeats the entire preflight and rejects any difference before token minting.
-3. The original authenticated identity must already support audience-bound ID
-   tokens, invocation and ingress. A missing token or rejected invocation stops;
-   there is no impersonation fallback, permission grant or network change.
-   The caller sends **one** ordinary POST `/probe`, disables redirects, supplies
-   no maintenance header, and persists an uncertain-attempt receipt before send.
-   It never retries. Timeout, 5xx or an uncertain result require inspecting the
-   original protected request/report before any later action.
-4. Independently validate the exact new ordinary report and qualified account
-   facts; HTTP 200/`Probe OK` is not that validation. Source preparation and
-   publication remain separate existing operations. This workflow never
-   publishes or rotates bindings. Raw reports, URLs, group data and tokens stay
-   in the protected runner; only fixed checks, fingerprints and response states
-   are emitted or uploaded.
+2. Review all safe `checks`, the six `fingerprints`, and the bridge job,
+   OIDC identity and configuration hashes in `additional1-probe.safe.json`.
+   Preflight uniquely matches the existing Scheduler to the verified canonical
+   service URL plus `/probe`: enabled, POST, audience equal to the canonical URL,
+   Google service-account OIDC identity, no custom body/headers (the standard
+   `Content-Type: application/json` or `application/octet-stream` and default
+   Scheduler User-Agent are allowed unchanged), 180-second
+   deadline, zero retry count and zero maximum retry duration. Its complete
+   selected configuration enters the existing `state_sha256`; no private job or
+   identity mapping is committed. The source check stays between two service and
+   bridge readbacks. A new bridge attempt during that check invalidates it.
+   Coordinate writers and calls to this service during the operation, then
+   dispatch explicit `mode=invoke` with exactly the reviewed six-fingerprint
+   object and the same `source_evidence`. Invoke repeats the complete preflight;
+   changes stop before obtaining the existing WIF identity's Google access token.
+3. Invocation uses only that existing Scheduler. The caller rejects a recent
+   same-job attempt (within the 180-second deadline plus 15-second observation
+   allowance) or an upcoming natural attempt in that interval. It also requires
+   a unique Started/Finished pair for the exact previous `lastAttemptTime`, with
+   unchanged current job metadata: elapsed age alone never proves completion.
+   It journals the
+   uncertain outcome before **one** Google Scheduler `jobs.run` POST, with no
+   redirects, proxies or retries. It never directly calls the Cloud Run URL or
+   prepares a native ID token, and never creates or modifies a Scheduler job,
+   ingress or IAM. Missing permissions stop without a fallback. Timeout, rejected
+   dispatch, missing/ambiguous terminal metadata or workflow interruption require
+   inspecting the original attempt before any later action; an existing dispatch
+   journal prevents a second invocation in that runner.
+4. Readback stops within a 195-second monotonic polling budget; each metadata
+   command timeout is limited by the remaining budget. It uses only fixed
+   Scheduler control metadata: one `AttemptStarted`/`AttemptFinished` pair, a
+   corresponding new `lastAttemptTime`, unchanged bridge configuration, and the
+   Finished HTTP status. All three timestamps must be inside dispatch time through
+   dispatch time plus 195 seconds, with both log timestamps at or after that
+   attempt time. Logging timestamps may arrive out of order; their relative order
+   is not an execution-order guarantee. Later natural attempts cannot supply this
+   terminal evidence.
+   HTTP 2xx proves successful transport; missing HTTP status remains unknown.
+   The optional job status is auxiliary: an empty `{}` does not require a
+   fabricated status message. See the official [Scheduler Job definition](https://docs.cloud.google.com/scheduler/docs/reference/rpc/google.cloud.scheduler.v1#job)
+   and [execution-log guidance](https://docs.cloud.google.com/scheduler/docs/troubleshooting).
+   Independently validate the exact new ordinary report and qualified account
+   facts. This receipt always leaves `facts_verified` and `published` false.
+   Source preparation and publication remain separate existing operations. Raw
+   reports, resource mappings, group data and tokens stay in the protected
+   runner; only fixed checks, hashes, timestamps, counts and result enums are
+   emitted or uploaded.
 
 The reviewed source runs strategy work synchronously, unwinds/disconnects on a
 local deadline, and has no strategy thread surviving the response. With the

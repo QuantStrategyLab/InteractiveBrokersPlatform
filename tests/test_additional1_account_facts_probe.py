@@ -1,8 +1,10 @@
 """Offline admission and one-attempt transport regressions; no broker/cloud calls."""
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from io import BytesIO
 import json
+import re
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 
@@ -42,9 +44,13 @@ def case(monkeypatch):
             conditions=[dict(type='Ready', status='True')], latestReadyRevisionName=revision_name,
             latestCreatedRevisionName=revision_name, url='https://synthetic-service-abc-uc.a.run.app',
             traffic=[dict(revisionName=revision_name, percent=100)]))
-    c = dict(expected=expected, service=service, revision=revision, group=Group())
+    bridge = _scheduler_target()['bridge']
+    bridge['httpTarget']['uri'] = service['status']['url'] + '/probe'
+    bridge['httpTarget']['oidcToken']['audience'] = service['status']['url']
+    c = dict(expected=expected, service=service, revision=revision, group=Group(), bridge=bridge)
     c['state'] = lambda e: probe._state(e, read_service=lambda _: c['service'],
-        read_json=lambda *_: c['revision'], read_group=lambda *_: c['group'])
+        read_json=lambda *_: c['revision'], read_group=lambda *_: c['group'],
+        read_bridge=lambda e, u: probe.existing_bridge(e, u, read_json=lambda *_: [deepcopy(c['bridge'])]))
     return c
 
 
@@ -57,7 +63,7 @@ def test_preflight_only_returns_safe_fingerprints_after_stable_verified_source(c
     assert set(hashes) == probe.FINGERPRINTS
     assert hashes['serving_revision_sha256'] == probe.sha('synthetic-service-abc')
     assert hashes['source_sha'] == probe.REVIEWED_SOURCE
-    assert url.endswith('.run.app')
+    assert url['url'].endswith('.run.app')
     assert 'U00000001' not in json.dumps(receipt)
     assert 'https://' not in json.dumps(receipt)
     assert receipt['status'] == 'preflight_verified'
@@ -122,33 +128,37 @@ def test_exact_reviewed_single_worker_override_is_allowed(case):
     case['state'](case['expected'])
 
 
-@pytest.mark.parametrize('outcome', ['ok', 'redirect', 'timeout', 'error'])
-def test_http_is_once_no_maintenance_header_and_unknown_outcome_is_not_retried(outcome):
+@pytest.mark.parametrize('outcome', ['ok', 'redirect', 'timeout', 'error', 'forbidden'])
+def test_scheduler_is_once_and_unknown_outcome_is_not_retried(outcome):
     calls, records, receipt = [], [], {}
     class Response:
         status = 200
         def __enter__(self): return self
         def __exit__(self, *_): return False
-        def read(self, _): return b'Probe OK'
+        def read(self, *_): pytest.fail('must not read Scheduler response body')
     class Client:
         def open(self, request, **kwargs):
             calls.append(request)
-            assert receipt['http_attempted'] is True and records
-            assert request.full_url == 'https://synthetic.run.app/probe'
-            assert request.method == 'POST'
-            assert dict(request.header_items()) == {'Authorization': 'Bearer ' + PRIVATE}
-            assert kwargs['timeout'] == 120
+            assert receipt['scheduler_dispatch_attempted'] is True and records
+            assert request.full_url.endswith('/jobs/synthetic-probe:run')
+            assert request.method == 'POST' and request.data == b'{}'
+            assert dict(request.header_items()) == {'Authorization': 'Bearer ' + PRIVATE,
+                                                    'Content-type': 'application/json'}
+            assert kwargs['timeout'] == 30
             if outcome == 'timeout': raise URLError(PRIVATE)
-            if outcome in {'redirect', 'error'}:
-                raise HTTPError(request.full_url, 302 if outcome == 'redirect' else 500, PRIVATE, {}, BytesIO(PRIVATE.encode()))
+            if outcome in {'redirect', 'error', 'forbidden'}:
+                code = {'redirect': 302, 'error': 500, 'forbidden': 403}[outcome]
+                raise HTTPError(request.full_url, code, PRIVATE, {}, BytesIO(PRIVATE.encode()))
             return Response()
-    probe.invoke_once('https://synthetic.run.app', receipt, token=PRIVATE,
-        opener=Client(), record=lambda: records.append(deepcopy(receipt)))
-    assert len(calls) == 1
-    assert receipt['http_attempts'] == 1
+    probe.invoke_once(_scheduler_target(), receipt, token=PRIVATE, opener=Client(), verify_previous=lambda *_: True,
+        record=lambda: records.append(deepcopy(receipt)),
+        read_terminal=lambda *_: {'scheduler_terminal': True, 'scheduler_request_succeeded': True})
+    assert len(calls) == 1 and receipt['scheduler_dispatch_attempts'] == 1
     assert PRIVATE not in json.dumps(receipt)
-    assert receipt['status'] == ('response_received' if outcome == 'ok' else 'request_outcome_unknown'
-                                if outcome == 'timeout' else 'http_failure')
+    assert receipt['status'] == ('scheduler_terminal_observed' if outcome == 'ok' else 'request_outcome_unknown')
+    with pytest.raises(probe.ProbeError, match='previous_dispatch_inspect_only'):
+        probe.invoke_once(_scheduler_target(), receipt, token=PRIVATE, opener=Client())
+    assert len(calls) == 1
 
 
 def test_no_redirect_handler_does_not_follow_location():
@@ -173,7 +183,7 @@ def test_changed_reviewed_fingerprint_stops_before_token_or_http(monkeypatch, tm
     assert probe.main([]) == 1
     receipt = json.loads((tmp_path / 'additional1-probe.safe.json').read_text())
     assert receipt['reason'] == 'reviewed_fingerprints_changed'
-    assert receipt['http_attempted'] is False
+    assert receipt['scheduler_dispatch_attempted'] is False
     assert 'https://' not in capsys.readouterr().out
 
 
@@ -331,7 +341,7 @@ def test_real_serialization_failure_has_only_precise_safe_reason(case, monkeypat
     stdout = capsys.readouterr().out
     receipt = json.loads((tmp_path / 'additional1-probe.safe.json').read_text())
     assert receipt['status'] == 'blocked' and receipt['reason'] == reason
-    assert receipt['http_attempted'] is False and receipt['http_attempts'] == 0
+    assert receipt['scheduler_dispatch_attempted'] is False and receipt['scheduler_dispatch_attempts'] == 0
     for private in (PRIVATE, 'synthetic-service', 'U00000001', 'https://', 'containerConcurrency', 'maxScale'):
         assert private not in stdout
         assert private not in json.dumps(receipt)
@@ -391,17 +401,15 @@ def test_larger_service_cap_keeps_revision_and_manual_guards(case, fault, reason
 
 
 @pytest.fixture
-def native_invocation(case, monkeypatch, tmp_path):
+def scheduler_invocation(case, monkeypatch, tmp_path):
     hashes, _ = case['state'](case['expected'])
     hashes['source_evidence_sha256'] = probe.sha('static_source')
     for key, value in dict(GITHUB_REF='refs/heads/main', GITHUB_EVENT_NAME='workflow_dispatch',
         GITHUB_RUN_ATTEMPT='1', GITHUB_REPOSITORY=probe.identity._SOURCE_REPOSITORY,
         IBKR_ACCOUNT_FACTS_TARGET='additional-1', RUNNER_TEMP=str(tmp_path),
-        GITHUB_OUTPUT=str(tmp_path / 'step-output'), ACCOUNT_FACTS_PROBE_MODE='invoke',
-        ACCOUNT_FACTS_PROBE_SOURCE_EVIDENCE='static_source',
+        ACCOUNT_FACTS_PROBE_MODE='invoke', ACCOUNT_FACTS_PROBE_SOURCE_EVIDENCE='static_source',
         ACCOUNT_FACTS_PROBE_REVIEWED_FINGERPRINTS=json.dumps(hashes)).items():
         monkeypatch.setenv(key, value)
-    monkeypatch.delenv('ACCOUNT_FACTS_PROBE_ID_TOKEN', raising=False)
     monkeypatch.setattr(probe.identity, 'resolve_expected', lambda: case['expected'])
     original_preflight = probe.preflight
     calls = []
@@ -410,128 +418,87 @@ def native_invocation(case, monkeypatch, tmp_path):
         return original_preflight(expected, receipt, state=case['state'],
             static_provenance=lambda _: _static_evidence(expected), **kwargs)
     monkeypatch.setattr(probe, 'preflight', preflight)
-    case.update(hashes=hashes, output=tmp_path / 'step-output',
-                receipt=tmp_path / 'additional1-probe.safe.json', preflight_calls=calls)
+    case.update(hashes=hashes, receipt=tmp_path / 'additional1-probe.safe.json', preflight_calls=calls)
     return case
 
 
-def test_prepare_auth_exports_masked_audience_only_after_full_exact_preflight(native_invocation, monkeypatch, capsys):
-    case = native_invocation
-    monkeypatch.setattr(probe, 'invoke_once', lambda *_a, **_k: pytest.fail('prepare cannot invoke'))
-    original_get = probe.os.environ.get
-    def get(key, *args):
-        assert key != 'ACCOUNT_FACTS_PROBE_ID_TOKEN', 'prepare must not read an invocation token'
-        return original_get(key, *args)
-    monkeypatch.setattr(probe.os.environ, 'get', get)
-    assert probe.main(['--prepare-invocation-auth']) == 0
-    stdout = capsys.readouterr().out.splitlines()
-    audience = 'https://synthetic-service-abc-uc.a.run.app'
-    assert stdout[0] == '::add-mask::' + audience
-    assert case['output'].read_text() == 'invocation_audience=' + audience + '\n'
-    receipt = json.loads(case['receipt'].read_text())
-    assert receipt['status'] == 'invocation_auth_prepared'
-    assert receipt['fingerprints'] == case['hashes'] and all(receipt['checks'].values())
-    assert receipt['http_attempted'] is False and receipt['http_attempts'] == 0
-    assert audience not in json.dumps(receipt)
-    assert case['preflight_calls'] == ['full_preflight']
-
-
-@pytest.mark.parametrize('phase', ['prepare', 'invoke'])
-def test_changed_fingerprints_stop_before_audience_or_token_read(native_invocation, monkeypatch, capsys, phase):
-    case = native_invocation
+def test_changed_fingerprints_stop_before_access_token_or_scheduler(scheduler_invocation, monkeypatch, capsys):
+    case = scheduler_invocation
     case['service']['metadata']['annotations'] = {'run.googleapis.com/maxScale': '10'}
+    monkeypatch.setattr(probe.commands, 'command', lambda *_a, **_k: pytest.fail('must not mint token'))
     monkeypatch.setattr(probe, 'invoke_once', lambda *_a, **_k: pytest.fail('must not invoke'))
-    original_get = probe.os.environ.get
-    def get(key, *args):
-        assert key != 'ACCOUNT_FACTS_PROBE_ID_TOKEN', 'changed fingerprints must stop before token read'
-        return original_get(key, *args)
-    monkeypatch.setattr(probe.os.environ, 'get', get)
-    assert probe.main(['--prepare-invocation-auth'] if phase == 'prepare' else []) == 1
+    assert probe.main([]) == 1
     assert json.loads(capsys.readouterr().out)['reason'] == 'reviewed_fingerprints_changed'
-    assert not case['output'].exists()
-    assert json.loads(case['receipt'].read_text())['http_attempted'] is False
+    assert json.loads(case['receipt'].read_text())['scheduler_dispatch_attempted'] is False
 
 
-def test_normal_preflight_does_not_prepare_audience_or_read_native_token(native_invocation, monkeypatch, capsys):
-    case = native_invocation
+def test_normal_preflight_does_not_read_access_token_or_dispatch(scheduler_invocation, monkeypatch, capsys):
     monkeypatch.setenv('ACCOUNT_FACTS_PROBE_MODE', 'preflight')
     monkeypatch.setenv('ACCOUNT_FACTS_PROBE_REVIEWED_FINGERPRINTS', '{}')
-    original_get = probe.os.environ.get
-    def get(key, *args):
-        assert key != 'ACCOUNT_FACTS_PROBE_ID_TOKEN'
-        return original_get(key, *args)
-    monkeypatch.setattr(probe.os.environ, 'get', get)
+    monkeypatch.setattr(probe.commands, 'command', lambda *_a, **_k: pytest.fail('preflight must not mint token'))
+    monkeypatch.setattr(probe, 'invoke_once', lambda *_a, **_k: pytest.fail('preflight must not dispatch'))
     assert probe.main([]) == 0
     assert json.loads(capsys.readouterr().out)['status'] == 'preflight_verified'
-    assert not case['output'].exists()
-    assert probe.main(['--prepare-invocation-auth']) == 1
-    assert json.loads(capsys.readouterr().out)['reason'] == 'invocation_auth_requires_invoke'
 
 
-def test_native_auth_missing_stops_at_zero_http_after_reverification(native_invocation, capsys):
-    case = native_invocation
+def test_access_token_failure_stops_at_zero_dispatch_after_reverification(scheduler_invocation, monkeypatch, capsys):
+    def fail(*_a, **_k): raise RuntimeError(PRIVATE)
+    monkeypatch.setattr(probe.commands, 'command', fail)
     assert probe.main([]) == 1
     output = json.loads(capsys.readouterr().out)
-    assert output['reason'] == 'existing_invocation_identity_unavailable'
-    assert output['http_attempted'] is False and output['http_attempts'] == 0
-    assert case['preflight_calls'] == ['full_preflight']
+    assert output['reason'] == 'protected_preflight_read_failed'
+    assert output['scheduler_dispatch_attempted'] is False and output['scheduler_dispatch_attempts'] == 0
+    assert PRIVATE not in json.dumps(output)
+    assert scheduler_invocation['preflight_calls'] == ['full_preflight']
 
 
-def test_native_id_token_is_only_in_one_http_header_after_reverification(native_invocation, monkeypatch, capsys):
-    case, requests = native_invocation, []
-    assert probe.main(['--prepare-invocation-auth']) == 0
-    capsys.readouterr()
-    monkeypatch.setenv('ACCOUNT_FACTS_PROBE_ID_TOKEN', PRIVATE)
+def test_access_token_only_in_one_control_header_after_reverification(scheduler_invocation, monkeypatch, capsys):
+    case, requests = scheduler_invocation, []
+    def token(args, **kwargs):
+        assert args == ['gcloud', 'auth', 'print-access-token']
+        return PRIVATE
+    monkeypatch.setattr(probe.commands, 'command', token)
     class Response:
         status = 200
         def __enter__(self): return self
         def __exit__(self, *_): return False
-        def read(self, _): return b'Probe OK'
+        def read(self, *_): pytest.fail('must not read Scheduler response body')
     class Client:
         def open(self, request, **kwargs):
             requests.append(request)
             assert request.get_header('Authorization') == 'Bearer ' + PRIVATE
-            assert json.loads(case['receipt'].read_text())['http_attempted'] is True
+            assert json.loads(case['receipt'].read_text())['scheduler_dispatch_attempted'] is True
             return Response()
     original_invoke = probe.invoke_once
     monkeypatch.setattr(probe, 'invoke_once', lambda *args, **kwargs:
-                        original_invoke(*args, **kwargs, opener=Client()))
+        original_invoke(*args, **kwargs, opener=Client(), verify_previous=lambda *_: True,
+            read_terminal=lambda *_: {'scheduler_terminal': True, 'scheduler_request_succeeded': True}))
     assert probe.main([]) == 0
     stdout = capsys.readouterr().out
-    assert len(requests) == 1 and case['preflight_calls'] == ['full_preflight', 'full_preflight']
-    assert PRIVATE not in stdout + case['receipt'].read_text() + case['output'].read_text()
+    assert len(requests) == 1 and case['preflight_calls'] == ['full_preflight']
+    assert PRIVATE not in stdout + case['receipt'].read_text()
     receipt = json.loads(case['receipt'].read_text())
-    assert receipt['http_attempted'] is True and receipt['http_attempts'] == 1
+    assert receipt['scheduler_dispatch_attempts'] == 1
     assert receipt['facts_verified'] is False and receipt['published'] is False
+    before = case['receipt'].read_bytes()
+    monkeypatch.setattr(probe, 'preflight', lambda *_a, **_k: pytest.fail('journal forbids replay'))
+    monkeypatch.setattr(probe.commands, 'command', lambda *_a, **_k: pytest.fail('no second token'))
+    assert probe.main([]) == 1
+    assert case['receipt'].read_bytes() == before and len(requests) == 1
 
 
-@pytest.mark.parametrize('url', ['https://synthetic.run.app\nINJECT=value', 'https://synthetic.run.app\r',
-    'https://synthetic.run.app\x00'])
-def test_prepare_cannot_inject_private_workflow_command_or_output(tmp_path, monkeypatch, capsys, url):
-    output = tmp_path / 'step-output'
-    monkeypatch.setenv('GITHUB_OUTPUT', str(output))
-    with pytest.raises(probe.ProbeError, match='canonical_url_invalid'):
-        probe.prepare_invocation_auth(url, {})
-    assert not output.exists() and capsys.readouterr().out == ''
-
-
-def test_workflow_native_auth_is_same_identity_and_only_after_prepare():
+def test_workflow_has_only_existing_wif_scheduler_path():
     text = Path('.github/workflows/additional1-account-facts-probe.yml').read_text()
-    prepared = text.index('id: prepare_invocation_auth')
-    native = text.index('id: invocation_auth')
-    final = text.index('Reverify reviewed fingerprints and invoke once')
-    assert prepared < native < final
-    native_step = text[native:final]
-    assert "if: ${{ inputs.mode == 'invoke' }}" in text[prepared:native]
-    assert 'uses: google-github-actions/auth@v3' in native_step
-    assert 'workload_identity_provider: ${{ secrets.ACCOUNT_FACTS_RECOVERY_WIF_PROVIDER }}' in native_step
-    assert 'service_account: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}' in native_step
-    assert 'token_format: id_token' in native_step
-    assert 'id_token_audience: ${{ steps.prepare_invocation_auth.outputs.invocation_audience }}' in native_step
-    assert 'create_credentials_file: false' in native_step and 'export_environment_variables: false' in native_step
-    assert 'ACCOUNT_FACTS_PROBE_ID_TOKEN: ${{ steps.invocation_auth.outputs.id_token }}' in text[final:]
+    source = Path('scripts/invoke_additional1_account_facts_probe.py').read_text()
+    assert text.count('uses: google-github-actions/auth@v3') == 1
+    assert 'Reverify reviewed fingerprints and run the existing Scheduler once' in text
+    assert 'token_format: id_token' not in text and 'id_token_audience:' not in text
+    assert 'ACCOUNT_FACTS_PROBE_ID_TOKEN' not in source + text
+    assert 'prepare-invocation-auth' not in source + text
+    assert 'print-identity-token' not in source
     assert 'continue-on-error' not in text
-    assert 'print-identity-token' not in Path('scripts/invoke_additional1_account_facts_probe.py').read_text()
+    assert 'cloudscheduler.googleapis.com/v1/' in source
+    assert re.search(r'(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])', source) is None
 
 
 @pytest.mark.parametrize('where', ['revision', 'static_evidence'])
@@ -549,13 +516,244 @@ def test_previous_reviewed_source_is_not_a_second_allowed_source(case, where):
                             static_provenance=lambda _: evidence)
 
 
-def test_previous_source_fingerprints_cannot_prepare_native_auth(native_invocation, monkeypatch, capsys):
-    case = native_invocation
+def test_previous_source_fingerprints_cannot_dispatch(scheduler_invocation, monkeypatch, capsys):
+    case = scheduler_invocation
     reviewed = {**case['hashes'], 'source_sha': '1595957e388a1d29914a13075d210016c8848404'}
     monkeypatch.setenv('ACCOUNT_FACTS_PROBE_REVIEWED_FINGERPRINTS', json.dumps(reviewed))
-    monkeypatch.setattr(probe, 'invoke_once', lambda *_a, **_k: pytest.fail('old source cannot invoke'))
-    assert probe.main(['--prepare-invocation-auth']) == 1
+    monkeypatch.setattr(probe.commands, 'command', lambda *_a, **_k: pytest.fail('old source cannot mint token'))
+    assert probe.main([]) == 1
     receipt = json.loads(capsys.readouterr().out)
     assert receipt['reason'] == 'reviewed_fingerprints_changed'
-    assert receipt['http_attempted'] is False and receipt['http_attempts'] == 0
-    assert not case['output'].exists()
+    assert receipt['scheduler_dispatch_attempted'] is False and receipt['scheduler_dispatch_attempts'] == 0
+
+
+def _scheduler_target():
+    return {'url': 'https://synthetic.run.app', 'bridge': {
+        'name': 'projects/synthetic-project/locations/us-central1/jobs/synthetic-probe',
+        'state': 'ENABLED', 'schedule': '10 22 * * *', 'timeZone': 'UTC',
+        'attemptDeadline': '180s', 'retryConfig': {'retryCount': 0, 'maxRetryDuration': '0s'},
+        'lastAttemptTime': '2020-01-01T00:00:00Z', 'scheduleTime': '2099-01-01T00:00:00Z',
+        'httpTarget': {'uri': 'https://synthetic.run.app/probe', 'httpMethod': 'POST',
+                       'oidcToken': {'audience': 'https://synthetic.run.app',
+                                     'serviceAccountEmail': 'synthetic@synthetic-project.iam.gserviceaccount.com'}}}}
+
+
+def test_scheduler_dispatch_records_unknown_before_one_control_post_without_reading_body():
+    records, calls, receipt = [], [], {}
+    class Response:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def read(self, *_): pytest.fail('Scheduler response body must not be read')
+    class Client:
+        def open(self, request, **kwargs):
+            assert records and records[0]['scheduler_dispatch_attempted'] is True
+            calls.append(request)
+            assert request.full_url == ('https://cloudscheduler.googleapis.com/v1/'
+                'projects/synthetic-project/locations/us-central1/jobs/synthetic-probe:run')
+            assert request.method == 'POST' and request.data == b'{}'
+            assert request.get_header('Authorization') == 'Bearer ' + PRIVATE
+            return Response()
+    probe.invoke_once(_scheduler_target(), receipt, token=PRIVATE, opener=Client(), verify_previous=lambda *_: True,
+        record=lambda: records.append(deepcopy(receipt)),
+        read_terminal=lambda *_: {'scheduler_terminal': True, 'scheduler_request_succeeded': True})
+    assert len(calls) == 1 and receipt['scheduler_dispatch_attempts'] == 1
+    assert receipt['status'] == 'scheduler_terminal_observed'
+    assert PRIVATE not in json.dumps(receipt)
+
+
+@pytest.mark.parametrize('fault', ['absent', 'duplicate', 'foreign_name', 'path_injection', 'paused',
+    'method', 'audience', 'identity', 'body', 'header', 'retry', 'bool_retry', 'duration', 'deadline'])
+def test_existing_bridge_rejects_changed_or_unbound_transport(case, fault):
+    job = deepcopy(case['bridge'])
+    jobs = [job]
+    if fault == 'absent': jobs = []
+    elif fault == 'duplicate': jobs.append(deepcopy(job))
+    elif fault == 'foreign_name': job['name'] = job['name'].replace('synthetic-project', 'other-project')
+    elif fault == 'path_injection': job['name'] += '/other:run'
+    elif fault == 'paused': job['state'] = 'PAUSED'
+    elif fault == 'method': job['httpTarget']['httpMethod'] = 'GET'
+    elif fault == 'audience': job['httpTarget']['oidcToken']['audience'] += '/probe'
+    elif fault == 'identity': job['httpTarget']['oidcToken']['serviceAccountEmail'] = ''
+    elif fault == 'body': job['httpTarget']['body'] = PRIVATE
+    elif fault == 'header': job['httpTarget']['headers'] = {'X-QSL-Maintenance': PRIVATE}
+    elif fault == 'retry': job['retryConfig']['retryCount'] = 1
+    elif fault == 'bool_retry': job['retryConfig']['retryCount'] = False
+    elif fault == 'duration': job['retryConfig']['maxRetryDuration'] = '1s'
+    elif fault == 'deadline': job['attemptDeadline'] = '600s'
+    with pytest.raises(probe.ProbeError) as error:
+        probe.existing_bridge(case['expected'], case['service']['status']['url'], read_json=lambda *_: jobs)
+    assert PRIVATE not in str(error.value)
+
+
+def test_bridge_config_is_fingerprinted_and_attempt_during_static_check_is_rejected(case):
+    before, _ = case['state'](case['expected'])
+    case['bridge']['schedule'] = '11 22 * * *'
+    after, _ = case['state'](case['expected'])
+    assert before['state_sha256'] != after['state_sha256']
+    def static(expected):
+        case['bridge']['lastAttemptTime'] = '2026-10-28T00:00:00Z'
+        return _static_evidence(expected)
+    with pytest.raises(probe.ProbeError, match='configuration_changed_during_preflight'):
+        probe.preflight(case['expected'], {}, source_evidence='static_source',
+                        state=case['state'], static_provenance=static)
+
+
+@pytest.mark.parametrize('field,value,reason', [
+    ('lastAttemptTime', '2026-10-28T00:00:00Z', 'recent_or_in_flight'),
+    ('lastAttemptTime', '2099-01-01T00:00:00Z', 'recent_or_in_flight'),
+    ('scheduleTime', '2026-10-28T00:03:15Z', 'natural_probe_window_conflict'),
+])
+def test_same_service_recent_attempt_and_natural_window_stop_before_journal_or_post(field, value, reason):
+    target, receipt = _scheduler_target(), {}
+    target['bridge'][field] = value
+    with pytest.raises(probe.ProbeError, match=reason):
+        probe.invoke_once(target, receipt, token=PRIVATE, now=datetime(2026, 10, 28, tzinfo=timezone.utc),
+            record=lambda: pytest.fail('must not journal a dispatch'),
+            opener=type('Forbidden', (), {'open': lambda *_a, **_k: pytest.fail('must not dispatch')})())
+    assert not receipt
+
+
+def _terminal_reader(*, http=200, fault=None, code=None):
+    job = _scheduler_target()['bridge']
+    current = deepcopy(job)
+    current['lastAttemptTime'] = '2026-10-28T00:00:00.010Z'
+    current['status'] = {} if code is None else {'code': code}
+    started = [{'timestamp': '2026-10-28T00:00:00.100Z'}]
+    finished = [{'timestamp': '2026-10-28T00:00:05Z', 'httpRequest': {}, 'jsonPayload': {}}]
+    if http is not None: finished[0]['httpRequest']['status'] = http
+    if fault == 'duplicate_finished': finished.append(deepcopy(finished[0]))
+    elif fault == 'duplicate_started': started.append(deepcopy(started[0]))
+    elif fault == 'no_started': started = []
+    elif fault == 'old_attempt': current['lastAttemptTime'] = job['lastAttemptTime']
+    elif fault == 'config_drift': current['schedule'] = '11 22 * * *'
+    elif fault == 'bad_time': started[0]['timestamp'] = PRIVATE
+    elif fault == 'log_order':
+        finished[0]['timestamp'] = '2026-10-28T00:00:00.100Z'
+        started[0]['timestamp'] = '2026-10-28T00:00:00.321Z'
+    elif fault == 'late_lastAttemptTime': current['lastAttemptTime'] = '2026-10-28T00:03:16Z'
+    elif fault == 'late_started': started[0]['timestamp'] = '2026-10-28T00:03:16Z'
+    elif fault == 'late_finished': finished[0]['timestamp'] = '2026-10-28T00:03:16Z'
+    calls = []
+    def read(args, stage):
+        calls.append(args)
+        assert PRIVATE not in repr(args)
+        if args[:3] == ('gcloud', 'logging', 'read'):
+            assert '--limit=2' in args
+            return started if 'AttemptStarted' in args[3] else finished
+        assert args[:4] == ('gcloud', 'scheduler', 'jobs', 'describe')
+        return current
+    return job, read, calls
+
+
+@pytest.mark.parametrize('http,code,success', [(200, None, True), (204, 0, True),
+    (500, None, False), (403, 7, False), (None, None, None), (200, 7, None)])
+def test_scheduler_terminal_uses_explicit_http_and_optional_empty_job_status(http, code, success):
+    job, read, calls = _terminal_reader(http=http, code=code)
+    result = probe.terminal_readback(job, '2026-10-28T00:00:00Z', read_json=read,
+                                   pause=lambda _: pytest.fail('terminal already present'))
+    assert result['scheduler_terminal'] is True
+    assert result['scheduler_request_succeeded'] is success
+    assert result['scheduler_job_status_code'] == code
+    assert len(calls) == 3
+    assert PRIVATE not in json.dumps(result)
+
+
+@pytest.mark.parametrize('fault', ['duplicate_finished', 'duplicate_started', 'no_started', 'old_attempt', 'config_drift'])
+def test_ambiguous_or_changed_terminal_is_unknown_without_replay(fault):
+    job, read, _ = _terminal_reader(fault=fault)
+    result = probe.terminal_readback(job, '2026-10-28T00:00:00Z', read_json=read, pause=lambda _: None)
+    assert result == {'scheduler_terminal': False, 'scheduler_request_succeeded': None}
+
+
+def test_missing_terminal_polling_is_bounded_and_does_not_dispatch():
+    reads, pauses = [], []
+    result = probe.terminal_readback(_scheduler_target()['bridge'], '2026-10-28T00:00:00Z',
+        read_json=lambda *args: reads.append(args) or [], pause=pauses.append)
+    assert len(reads) == 40 and pauses == [5] * 39
+    assert all(args[0][:3] == ('gcloud', 'logging', 'read') for args in reads)
+    assert result == {'scheduler_terminal': False, 'scheduler_request_succeeded': None}
+
+
+def test_readback_parse_error_after_dispatch_stays_unknown(scheduler_invocation, monkeypatch, capsys):
+    monkeypatch.setattr(probe.commands, 'command', lambda *_a, **_k: PRIVATE)
+    def after_dispatch(_invocation, receipt, **kwargs):
+        receipt.update(scheduler_dispatch_attempted=True, scheduler_dispatch_attempts=1)
+        kwargs['record']()
+        raise probe.ProbeError('scheduler_time_unverified')
+    monkeypatch.setattr(probe, 'invoke_once', after_dispatch)
+    assert probe.main([]) == 1
+    output = [json.loads(line) for line in capsys.readouterr().out.splitlines()][-1]
+    assert output['scheduler_dispatch_attempted'] is True
+    assert output['status'] == 'request_outcome_unknown'
+    assert PRIVATE not in json.dumps(output)
+
+
+def test_finished_log_can_precede_started_by_221ms():
+    job, read, _ = _terminal_reader(fault='log_order')
+    result = probe.terminal_readback(job, '2026-10-28T00:00:00Z', read_json=read,
+                                   pause=lambda _: pytest.fail('must accept unique terminal'))
+    assert result['scheduler_terminal'] is True and result['scheduler_request_succeeded'] is True
+
+
+@pytest.mark.parametrize('field', ['lastAttemptTime', 'started', 'finished'])
+def test_terminal_outside_dispatch_window_is_unknown(field):
+    job, read, _ = _terminal_reader(fault='late_' + field)
+    assert probe.terminal_readback(job, '2026-10-28T00:00:00Z', read_json=read,
+        pause=lambda _: None) == {'scheduler_terminal': False, 'scheduler_request_succeeded': None}
+
+
+def test_slow_control_reads_stop_at_monotonic_total_deadline():
+    elapsed, reads = [0.0], []
+    def read(*args):
+        reads.append(args)
+        elapsed[0] += 100
+        return []
+    def pause(seconds): elapsed[0] += seconds
+    result = probe.terminal_readback(_scheduler_target()['bridge'], '2026-10-28T00:00:00Z',
+        read_json=read, pause=pause, clock=lambda: elapsed[0])
+    assert len(reads) == 2 and elapsed[0] == 205
+    assert result['scheduler_terminal'] is False
+
+
+@pytest.mark.parametrize('content_type', ['application/json', 'application/octet-stream'])
+def test_existing_standard_headers_are_preserved_and_fingerprinted(case, content_type):
+    case['bridge']['httpTarget']['headers'] = {'Content-Type': content_type, 'User-Agent': 'Google-Cloud-Scheduler'}
+    before, _ = case['state'](case['expected'])
+    assert case['bridge']['httpTarget']['headers']['Content-Type'] == content_type
+    case['bridge']['httpTarget']['headers']['Content-Type'] = ('application/json'
+        if content_type == 'application/octet-stream' else 'application/octet-stream')
+    after, _ = case['state'](case['expected'])
+    assert before['state_sha256'] != after['state_sha256']
+
+
+@pytest.mark.parametrize('fault,qualified', [(None, True), ('missing_finished', False),
+    ('duplicate_started', False), ('last_attempt_changed', False), ('config_changed', False),
+    ('pre_attempt_timestamp', False)])
+def test_previous_attempt_requires_its_exact_terminal_pair(fault, qualified):
+    job = _scheduler_target()['bridge']
+    current = deepcopy(job)
+    started = [{'timestamp': '2020-01-01T00:00:00.321Z'}]
+    finished = [{'timestamp': '2020-01-01T00:00:00.100Z'}]
+    if fault == 'missing_finished': finished = []
+    elif fault == 'duplicate_started': started.append(deepcopy(started[0]))
+    elif fault == 'last_attempt_changed': current['lastAttemptTime'] = '2020-01-02T00:00:00Z'
+    elif fault == 'config_changed': current['schedule'] = '11 22 * * *'
+    elif fault == 'pre_attempt_timestamp': finished[0]['timestamp'] = '2019-12-31T23:59:59Z'
+    def read(args, stage):
+        if args[:3] == ('gcloud', 'logging', 'read'):
+            assert 'timestamp>="2020-01-01T00:00:00Z"' in args[3]
+            assert 'resource.labels.job_id="synthetic-probe"' in args[3]
+            return started if 'AttemptStarted' in args[3] else finished
+        return current
+    assert probe.previous_terminal(job, datetime(2026, 10, 28, tzinfo=timezone.utc),
+                                   read_json=read) is qualified
+
+
+def test_unverified_previous_terminal_stops_before_journal_or_dispatch():
+    receipt = {}
+    with pytest.raises(probe.ProbeError, match='previous_scheduler_attempt_terminal_unverified'):
+        probe.invoke_once(_scheduler_target(), receipt, token=PRIVATE, verify_previous=lambda *_: False,
+            record=lambda: pytest.fail('no attempted dispatch'),
+            opener=type('Forbidden', (), {'open': lambda *_a, **_k: pytest.fail('must not dispatch')})())
+    assert not receipt
