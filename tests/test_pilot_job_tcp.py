@@ -98,8 +98,8 @@ def lifecycle(monkeypatch):
         if state.fail == "changed_uid" and stage == "cleanup_job_read_unavailable":
             value["metadata"]["uid"] = "other-uid"
         return value
-    state.execute = lambda: job.execute(ctx, "123", run=run, snapshot=lambda *a: copy.deepcopy(state.current),
-        api=api, pause=lambda _: None, progress=state.progress)
+    state.execute = lambda **kwargs: job.execute(ctx, "123", run=run, snapshot=lambda *a: copy.deepcopy(state.current),
+        api=api, pause=lambda _: None, progress=state.progress, **kwargs)
     return state
 
 
@@ -242,3 +242,20 @@ def test_job_workflow_is_default_off_mutually_exclusive_and_uses_original_lock()
     assert "job_mode_invalid=true" in callee and "PILOT_JOB_NETWORK_PREFLIGHT" in callee
     assert "if: inputs.isolated_job_network_preflight" in callee
     assert "service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}" in callee
+
+
+@pytest.mark.parametrize("passed", [True, False])
+def test_application_phase_reads_safe_failure_or_success_then_deletes_job(lifecycle, monkeypatch, passed):
+    monkeypatch.setattr(job.app_isolation, "prepared", lambda ctx, before, group, desired, source: desired)
+    value = dict(schema_version="ibkr.application_isolation.v1", stage="isolation_observed" if passed else "application_import",
+        isolation_passed=passed, candidate_source_verified=True, dependencies_verified=True, application_imported=passed,
+        binding_verified=passed, outputs_isolated=passed, report_saved_readback=passed, sdk_guards_installed=passed,
+        notification_guards_installed=passed, external_effect_attempts=0 if passed else None,
+        broker_called=False, strategy_computed=False, production_state_read=False)
+    lifecycle.logs = [{"jsonPayload": value}]
+    if not passed:
+        lifecycle.fail = "task_failed"
+    out = lifecycle.execute(application_source=Path("source"))
+    assert out["measurement_read"] and out["application_isolation"] == value
+    assert out["status"] == ("observed" if passed else "unavailable")
+    assert out["job_deleted"] and out["baseline_unchanged"] and out["tcp_connected"] is None
