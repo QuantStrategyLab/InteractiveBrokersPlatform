@@ -60,6 +60,8 @@ def lifecycle(monkeypatch):
                 task.pop("maxRetries")
                 task["timeoutSeconds"] = 60
                 task["containers"][0]["resources"]["limits"]["cpu"] = "1000m"
+            if state.fail == "gen2_default":
+                value["spec"]["template"]["metadata"]["annotations"]["run.googleapis.com/execution-environment"] = "gen2"
             return value
         if method == "POST" and url.endswith("/jobs"):
             state.actual = copy.deepcopy(body)
@@ -141,6 +143,25 @@ def test_dry_run_rejection_never_creates_a_resource(lifecycle, failure):
 def test_documented_scalar_defaults_do_not_change_the_task(lifecycle):
     lifecycle.fail = "defaults"
     assert lifecycle.execute()["job_deleted"]
+
+
+def test_mandatory_job_gen2_default_is_accepted_without_changing_production(lifecycle):
+    lifecycle.fail = "gen2_default"
+    out = lifecycle.execute()
+    assert out["job_execution_env_defaulted_gen2"] and out["measurement_read"]
+    assert out["job_deleted"] and out["baseline_unchanged"]
+    assert lifecycle.current == lifecycle.before
+
+
+@pytest.mark.parametrize("key,value", [("run.googleapis.com/network-interfaces", '[{"network":"other"}]'),
+    ("run.googleapis.com/vpc-access-egress", "all-traffic"),
+    ("run.googleapis.com/encryption-key", "unexpected-key"), ("run.googleapis.com/execution-environment", "gen1")])
+def test_job_default_normalization_still_rejects_network_security_changes(lifecycle, key, value):
+    desired = job.prepared(lifecycle.ctx, lifecycle.before, lifecycle.group, "123")
+    actual = copy.deepcopy(desired)
+    actual["spec"]["template"]["metadata"]["annotations"][key] = value
+    with pytest.raises(pilot.ReleaseError, match="job_network_readback_unverified"):
+        job.verify_job(actual, desired)
 
 
 def test_prior_p4_job_prevents_a_second_job(lifecycle):

@@ -86,6 +86,10 @@ def verify_template(actual, desired):
     expected = desired.get("metadata", {}).get("annotations", {})
     for key in NETWORK_KEYS:
         left, right = annotations.get(key), expected.get(key)
+        # Jobs always use gen2. The API can materialize that mandatory default
+        # even when the original service leaves its execution environment unset.
+        if key == "run.googleapis.com/execution-environment" and left == "gen2" and right is None:
+            continue
         if key == "run.googleapis.com/network-interfaces" and left and right:
             left, right = pilot._json(left), pilot._json(right)
         if left != right:
@@ -158,6 +162,15 @@ def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=clou
     if not isinstance(jobs, list) or any(row.get("metadata", {}).get("name", "").startswith("ibkr-p4-") for row in jobs):
         raise pilot.ReleaseError("prior_p4_job_remaining")
     verified = call(endpoint + "/jobs?dryRun=all", "POST", desired, "job_dry_run_failed")
+    actual_annotations = verified.get("spec", {}).get("template", {}).get("metadata", {}).get("annotations", {})
+    expected_annotations = desired["spec"]["template"]["metadata"]["annotations"]
+    out["dry_run_network_checks"] = {key.rsplit("/", 1)[-1] + "_equal":
+        (pilot._json(actual_annotations[key]) == pilot._json(expected_annotations[key])
+            if key.endswith("/network-interfaces") and actual_annotations.get(key) and expected_annotations.get(key)
+            else actual_annotations.get(key) == expected_annotations.get(key)) for key in sorted(NETWORK_KEYS)}
+    out["job_execution_env_defaulted_gen2"] = (
+        actual_annotations.get("run.googleapis.com/execution-environment") == "gen2"
+        and "run.googleapis.com/execution-environment" not in expected_annotations)
     verify_job(verified, desired)
     out["deployment_dry_run_verified"] = True
     if not all(production_checks(before, snapshot(ctx, run)).values()):
