@@ -10,6 +10,8 @@
 
 执行前后比较正常 serving 镜像和配置、完整服务模板、流量、IAM、Scheduler 和全局设置。网络观察、任务完成、清理和生产基线分别报告；TCP 成功不代表应用隔离或完整策略周期通过。只保留安全状态 artifact，私有配置和原始云响应不下载。
 
+Job 固定使用第二代执行环境。原服务未声明执行环境时，仅将 Job 回读新增的 `gen2` 视为平台强制默认值；原服务不修改，显式不同值、网络/egress/加密差异仍拒绝。比较结果以固定布尔项记录。[执行环境规则](https://docs.cloud.google.com/run/docs/configuring/execution-environments)。
+
 接口依据：[创建 Job 与 dryRun](https://docs.cloud.google.com/run/docs/reference/rest/v1/namespaces.jobs/create)、[执行 Job](https://docs.cloud.google.com/run/docs/reference/rest/v1/namespaces.jobs/run)、[删除 Job](https://docs.cloud.google.com/run/docs/reference/rest/v1/namespaces.jobs/delete)。
 
 ## 原 revision 模式
