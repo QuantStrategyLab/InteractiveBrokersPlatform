@@ -172,6 +172,7 @@ def test_probe_template_has_no_account_environment_or_application_entrypoint(lif
     assert template["spec"]["serviceAccountName"] == "synthetic-runtime"
     container = template["spec"]["containers"][0]
     assert container["command"] == ["/usr/local/bin/python"]
+    assert container["resources"] == lifecycle.before["serving_revision"]["spec"]["containers"][0]["resources"]
     assert container["args"][:3] == ["-I", "-S", "-c"]
     assert {row["name"] for row in container["env"]} == {"PILOT_TCP_HOST", "PILOT_TCP_PORT"}
     assert "PRIVATE_AMOUNT" not in json.dumps(body["spec"]["template"])

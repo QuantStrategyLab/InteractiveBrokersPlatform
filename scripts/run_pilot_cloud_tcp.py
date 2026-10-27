@@ -109,7 +109,6 @@ def prepared(ctx, before, group, run_id):
     spec.update(containerConcurrency=1, timeoutSeconds=60)
     container = copy.deepcopy(spec["containers"][0])
     container.update(image=base, command=["/usr/local/bin/python"], args=["-I", "-S", "-c", code],
-        resources={"limits": {"cpu": "1000m" if str(container.get("resources", {}).get("limits", {}).get("cpu", "")).endswith("m") else "1", "memory": "256Mi"}},
         env=[dict(name="PILOT_TCP_HOST", value=group.ib_gateway_instance_name),
              dict(name="PILOT_TCP_PORT", value=str(group.ib_gateway_port))])
     spec["containers"] = [container]
