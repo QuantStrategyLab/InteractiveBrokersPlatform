@@ -89,3 +89,12 @@ uv run --no-sync python scripts/validate_runtime_target_manifest.py
 uv run --no-sync python scripts/validate_runtime_target_manifest.py --json
 uv run --no-sync python -m pytest -q tests/test_runtime_target_manifest.py
 ```
+
+
+The manual `Inspect Historical IBKR Execution` workflow resolves the actual live
+service from protected inventory. Its optional execution-ledger summary also
+aggregates UTC claim dates and signal/effective dates for claims without outcomes.
+Unclassified or missing dates remain `null`. These are local execution records,
+not a broker open-order count or authorization to clear a claim. The diagnostic
+reads bounded objects without connecting to the broker and emits no account,
+order, object URI, marker key or financial values.

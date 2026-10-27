@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print only aggregate IBKR execution-record types on an authorized cloud runner."""
+"""Print aggregate IBKR record types and unresolved-claim dates on an authorized runner."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import json
 import re
 import subprocess
 from collections import Counter
+from datetime import date, datetime, timezone
 from urllib.parse import urlsplit
 
 
@@ -81,7 +82,20 @@ def _list_objects(prefix: str, *, project: str, limit: int) -> tuple[str, ...]:
     return uris
 
 
-def _read_record(uri: str, *, prefix: str) -> tuple[str, str]:
+def _claim_date(value: object, *, timestamp: bool = False) -> str | None:
+    """Keep unclassified dates unknown; never echo a private key or metadata."""
+    if not isinstance(value, str):
+        return None
+    try:
+        if timestamp:
+            parsed = datetime.fromisoformat(value)
+            return parsed.astimezone(timezone.utc).date().isoformat() if parsed.tzinfo else None
+        return date.fromisoformat(value).isoformat() if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) else None
+    except ValueError:
+        return None
+
+
+def _read_record(uri: str, *, prefix: str) -> tuple[str, str, str | None]:
     result = _gcloud("storage", "cat", uri)
     if result.returncode:
         raise RuntimeError("execution state record read failed")
@@ -96,17 +110,20 @@ def _read_record(uri: str, *, prefix: str) -> tuple[str, str]:
         or uri != prefix + marker_key[len(scoped_key_prefix):] + ".json"
     ):
         raise ValueError("execution state record identity mismatch")
-    return str(payload.get("schema_version") or ""), marker_key
+    return str(payload.get("schema_version") or ""), marker_key, _claim_date(payload.get("claimed_at"), timestamp=True)
 
 
 def summarize(*, service: str, project: str, region: str, limit: int = 256) -> dict[str, object]:
     prefixes = _scoped_prefixes(service=service, project=project, region=region)
     records: dict[str, dict[str, str]] = {}
+    claimed_dates: dict[str, str | None] = {}
     for namespace, prefix in prefixes.items():
         records[namespace] = {}
         for uri in _list_objects(prefix, project=project, limit=limit):
-            schema, marker_key = _read_record(uri, prefix=prefix)
+            schema, marker_key, claimed_date = _read_record(uri, prefix=prefix)
             records[namespace][marker_key] = schema
+            if namespace == "execution_markers" and schema == "execution_claim.v1":
+                claimed_dates[marker_key] = claimed_date
     marker_schemas = Counter(records["execution_markers"].values())
     outcome_schemas = Counter(records["execution_outcomes"].values())
     if set(marker_schemas) - {"execution_claim.v1", "execution_marker.v1"}:
@@ -115,6 +132,18 @@ def summarize(*, service: str, project: str, region: str, limit: int = 256) -> d
         raise ValueError("execution state contains an unsupported outcome schema")
     claims = {key for key, schema in records["execution_markers"].items() if schema == "execution_claim.v1"}
     outcomes = set(records["execution_outcomes"])
+    unresolved_dates = Counter()
+    for key in claims - outcomes:
+        parts = key.split("/")
+        signal = _claim_date(parts[5]) if len(parts) == 8 else None
+        effective = _claim_date(parts[6]) if len(parts) == 8 else None
+        unresolved_dates[(signal, effective, claimed_dates[key])] += 1
+    date_counts = [
+        {"signal_date": signal, "effective_date": effective, "claimed_date_utc": claimed, "count": count}
+        for (signal, effective, claimed), count in sorted(
+            unresolved_dates.items(), key=lambda item: tuple(value or "" for value in item[0])
+        )
+    ]
     return {
         "schema_version": "ibkr_execution_ledger_type_summary.v1",
         "bounded_complete": True,
@@ -122,6 +151,7 @@ def summarize(*, service: str, project: str, region: str, limit: int = 256) -> d
         "completion_marker_count": marker_schemas["execution_marker.v1"],
         "outcome_count": len(outcomes),
         "claim_without_outcome_count": len(claims - outcomes),
+        "claim_without_outcome_date_counts": date_counts,
     }
 
 
