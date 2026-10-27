@@ -51,7 +51,11 @@ def test_service_selection_rejects_duplicates_instead_of_choosing_first():
 
 def test_history_workflow_selects_and_masks_private_service(tmp_path):
     root = Path(__file__).resolve().parents[1]
-    workflow = (root / ".github/workflows/inspect-historical-execution.yml").read_text()
+    wrapper = (root / ".github/workflows/inspect-historical-execution.yml").read_text()
+    assert 'uses: ./.github/workflows/inspect-historical-execution-protected.yml' in wrapper
+    assert 'secrets:\n      CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ vars.CLOUD_RUN_SERVICE_TARGETS_JSON || secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}' in wrapper
+    assert 'runs-on:' not in wrapper
+    workflow = (root / ".github/workflows/inspect-historical-execution-protected.yml").read_text()
     assert 'secrets.CLOUD_RUN_SERVICE_TARGETS_JSON' in workflow
     assert 'jq -r .service' not in workflow
     script = re.search(r"python3 - <<'PY'\n(.*?)\n          PY", workflow, re.S)
