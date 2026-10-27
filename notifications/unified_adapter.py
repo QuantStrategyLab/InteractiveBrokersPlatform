@@ -287,7 +287,17 @@ def send_incident(event, send, *, family, severity=1, store=None):
     return immediate_incident(event, send, severity=severity, store=store)
 
 
+def _notification_evidence(execution):
+    """An explicit gate approval is evidence, not an execution restriction."""
+    flags = execution.get("risk_flags")
+    if (execution.get("risk_gate") == "APPROVE"
+            and isinstance(flags, (list, tuple)) and tuple(flags) == ("risk_gate:passed",)):
+        return {**execution, "risk_flags": []}
+    return execution
+
+
 def _kind(execution, *, dry_run=False):
+    execution = _notification_evidence(execution)
     if execution.get("auth_expired") or execution.get("auth_failure"):
         return "auth_failure"
     if any(execution.get(k) for k in ("error", "errors", "fail_reason", "plugin_error", "persistence_error",
@@ -354,6 +364,7 @@ def _kind(execution, *, dry_run=False):
 def publish_cycle(publisher, *, notification, execution, attention=False):
     if not enabled():
         return publisher.publish(notification)
+    execution = _notification_evidence(execution)
     from dataclasses import replace
     from quant_platform_kit.notifications.digest_candidates import summary_evidence
     from quant_platform_kit.notifications.unified_contract import order_identity_digest
@@ -362,6 +373,7 @@ def publish_cycle(publisher, *, notification, execution, attention=False):
     kind = _kind(execution, dry_run=dry_run)
     if attention and kind in {"routine_cycle", "order_submitted", "fill"}:
         kind = "receipt_unacceptable"  # Earlier attention cannot be cleared by merging a later summary.
+    print("notification_cycle_classified kind=" + kind, flush=True)
     facts = summary_evidence(execution, dry_run=dry_run)
     reason = kind
     reason_code = str(execution.get("no_op_reason") or "").split(":", 1)[0]
