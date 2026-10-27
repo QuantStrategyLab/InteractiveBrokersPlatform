@@ -23,6 +23,12 @@ projection; disabled targets stay disabled. Do not infer private identities.
 The producer aggregates every unique cycle in the completed 06:00 SGT window;
 missing evidence is unknown, never zero. No new collector or scheduler is added.
 
+An explicit `risk_gate=APPROVE` with only the `risk_gate:passed` marker is
+normal approval evidence. Notification classification uses a copy without that
+marker; the execution result and risk decision remain intact. Mixed, unknown or
+restrictive flags, pending orders and errors retain immediate delivery. Server
+logs record only the resulting notification kind, without private event facts.
+
 Before uploading a legacy `primary-live` projection, the existing scheduled
 producer reads the exact configured service's serving revision metadata. Once
 that revision enables unified routing with the same slot, candidate namespace
