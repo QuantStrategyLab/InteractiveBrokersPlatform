@@ -1,18 +1,20 @@
 """Preflight or invoke one ordinary additional-1 probe; no publishing or retry.
 
-Private configuration, service URL and bearer token stay in the protected runner.
+Private configuration and the Google API access token stay in the protected runner.
 A response is not proof of qualified facts. An uncertain request is never replayed.
 """
 from __future__ import annotations
 
 import argparse
 from dataclasses import asdict
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
 from types import SimpleNamespace
+from time import monotonic, sleep
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
@@ -31,6 +33,10 @@ CMD = static.REVIEWED_IMAGE_CMD
 FINGERPRINTS = {"serving_revision_sha256", "source_sha", "target_sha256", "state_sha256", "canonical_url_sha256",
                 "source_evidence_sha256"}
 EVIDENCE_MODES = {"deploy_receipt", "static_source"}
+BRIDGE_FIELDS = "name,state,schedule,timeZone,attemptDeadline,retryConfig,httpTarget,lastAttemptTime,scheduleTime,status.code"
+BRIDGE_CONFIG_FIELDS = ("name", "state", "schedule", "timeZone", "attemptDeadline", "retryConfig", "httpTarget")
+READBACK_SECONDS = 195  # Existing 180-second attempt deadline plus control-log grace.
+
 CHECKS = ("source_evidence", "scope_identity", "canonical_url", "single_serving_revision",
           "service_revision_serialized", "single_worker_thread", "positive_client_id", "configuration_stable")
 
@@ -70,8 +76,68 @@ def context(mode, reviewed):
     return expected
 
 
+def _timestamp(value):
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError
+        return parsed.astimezone(timezone.utc)
+    except (AttributeError, TypeError, ValueError):
+        raise ProbeError("scheduler_time_unverified") from None
+
+
+def _bridge_config(job):
+    return {key: job.get(key) for key in BRIDGE_CONFIG_FIELDS}
+
+
+def existing_bridge(expected, url, *, read_json=image._json_command):
+    region = os.environ.get("CLOUD_RUN_REGION", "")
+    jobs = read_json(("gcloud", "scheduler", "jobs", "list", "--project", expected["expected_project_id"],
+        "--location", region, "--format=json(" + BRIDGE_FIELDS + ")"), "scheduler_bridge_unavailable")
+    if not isinstance(jobs, list):
+        raise ProbeError("scheduler_bridge_unavailable")
+    matches = [job for job in jobs if isinstance(job, dict)
+               and job.get("httpTarget", {}).get("uri") == url + "/probe"]
+    if len(matches) != 1:
+        raise ProbeError("scheduler_bridge_not_unique")
+    job = matches[0]
+    target, retries = job.get("httpTarget", {}), job.get("retryConfig", {})
+    oidc, name = target.get("oidcToken", {}), job.get("name", "")
+    email = oidc.get("serviceAccountEmail", "")
+    if (not isinstance(name, str)
+            or re.fullmatch(re.escape("projects/" + expected["expected_project_id"] + "/locations/" + region + "/jobs/") + r"[A-Za-z0-9_-]+", name) is None
+            or job.get("state") != "ENABLED" or target.get("httpMethod") != "POST"
+            or oidc.get("audience") != url or not isinstance(email, str)
+            or re.fullmatch(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.gserviceaccount\.com", email) is None
+            or target.get("oauthToken")
+            or target.get("body") not in (None, "")
+            or job.get("attemptDeadline") != "180s"):
+        raise ProbeError("scheduler_bridge_binding_unverified")
+    headers = target.get("headers", {})
+    defaults = {"user-agent": {"Google-Cloud-Scheduler"},
+                "content-type": {"application/octet-stream", "application/json"}}
+    if (not isinstance(headers, dict) or any(not isinstance(k, str) or v not in defaults.get(k.lower(), set())
+            for k, v in headers.items())):
+        raise ProbeError("scheduler_custom_headers_denied")
+    count = retries.get("retryCount", 0)
+    if type(count) is not int or count != 0 or retries.get("maxRetryDuration", "0s") != "0s":
+        raise ProbeError("scheduler_retry_not_disabled")
+    _timestamp(job.get("lastAttemptTime"))
+    _timestamp(job.get("scheduleTime"))
+    return job
+
+
+def _bridge_window(job, now):
+    last, upcoming = _timestamp(job.get("lastAttemptTime")), _timestamp(job.get("scheduleTime"))
+    if now - last <= timedelta(seconds=READBACK_SECONDS):
+        raise ProbeError("same_service_probe_attempt_recent_or_in_flight")
+    if upcoming <= now + timedelta(seconds=READBACK_SECONDS):
+        raise ProbeError("natural_probe_window_conflict")
+
+
 def _state(expected, *, read_service=identity._read_cloud_run_metadata,
-           read_json=image._json_command, run=commands.command, read_group=gateway.read_group):
+           read_json=image._json_command, run=commands.command, read_group=gateway.read_group,
+           read_bridge=existing_bridge):
     region = os.environ.get("CLOUD_RUN_REGION", "")
     if re.fullmatch(r"[a-z]+-[a-z]+[0-9]+", region) is None:
         raise ProbeError("region_unavailable")
@@ -131,13 +197,14 @@ def _state(expected, *, read_service=identity._read_cloud_run_metadata,
     if (group.execution_backend != "gateway" or type(group.ib_client_id) is not int or group.ib_client_id <= 0
             or publisher._selector(group.account_ids) != expected["expected_account_selector"]):
         raise ProbeError("broker_group_identity_unverified")
-    state = {"service_spec": service.get("spec"), "service_annotations": service.get("metadata", {}).get("annotations", {}),
+    bridge = read_bridge(expected, url)
+    state = {"bridge_config": _bridge_config(bridge), "service_spec": service.get("spec"), "service_annotations": service.get("metadata", {}).get("annotations", {}),
              "traffic": status.get("traffic"), "revision": revision, "group": asdict(group), "url": url,
              "expected": expected, "immutable": immutable}
     hashes = {"serving_revision_sha256": sha(serving), "source_sha": source,
               "target_sha256": fingerprint({"configured": expected, "deployed": target}),
               "state_sha256": fingerprint(state), "canonical_url_sha256": sha(url)}
-    return hashes, url
+    return hashes, {"url": url, "bridge": bridge}
 
 
 def preflight(expected, receipt, *, source_evidence="deploy_receipt", state=_state,
@@ -145,7 +212,7 @@ def preflight(expected, receipt, *, source_evidence="deploy_receipt", state=_sta
     if source_evidence not in EVIDENCE_MODES:
         raise ProbeError("source_evidence_invalid")
     receipt["source_evidence"] = source_evidence
-    before, url = state(expected)
+    before, invocation = state(expected)
     if source_evidence == "deploy_receipt":
         verified = provenance(expected)
         if (verified.get("deployment_provenance_status") != "verified"
@@ -171,49 +238,145 @@ def preflight(expected, receipt, *, source_evidence="deploy_receipt", state=_sta
                 or any(not isinstance(row, dict) or row.get("status") != "observed"
                        or row.get("equals_candidate_lock") is not True for row in dependencies.values())):
             raise ProbeError("static_source_unverified")
-    after, after_url = state(expected)
-    if before != after or url != after_url:
+    after, after_invocation = state(expected)
+    if before != after or invocation != after_invocation:
         raise ProbeError("configuration_changed_during_preflight")
     before["source_evidence_sha256"] = sha(source_evidence)
     receipt.update(checks=dict.fromkeys(CHECKS, True), fingerprints=before,
                    source_evidence=source_evidence,
+                   scheduler_bridge={"job_sha256": sha(invocation["bridge"]["name"]),
+                       "oidc_identity_sha256": sha(invocation["bridge"]["httpTarget"]["oidcToken"]["serviceAccountEmail"]),
+                       "config_sha256": fingerprint(_bridge_config(invocation["bridge"]))},
                    status="preflight_verified", reason="review_before_explicit_invoke")
-    return before, url
+    return before, invocation
 
 
-def prepare_invocation_auth(url, receipt):
-    """Expose the verified audience only to this protected job's auth action."""
-    output = os.environ.get("GITHUB_OUTPUT", "")
-    if not output:
-        raise ProbeError("invocation_auth_output_unavailable")
-    if not isinstance(url, str) or not url or any(ord(c) <= 0x20 or ord(c) > 0x7e for c in url):
-        raise ProbeError("canonical_url_invalid")
-    # The workflow command is consumed by the runner; never put this private
-    # audience in the JSON receipt or an artifact. Escape command protocol data.
-    print("::add-mask::" + url.replace("%", "%25"), flush=True)
-    with Path(output).open("a", encoding="utf-8") as handle:
-        handle.write("invocation_audience=" + url + "\n")
-    receipt.update(status="invocation_auth_prepared", reason="native_id_token_required")
+def _attempt_entries(job, kind, since, until, fields, read_json):
+    project, region, job_id = job["name"].split("/")[1::2]
+    query = ('resource.type="cloud_scheduler_job" AND resource.labels.job_id="' + job_id
+             + '" AND resource.labels.location="' + region + '" AND timestamp>="' + since
+             + '" AND timestamp<="' + until + '" AND jsonPayload."@type"="'
+             + 'type.googleapis.com/google.cloud.scheduler.logging.' + kind + '"')
+    return read_json(("gcloud", "logging", "read", query, "--project", project,
+                     "--limit=2", "--format=json(" + fields + ")"), "scheduler_terminal_unavailable")
 
 
-def invoke_once(url, receipt, *, token, opener=None, record=lambda: None):
-    # Only the official auth action's masked output is passed by the workflow.
-    # Missing/rejected native auth never falls back to gcloud or another identity.
+def _current_bridge(job, read_json):
+    project, region, job_id = job["name"].split("/")[1::2]
+    return read_json(("gcloud", "scheduler", "jobs", "describe", job_id,
+        "--project", project, "--location", region, "--format=json(" + BRIDGE_FIELDS + ")"),
+        "scheduler_terminal_unavailable")
+
+
+def previous_terminal(job, now, *, read_json=image._json_command):
+    """Require a terminal pair for this job's exact latest attempt, not an age guess."""
+    since, until = job["lastAttemptTime"], now.isoformat()
+    finished = _attempt_entries(job, "AttemptFinished", since, until, "timestamp", read_json)
+    started = _attempt_entries(job, "AttemptStarted", since, until, "timestamp", read_json)
+    current = _current_bridge(job, read_json)
+    if (not isinstance(finished, list) or len(finished) != 1
+            or not isinstance(started, list) or len(started) != 1
+            or current.get("lastAttemptTime") != job.get("lastAttemptTime")
+            or _bridge_config(current) != _bridge_config(job)):
+        return False
+    return all(_timestamp(since) <= _timestamp(row.get("timestamp")) <= now
+               for row in (started[0], finished[0]))
+
+
+def terminal_readback(job, fence, *, read_json=None, pause=sleep, clock=monotonic):
+    """Observe this attempt inside a fixed time window; missing fields stay unknown."""
+    start = _timestamp(fence)
+    end = start + timedelta(seconds=READBACK_SECONDS)
+    deadline = clock() + READBACK_SECONDS
+    def read(args, reason):
+        remaining = deadline - clock()
+        if remaining <= 0:
+            raise ProbeError("scheduler_observation_deadline")
+        if read_json is not None:
+            return read_json(args, reason)
+        return commands._json(commands.command(list(args), stage=reason, timeout=min(60, remaining)))
+    unknown = {"scheduler_terminal": False, "scheduler_request_succeeded": None}
+    for index in range(40):
+        if clock() >= deadline:
+            return unknown
+        finished = _attempt_entries(job, "AttemptFinished", fence, end.isoformat(),
+                                    "timestamp,httpRequest.status", read)
+        if clock() >= deadline:
+            return unknown
+        if not isinstance(finished, list) or len(finished) > 1:
+            return unknown
+        if finished:
+            started = _attempt_entries(job, "AttemptStarted", fence, end.isoformat(), "timestamp", read)
+            if clock() >= deadline:
+                return unknown
+            if not isinstance(started, list) or len(started) != 1:
+                return unknown
+            first, last = _timestamp(started[0].get("timestamp")), _timestamp(finished[0].get("timestamp"))
+            current = _current_bridge(job, read)
+            attempted = _timestamp(current.get("lastAttemptTime"))
+            if (clock() >= deadline or not start <= attempted <= end
+                    or not attempted <= first <= end or not attempted <= last <= end
+                    or attempted == _timestamp(job.get("lastAttemptTime"))
+                    or _bridge_config(current) != _bridge_config(job)):
+                return unknown
+            http = finished[0].get("httpRequest", {}).get("status")
+            status = current.get("status")
+            # Job status is auxiliary; omitted fields remain unknown.
+            # The explicit Finished HTTP result is decisive.
+            code = status.get("code") if isinstance(status, dict) else None
+            code = code if type(code) is int else None
+            success = None
+            if type(http) is int and 100 <= http <= 599:
+                success = 200 <= http < 300
+                if success and code not in (None, 0):
+                    success = None  # Conflicting metadata is not replay authority.
+            return {"scheduler_terminal": True, "scheduler_request_succeeded": success,
+                    "scheduler_started_at": first.isoformat(), "scheduler_finished_at": last.isoformat(),
+                    "scheduler_http_status": http if type(http) is int else None,
+                    "scheduler_job_status_code": code}
+        remaining = deadline - clock()
+        if index < 39 and remaining > 0:
+            pause(min(5, remaining))
+    return unknown
+
+
+def invoke_once(invocation, receipt, *, token, opener=None, record=lambda: None,
+                read_terminal=terminal_readback, verify_previous=previous_terminal, now=None):
+    if receipt.get("scheduler_dispatch_attempted"):
+        raise ProbeError("previous_dispatch_inspect_only")
     if (not isinstance(token, str) or not token or len(token) > 16384
             or any(ord(c) <= 0x20 or ord(c) > 0x7e for c in token)):
         raise ProbeError("existing_invocation_identity_unavailable")
-    request = Request(url + "/probe", data=b"", method="POST", headers={"Authorization": "Bearer " + token})
-    receipt.update(http_attempted=True, http_attempts=1, status="request_outcome_unknown", reason="inspect_original_report_before_any_other_action")
-    record()  # Persist the uncertain attempt before sending; never silently replay.
+    job = invocation["bridge"]
+    current = now if now is not None else datetime.now(timezone.utc)
+    _bridge_window(job, current)
+    if verify_previous(job, current) is not True:
+        raise ProbeError("previous_scheduler_attempt_terminal_unverified")
+    current = now if now is not None else datetime.now(timezone.utc)
+    _bridge_window(job, current)
+    fence = current.isoformat()
+    # Only this fixed Google API endpoint is called. The existing Scheduler emits OIDC.
+    request = Request("https://cloudscheduler.googleapis.com/v1/" + job["name"] + ":run",
+                      data=b"{}", method="POST", headers={"Authorization": "Bearer " + token,
+                      "Content-Type": "application/json"})
+    receipt.update(scheduler_dispatch_attempted=True, scheduler_dispatch_attempts=1,
+        scheduler_dispatch_started_at=fence, status="request_outcome_unknown",
+        reason="inspect_original_attempt_before_any_other_action")
+    record()
     client = opener if opener is not None else build_opener(ProxyHandler({}), publisher._NoRedirect())
     try:
-        with client.open(request, timeout=120) as response:
-            receipt.update(http_status=response.status, response_is_probe_ok=response.read(64) == b"Probe OK")
-        receipt.update(status="response_received", reason="original_report_requires_separate_validation")
+        with client.open(request, timeout=30) as response:
+            receipt["scheduler_run_http_status"] = response.status
+            if not 200 <= response.status < 300:
+                return
+        receipt.update(status="scheduler_dispatched", reason="await_original_terminal_metadata")
+        record()
+        receipt.update(read_terminal(job, fence))
+        if receipt.get("scheduler_terminal") is True:
+            receipt.update(status="scheduler_terminal_observed", reason="original_report_requires_separate_validation")
     except HTTPError as error:
-        receipt.update(status="http_failure", http_status=error.code,
-                       reason="existing_invocation_rejected" if error.code in {401, 403} else
-                       "existing_failure_notification_may_have_been_sent")
+        receipt.update(scheduler_run_http_status=error.code,
+            reason="existing_scheduler_identity_rejected" if error.code in {401, 403} else "request_outcome_unknown_do_not_retry")
         error.close()
     except (URLError, OSError, TimeoutError):
         receipt["reason"] = "request_outcome_unknown_do_not_retry"
@@ -221,13 +384,12 @@ def invoke_once(url, receipt, *, token, opener=None, record=lambda: None):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    mode_args = parser.add_mutually_exclusive_group()
-    mode_args.add_argument("--validate-context", action="store_true")
-    mode_args.add_argument("--prepare-invocation-auth", action="store_true")
+    parser.add_argument("--validate-context", action="store_true")
     args = parser.parse_args(argv)
     receipt = dict(schema_version="ibkr.additional1_probe_invocation.v1", target="additional-1",
         status="blocked", reason="preflight_unverified", checks=dict.fromkeys(CHECKS, False), fingerprints={},
-        http_attempted=False, http_attempts=0, http_status=None, response_is_probe_ok=None,
+        scheduler_dispatch_attempted=False, scheduler_dispatch_attempts=0, scheduler_run_http_status=None,
+        scheduler_terminal=False, scheduler_request_succeeded=None,
         facts_verified=False, published=False, broker_connection_attempts="unknown",
         existing_failure_notification_possible=True)
     receipt.update(loaded_source_status="unknown", independent_release_approval="unknown")
@@ -244,26 +406,29 @@ def main(argv=None):
         expected = context(mode, reviewed)
         if args.validate_context:
             return 0
-        if args.prepare_invocation_auth and mode != "invoke":
-            raise ProbeError("invocation_auth_requires_invoke")
-        hashes, url = preflight(expected, receipt,
+        if mode == "invoke" and path.exists():
+            previous = commands._json(path.read_text())
+            if previous.get("scheduler_dispatch_attempted") is True:
+                print(json.dumps({"status": "request_outcome_unknown", "reason": "previous_dispatch_inspect_only"}))
+                return 1
+        hashes, invocation = preflight(expected, receipt,
                                source_evidence=os.environ.get("ACCOUNT_FACTS_PROBE_SOURCE_EVIDENCE", "deploy_receipt"))
         if mode == "invoke":
             if hashes != reviewed:
                 raise ProbeError("reviewed_fingerprints_changed")
-            if args.prepare_invocation_auth:
-                prepare_invocation_auth(url, receipt)
-            else:
-                invoke_once(url, receipt, token=os.environ.get("ACCOUNT_FACTS_PROBE_ID_TOKEN", ""), record=record)
+            # The original WIF credentials authorize only this one Google API request.
+            token = commands.command(["gcloud", "auth", "print-access-token"], stage="existing_invocation_identity_unavailable").strip()
+            invoke_once(invocation, receipt, token=token, record=record)
     except ProbeError as error:
-        receipt.update(status="blocked", reason=str(error))
+        receipt.update(status="request_outcome_unknown" if receipt["scheduler_dispatch_attempted"] else "blocked",
+            reason="request_outcome_unknown_do_not_retry" if receipt["scheduler_dispatch_attempted"] else str(error))
     except Exception:
         # Never print native cloud errors, secret payloads, URLs or tokens.
-        receipt.update(status="request_outcome_unknown" if receipt["http_attempted"] else "blocked",
-                       reason="request_outcome_unknown_do_not_retry" if receipt["http_attempted"] else "protected_preflight_read_failed")
+        receipt.update(status="request_outcome_unknown" if receipt["scheduler_dispatch_attempted"] else "blocked",
+                       reason="request_outcome_unknown_do_not_retry" if receipt["scheduler_dispatch_attempted"] else "protected_preflight_read_failed")
     record()
-    return 0 if receipt["status"] in {"preflight_verified", "invocation_auth_prepared"} or (
-        receipt["status"] == "response_received" and receipt["http_status"] == 200 and receipt["response_is_probe_ok"] is True) else 1
+    return 0 if receipt["status"] == "preflight_verified" or (
+        receipt["scheduler_terminal"] is True and receipt["scheduler_request_succeeded"] is True) else 1
 
 
 if __name__ == "__main__":
