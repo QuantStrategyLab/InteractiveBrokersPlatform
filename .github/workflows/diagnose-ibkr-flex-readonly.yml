@@ -23,6 +23,11 @@ on:
         type: boolean
         required: false
         default: false
+      execution_source_only:
+        description: Inspect native execution identity and fee conflicts in an explicit max-31-day window; never publish
+        type: boolean
+        required: false
+        default: false
       cashflow_period_from:
         description: Optional cash-flow source request start (YYYY-MM-DD); pair with end, at most 31 days
         type: string
@@ -34,12 +39,12 @@ on:
         required: false
         default: ""
       expected_period_from:
-        description: Optional expected report period start (YYYY-MM-DD), paired with the end; does not change the query
+        description: Expected start (YYYY-MM-DD), paired with end; required actual request start for execution_source_only
         type: string
         required: false
         default: ""
       expected_period_to:
-        description: Optional expected report period end (YYYY-MM-DD), paired with the start
+        description: Expected end (YYYY-MM-DD); required actual request end for execution_source_only
         type: string
         required: false
         default: ""
@@ -74,7 +79,7 @@ jobs:
       - name: Validate the exact target and optional period without requests
         run: |
           selected_modes=0
-          for enabled in "$CASH_SOURCE_ONLY" "$CASHFLOW_SOURCE_ONLY" "$CONFIGURED_ACCOUNT_COVERAGE_ONLY"; do
+          for enabled in "$CASH_SOURCE_ONLY" "$CASHFLOW_SOURCE_ONLY" "$CONFIGURED_ACCOUNT_COVERAGE_ONLY" "$EXECUTION_SOURCE_ONLY"; do
             if [ "$enabled" = "true" ]; then selected_modes=$((selected_modes + 1)); fi
           done
           if [ "$selected_modes" -gt 1 ]; then
@@ -84,12 +89,15 @@ jobs:
           preflight_args=(--preflight)
           if [ "$CONFIGURED_ACCOUNT_COVERAGE_ONLY" = "true" ]; then
             preflight_args+=(--configured-account-coverage-only)
+          elif [ "$EXECUTION_SOURCE_ONLY" = "true" ]; then
+            preflight_args+=(--execution-source-only)
           fi
           uv run --no-sync python -m scripts.diagnose_ibkr_flex_ledger "${preflight_args[@]}"
         env:
           CONFIGURED_ACCOUNT_COVERAGE_ONLY: ${{ inputs.configured_account_coverage_only }}
           CASH_SOURCE_ONLY: ${{ inputs.cash_source_only }}
           CASHFLOW_SOURCE_ONLY: ${{ inputs.cashflow_source_only }}
+          EXECUTION_SOURCE_ONLY: ${{ inputs.execution_source_only }}
           IBKR_FLEX_TOKEN: ${{ secrets.IBKR_FLEX_TOKEN }}
           IBKR_FLEX_QUERY_ID: ${{ secrets.IBKR_FLEX_QUERY_ID }}
           IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON: ${{ secrets.IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON }}
@@ -99,6 +107,8 @@ jobs:
         run: |
           if [ "$CONFIGURED_ACCOUNT_COVERAGE_ONLY" = "true" ]; then
             uv run --no-sync python -m scripts.diagnose_ibkr_flex_ledger --configured-account-coverage-read-once
+          elif [ "$EXECUTION_SOURCE_ONLY" = "true" ]; then
+            uv run --no-sync python -m scripts.diagnose_ibkr_flex_ledger --execution-read-once
           elif [ "$CASHFLOW_SOURCE_ONLY" = "true" ]; then
             uv run --no-sync python -m scripts.diagnose_ibkr_flex_ledger --cashflow-read-once
           elif [ "$CASH_SOURCE_ONLY" = "true" ]; then
@@ -110,6 +120,7 @@ jobs:
           CONFIGURED_ACCOUNT_COVERAGE_ONLY: ${{ inputs.configured_account_coverage_only }}
           CASH_SOURCE_ONLY: ${{ inputs.cash_source_only }}
           CASHFLOW_SOURCE_ONLY: ${{ inputs.cashflow_source_only }}
+          EXECUTION_SOURCE_ONLY: ${{ inputs.execution_source_only }}
           IBKR_FLEX_DIAGNOSTIC_ENABLED: "true"
           IBKR_FLEX_TOKEN: ${{ secrets.IBKR_FLEX_TOKEN }}
           IBKR_FLEX_QUERY_ID: ${{ secrets.IBKR_FLEX_QUERY_ID }}
