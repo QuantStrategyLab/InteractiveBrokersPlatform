@@ -259,3 +259,20 @@ def test_application_phase_reads_safe_failure_or_success_then_deletes_job(lifecy
     assert out["measurement_read"] and out["application_isolation"] == value
     assert out["status"] == ("observed" if passed else "unavailable")
     assert out["job_deleted"] and out["baseline_unchanged"] and out["tcp_connected"] is None
+
+
+def test_closed_market_cycle_remains_unavailable_after_successful_cleanup(lifecycle, monkeypatch):
+    from scripts import pilot_cycle_entry
+    monkeypatch.setattr(job.app_isolation, "prepared", lambda *args, **kwargs: args[3])
+    app = dict(schema_version="ibkr.application_isolation.v1", stage="isolation_observed", isolation_passed=True,
+        candidate_source_verified=True, dependencies_verified=True, application_imported=True, binding_verified=True,
+        outputs_isolated=True, report_saved_readback=True, sdk_guards_installed=True, notification_guards_installed=True,
+        external_effect_attempts=0, broker_called=False, strategy_computed=False, production_state_read=False)
+    cycle = pilot_cycle_entry.result()
+    cycle.update(status="waiting_market", stage="market_closed", market_open=False)
+    lifecycle.logs = [{"jsonPayload": dict(schema_version="ibkr.guarded_cycle.v1", isolation=app, cycle=cycle)}]
+    lifecycle.fail = "task_failed"
+    out = lifecycle.execute(application_source=Path("source"), application_phase="cycle")
+    assert out["status"] == "unavailable" and out["stage"] == "market_closed"
+    assert out["job_deleted"] and out["baseline_unchanged"] and out["measurement_read"]
+    assert not out["guarded_cycle"]["cycle"]["cycle_completed"] and not out["broker_called"]

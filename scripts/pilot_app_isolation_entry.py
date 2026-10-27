@@ -40,7 +40,7 @@ def unpack(data, expected, source):
         raise IsolationError("candidate_lock_unverified")
 
 
-def install_audit(root, violations):
+def install_audit(root, violations, network_policy=None):
     def reject():
         violations.append(True)
         raise IsolationError("external_effect_forbidden")
@@ -50,7 +50,9 @@ def install_audit(root, violations):
             if path != Path("/dev/null") and not path.is_relative_to(root):
                 reject()
     def audit(event, args):
-        if event in {"socket.connect", "socket.getaddrinfo", "socket.sendto", "subprocess.Popen", "os.system"}:
+        if event in {"subprocess.Popen", "os.system"}:
+            reject()
+        if event in {"socket.connect", "socket.getaddrinfo", "socket.sendto"} and not (network_policy and network_policy["enabled"]):
             reject()
         if event == "open" and isinstance(args[0], (str, bytes, os.PathLike)):
             path = Path(os.fsdecode(args[0])).resolve()
@@ -83,13 +85,17 @@ def isolation(root, source, out):
         (path.parent if key == "IBKR_RECONCILIATION_OUTPUT_PATH" else path).mkdir(parents=True, exist_ok=True)
     os.environ.update(EXECUTION_REPORT_GCS_URI="", EXECUTION_REPORT_CLOUD_URI="",
         IBKR_EXECUTION_STATE_CLOUD_URI="", IBKR_EXECUTION_STATE_GCS_URI="", PYTHONDONTWRITEBYTECODE="1")
+    tempfile.tempdir = str(paths["TMPDIR"])
     sys.dont_write_bytecode = True
     sys.path.insert(0, str(source))
     os.chdir(root)
     violations = []
-    install_audit(root, violations)
+    network_policy = dict(enabled=False)
+    install_audit(root, violations, network_policy)
     out["stage"] = "application_import"
     import ib_insync
+    sdk_originals = {(cls, name): getattr(cls, name) for cls, names in (
+        (ib_insync.IB, ("connect",)), (ib_insync.client.Client, ("connect", "send", "sendMsg"))) for name in names}
     def forbidden(*args, **kwargs):
         violations.append(True)
         raise IsolationError("broker_or_notification_forbidden")
@@ -142,9 +148,13 @@ def isolation(root, source, out):
         raise IsolationError("unexpected_external_effect_attempted")
     out.update(isolation_passed=True, stage="isolation_observed", report_saved_readback=True,
         sdk_guards_installed=True, notification_guards_installed=True, external_effect_attempts=0)
+    return dict(main=main, sdk=ib_insync, sdk_originals=sdk_originals, expected=expected,
+        paths=paths, network_policy=network_policy, violations=violations)
 
 
 def main():
+    cycle_phase = os.environ.get("PILOT_JOB_PHASE") == "cycle"
+    cycle = None
     out = dict(schema_version="ibkr.application_isolation.v1", stage="bundle_preflight", isolation_passed=False,
         candidate_source_verified=False, dependencies_verified=False, application_imported=False,
         binding_verified=False, outputs_isolated=False, report_saved_readback=False, sdk_guards_installed=False,
@@ -160,15 +170,26 @@ def main():
         source.mkdir()
         unpack(base64.b64decode("".join(sys.argv[2:]), validate=True), sys.argv[1], source)
         out["candidate_source_verified"] = True
-        isolation(root, source, out)
+        if cycle_phase:
+            sys.path.insert(0, str(source))
+            import _p4_operator_cycle as operator
+            cycle = operator.result()
+            counters, private_save = operator.install_cloud_guards()
+        context = isolation(root, source, out)
+        if cycle_phase:
+            cycle = operator.run(context, counters, private_save, os.environ.pop("PILOT_REPORT_STORE"))
     except Exception as error:
         if isinstance(error, IsolationError):
             out["stage"] = str(error)
         else:
             out["failure_class"] = type(error).__name__ if type(error).__name__ in {
                 "ImportError", "ModuleNotFoundError", "AttributeError", "TypeError", "ValueError", "PermissionError", "FileNotFoundError"} else "unavailable"
+    passed = out["isolation_passed"]
+    if cycle_phase:
+        out = dict(schema_version="ibkr.guarded_cycle.v1", isolation=out, cycle=cycle)
+        passed = bool(passed and cycle and cycle["cycle_completed"])
     os.write(safe_fd, (json.dumps(out, sort_keys=True) + "\n").encode())
-    return 0 if out["isolation_passed"] else 1
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":
