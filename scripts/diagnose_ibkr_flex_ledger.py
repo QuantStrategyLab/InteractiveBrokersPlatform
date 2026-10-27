@@ -16,6 +16,7 @@ from application.ibkr_flex_source import (
     diagnose_activity_flex_ledger, diagnose_configured_flex_coverage,
 )
 from application.ibkr_flex_ledger import CASH_REPORT_MISSING_CODES
+from application.ibkr_flex_executions import EXECUTION_SOURCE_FIELDS
 
 
 _SCHEMA_VERSION = "ibkr_flex_diagnostic.v1"
@@ -355,13 +356,95 @@ def _validated_coverage_report(value: object) -> dict[str, Any]:
             "period": accounts["primary"]["period"], "accounts": accounts}
 
 
+def _validated_execution_report(value: object) -> dict[str, Any]:
+    """Rebuild the closed source-evidence schema; never forward native keys."""
+    invalid = _empty_report(status="error", missing=["flex_execution_diagnostic_result_invalid"])
+    if not isinstance(value, dict):
+        return invalid
+    fixed = {"schema_version": "ibkr_flex_execution_source.v1", "status": "observed_source_shape",
+             "report_evidence": "newly_generated_report", "coverage": "not_evaluated",
+             "correction_resolution": "not_applied"}
+    if (any(value.get(key) != expected for key, expected in fixed.items())
+            or value.get("publication_authority_granted") is not False
+            or type(value.get("section_present")) is not bool
+            or not isinstance(value.get("source_ref"), str)
+            or not re.fullmatch(r"[a-f0-9]{64}", value["source_ref"])):
+        return invalid
+
+    def count(number, limit=10000):
+        return type(number) is int and 0 <= number <= limit
+
+    period = value.get("period")
+    try:
+        if not isinstance(period, dict) or set(period) != {"from", "to"}:
+            return invalid
+        start, end = (date.fromisoformat(period[key]) for key in ("from", "to"))
+        if (start.isoformat() != period["from"] or end.isoformat() != period["to"]
+                or not 0 <= (end - start).days <= 30):
+            return invalid
+    except (TypeError, ValueError):
+        return invalid
+    total = value.get("native_record_count")
+    keys = {"execution_rows", "other_level_rows", "missing_identity_rows", "economic_fields_unknown_rows",
+            "explicit_correction_signal_rows", "notes_correction_signal_rows", "original_reference_signal_rows",
+            "notes_unknown_rows", "original_fields_unknown_rows",
+            "repeated_identity_groups", "identity_conflict_groups", "suffix_family_candidate_groups"}
+    counts, fields, dates = (value.get(key) for key in ("counts", "field_counts", "date_counts"))
+    if (not count(total) or not isinstance(counts, dict) or set(counts) != keys
+            or any(not count(number, total) for number in counts.values())
+            or counts["execution_rows"] + counts["other_level_rows"] != total
+            or not isinstance(fields, dict) or set(fields) != set(EXECUTION_SOURCE_FIELDS)
+            or not isinstance(dates, dict) or len(dates) > 31):
+        return invalid
+    safe_fields = {}
+    for key in EXECUTION_SOURCE_FIELDS:
+        row = fields[key]
+        if (not isinstance(row, dict) or set(row) != {"present", "nonempty"}
+                or not count(row["present"], total) or not count(row["nonempty"], row["present"])):
+            return invalid
+        safe_fields[key] = {name: row[name] for name in ("present", "nonempty")}
+    for day, number in dates.items():
+        try:
+            parsed = date.fromisoformat(day)
+            if parsed.isoformat() != day or not start <= parsed <= end or not count(number, total):
+                return invalid
+        except (TypeError, ValueError):
+            return invalid
+    if sum(dates.values()) != total:
+        return invalid
+    groups, omitted = value.get("economic_similarity_groups"), value.get("omitted_similarity_group_count")
+    if not isinstance(groups, list) or len(groups) > 32 or not count(omitted):
+        return invalid
+    safe_groups = []
+    for group in groups:
+        if (not isinstance(group, dict) or not isinstance(group.get("comparison_sha256"), str)
+                or not re.fullmatch(r"[a-f0-9]{64}", group["comparison_sha256"])
+                or group.get("date") not in dates or not count(group.get("record_count"), total)
+                or group["record_count"] < 2
+                or not count(group.get("distinct_native_id_count"), group["record_count"])
+                or not count(group.get("suffix_family_candidate_groups"), group["record_count"])
+                or not count(group.get("explicit_correction_signal_rows"), group["record_count"])
+                or group.get("fee_comparison") not in {"unknown", "same", "different"}):
+            return invalid
+        safe_groups.append({key: group[key] for key in ("comparison_sha256", "date", "record_count",
+                                                       "distinct_native_id_count", "suffix_family_candidate_groups",
+                                                       "explicit_correction_signal_rows", "fee_comparison")})
+    return {**fixed, "publication_authority_granted": False, "section_present": value["section_present"],
+            "source_ref": value["source_ref"], "period": dict(period), "native_record_count": total,
+            "field_counts": safe_fields, "counts": {key: counts[key] for key in sorted(keys)},
+            "date_counts": dict(dates), "economic_similarity_groups": safe_groups,
+            "omitted_similarity_group_count": omitted}
+
+
 def main(argv: Sequence[str] = ()) -> int:
     args = tuple(argv)
     coverage = args in (("--configured-account-coverage-read-once",),
                         ("--preflight", "--configured-account-coverage-only"))
-    preflight = args in (("--preflight",), ("--preflight", "--configured-account-coverage-only"))
+    execution = args in (("--execution-read-once",), ("--preflight", "--execution-source-only"))
+    preflight = args in (("--preflight",), ("--preflight", "--configured-account-coverage-only"),
+                        ("--preflight", "--execution-source-only"))
     if args not in ((), ("--preflight",), ("--read-once",), ("--cash-read-once",), ("--cashflow-read-once",)
-                    ) and not coverage:
+                    ) and not coverage and not execution:
         print(json.dumps(_empty_report(status="incomplete", missing=["arguments_invalid"]), sort_keys=True))
         return 2
     if not preflight and os.environ.get(_ENABLE_ENV) != "true":
@@ -393,6 +476,10 @@ def main(argv: Sequence[str] = ()) -> int:
             raise ValueError
     except ValueError:
         missing.append("cashflow_request_period_invalid")
+    if execution:
+        if (expected_period is None or
+                (date.fromisoformat(expected_period["to"]) - date.fromisoformat(expected_period["from"])).days > 30):
+            missing.append("execution_request_period_required_or_invalid")
     try:
         allowed_accounts = _approved_report_accounts(account_ids)
         if coverage and (allowed_accounts is None or request_period is not None):
@@ -427,6 +514,8 @@ def main(argv: Sequence[str] = ()) -> int:
             kwargs["cashflow_source_only"] = True
             if request_period is not None:
                 kwargs["report_period"] = request_period
+        if execution:
+            kwargs.update(execution_source_only=True, report_period=expected_period, collect_pending=True)
         if allowed_accounts is not None:
             kwargs["allowed_report_account_ids"] = allowed_accounts
         result = diagnose_activity_flex_ledger(
@@ -435,7 +524,9 @@ def main(argv: Sequence[str] = ()) -> int:
             expected_account_ids=account_ids,
             **kwargs,
         )
-        if args == ("--cashflow-read-once",):
+        if execution:
+            report = _validated_execution_report(result)
+        elif args == ("--cashflow-read-once",):
             report = _validated_cashflow_report(result)
         else:
             report = _validated_cash_report(result) if args == ("--cash-read-once",) else _validated_report(result)
