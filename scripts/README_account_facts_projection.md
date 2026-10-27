@@ -189,10 +189,10 @@ publishing or configuration write.
 fixed to the existing `additional-1` slot. It uses the existing recovery WIF
 provider/deployment identity and changes no IAM, service, Scheduler, account,
 strategy, risk or notification configuration. The source allowlist contains only
-`f9ace60a88b622ec8ffa0d65d22d063d38129ebf`, whose ordinary `/probe`, synchronous
+`8bcd327327acc3e47a88a6a0901bf91b06ef30c7`, whose ordinary `/probe`, synchronous
 strategy-deadline cleanup and single-worker image command were reviewed.
-Its change from the previous reviewed source only adds fixed timeout-stage
-observations and report/trace correlation; the ordinary probe path is unchanged.
+Its change from the previous reviewed source only adds fixed classification of
+timed-out contract-qualification callers; the ordinary probe path is unchanged.
 A new serving source still requires fresh complete static/source verification
 and a new reviewed preflight fingerprint object; previous results cannot be reused.
 A changed source requires review of the actual path before updating that list.

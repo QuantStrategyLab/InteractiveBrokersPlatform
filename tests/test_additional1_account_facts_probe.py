@@ -502,8 +502,9 @@ def test_workflow_has_only_existing_wif_scheduler_path():
 
 
 @pytest.mark.parametrize('where', ['revision', 'static_evidence'])
-def test_previous_reviewed_source_is_not_a_second_allowed_source(case, where):
-    previous = '1595957e388a1d29914a13075d210016c8848404'
+@pytest.mark.parametrize('previous', ['1595957e388a1d29914a13075d210016c8848404',
+                                      'f9ace60a88b622ec8ffa0d65d22d063d38129ebf'])
+def test_previous_reviewed_source_is_not_a_second_allowed_source(case, where, previous):
     if where == 'revision':
         case['revision']['metadata']['labels']['commit-sha'] = previous
         with pytest.raises(probe.ProbeError, match='source_not_reviewed'):
@@ -516,9 +517,11 @@ def test_previous_reviewed_source_is_not_a_second_allowed_source(case, where):
                             static_provenance=lambda _: evidence)
 
 
-def test_previous_source_fingerprints_cannot_dispatch(scheduler_invocation, monkeypatch, capsys):
+@pytest.mark.parametrize('previous', ['1595957e388a1d29914a13075d210016c8848404',
+                                      'f9ace60a88b622ec8ffa0d65d22d063d38129ebf'])
+def test_previous_source_fingerprints_cannot_dispatch(scheduler_invocation, monkeypatch, capsys, previous):
     case = scheduler_invocation
-    reviewed = {**case['hashes'], 'source_sha': '1595957e388a1d29914a13075d210016c8848404'}
+    reviewed = {**case['hashes'], 'source_sha': previous}
     monkeypatch.setenv('ACCOUNT_FACTS_PROBE_REVIEWED_FINGERPRINTS', json.dumps(reviewed))
     monkeypatch.setattr(probe.commands, 'command', lambda *_a, **_k: pytest.fail('old source cannot mint token'))
     assert probe.main([]) == 1
