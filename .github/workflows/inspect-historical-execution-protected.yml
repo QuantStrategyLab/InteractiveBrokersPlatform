@@ -1,0 +1,108 @@
+name: Inspect Historical IBKR Execution (protected execution)
+
+# Register the original private inventory as a workflow secret before any
+# runner step header, matching the existing reconciliation evidence boundary.
+on:
+  workflow_call:
+    inputs:
+      target:
+        required: true
+        type: string
+      dates:
+        required: true
+        type: string
+      inspect_execution_ledger:
+        required: false
+        default: false
+        type: boolean
+    secrets:
+      CLOUD_RUN_SERVICE_TARGETS_JSON:
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
+  GCP_WORKLOAD_IDENTITY_PROVIDER: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
+  GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Require infrastructure variables
+        env:
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          IBKR_GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in IBKR_DEPLOY_SERVICE_ACCOUNT IBKR_GCP_PROJECT_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is required" >&2
+              exit 2
+            fi
+          done
+
+      - uses: actions/checkout@v6
+        id: source_checkout
+
+      - name: Select validated target
+        id: target
+        env:
+          REQUESTED_TARGET: ${{ inputs.target }}
+          CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}
+        run: |
+          set -euo pipefail
+          target="$(jq -cer --arg id "$REQUESTED_TARGET" '
+            [.targets[] | select(.id == $id and .execution_mode == "live" and .include_reconciliation == true)]
+            | if length == 1 then .[0] else error("target is not a unique live target") end
+          ' config/runtime_targets.manifest.json)"
+          echo "region=$(jq -r .region <<< "$target")" >> "$GITHUB_OUTPUT"
+          python3 - <<'PY'
+          import os
+          from scripts.summarize_historical_execution_cloud import resolve_private_service
+
+          service = resolve_private_service(
+              os.environ["CLOUD_RUN_SERVICE_TARGETS_JSON"], os.environ["REQUESTED_TARGET"]
+          )
+          print(f"::add-mask::{service}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"service={service}\n")
+          PY
+
+      - uses: google-github-actions/auth@v3
+        id: cloud_auth
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+        id: cloud_cli
+
+      - name: Summarize selected private reports without order details
+        env:
+          SERVICE: ${{ steps.target.outputs.service }}
+          REGION: ${{ steps.target.outputs.region }}
+          DATES: ${{ inputs.dates }}
+        run: |
+          set -euo pipefail
+          read -r -a selected_dates <<< "$DATES"
+          python3 scripts/summarize_historical_execution_cloud.py \
+            --service "$SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$REGION" \
+            --dates "${selected_dates[@]}"
+
+      - name: Summarize scoped execution record types without broker connection
+        if: ${{ always() && !cancelled() && inputs.inspect_execution_ledger && steps.source_checkout.outcome == 'success' && steps.target.outcome == 'success' && steps.cloud_auth.outcome == 'success' && steps.cloud_cli.outcome == 'success' }}
+        env:
+          SERVICE: ${{ steps.target.outputs.service }}
+          REGION: ${{ steps.target.outputs.region }}
+        run: |
+          set -euo pipefail
+          python3 scripts/summarize_execution_ledger_cloud.py \
+            --service "$SERVICE" --project "$GCP_PROJECT_ID" --region "$REGION"
