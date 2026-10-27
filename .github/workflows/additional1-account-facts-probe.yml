@@ -72,9 +72,34 @@ jobs:
           workload_identity_provider: ${{ secrets.ACCOUNT_FACTS_RECOVERY_WIF_PROVIDER }}
           service_account: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v3
-      - name: Verify current source and configuration; invoke only in explicit invoke mode
+      - name: Verify current source and configuration without invocation
+        if: ${{ inputs.mode == 'preflight' }}
         env:
           GH_TOKEN: ${{ github.token }}
+        run: uv run --no-sync python -m scripts.invoke_additional1_account_facts_probe
+      - name: Verify reviewed fingerprints and prepare the private invocation audience
+        if: ${{ inputs.mode == 'invoke' }}
+        id: prepare_invocation_auth
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --no-sync python -m scripts.invoke_additional1_account_facts_probe --prepare-invocation-auth
+      - name: Generate the native invocation ID token with the same protected identity
+        if: ${{ inputs.mode == 'invoke' }}
+        id: invocation_auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.ACCOUNT_FACTS_RECOVERY_WIF_PROVIDER }}
+          service_account: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ steps.prepare_invocation_auth.outputs.invocation_audience }}
+          id_token_include_email: true
+          create_credentials_file: false
+          export_environment_variables: false
+      - name: Reverify reviewed fingerprints and invoke once with the native token
+        if: ${{ inputs.mode == 'invoke' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACCOUNT_FACTS_PROBE_ID_TOKEN: ${{ steps.invocation_auth.outputs.id_token }}
         run: uv run --no-sync python -m scripts.invoke_additional1_account_facts_probe
       - name: Preserve only the safe receipt
         if: always()

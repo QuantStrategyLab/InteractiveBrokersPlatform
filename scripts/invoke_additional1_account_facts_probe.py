@@ -181,13 +181,26 @@ def preflight(expected, receipt, *, source_evidence="deploy_receipt", state=_sta
     return before, url
 
 
-def invoke_once(url, receipt, *, run=commands.command, opener=None, record=lambda: None):
-    try:
-        token = run(["gcloud", "auth", "print-identity-token", "--audiences=" + url],
-                    stage="existing_invocation_identity_unavailable").strip()
-    except Exception:
-        raise ProbeError("existing_invocation_identity_unavailable") from None
-    if not token or len(token) > 16384 or any(c.isspace() for c in token):
+def prepare_invocation_auth(url, receipt):
+    """Expose the verified audience only to this protected job's auth action."""
+    output = os.environ.get("GITHUB_OUTPUT", "")
+    if not output:
+        raise ProbeError("invocation_auth_output_unavailable")
+    if not isinstance(url, str) or not url or any(ord(c) <= 0x20 or ord(c) > 0x7e for c in url):
+        raise ProbeError("canonical_url_invalid")
+    # The workflow command is consumed by the runner; never put this private
+    # audience in the JSON receipt or an artifact. Escape command protocol data.
+    print("::add-mask::" + url.replace("%", "%25"), flush=True)
+    with Path(output).open("a", encoding="utf-8") as handle:
+        handle.write("invocation_audience=" + url + "\n")
+    receipt.update(status="invocation_auth_prepared", reason="native_id_token_required")
+
+
+def invoke_once(url, receipt, *, token, opener=None, record=lambda: None):
+    # Only the official auth action's masked output is passed by the workflow.
+    # Missing/rejected native auth never falls back to gcloud or another identity.
+    if (not isinstance(token, str) or not token or len(token) > 16384
+            or any(ord(c) <= 0x20 or ord(c) > 0x7e for c in token)):
         raise ProbeError("existing_invocation_identity_unavailable")
     request = Request(url + "/probe", data=b"", method="POST", headers={"Authorization": "Bearer " + token})
     receipt.update(http_attempted=True, http_attempts=1, status="request_outcome_unknown", reason="inspect_original_report_before_any_other_action")
@@ -208,7 +221,9 @@ def invoke_once(url, receipt, *, run=commands.command, opener=None, record=lambd
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--validate-context", action="store_true")
+    mode_args = parser.add_mutually_exclusive_group()
+    mode_args.add_argument("--validate-context", action="store_true")
+    mode_args.add_argument("--prepare-invocation-auth", action="store_true")
     args = parser.parse_args(argv)
     receipt = dict(schema_version="ibkr.additional1_probe_invocation.v1", target="additional-1",
         status="blocked", reason="preflight_unverified", checks=dict.fromkeys(CHECKS, False), fingerprints={},
@@ -229,12 +244,17 @@ def main(argv=None):
         expected = context(mode, reviewed)
         if args.validate_context:
             return 0
+        if args.prepare_invocation_auth and mode != "invoke":
+            raise ProbeError("invocation_auth_requires_invoke")
         hashes, url = preflight(expected, receipt,
                                source_evidence=os.environ.get("ACCOUNT_FACTS_PROBE_SOURCE_EVIDENCE", "deploy_receipt"))
         if mode == "invoke":
             if hashes != reviewed:
                 raise ProbeError("reviewed_fingerprints_changed")
-            invoke_once(url, receipt, record=record)
+            if args.prepare_invocation_auth:
+                prepare_invocation_auth(url, receipt)
+            else:
+                invoke_once(url, receipt, token=os.environ.get("ACCOUNT_FACTS_PROBE_ID_TOKEN", ""), record=record)
     except ProbeError as error:
         receipt.update(status="blocked", reason=str(error))
     except Exception:
@@ -242,7 +262,7 @@ def main(argv=None):
         receipt.update(status="request_outcome_unknown" if receipt["http_attempted"] else "blocked",
                        reason="request_outcome_unknown_do_not_retry" if receipt["http_attempted"] else "protected_preflight_read_failed")
     record()
-    return 0 if receipt["status"] == "preflight_verified" or (
+    return 0 if receipt["status"] in {"preflight_verified", "invocation_auth_prepared"} or (
         receipt["status"] == "response_received" and receipt["http_status"] == 200 and receipt["response_is_probe_ok"] is True) else 1
 
 
