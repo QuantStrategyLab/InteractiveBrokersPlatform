@@ -79,6 +79,40 @@ def cycle(execution, *, source=None):
     return result, sends
 
 
+@pytest.mark.parametrize("flags", [["risk_gate:passed"], ("risk_gate:passed",)])
+def test_approved_gate_marker_is_routine_notification_evidence(routing, flags):
+    execution = {"execution_status": "no_op", "no_op_reason": "target_diff_below_threshold",
+                 "risk_gate": "APPROVE", "risk_flags": flags,
+                 "orders_submitted": [], "orders_pending": [], "orders_filled": []}
+    original = deepcopy(execution)
+    assert adapter._kind(execution) == "routine_cycle"
+    result, sends = cycle(execution)
+    assert result and not sends
+    assert execution == original
+    payload = next(iter(routing[1].rows.values()))[1]
+    assert {event["event_kind"] for row in payload["runs"] for event in row["notification_events"]} == {"routine_cycle"}
+
+
+@pytest.mark.parametrize("extra", [
+    {"risk_gate": "BLOCK"},
+    {"risk_gate": None},
+    {"risk_flags": "risk_gate:passed"},
+    {"risk_flags": ["risk_gate:passed", "synthetic_warning"]},
+    {"risk_flags": ["unknown_flag"]},
+    {"account_new_risk_buy_blocked": True},
+    {"small_account_buy_blocked": True},
+    {"execution_blocked_reason": "synthetic_restriction"},
+    {"error": "synthetic_failure"},
+    {"orders_pending": [{"status": "PendingSubmit"}]},
+])
+def test_approval_marker_never_clears_other_attention(routing, extra):
+    execution = {"execution_status": "no_op", "no_op_reason": "target_diff_below_threshold",
+                 "risk_gate": "APPROVE", "risk_flags": ["risk_gate:passed"], **extra}
+    original = deepcopy(execution)
+    assert adapter._kind(execution) != "routine_cycle"
+    assert execution == original
+
+
 @pytest.mark.parametrize("flag", [None, "", "false", "1", "yes", "typo", False])
 def test_unset_empty_invalid_flags_delegate_without_writes(monkeypatch, flag):
     env = {} if flag is None else {adapter.FLAG: flag}
