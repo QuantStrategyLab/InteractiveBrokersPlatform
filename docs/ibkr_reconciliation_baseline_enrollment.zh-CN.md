@@ -63,22 +63,29 @@ XML Activity 报表获取和账户范围校验。它固定访问 IBKR 的 SendRe
 `ACTIVE_LKG` 目标的正常运行不依赖这条冻结基线来源链路。
 
 若 `RECONCILE_ONLY` 目标仍缺少必要 section，先在原 Query 所属用户名的
-Client Portal 中新增专用 XML Activity Flex Query，保留现有网站使用的 Query。
-查询覆盖、账户范围和期间应与待核对基线一致，按下表准备字段：
+Client Portal 中检查既有 Activity Flex Query，按实际需要补充 Open Positions、
+汇率或缺少的字段。保留原 period、XML 格式、日期格式、账户分组及网站收益/现金流
+使用的 sections 和字段；现有消费者按需解析 XML，可兼容新增节点。
+查询覆盖、账户范围和期间仍须与待核对基线一致，按下表核对字段：
 
 | Section | 需要核对的内容 |
 | --- | --- |
 | Account Information | 原生账户身份、基础币种与报告期间，用于与已有受保护选择器核对。 |
 | [Open Positions](https://www.ibkrguides.com/reportingreference/reportguide/open%20positionsfq.htm) | 报告日期、币种、资产类型、合约标识、数量及乘数；明确 Summary/Lot 层级，避免重复统计。 |
+| Conversion Rates | 检查 General Configuration 的 Include Currency Rates；核对来源币种、目标币种、汇率及报告日期。 |
 | [Cash Report](https://www.ibkrguides.com/reportingreference/reportguide/cash%20reportfq.htm) | 各币种 From/To Date、Ending Cash 和 Ending Settled Cash；两种余额分别核验。 |
 | [Trades](https://www.ibkrguides.com/reportingreference/reportguide/tradesfq.htm) | Executions 明细、原生交易/订单标识、成交及目标结算日期、数量、现金与佣金币种；保留源提供的 Order Reference。 |
 | [Cash Transactions](https://www.ibkrguides.com/reportingreference/reportguide/cash%20transactionsfq.htm) | 日期时间、币种、金额与类型，保留源提供的交易标识；未知标识或时间语义不能自行补齐。 |
 | [Corporate Actions](https://www.ibkrguides.com/reportingreference/reportguide/corporate%20actionsfq.htm) | 报告/事件日期、合约、币种、类型、数量及原生 Transaction ID，用于解释非交易持仓和现金变化。 |
 
-Section 缺失保留 unknown，不能直接解释为零持仓或零成交；显式空 section 也须核对查询
-选项和报告覆盖。期末 Settled Cash 不能替代当前可支用现金或全部挂单义务。
-新增 Query 完成后，先用受保护入口只读检查来源、账户及期间；不要直接替换旧 Query，
-也不要把新 Query 的原始值或访问令牌贴到聊天、PR 或日志。
+XML 节点缺失保留 unknown，不能证明 Portal 未勾选该 section，也不能直接解释为零持仓
+或零成交；显式空 section 也须核对查询选项和报告覆盖。期末 Settled Cash 不能替代当前
+可支用现金或全部挂单义务。调整完成后，先用受保护入口只读检查来源、账户及期间。
+
+只有确实需要不同的 period、分组、格式、账户范围，或外部消费者要求固定模板时，
+才考虑专用 Query。当前消费者只有一个 `IBKR_FLEX_QUERY_ID` Secret 槽，专用 Query
+需要明确单独接入，不能直接替换网站正在使用的 Query。不要把 Query 的原始值或
+访问令牌贴到聊天、PR 或日志。
 继续复用已经批准的令牌存储及消费路径；只有实际需要新令牌时，才由所属用户名在门户
 生成并存入指定私有 Secret Manager，不因增加报表 section 自动更换凭据。
 
