@@ -231,10 +231,10 @@ def test_restored_template_is_not_enough_to_delete_latest_revision(lifecycle):
 
 def test_failed_restore_comparison_can_clean_resource_without_claiming_restoration(lifecycle, monkeypatch):
     check = cloud.protected_baseline
-    def compare(before, current):
+    def compare(before, current, **kwargs):
         if current["service"]["metadata"]["resourceVersion"] == "3":
             raise pilot.ReleaseError("production_baseline_changed")
-        check(before, current)
+        check(before, current, **kwargs)
     def cleanup(*args, progress, **kwargs):
         progress.update(revision_delete_attempted=True, revision_deleted=True, baseline_unchanged=True)
     monkeypatch.setattr(cloud, "protected_baseline", compare)
@@ -279,6 +279,34 @@ def test_probe_template_has_no_account_environment_or_application_entrypoint(lif
     assert {row["name"] for row in container["env"]} == {"PILOT_TCP_HOST", "PILOT_TCP_PORT"}
     assert "PRIVATE_AMOUNT" not in json.dumps(body["spec"]["template"])
     assert all(not row.get("latestRevision") for row in body["spec"]["traffic"])
+    assert body["spec"]["traffic"][-1]["percent"] == 0
+    assert body["spec"]["traffic"][-1]["tag"].startswith("tcp-")
+
+
+@pytest.mark.parametrize("change", [None, "positive_percent", "wrong_tag", "wrong_revision", "duplicate"])
+def test_only_exact_owned_zero_percent_route_can_be_ignored_during_probe(lifecycle, change):
+    body, candidate, _ = cloud.prepared(lifecycle.ctx, lifecycle.before, lifecycle.group, "123")
+    tag = body["spec"]["traffic"][-1]["tag"]
+    current = copy.deepcopy(lifecycle.before)
+    row = dict(revision=candidate, tag=tag, percent=0, url="https://synthetic-tag.run.app")
+    if change == "positive_percent":
+        row["percent"] = 1
+    if change == "wrong_tag":
+        row["tag"] = "other"
+    if change == "wrong_revision":
+        row["revision"] = "other-revision"
+    current["traffic"].append(row)
+    if change == "duplicate":
+        current["traffic"].append(copy.deepcopy(row))
+    assert cloud.baseline_checks(lifecycle.before, current, probe=(candidate, tag))["traffic_equal"] is (change is None)
+    assert not cloud.baseline_checks(lifecycle.before, current)["traffic_equal"]
+
+
+def test_existing_tag_is_never_reassigned_to_the_probe(lifecycle):
+    body, _, _ = cloud.prepared(lifecycle.ctx, lifecycle.before, lifecycle.group, "123")
+    lifecycle.before["traffic"][0]["tag"] = body["spec"]["traffic"][-1]["tag"]
+    with pytest.raises(pilot.ReleaseError, match="temporary_tag_in_use"):
+        cloud.prepared(lifecycle.ctx, lifecycle.before, lifecycle.group, "123")
 
 
 def test_probe_explicitly_enables_deployment_startup_check_without_changing_original(lifecycle):
