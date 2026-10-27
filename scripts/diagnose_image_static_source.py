@@ -37,8 +37,16 @@ SOURCE_FILES = {
     "dependencies": "application/runtime_dependencies.py",
     "broker_adapter": "application/runtime_broker_adapters.py",
     "reporting_adapter": "application/runtime_reporting_adapters.py",
+    "probe_handler": "application/http_routes.py",
+    "portfolio_reader": "application/ibkr_portfolio.py",
+    "account_facts": "application/account_facts.py",
+    "runtime_deadline": "application/runtime_deadline.py",
+    "rebalance_service": "application/rebalance_service.py",
+    "monitor_dispatcher": "application/monitor_dispatcher.py",
+    "runtime_config": "runtime_config_support.py",
     "project": "pyproject.toml", "lock": "uv.lock",
 }
+REVIEWED_IMAGE_CMD = ["gunicorn", "--bind", ":8080", "--workers", "1", "--threads", "1", "--timeout", "300", "main:app"]
 PACKAGES = {"ues": ("us-equity-strategies", "UsEquityStrategies"),
             "qpk": ("quant-platform-kit", "QuantPlatformKit")}
 _SHA256 = re.compile(r"sha256:[0-9a-f]{64}")
@@ -56,6 +64,7 @@ _REASONS = image._REASONS | identity._SOURCE_REASONS | frozenset({
     "content_digest_mismatch", "descriptor_size_mismatch", "static_budget_exceeded", "static_platform_invalid",
     "static_layer_unsupported", "static_tar_invalid", "static_path_invalid", "static_diff_id_mismatch",
     "selected_files_incomplete", "selected_files_differ", "dependency_metadata_incomplete", "static_files_match",
+    "image_command_not_reviewed",
 })
 
 
@@ -569,6 +578,12 @@ def read_image(registry, budget):
     for layer, diff_id in zip(layers, diffs):
         with registry.fetch("blobs", layer["digest"], layer["size"], 256 * 1024**2, stage="layer") as handle:
             overlay.layer(handle, _LAYERS[layer["mediaType"]], diff_id, budget)
+    runtime = config.get("config")
+    # Project a closed comparison only; never return image Env, command text,
+    # entrypoint text or any other private runtime configuration.
+    registry.image_command_matches_reviewed = (
+        isinstance(runtime, Mapping) and runtime.get("Cmd") == REVIEWED_IMAGE_CMD
+        and runtime.get("Entrypoint") in (None, []))
     return overlay.final()
 
 
@@ -654,6 +669,7 @@ def _result():
         "source_sha": image._sha(os.environ.get("GITHUB_SHA")), "reason": "source_metadata_unavailable",
         "scope_equalities": dict.fromkeys(("service_name", "account_scope", "deployment_selector", "account_selector")),
         "immutable_image_status": "unknown", "image_content_status": "unknown", "serving_stable": None,
+        "image_command_matches_reviewed": None,
         "selected_files": dict.fromkeys(SOURCE_FILES), "selected_files_match_candidate": None,
         "matched_candidate_sha": None, "selected_source_sha": None,
         "redirect_metadata": _redirect_result(),
@@ -704,6 +720,7 @@ def diagnose(expected):
             files = read_image(registry, budget)
         finally:
             result["redirect_metadata"] = getattr(registry, "redirect_metadata", _redirect_result())
+            result["image_command_matches_reviewed"] = getattr(registry, "image_command_matches_reviewed", None)
         result["image_content_status"] = "verified"
         result["selected_files"] = {alias: files.get("app/" + path) == candidate_files[path]
                                     if "app/" + path in files else None for alias, path in SOURCE_FILES.items()}
@@ -721,6 +738,8 @@ def diagnose(expected):
             raise StaticError("selected_files_differ")
         if not all(row["status"] == "observed" and row["equals_candidate_lock"] is True for row in result["dependencies"].values()):
             raise StaticError("dependency_metadata_incomplete")
+        if result["image_command_matches_reviewed"] is not True:
+            raise StaticError("image_command_not_reviewed")
         result["reason"] = "static_files_match"
     except ValueError as exc:
         result["reason"] = str(exc) if str(exc) in _REASONS else "diagnostic_error"

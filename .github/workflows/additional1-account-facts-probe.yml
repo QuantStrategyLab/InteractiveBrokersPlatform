@@ -1,0 +1,86 @@
+name: Preflight or invoke additional-1 account facts probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Preflight reads metadata only; invoke sends exactly one ordinary /probe after exact reviewed readback
+        type: choice
+        required: true
+        default: preflight
+        options: [preflight, invoke]
+      reviewed_fingerprints:
+        description: Invoke only; exact fingerprints object from the reviewed successful preflight
+        type: string
+        required: false
+        default: '{}'
+      source_evidence:
+        description: Explicit evidence source; static_source checks the fixed probe files and image command, never an automatic fallback
+        type: choice
+        required: true
+        default: deploy_receipt
+        options: [deploy_receipt, static_source]
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+concurrency:
+  group: additional1-account-facts-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    if: github.ref == 'refs/heads/main' && github.run_attempt == 1 && github.event_name == 'workflow_dispatch' && github.repository == 'QuantStrategyLab/InteractiveBrokersPlatform'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      IBKR_ACCOUNT_FACTS_TARGET: additional-1
+      IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}
+      IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON }}
+      IBKR_ACCOUNT_FACTS_TARGET_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_TARGET_ID }}
+      IBKR_ACCOUNT_FACTS_REPORT_PREFIX: ${{ secrets.IBKR_ACCOUNT_FACTS_REPORT_PREFIX }}
+      CLOUD_RUN_REGION: ${{ secrets.ACCOUNT_FACTS_RECOVERY_CLOUD_REGION }}
+      ACCOUNT_FACTS_PROBE_MODE: ${{ inputs.mode }}
+      ACCOUNT_FACTS_PROBE_SOURCE_EVIDENCE: ${{ inputs.source_evidence }}
+      ACCOUNT_FACTS_PROBE_REVIEWED_FINGERPRINTS: ${{ inputs.reviewed_fingerprints }}
+      CLOUDSDK_CORE_DISABLE_FILE_LOGGING: 'true'
+      CLOUDSDK_CORE_LOG_HTTP: 'false'
+      CLOUDSDK_CORE_DISABLE_PROMPTS: '1'
+    steps:
+      - name: Require infrastructure variables
+        env:
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$IBKR_DEPLOY_SERVICE_ACCOUNT" ]; then
+            echo '::error::IBKR_DEPLOY_SERVICE_ACCOUNT is required' >&2
+            exit 2
+          fi
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate the fixed target and explicit mode before authentication
+        run: python3 -m scripts.invoke_additional1_account_facts_probe --validate-context
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+      - name: Install frozen native configuration reader dependencies
+        run: uv sync --frozen --no-dev
+      - name: Authenticate with the original protected recovery identity
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.ACCOUNT_FACTS_RECOVERY_WIF_PROVIDER }}
+          service_account: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Verify current source and configuration; invoke only in explicit invoke mode
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --no-sync python -m scripts.invoke_additional1_account_facts_probe
+      - name: Preserve only the safe receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: additional1-probe-safe
+          path: ${{ runner.temp }}/additional1-probe.safe.json
+          if-no-files-found: ignore
+          retention-days: 1

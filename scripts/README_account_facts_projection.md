@@ -182,3 +182,89 @@ workflow, job, steps, selected source, immutable digest, scope and stable-servin
 checks pass. Failed checks keep their original reason and unknown verification
 states. This mode still performs no financial report read, broker connection,
 publishing or configuration write.
+
+### One ordinary additional-1 probe
+
+`additional1-account-facts-probe.yml` is manual, main-only, first-attempt-only,
+fixed to the existing `additional-1` slot. It uses the existing recovery WIF
+provider/deployment identity and changes no IAM, service, Scheduler, account,
+strategy, risk or notification configuration. The source allowlist contains only
+`1595957e388a1d29914a13075d210016c8848404`, whose ordinary `/probe`, synchronous
+strategy-deadline cleanup and single-worker image command were reviewed.
+A changed source requires review of the actual path before updating that list.
+
+1. Choose `source_evidence=deploy_receipt` (the default) or explicitly choose
+   `static_source`, then dispatch `mode=preflight`, leaving
+   `reviewed_fingerprints={}`. No service HTTP
+   or broker request is sent. The protected runner checks the selected source evidence, non-revision
+   account scope, canonical Cloud Run URL, settled
+   unique 100% serving revision, revision and service-template concurrency/caps
+   of one, and no image-command override (or the exact reviewed one-worker,
+   one-thread command). The existing native group reader checks the configured
+   positive client ID, Gateway backend and physical account selector. It reads
+   only the declared private group configuration using existing permissions.
+2. Review all safe `checks` and the six `fingerprints` in
+   `additional1-probe.safe.json`. Coordinate deployment/configuration writers
+   during the operation. Then dispatch a new explicit `mode=invoke`, passing
+   exactly that `fingerprints` object as `reviewed_fingerprints` and retain the
+   same `source_evidence`. Its hash is included in the reviewed fingerprints;
+   changing the evidence method cannot reuse the other preflight. The runner
+   repeats the entire preflight and rejects any difference before token minting.
+3. The original authenticated identity must already support audience-bound ID
+   tokens, invocation and ingress. A missing token or rejected invocation stops;
+   there is no impersonation fallback, permission grant or network change.
+   The caller sends **one** ordinary POST `/probe`, disables redirects, supplies
+   no maintenance header, and persists an uncertain-attempt receipt before send.
+   It never retries. Timeout, 5xx or an uncertain result require inspecting the
+   original protected request/report before any later action.
+4. Independently validate the exact new ordinary report and qualified account
+   facts; HTTP 200/`Probe OK` is not that validation. Source preparation and
+   publication remain separate existing operations. This workflow never
+   publishes or rotates bindings. Raw reports, URLs, group data and tokens stay
+   in the protected runner; only fixed checks, fingerprints and response states
+   are emitted or uploaded.
+
+The reviewed source runs strategy work synchronously, unwinds/disconnects on a
+local deadline, and has no strategy thread surviving the response. With the
+checked single-instance/single-concurrency configuration, ordinary same-service
+requests serialize; this does not require all other Gateway clients to be idle.
+The caller shares the existing configured client ID. Its **one HTTP attempt**
+does not mean one internal broker connection attempt: the old deployed source
+uses its original connection-retry configuration. The receipt keeps broker
+connection count unknown. Success has no success notification; a service failure
+may send the existing error notification, which this caller does not suppress.
+
+The native group reader observes the currently declared configuration, including
+a declared Secret's current version. It cannot prove that a long-lived worker
+has reloaded a Secret changed since process startup. Keep the original group
+configuration unchanged for this operation; do not present metadata or this
+receipt as proof of loaded-process settings or independent release approval.
+
+
+The source modes are separate, explicit choices. `deploy_receipt` retains the
+original complete workflow/job/step/log/digest/source/target checks; expired or
+unavailable logs stop that mode. It never falls back to static evidence.
+`static_source` invokes the existing bounded OCI reader inside the same
+preflight, bracketed by the caller's complete current-state reads. It requires
+`static_files_match`, the exact reviewed candidate, every fixed source file,
+immutable image/content integrity, all scope equalities, installed QPK/UES
+metadata matching the candidate lock, a stable serving revision, and the image
+command comparison all to pass. Missing fields, including an old eight-file-only
+result, fail admission.
+
+The fixed static list now includes the original eight files plus
+`application/http_routes.py`, `application/ibkr_portfolio.py`,
+`application/account_facts.py`, `application/runtime_deadline.py`,
+`application/rebalance_service.py`, `application/monitor_dispatcher.py`, and
+`runtime_config_support.py`. The verified OCI config's `Cmd` must exactly match
+the reviewed single-worker/single-thread gunicorn command, with no image
+`Entrypoint`. The diagnostic emits only `image_command_matches_reviewed`, never
+command text, image environment or other image configuration. Existing layer,
+overlay, digest, dependency and resource-budget checks remain in force.
+
+This static comparison establishes only the selected file contents, image
+command and dependency metadata in the immutable serving artifact. It does not
+verify the process's loaded modules/settings, change risk admission or grant
+independent release approval; the caller keeps those states unknown. Qualified
+account facts and actual publication still require their separate original
+report and receiver checks.
