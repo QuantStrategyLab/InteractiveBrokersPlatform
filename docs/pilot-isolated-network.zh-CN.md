@@ -12,6 +12,14 @@
 
 Job 固定使用第二代执行环境。原服务未声明执行环境时，仅将 Job 回读新增的 `gen2` 视为平台强制默认值；原服务不修改，显式不同值、网络/egress/加密差异仍拒绝。比较结果以固定布尔项记录。[执行环境规则](https://docs.cloud.google.com/run/docs/configuring/execution-environments)。
 
+### 固定应用隔离预检
+
+TCP 与清理已获证后，在 Job 模式指定 `isolated_job_phase=isolation`。仍使用原固定镜像，工作流只 checkout 固定维护候选 `15427acb0ecc5e4c2450adf5276f90625a32e01a`。将其公开运行源码打包，经摘要检查后仅解包到 Job 临时目录，保留原 QPK/UES/HES/SDK 依赖；不构建或推送新镜像、不安装依赖。任务上限 120 秒、零重试，总操作仍至多 15 分钟。
+
+原账户组在受保护 runner 解析后，只注入所选组；去除通知路由、凭据类环境及原组 Secret 引用，仅允许必要的原 runtime-target JSON Secret 引用。应用导入前拦截网络、进程启动、凭据文件读取和临时目录外写入；SDK connect/协议发送及交易方法全部禁止。stdout/stderr 文件描述符重定向到受保护临时日志，仅固定安全状态写到云日志。
+
+候选导入和依赖身份、六项目标及原账户/host/port/client ID 分别核验。通过实际 composer 构建器确认 dry-run、报告/对账/marker/lifecycle/锁路径及 cloud 写入位置隔离；仅保存带 `isolation_preflight` 标识的空运行报告并原路读回，同时验证本地路径可写。此报告没有行情、余额、信号或订单，不是策略周期或金融验收。预检不计算策略、不连接券商、不读取或初始化真实风险状态，不将实际 OPEN/unknown 改成 CLOSED。失败状态和安全类别按固定 schema 返回；沿同一 Job 所有权、Execution 终止、删除 404 和生产基线复核流程结束。下一阶段的真实周期需另行验证实际来源、原风险/订单状态及隔离报告。
+
 接口依据：[创建 Job 与 dryRun](https://docs.cloud.google.com/run/docs/reference/rest/v1/namespaces.jobs/create)、[执行 Job](https://docs.cloud.google.com/run/docs/reference/rest/v1/namespaces.jobs/run)、[删除 Job](https://docs.cloud.google.com/run/docs/reference/rest/v1/namespaces.jobs/delete)。
 
 ## 原 revision 模式

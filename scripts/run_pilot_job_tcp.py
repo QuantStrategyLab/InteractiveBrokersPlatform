@@ -15,6 +15,7 @@ from scripts import deploy_pilot_no_traffic as pilot
 from scripts import diagnose_pilot_serving_install as serving
 from scripts import diagnose_runner_gateway_access as gateway
 from scripts import diagnose_serving_image_identity as identity
+from scripts import pilot_app_isolation as app_isolation
 from scripts import run_pilot_cloud_tcp as cloud
 
 ENTRY = Path(__file__).with_name("pilot_cloud_tcp_job.py")
@@ -135,7 +136,7 @@ def production_checks(before, after):
 
 
 def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=cloud.request,
-            pause=time.sleep, clock=time.monotonic, progress=None):
+            pause=time.sleep, clock=time.monotonic, progress=None, application_source=None):
     out = result() if progress is None else progress
     deadline = clock() + 600  # Leave cleanup time inside the 15-minute workflow.
     before = snapshot(ctx, run)
@@ -147,8 +148,14 @@ def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=clou
     source = serving._read(ctx, adapt, include_group_declarations=True)
     group = gateway.read_group(ctx, source["group_declarations"], adapt)
     desired = prepared(ctx, before, group, run_id)
+    schema = "ibkr.cloud_tcp_probe.v1"
+    if application_source is not None:
+        desired = app_isolation.prepared(ctx, before, group, desired, application_source)
+        schema = "ibkr.application_isolation.v1"
+        out["schema_version"] = "ibkr.job_application_isolation_lifecycle.v1"
     name = desired["metadata"]["name"]
-    out.update(binding_verified=True, probe_code_sha256=hashlib.sha256(ENTRY.read_bytes()).hexdigest())
+    out.update(binding_verified=True, probe_code_sha256=hashlib.sha256(
+        desired["spec"]["template"]["spec"]["template"]["spec"]["containers"][0]["args"][3].encode()).hexdigest())
     token = run(["gcloud", "auth", "print-access-token", "--quiet"], stage="original_identity_unavailable").strip()
     endpoint = f"https://{ctx.region}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/{ctx.project}"
     url = endpoint + "/jobs/" + name
@@ -211,12 +218,13 @@ def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=clou
             raise pilot.ReleaseError("execution_completion_unverified")
         out["execution_completed"] = True
         status = execution["status"]
-        if status.get("succeededCount") != 1 or any(status.get(key, 0) for key in (
-                "failedCount", "cancelledCount", "retriedCount", "runningCount")):
+        task_ok = status.get("succeededCount") == 1 and not any(status.get(key, 0) for key in (
+                "failedCount", "cancelledCount", "retriedCount", "runningCount"))
+        if not task_ok and application_source is None:
             raise pilot.ReleaseError("job_task_failed")
         query = (f'resource.type="cloud_run_job" AND resource.labels.job_name="{name}" '
             f'AND labels."run.googleapis.com/execution_name"="{execution_name}" '
-            'AND jsonPayload.schema_version="ibkr.cloud_tcp_probe.v1"')
+            f'AND jsonPayload.schema_version="{schema}"')
         for _ in range(20):
             rows = pilot._json(run(["gcloud", "logging", "read", query, f"--project={ctx.project}",
                 "--limit=2", "--format=json(jsonPayload)"], stage="measurement_log_unavailable"))
@@ -224,9 +232,14 @@ def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=clou
                 break
             pause(2)
         out["observation_count"] = len(rows) if isinstance(rows, list) else None
-        value = measurement(rows)
-        out.update(status="observed", stage="port_observed", measurement_read=True,
-            tcp_connected=value["tcp_connected"], tcp_failure_class=value["failure_class"])
+        if application_source is None:
+            value = measurement(rows)
+            out.update(status="observed", stage="port_observed", measurement_read=True,
+                tcp_connected=value["tcp_connected"], tcp_failure_class=value["failure_class"])
+        else:
+            value = app_isolation.measurement(rows)
+            out.update(status="observed" if task_ok and value["isolation_passed"] else "unavailable",
+                stage="application_isolation_observed", measurement_read=True, application_isolation=value)
     except cloud.CloudError as error:
         out.update(stage=str(error), cloud_http_status=error.http_status)
     except pilot.ReleaseError as error:
@@ -290,13 +303,17 @@ def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=clou
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--receipt", type=Path, required=True)
+    parser.add_argument("--application-source", type=Path)
     args = parser.parse_args(argv)
     out = result()
     try:
         ctx = pilot.context(os.environ)
         if os.environ.get("PILOT_JOB_NETWORK_PREFLIGHT") != "true" or os.environ.get("PILOT_CLEANUP_RUN_ID"):
             raise pilot.ReleaseError("job_mode_not_admitted")
-        execute(ctx, os.environ["GITHUB_RUN_ID"], progress=out)
+        phase = os.environ.get("PILOT_JOB_PHASE", "tcp")
+        if phase not in {"tcp", "isolation"} or (phase == "isolation") != (args.application_source is not None):
+            raise pilot.ReleaseError("job_phase_not_admitted")
+        execute(ctx, os.environ["GITHUB_RUN_ID"], progress=out, application_source=args.application_source)
     except cloud.CloudError as error:
         out.update(stage=str(error), cloud_http_status=error.http_status)
     except pilot.ReleaseError as error:
@@ -306,7 +323,8 @@ def main(argv=None):
     args.receipt.write_text(json.dumps(out, sort_keys=True) + "\n")
     args.receipt.chmod(0o600)
     print(json.dumps(out, sort_keys=True))
-    return 0 if out["measurement_read"] and out["tcp_connected"] and out["job_deleted"] and out["baseline_unchanged"] else 1
+    measured = out["tcp_connected"] or out.get("application_isolation", {}).get("isolation_passed")
+    return 0 if out["status"] == "observed" and out["measurement_read"] and measured and out["job_deleted"] and out["baseline_unchanged"] else 1
 
 
 if __name__ == "__main__":

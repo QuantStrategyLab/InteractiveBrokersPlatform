@@ -3,8 +3,14 @@ name: Deploy IBKR pilot without traffic
 on:
   workflow_dispatch:
     inputs:
+      isolated_job_phase:
+        description: "With temporary Job mode, test TCP or the frozen application's isolation. Neither runs a strategy cycle."
+        type: choice
+        required: false
+        default: tcp
+        options: [tcp, isolation]
       isolated_job_network_preflight:
-        description: "Run one temporary 60-second, zero-retry TCP Job on the original network/identity, then delete it. Requires Job and billing authorization."
+        description: "Run one zero-retry Job on the original network/identity, then delete it. Phase selects TCP (60s) or application isolation (120s). Requires Job and billing authorization."
         type: boolean
         required: false
         default: false
@@ -24,7 +30,7 @@ on:
         type: choice
         options: [tqqq_growth_income]
       source_commit:
-        description: "Exact reviewed 40-character repository commit to build."
+        description: "Exact reviewed 40-character repository commit for the protected helper."
         required: true
         type: string
 
@@ -44,6 +50,7 @@ jobs:
     with:
       profile: ${{ inputs.profile }}
       source_commit: ${{ inputs.source_commit }}
+      isolated_job_phase: ${{ inputs.isolated_job_phase }}
       isolated_job_network_preflight: ${{ inputs.isolated_job_network_preflight }}
       isolated_network_preflight: ${{ inputs.isolated_network_preflight }}
       isolated_cleanup_run_id: ${{ inputs.isolated_cleanup_run_id }}
