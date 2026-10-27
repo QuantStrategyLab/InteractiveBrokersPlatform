@@ -87,8 +87,11 @@ def prepared(ctx, before, group, run_id):
     # Keep the existing repository and never adopt a newer serving digest.
     base = base.rsplit("@", 1)[0] + "@" + BASE
     candidate = ctx.service + "-p" + hashlib.sha256(run_id.encode()).hexdigest()[:8]
+    tag = "tcp-" + hashlib.sha256(run_id.encode()).hexdigest()[:8]
     if not pilot.NAME.fullmatch(candidate):
         raise pilot.ReleaseError("temporary_name_unavailable")
+    if any(row["tag"] == tag for row in before["traffic"]):
+        raise pilot.ReleaseError("temporary_tag_in_use")
     # A dynamic latest target could resolve to the temporary revision during
     # restoration. Require an already-pinned baseline rather than changing it.
     if any(row.get("latestRevision") is True or not row.get("revisionName")
@@ -118,6 +121,9 @@ def prepared(ctx, before, group, run_id):
     out["spec"]["template"] = template
     out["spec"]["traffic"] = [dict(revisionName=row["revision"], percent=row["percent"],
         **({"tag": row["tag"]} if row["tag"] else {})) for row in before["traffic"]]
+    # A zero-percent route makes this revision an active deployment target.
+    # No external request is made; retain the original ingress and IAM.
+    out["spec"]["traffic"].append(dict(revisionName=candidate, percent=0, tag=tag))
     return out, candidate, hashlib.sha256(code.encode()).hexdigest()
 
 
@@ -128,8 +134,13 @@ def global_configuration(service):
     return metadata
 
 
-def baseline_checks(before, current):
+def baseline_checks(before, current, *, probe=None):
     traffic = current["traffic"]
+    if probe is not None:
+        candidate, tag = probe
+        own = [row for row in traffic if row["revision"] == candidate and row["tag"] == tag and row["percent"] == 0]
+        if len(own) == 1:
+            traffic = [row for row in traffic if row is not own[0]]
     return dict(serving_equal=before["serving"] == current["serving"],
         serving_configuration_equal=pilot._configuration(before["serving_revision"]) == pilot._configuration(current["serving_revision"]),
         serving_image_equal=identity.immutable_image(before["serving_revision"])[0] == identity.immutable_image(current["serving_revision"])[0],
@@ -140,8 +151,8 @@ def baseline_checks(before, current):
         global_configuration_equal=global_configuration(before["service"]) == global_configuration(current["service"]))
 
 
-def protected_baseline(before, current):
-    if not all(baseline_checks(before, current).values()):
+def protected_baseline(before, current, *, probe=None):
+    if not all(baseline_checks(before, current, probe=probe).values()):
         raise pilot.ReleaseError("production_baseline_changed")
 
 
@@ -168,6 +179,7 @@ def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=requ
     source = serving._read(ctx, adapt, include_group_declarations=True)
     group = gateway.read_group(ctx, source["group_declarations"], adapt)
     desired, candidate, code_hash = prepared(ctx, before, group, run_id)
+    probe = (candidate, desired["spec"]["traffic"][-1]["tag"])
     out.update(binding_verified=True, probe_code_sha256=code_hash)
     token = run(["gcloud", "auth", "print-access-token", "--quiet"], stage="original_identity_unavailable").strip()
     endpoint = f"https://{ctx.region}-run.googleapis.com/apis/serving.knative.dev/v1/namespaces/{ctx.project}"
@@ -211,7 +223,7 @@ def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=requ
         current = None
         for _ in range(20):
             current = snapshot(ctx, run)
-            protected_baseline(before, current)
+            protected_baseline(before, current, probe=probe)
             revision = pilot._json(run(["gcloud", "run", "revisions", "describe", candidate,
                 f"--project={ctx.project}", f"--region={ctx.region}", "--format=json"], stage="candidate_read_unavailable"))
             if revision.get("metadata", {}).get("name") != candidate:
@@ -256,7 +268,7 @@ def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=requ
     finally:
         try:
             current = snapshot(ctx, run)
-            protected_baseline(before, current)
+            protected_baseline(before, current, probe=probe)
             if probe_configuration(current["service"]["spec"]["template"]) != probe_configuration(desired["spec"]["template"]):
                 raise pilot.ReleaseError("cleanup_concurrent_change")
             backup["metadata"]["resourceVersion"] = current["service"]["metadata"]["resourceVersion"]
