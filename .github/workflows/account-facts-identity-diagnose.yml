@@ -49,7 +49,7 @@ on:
         required: true
         default: false
       static_source_only:
-        description: Compare eight public files with an exact source candidate in the serving digest; static OCI reads only, no image execution; exclusive with metadata modes
+        description: Compare fifteen public files and the reviewed image command with an exact source candidate; static OCI reads only, no image execution; exclusive with metadata modes
         type: boolean
         required: true
         default: false

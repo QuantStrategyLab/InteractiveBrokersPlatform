@@ -26,6 +26,13 @@ FILES = {
     "application/runtime_dependencies.py": b"public dependencies\n",
     "application/runtime_broker_adapters.py": b"public broker adapter\n",
     "application/runtime_reporting_adapters.py": b"public reporting adapter\n",
+    "application/http_routes.py": b"public probe handler\n",
+    "application/ibkr_portfolio.py": b"public portfolio reader\n",
+    "application/account_facts.py": b"public account facts\n",
+    "application/runtime_deadline.py": b"public runtime deadline\n",
+    "application/rebalance_service.py": b"public rebalance service\n",
+    "application/monitor_dispatcher.py": b"public monitor dispatcher\n",
+    "runtime_config_support.py": b"public runtime configuration\n",
     "pyproject.toml": b"public project\n",
     "uv.lock": ("version = 1\n[[package]]\nname = 'us-equity-strategies'\n"
                 "source = {git = 'https://github.com/QuantStrategyLab/UsEquityStrategies.git#" + "b" * 40 + "'}\n"
@@ -86,7 +93,7 @@ def _oci(layers):
         blobs["blobs/" + digest] = compressed
         descriptors.append({"mediaType": "application/vnd.oci.image.layer.v1.tar+gzip", "digest": digest, "size": len(compressed)})
     config = json.dumps({"os": "linux", "architecture": "amd64", "rootfs": {"type": "layers", "diff_ids": [_digest(x) for x in layers]},
-                         "config": {"Env": [PRIVATE]}}).encode()
+                         "config": {"Env": [PRIVATE], "Cmd": static.REVIEWED_IMAGE_CMD, "Entrypoint": None}}).encode()
     blobs["blobs/" + _digest(config)] = config
     manifest = {"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
                 "config": {"mediaType": "application/vnd.oci.image.config.v1+json", "digest": _digest(config), "size": len(config)},
@@ -127,7 +134,7 @@ def test_static_final_overlay_hashes_and_allowlist():
     files = static.read_image(registry, budget)
     assert files["app/main.py"] == b"new public code"
     assert "app/private.json" not in files
-    assert len(files) == 12
+    assert set(files) == {"app/" + p for p in FILES} | {p for p, _, _ in _installed()}
 
 
 @pytest.mark.parametrize("kind", ["symlink", "hardlink", "file"])
@@ -213,7 +220,7 @@ def test_static_candidate_uses_exact_sha_and_fixed_paths():
         return {"type": "file", "path": path, "size": len(value), "encoding": "base64",
                 "content": base64.b64encode(value).decode(), "sha": hashlib.sha1(b"blob " + str(len(value)).encode() + b"\0" + value).hexdigest()}
     assert static.read_candidate(SHA, api) == FILES
-    assert len(calls) == 9 and all("ref=" + SHA in x for x in calls[1:])
+    assert len(calls) == 1 + len(FILES) and all("ref=" + SHA in x for x in calls[1:])
 
 
 def test_static_workflow_explicit_main_mode_is_exclusive_without_docker():
@@ -323,8 +330,9 @@ def test_static_full_diagnostic_only_matches_selected_candidate(monkeypatch, cap
     assert out["redirect_metadata"]["same_origin"] is out["redirect_metadata"]["accurate_descriptor_path"] is None
     assert out["redirect_metadata"]["redirect_followed"] is out["redirect_metadata"]["authorization_forwarded"] is False
     assert out["selected_files_match_candidate"] is True and out["serving_stable"] is True
+    assert out["image_command_matches_reviewed"] is True
     assert PRIVATE not in json.dumps(out) and "sha256:" not in json.dumps(out)
-    assert len(case["calls"]) == 13  # service + revision + exact commit + eight files + token + reread
+    assert len(case["calls"]) == 5 + len(static.SOURCE_FILES)  # service + revision + exact commit + fixed files + token + reread
     assert all("/logs" not in str(c) and "docker" not in c and "list" not in c for c in case["calls"])
 
 
@@ -786,3 +794,56 @@ def test_layer_relative_redirect_has_only_one_manual_hop():
     assert len(calls) == 2
     assert error.value.redirect_metadata["redirect_followed"] is True
     assert PRIVATE not in json.dumps(error.value.redirect_metadata)
+
+
+@pytest.mark.parametrize('path', [
+    'application/http_routes.py', 'application/ibkr_portfolio.py', 'application/account_facts.py',
+    'application/runtime_deadline.py', 'application/rebalance_service.py',
+    'application/monitor_dispatcher.py', 'runtime_config_support.py',
+])
+def test_probe_required_file_mismatch_cannot_be_a_static_match(monkeypatch, capsys, path):
+    case = _diagnostic_case(monkeypatch)
+    case['files'][path] = b'different candidate'
+    assert static.main(['--static-source-only']) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result['reason'] == 'selected_files_differ'
+    assert result['selected_files_match_candidate'] is False
+    assert result['matched_candidate_sha'] is None
+
+
+@pytest.mark.parametrize('cmd,entrypoint,matched', [
+    (static.REVIEWED_IMAGE_CMD, None, True), (static.REVIEWED_IMAGE_CMD, [], True),
+    (static.REVIEWED_IMAGE_CMD, ['/bin/sh', PRIVATE], False),
+    (['gunicorn', '--workers', '2', 'main:app'], None, False),
+    (None, None, False), (PRIVATE, None, False),
+])
+def test_verified_oci_config_only_projects_exact_image_command_comparison(cmd, entrypoint, matched):
+    registry, budget, opener, manifest = _registry([_tar([])])
+    config = json.loads(opener.blobs['blobs/' + manifest['config']['digest']])
+    config['config'].update(Cmd=cmd, Entrypoint=entrypoint)
+    raw = json.dumps(config).encode()
+    manifest['config'].update(digest=_digest(raw), size=len(raw))
+    opener.blobs['blobs/' + _digest(raw)] = raw
+    raw = json.dumps(manifest).encode()
+    opener.blobs['manifests/' + _digest(raw)] = raw
+    registry.digest = _digest(raw)
+    assert static.read_image(registry, budget) == {}
+    assert registry.image_command_matches_reviewed is matched
+    assert not hasattr(registry, 'image_config')
+
+
+def test_unchanged_files_with_unreviewed_image_command_fail_safe_projection(monkeypatch, capsys):
+    _diagnostic_case(monkeypatch)
+    original = static.read_image
+    def unreviewed(registry, budget):
+        files = original(registry, budget)
+        registry.image_command_matches_reviewed = False
+        return files
+    monkeypatch.setattr(static, 'read_image', unreviewed)
+    assert static.main(['--static-source-only']) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result['reason'] == 'image_command_not_reviewed'
+    assert result['image_command_matches_reviewed'] is False
+    assert result['selected_files_match_candidate'] is True
+    assert result['loaded_source_status'] == result['independent_release_approval'] == 'unknown'
+    assert PRIVATE not in json.dumps(result)
