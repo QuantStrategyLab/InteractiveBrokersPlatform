@@ -361,9 +361,9 @@ def test_existing_release_workflow_keeps_default_mode_and_original_identity_lock
     callee = (root / ".github/workflows/deploy-pilot-no-traffic-protected.yml").read_text()
     assert "isolated_network_preflight:" in wrapper and "default: false" in wrapper
     assert "group: Deploy Cloud Run-${{ github.ref_name }}" in wrapper
-    assert "if: ${{ !inputs.isolated_network_preflight }}" in callee
+    assert "if: ${{ !inputs.isolated_network_preflight && !inputs.isolated_job_network_preflight }}" in callee
     assert "if: inputs.isolated_network_preflight" in callee
-    assert "inputs.isolated_network_preflight && 15 || 25" in callee
+    assert "(inputs.isolated_network_preflight || inputs.isolated_job_network_preflight) && 15 || 25" in callee
     assert "--preflight --bootstrap-identity" in callee
     assert "service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}" in callee
 
