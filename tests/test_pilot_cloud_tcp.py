@@ -60,7 +60,10 @@ def lifecycle(monkeypatch):
         if state.fail == stage:
             raise cloud.CloudError(stage, 403)
         if "dryRun=all" in url:
-            return copy.deepcopy(body)
+            reply = copy.deepcopy(body)
+            if stage == "deployment_dry_run_failed" and state.fail == "canonical_health_flag":
+                reply["spec"]["template"]["metadata"]["annotations"].pop("run.googleapis.com/health-check-disabled")
+            return reply
         if method == "PUT":
             if body["spec"]["template"]["metadata"]["name"] == SERVING:
                 previous_latest = state.current["service"]["status"]["latestCreatedRevisionName"]
@@ -169,6 +172,18 @@ def test_measurement_read_failure_still_restores_and_deletes_without_iam_change(
     assert out["stage"] == "measurement_log_unavailable" and not out["measurement_read"]
     assert out["baseline_unchanged"] and out["revision_deleted"] and not out["iam_changed"]
     assert lifecycle.log_reads == 1
+
+
+def test_dry_run_mismatch_records_only_fixed_field_comparisons_and_never_deploys(lifecycle):
+    lifecycle.fail = "canonical_health_flag"
+    with pytest.raises(pilot.ReleaseError, match="deployment_dry_run_mismatch"):
+        lifecycle.execute()
+    checks = lifecycle.progress["deployment_template_checks"]
+    assert not checks["annotations_equal"] and checks["non_health_annotations_equal"]
+    assert checks["health_flag_absent"] and not checks["health_flag_enabled"]
+    assert checks["container_equal"] and checks["other_spec_equal"]
+    assert all(type(value) is bool for value in checks.values())
+    assert not lifecycle.progress["deployment_attempted"] and lifecycle.current == lifecycle.before
 
 
 def test_unknown_deployment_is_not_retried_and_only_exact_owned_template_is_restored(lifecycle):

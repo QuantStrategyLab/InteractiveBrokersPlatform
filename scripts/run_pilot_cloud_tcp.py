@@ -169,7 +169,21 @@ def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=requ
         raise pilot.ReleaseError("restore_dry_run_mismatch")
     out["restore_dry_run_verified"] = True
     validated = api(service_url + "?dryRun=all", method="PUT", token=token, body=desired, stage="deployment_dry_run_failed")
-    if pilot._configuration(validated["spec"]["template"]) != pilot._configuration(desired["spec"]["template"]):
+    actual, expected = pilot._configuration(validated["spec"]["template"]), pilot._configuration(desired["spec"]["template"])
+    if actual != expected:
+        ac, ec = actual["spec"]["containers"][0], expected["spec"]["containers"][0]
+        aa, ea = actual["metadata"]["annotations"], expected["metadata"]["annotations"]
+        health = "run.googleapis.com/health-check-disabled"
+        out["deployment_template_checks"] = dict(
+            labels_equal=actual["metadata"]["labels"] == expected["metadata"]["labels"],
+            non_build_labels_equal={k: v for k, v in actual["metadata"]["labels"].items() if k not in pilot.BUILD_LABELS} ==
+                {k: v for k, v in expected["metadata"]["labels"].items() if k not in pilot.BUILD_LABELS},
+            annotations_equal=aa == ea,
+            non_health_annotations_equal={k: v for k, v in aa.items() if k != health} == {k: v for k, v in ea.items() if k != health},
+            health_flag_enabled=aa.get(health) == "false", health_flag_absent=health not in aa,
+            other_spec_equal={k: v for k, v in actual["spec"].items() if k != "containers"} == {k: v for k, v in expected["spec"].items() if k != "containers"},
+            container_equal=ac == ec,
+            **{key + "_equal": ac.get(key) == ec.get(key) for key in ("image", "command", "args", "env", "resources", "startupProbe")})
         raise pilot.ReleaseError("deployment_dry_run_mismatch")
     out["deployment_dry_run_verified"] = True
     fresh = snapshot(ctx, run)
