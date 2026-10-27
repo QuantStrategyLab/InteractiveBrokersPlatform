@@ -58,6 +58,30 @@ def classify_runtime_deadline_stage(exc: BaseException) -> str:
     return "unknown"
 
 
+_QUALIFICATION_CALLERS = {
+    ("quant_platform_kit.ibkr.market_data", "fetch_strict_adjusted_historical_price_candles"): "history",
+    ("quant_platform_kit.ibkr.market_data", "fetch_historical_price_series"): "history",
+    ("quant_platform_kit.ibkr.market_data", "fetch_historical_price_candles"): "history",
+    ("quant_platform_kit.ibkr.market_data", "fetch_quote_snapshots"): "quote",
+    ("quant_platform_kit.ibkr.market_data", "fetch_option_chain_snapshot"): "option",
+}
+
+
+def classify_runtime_deadline_qualification_caller(exc: BaseException) -> str:
+    """Classify the direct qualification caller without reading frame locals."""
+    if not isinstance(exc, RuntimeDeadlineExceeded):
+        return "unknown"
+    previous = None
+    frame = exc.__traceback__
+    while frame is not None:
+        current = (frame.tb_frame.f_globals.get("__name__"), frame.tb_frame.f_code.co_name)
+        if current == ("ib_insync.ib", "qualifyContracts"):
+            return _QUALIFICATION_CALLERS.get(previous, "other")
+        previous = current
+        frame = frame.tb_next
+    return "unknown"
+
+
 @contextlib.contextmanager
 def enforce_runtime_deadline(seconds: int, *, operation: str) -> Iterator[None]:
     """Interrupt main-thread work on POSIX before Cloud Run kills the worker."""
