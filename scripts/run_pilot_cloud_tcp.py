@@ -83,8 +83,9 @@ def prepared(ctx, before, group, run_id):
             or type(group.ib_gateway_port) is not int or not 1 <= group.ib_gateway_port <= 65535):
         raise pilot.ReleaseError("direct_binding_unverified")
     base, _ = identity.immutable_image(before["serving_revision"])
-    if not base.endswith("@" + BASE):
-        raise pilot.ReleaseError("original_image_changed")
+    # The approved probe image is frozen independently of normal deployments.
+    # Keep the existing repository and never adopt a newer serving digest.
+    base = base.rsplit("@", 1)[0] + "@" + BASE
     candidate = ctx.service + "-p" + hashlib.sha256(run_id.encode()).hexdigest()[:8]
     if not pilot.NAME.fullmatch(candidate):
         raise pilot.ReleaseError("temporary_name_unavailable")
@@ -97,6 +98,8 @@ def prepared(ctx, before, group, run_id):
     template = {"metadata": pilot._metadata(before["serving_revision"]),
         "spec": copy.deepcopy(before["serving_revision"]["spec"])}
     template["metadata"]["name"] = candidate
+    for key in pilot.BUILD_LABELS:
+        template["metadata"]["labels"].pop(key, None)
     template["metadata"]["labels"].pop("cloud.googleapis.com/location", None)
     for key in (pilot.INGRESS_ANNOTATION,):
         template["metadata"]["annotations"].pop(key, None)
