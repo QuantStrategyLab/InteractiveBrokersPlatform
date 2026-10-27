@@ -3,6 +3,11 @@ name: Deploy IBKR pilot without traffic
 on:
   workflow_dispatch:
     inputs:
+      isolated_job_network_preflight:
+        description: "Run one temporary 60-second, zero-retry TCP Job on the original network/identity, then delete it. Requires Job and billing authorization."
+        type: boolean
+        required: false
+        default: false
       isolated_cleanup_run_id:
         description: "With isolated mode, only delete this prior run's proven unused probe; never deploy."
         type: string
@@ -39,6 +44,7 @@ jobs:
     with:
       profile: ${{ inputs.profile }}
       source_commit: ${{ inputs.source_commit }}
+      isolated_job_network_preflight: ${{ inputs.isolated_job_network_preflight }}
       isolated_network_preflight: ${{ inputs.isolated_network_preflight }}
       isolated_cleanup_run_id: ${{ inputs.isolated_cleanup_run_id }}
     secrets:

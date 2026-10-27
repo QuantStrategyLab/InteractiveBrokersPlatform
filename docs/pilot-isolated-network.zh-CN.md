@@ -1,5 +1,19 @@
 # 原 Cloud Run 网络的临时隔离预检
 
+## 临时 Job 模式
+
+在同一受保护入口指定 `isolated_job_network_preflight=true`，需要用户明确批准临时 Job 及按量费用。此模式默认关闭，与旧 revision 模式及其清理输入互斥。它使用相同 main/首次 attempt、单账户准入、原 WIF 身份及部署锁；不会修改原服务模板、入口、流量、IAM 或 Scheduler。旧 revision 模式保留，但长服务名可能无法创建任何非空 tag，不应重复尝试该路径。
+
+受保护 runner 从准确现役版本读取原身份、Direct VPC/connector、egress 和已有执行/加密设置，仅带入原 host/port；镜像仍是已批准的原仓库与固定 digest。Job 为 1 CPU/512Mi、1 task、parallelism=1、60 秒、0 重试，不包含应用配置、Secret、报告路径或挂载。标准库命令 `python -I -S -c` 仅解析首个地址、TCP connect 一次（5 秒），关闭连接并输出六个固定状态字段后退出。不发送券商协议，不导入应用或 SDK。
+
+创建前确认无遗留 `ibkr-p4-` Job，使用 `jobs.create?dryRun=all` 验证服务端配置，并重新核对生产基线。只创建和执行一次；写入结果未知时不重发。按准确 Job/Execution 核身份、配置、终止及成功/重试计数，再读取准确 Execution 的唯一固定 schema 日志。完整操作受 15 分钟工作流限制；执行器预留清理时间。失败时仅取消本次已核实的未结束 Execution，确认结束后删除准确本次 Job，使用 GET 404 确认删除；清理身份或权限不获证就停止，不扩 IAM 或切换身份。
+
+执行前后比较正常 serving 镜像和配置、完整服务模板、流量、IAM、Scheduler 和全局设置。网络观察、任务完成、清理和生产基线分别报告；TCP 成功不代表应用隔离或完整策略周期通过。只保留安全状态 artifact，私有配置和原始云响应不下载。
+
+接口依据：[创建 Job 与 dryRun](https://docs.cloud.google.com/run/docs/reference/rest/v1/namespaces.jobs/create)、[执行 Job](https://docs.cloud.google.com/run/docs/reference/rest/v1/namespaces.jobs/run)、[删除 Job](https://docs.cloud.google.com/run/docs/reference/rest/v1/namespaces.jobs/delete)。
+
+## 原 revision 模式
+
 此入口会修改原服务模板并创建临时版本，需要用户对部署和本次按量费用的明确授权。它不是原镜像安装读取器，也不运行策略或完整禁提交周期。
 
 在既有 `Deploy IBKR pilot without traffic` 指定 `isolated_network_preflight=true`。默认关闭；沿用 main/首次 attempt、唯一 TQQQ 身份准入、原 WIF 身份和部署并发锁。先从准确 serving 配置读取原账户组，核单账户/live、正 client ID 和原直连 host/port；未通过时不部署。探针在既有镜像仓库内明确使用已批准的固定原 digest，不随正常服务发布采用新镜像；临时版本移除继承的 build source labels。正常服务即使已更新，也按执行前的实际配置与流量完整保留，不回退它。
