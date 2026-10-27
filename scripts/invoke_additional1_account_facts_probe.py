@@ -113,9 +113,8 @@ def _state(expected, *, read_service=identity._read_cloud_run_metadata,
             raise ProbeError(concurrency_reason)
         if node.get("metadata", {}).get("annotations", {}).get("autoscaling.knative.dev/maxScale") != "1":
             raise ProbeError(scale_reason)
-    # A service-level cap, if present, cannot contradict its revision cap.
-    if service.get("metadata", {}).get("annotations", {}).get("run.googleapis.com/maxScale", "1") != "1":
-        raise ProbeError("service_max_scale_conflict")
+    # Service and revision caps combine by taking the lower limit. A larger
+    # or unset service cap cannot raise the verified revision cap above one.
     try:
         commands._no_manual_scaling(service)
     except commands.ReleaseError:

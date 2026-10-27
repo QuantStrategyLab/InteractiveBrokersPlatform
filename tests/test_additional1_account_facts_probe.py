@@ -299,7 +299,6 @@ def test_configuration_change_during_static_read_stops_before_invocation(case):
     ('revision_concurrency', 'revision_concurrency_unverified'),
     ('template_maxscale', 'template_max_scale_unverified'),
     ('revision_maxscale', 'revision_max_scale_unverified'),
-    ('service_cap', 'service_max_scale_conflict'),
     ('manual_scaling', 'manual_scaling_unverified'),
 ])
 def test_real_serialization_failure_has_only_precise_safe_reason(case, monkeypatch, tmp_path, capsys, fault, reason):
@@ -310,8 +309,6 @@ def test_real_serialization_failure_has_only_precise_safe_reason(case, monkeypat
     elif fault.endswith('maxscale'):
         node = template if fault.startswith('template') else revision
         node['metadata']['annotations']['autoscaling.knative.dev/maxScale'] = PRIVATE
-    elif fault == 'service_cap':
-        service['metadata']['annotations'] = {'run.googleapis.com/maxScale': PRIVATE}
     else:
         service['metadata']['annotations'] = {'run.googleapis.com/scalingMode': PRIVATE}
     with pytest.raises(probe.ProbeError) as error:
@@ -358,3 +355,36 @@ def test_missing_or_non_string_one_maxscale_still_rejected(case, node_name, valu
     with pytest.raises(probe.ProbeError) as error:
         case['state'](case['expected'])
     assert str(error.value) == node_name + '_max_scale_unverified'
+
+
+@pytest.mark.parametrize('cap', [None, '0', '1', '2', '100'])
+def test_service_cap_does_not_expand_or_replace_revision_cap(case, cap):
+    if cap is not None:
+        case['service']['metadata']['annotations'] = {'run.googleapis.com/maxScale': cap}
+    receipt = {}
+    probe.preflight(case['expected'], receipt, source_evidence='static_source', state=case['state'],
+                    static_provenance=lambda _: _static_evidence(case['expected']))
+    assert receipt['status'] == 'preflight_verified'
+    assert all(receipt['checks'].values())
+    assert 'http_attempted' not in receipt
+
+
+@pytest.mark.parametrize('fault,reason', [
+    ('revision_cap', 'revision_max_scale_unverified'),
+    ('template_cap', 'template_max_scale_unverified'),
+    ('manual', 'manual_scaling_unverified'),
+    ('unsupported', 'manual_scaling_unverified'),
+])
+def test_larger_service_cap_keeps_revision_and_manual_guards(case, fault, reason):
+    case['service']['metadata']['annotations'] = {'run.googleapis.com/maxScale': '100'}
+    if fault == 'revision_cap':
+        case['revision']['metadata']['annotations']['autoscaling.knative.dev/maxScale'] = '2'
+    elif fault == 'template_cap':
+        case['service']['spec']['template']['metadata']['annotations']['autoscaling.knative.dev/maxScale'] = '2'
+    elif fault == 'manual':
+        case['service']['metadata']['annotations']['run.googleapis.com/scalingMode'] = 'manual'
+    else:
+        case['service']['scaling'] = {'maxInstanceCount': 100}
+    with pytest.raises(probe.ProbeError) as error:
+        case['state'](case['expected'])
+    assert str(error.value) == reason
