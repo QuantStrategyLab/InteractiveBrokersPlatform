@@ -419,6 +419,13 @@ Flex 中的更正关系。缺少 notes/orig* 的行有独立 unknown 计数，�
 这次新生成的报告只能提供新的来源证据，不能冒称它就是旧截图的原报告，也不证明网站已恢复。
 业务成交投影器及 `SHA256(accountId|ibExecID)` 身份规则保持不变。
 
+诊断失败时 CLI 仍返回非零退出码；已有 `FlexSourceError.safe_diagnostic` 只经闭集
+字段/类型校验后保留 endpoint、分类、HTTP/provider 错误码及固定身份计数/布尔。
+可定位时仅给固定 `failure_stage`；纯成交诊断只允许六个 `execution_source_*`
+固定错误码，其他异常继续为 `flex_import_failed`，不输出异常正文、类名或句柄。
+阶段不代表报告已生成或身份/事实已合格；generic 错误也不能反推请求是否发出。
+这一补充不改变任何请求/重试行为，不能恢复上次进程已丢弃的原 reference。
+
 一手资料：[SendRequest](https://www.interactivebrokers.com/docs/web-api/api-reference/send-request)
 说明生成报告、日期参数和请求频率；[GetStatement](https://www.interactivebrokers.com/docs/web-api/api-reference/get-statement)
 说明原 reference 领取；[Flex 错误码](https://www.ibkrguides.com/complianceportal/flex3error.htm)
