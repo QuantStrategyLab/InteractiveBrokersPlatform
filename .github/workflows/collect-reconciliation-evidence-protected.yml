@@ -98,6 +98,7 @@ jobs:
           fi
 
       - name: Checkout for optional execution ledger diagnostic
+        id: ledger_source
         if: ${{ steps.selection.outputs.selected == 'true' && inputs.inspect_execution_ledger }}
         uses: actions/checkout@v6
 
@@ -132,6 +133,7 @@ jobs:
           PY
 
       - name: Authenticate to Google Cloud
+        id: cloud_auth
         if: ${{ steps.selection.outputs.selected == 'true' }}
         uses: google-github-actions/auth@v3
         with:
@@ -139,6 +141,7 @@ jobs:
           service_account: ${{ env.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
 
       - name: Set up gcloud
+        id: cloud_cli
         if: ${{ steps.selection.outputs.selected == 'true' }}
         uses: google-github-actions/setup-gcloud@v3
 
@@ -424,7 +427,9 @@ jobs:
           retention-days: 30
 
       - name: Summarize scoped execution record types
-        if: ${{ success() && steps.selection.outputs.selected == 'true' && inputs.inspect_execution_ledger }}
+        # The ledger is independently readable even when the broker probe fails.
+        # Preserve that probe's failure; never imply it succeeded from this read.
+        if: ${{ always() && !cancelled() && steps.selection.outputs.selected == 'true' && inputs.inspect_execution_ledger && steps.ledger_source.outcome == 'success' && steps.runtime_target.outcome == 'success' && steps.cloud_auth.outcome == 'success' && steps.cloud_cli.outcome == 'success' }}
         env:
           SERVICE: ${{ steps.runtime_target.outputs.service }}
         run: |

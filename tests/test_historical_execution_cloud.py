@@ -1,9 +1,69 @@
 import json
+import os
+from pathlib import Path
+import re
+import subprocess
 from subprocess import CompletedProcess
+import sys
+import textwrap
 
 import pytest
 
 from scripts import summarize_historical_execution_cloud as diagnostic
+
+
+def _private_target():
+    return {"service": "private-service", "service_name": "private-service", "include_reconciliation": True,
+            "runtime_target": {"strategy_profile": "sample", "execution_mode": "live",
+                               "service_name": "private-service"}}
+
+
+def test_service_selection_uses_private_binding_with_string_or_object_runtime():
+    target = _private_target()
+    for stringify in (False, True):
+        entry = {**target, "runtime_target": json.dumps(target["runtime_target"]) if stringify else target["runtime_target"]}
+        for payload in ([entry], {"targets": [entry]}):
+            assert diagnostic.resolve_private_service(json.dumps(payload), "sample") == "private-service"
+
+
+@pytest.mark.parametrize("change", [
+    {"include_reconciliation": False},
+    {"service_name": "other-service"},
+    {"service": "invalid\nservice"},
+    {"runtime_target": {"strategy_profile": "sample", "execution_mode": "paper", "service_name": "private-service"}},
+    {"runtime_target": {"strategy_profile": "sample", "execution_mode": "live", "service_name": "other-service"}},
+])
+def test_service_selection_rejects_unbound_or_nonlive_entries(change):
+    with pytest.raises(ValueError, match="one bound live service"):
+        diagnostic.resolve_private_service(json.dumps([{**_private_target(), **change}]), "sample")
+
+
+@pytest.mark.parametrize("raw", ["invalid", "{}", "null", "[]"])
+def test_service_selection_rejects_absent_or_invalid_inventory(raw):
+    with pytest.raises(ValueError, match="one bound live service"):
+        diagnostic.resolve_private_service(raw, "sample")
+
+
+def test_service_selection_rejects_duplicates_instead_of_choosing_first():
+    with pytest.raises(ValueError, match="one bound live service"):
+        diagnostic.resolve_private_service(json.dumps([_private_target(), _private_target()]), "sample")
+
+
+def test_history_workflow_selects_and_masks_private_service(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    workflow = (root / ".github/workflows/inspect-historical-execution.yml").read_text()
+    assert 'secrets.CLOUD_RUN_SERVICE_TARGETS_JSON' in workflow
+    assert 'jq -r .service' not in workflow
+    script = re.search(r"python3 - <<'PY'\n(.*?)\n          PY", workflow, re.S)
+    assert script is not None
+    output = tmp_path / "github-output"
+    result = subprocess.run([sys.executable, "-"], input=textwrap.dedent(script.group(1)),
+                            text=True, capture_output=True, cwd=root, env={**os.environ,
+                                "GITHUB_OUTPUT": str(output), "REQUESTED_TARGET": "sample",
+                                "CLOUD_RUN_SERVICE_TARGETS_JSON": json.dumps([_private_target()])})
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "::add-mask::private-service"
+    assert output.read_text() == "service=private-service\n"
 
 
 def test_summarize_selected_private_reports_without_order_details(monkeypatch):

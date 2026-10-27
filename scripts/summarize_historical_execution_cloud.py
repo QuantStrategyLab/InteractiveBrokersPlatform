@@ -26,6 +26,41 @@ _BROKER_CONFIRMATIONS = frozenset({
 })
 
 
+def resolve_private_service(raw_inventory: str, profile: str) -> str:
+    """Resolve one live service from protected inventory, never public examples."""
+    try:
+        payload = json.loads(raw_inventory)
+        entries = payload.get("targets") if isinstance(payload, dict) else payload
+        if not isinstance(entries, list):
+            raise ValueError
+        matches = []
+        for item in entries:
+            if not isinstance(item, dict) or item.get("include_reconciliation") is not True:
+                continue
+            runtime = item.get("runtime_target")
+            if isinstance(runtime, str):
+                runtime = json.loads(runtime)
+            if not isinstance(runtime, dict):
+                raise ValueError
+            if runtime.get("strategy_profile") != profile:
+                continue
+            service = item.get("service") or item.get("service_name")
+            if (
+                runtime.get("execution_mode") != "live"
+                or not isinstance(service, str)
+                or not re.fullmatch(r"[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?", service)
+                or runtime.get("service_name") != service
+                or (item.get("service_name") is not None and item["service_name"] != service)
+            ):
+                raise ValueError
+            matches.append(service)
+        if len(matches) != 1:
+            raise ValueError
+        return matches[0]
+    except (TypeError, ValueError):
+        raise ValueError("expected one bound live service in private inventory") from None
+
+
 def _safe_status(value: object, allowed: frozenset[str]) -> str | None:
     if value is None:
         return None
