@@ -3,6 +3,11 @@ name: Deploy IBKR pilot without traffic
 on:
   workflow_dispatch:
     inputs:
+      isolated_network_preflight:
+        description: "Temporarily test the original Cloud Run network with stdlib only, restore configuration and delete the probe revision. Requires deployment authorization."
+        type: boolean
+        required: false
+        default: false
       profile:
         description: "Single pilot profile; never enables trading or shifts traffic."
         required: true
@@ -29,6 +34,7 @@ jobs:
     with:
       profile: ${{ inputs.profile }}
       source_commit: ${{ inputs.source_commit }}
+      isolated_network_preflight: ${{ inputs.isolated_network_preflight }}
     secrets:
       DEPLOY_GATE: ${{ vars.ENABLE_GITHUB_CLOUD_RUN_DEPLOY }}
       GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
