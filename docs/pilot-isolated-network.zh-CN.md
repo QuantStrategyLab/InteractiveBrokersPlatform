@@ -13,3 +13,5 @@
 最后先确认仍是本次模板及原生产基线，按原模板/原 revision name 恢复配置与流量，回读原 IAM/Scheduler/serving/configuration；还须确认临时版本已不再是 latestCreated/latestReady，才删除它并以 404 回读确认。Cloud Run 不允许删除最新版本；若平台未释放该关系，保留零流量/零最小实例，明确报告清理未完成，不另建恢复版本。云端 dry-run 接受只是执行前校验；实际恢复和删除各自必须读回。发现其他写者的变化时不覆盖。失败、安全结果和清理状态分别记录；只有基线恢复且临时版本删除获证才正常结束。安全 artifact 不包含资源名、host/port、token、账户或底层异常。
 
 接口依据：[Cloud Run replaceService 和 dryRun](https://docs.cloud.google.com/run/docs/reference/rest/v1/namespaces.services/replaceService)、[零流量与标签](https://docs.cloud.google.com/run/docs/rollouts-rollbacks-traffic-migration)。
+
+前次运行已结束但清理未完成时，可在相同入口同时指定 `isolated_network_preflight=true` 和 `isolated_cleanup_run_id=<前次 run ID>`。该模式不部署、不恢复模板或读取账户组 Secret，只定位该次派生名称，并核准确原镜像、标准库代码摘要、命令、仅 host/port 的环境和 min=0/max=1。只有当前模板、latestCreated/latestReady、全部流量和 tags 均不引用它，且删除前基线再次稳定，才删除这一版本并读取 404。当前模板与其命名的原 revision 是否一致单独报告；它不是保留已证无用临时资源的前置。原执行身份和正常配置不替换。

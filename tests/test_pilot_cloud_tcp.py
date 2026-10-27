@@ -228,3 +228,57 @@ def test_existing_release_workflow_keeps_default_mode_and_original_identity_lock
     assert "inputs.isolated_network_preflight && 15 || 25" in callee
     assert "--preflight --bootstrap-identity" in callee
     assert "service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}" in callee
+
+
+def cleanup_case(lifecycle, *, changed_code=False, referenced=False, original_read_failure=False):
+    body, name, _ = cloud.prepared(lifecycle.ctx, lifecycle.before, lifecycle.group, "123")
+    owned = copy.deepcopy(body["spec"]["template"])
+    if changed_code:
+        owned["spec"]["containers"][0]["args"][-1] += "\n# changed"
+    current = copy.deepcopy(lifecycle.before)
+    current["service"]["spec"]["template"]["metadata"]["name"] = SERVING
+    if referenced:
+        current["service"]["status"]["latestCreatedRevisionName"] = name
+    calls = []
+    def run(args, **kwargs):
+        if args[:4] == ["gcloud", "run", "revisions", "describe"]:
+            if args[4] == name:
+                return json.dumps(owned)
+            if original_read_failure:
+                raise pilot.ReleaseError("restored_revision_unavailable")
+            return json.dumps(lifecycle.before["serving_revision"])
+        assert args[:2] == ["gcloud", "auth"]
+        return "private-synthetic-token"
+    def api(url, *, method, **kwargs):
+        calls.append(method)
+        if method == "GET":
+            raise cloud.CloudError("revision_delete_readback", 404)
+        assert method == "DELETE" and url.endswith("/" + name)
+        return {}
+    return lambda: cloud.cleanup_existing(lifecycle.ctx, "123", run=run,
+        snapshot=lambda *a: copy.deepcopy(current), api=api), calls
+
+
+def test_cleanup_only_deletes_owned_unused_probe_without_new_deployment(lifecycle):
+    execute, calls = cleanup_case(lifecycle)
+    out = execute()
+    assert calls == ["DELETE", "GET"]
+    assert out["revision_deleted"] and out["baseline_unchanged"] and out["traffic_unchanged"]
+    assert not out["deployment_attempted"] and not out["restore_attempted"]
+    assert out["configuration_restored"] and out["baseline_scope"] == "cleanup_before_after"
+
+
+@pytest.mark.parametrize("changes,reason", [(dict(changed_code=True), "cleanup_ownership_unverified"),
+    (dict(referenced=True), "cleanup_revision_still_referenced")])
+def test_cleanup_rejects_different_code_or_still_referenced_revision(lifecycle, changes, reason):
+    execute, calls = cleanup_case(lifecycle, **changes)
+    with pytest.raises(pilot.ReleaseError, match=reason):
+        execute()
+    assert not calls
+
+
+def test_unavailable_restore_diagnostic_does_not_retain_proven_unused_resource(lifecycle):
+    execute, calls = cleanup_case(lifecycle, original_read_failure=True)
+    out = execute()
+    assert calls == ["DELETE", "GET"] and out["revision_deleted"]
+    assert out["configuration_restored"] is None and out["restored_template_checks"] is None

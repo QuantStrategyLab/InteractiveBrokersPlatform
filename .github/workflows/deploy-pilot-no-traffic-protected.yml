@@ -3,6 +3,10 @@ name: Deploy IBKR pilot without traffic (protected execution)
 on:
   workflow_call:
     inputs:
+      isolated_cleanup_run_id:
+        type: string
+        required: false
+        default: ""
       isolated_network_preflight:
         type: boolean
         required: false
@@ -62,7 +66,12 @@ jobs:
           IBKR_ARTIFACT_REGISTRY_ROLLBACK_DIGESTS: ${{ secrets.IBKR_ARTIFACT_REGISTRY_ROLLBACK_DIGESTS }}
           PILOT_PROFILE: ${{ inputs.profile }}
           PILOT_SOURCE_COMMIT: ${{ inputs.source_commit }}
-        run: uv run --no-sync python -m scripts.deploy_pilot_no_traffic --preflight --bootstrap-identity --receipt "${RUNNER_TEMP}/pilot-release.safe.json"
+          PILOT_CLEANUP_RUN_ID: ${{ inputs.isolated_cleanup_run_id }}
+        run: |
+          if [ -n "$PILOT_CLEANUP_RUN_ID" ] && [ "${{ inputs.isolated_network_preflight }}" != true ]; then
+            echo 'cleanup_mode_invalid=true'; exit 1
+          fi
+          uv run --no-sync python -m scripts.deploy_pilot_no_traffic --preflight --bootstrap-identity --receipt "${RUNNER_TEMP}/pilot-release.safe.json"
       - name: Checkout exact application source
         uses: actions/checkout@v6
         with:
