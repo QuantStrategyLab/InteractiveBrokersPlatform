@@ -1056,8 +1056,8 @@ def _publisher_job_environment(target: str = "primary-live") -> dict[str, str]:
             value = placeholders[source_name, name]
         elif raw_value == "${{ matrix.target }}":
             value = target
-        elif raw_value == "${{ (matrix.target == 'primary-live' || matrix.target == 'additional-2' || matrix.target == 'additional-3') && 'true' || 'false' }}":
-            value = "true" if target in {"primary-live", "additional-2", "additional-3"} else "false"
+        elif raw_value == "${{ (matrix.target == 'primary-live' || matrix.target == 'additional-1' || matrix.target == 'additional-2' || matrix.target == 'additional-3') && 'true' || 'false' }}":
+            value = "true" if target in {"primary-live", "additional-1", "additional-2", "additional-3"} else "false"
         elif "matrix.target == 'additional-1'" in raw_value and "secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON" in raw_value:
             value = json.dumps(_additional_targets()) if target.startswith("additional-") else ""
         else:
@@ -1066,11 +1066,11 @@ def _publisher_job_environment(target: str = "primary-live") -> dict[str, str]:
     return environment
 
 
-@pytest.mark.parametrize("target", ["primary-live", "additional-1", "additional-2", "additional-3"])
+@pytest.mark.parametrize("target", ["primary-live", "additional-1", "additional-2", "additional-3", "unsupported"])
 def test_workflow_publishes_broker_positions_only_for_qualified_inventory_targets(target):
     environment = _publisher_job_environment(target)
     assert environment["IBKR_ACCOUNT_FACTS_INCLUDE_POSITIONS"] == (
-        "true" if target in {"primary-live", "additional-2", "additional-3"} else "false"
+        "true" if target in {"primary-live", "additional-1", "additional-2", "additional-3"} else "false"
     )
 
 
