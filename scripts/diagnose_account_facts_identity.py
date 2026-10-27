@@ -566,6 +566,7 @@ def _source_result(source_sha: object, reason: str = "source_metadata_unavailabl
         "scope_equalities": dict.fromkeys(("service_name", "account_scope", "deployment_selector", "account_selector")),
         "immutable_image_status": "unknown", "deployment_provenance_status": "unknown",
         "selected_source_sha": None, "serving_stable": None,
+        "reported_source_sha": None, "reported_deployment_run_id": None,
         "loaded_source_status": "unknown", "independent_release_approval": "unknown",
     }
 
@@ -607,7 +608,12 @@ def diagnose_serving_source_metadata(expected: Mapping[str, Any], *, source_sha:
         labels = metadata.get("labels")
         selected = image._sha(labels.get("commit-sha")) if isinstance(labels, Mapping) else None
         run_id = labels.get("github-run-id") if isinstance(labels, Mapping) else None
-        if not selected or not isinstance(run_id, str) or re.fullmatch(r"[1-9][0-9]{0,19}", run_id) is None:
+        valid_run_id = isinstance(run_id, str) and re.fullmatch(r"[1-9][0-9]{0,19}", run_id) is not None
+        # Public revision labels are observations, not verified provenance.
+        # Retain only format-validated locators when a later receipt check fails.
+        result["reported_source_sha"] = selected
+        result["reported_deployment_run_id"] = run_id if valid_run_id else None
+        if not selected or not valid_run_id:
             raise publisher._ProjectionError("source_labels_unavailable")
         _source_deploy_receipt(image, run_id=run_id, selected_source=selected,
                               digest=immutable.rsplit("@", 1)[1], expected=expected, region=region)

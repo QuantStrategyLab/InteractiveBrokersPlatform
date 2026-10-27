@@ -166,3 +166,19 @@ The output is explicitly candidate-only. It does not update the publisher's
 revision binding, activate the runtime, run a strategy, establish product/API
 permissions, verify complete pending cash obligations or authorize spending.
 It cannot count as the full no-submit trading cycle.
+
+# Serving deployment label observations
+
+The existing `--serving-source-metadata-only` diagnostic exposes optional
+`reported_source_sha` and `reported_deployment_run_id` from the selected serving
+revision's `commit-sha` and `github-run-id` labels. Each value passes the original
+SHA or positive-decimal run-ID format check; malformed labels remain null and
+are not echoed. These public locators remain available when a later deployment
+receipt check fails, so the operator can inspect the exact GitHub run and job.
+
+Reported labels do not establish deployment provenance, loaded source or release
+approval. `selected_source_sha` is still set only after the original repository,
+workflow, job, steps, selected source, immutable digest, scope and stable-serving
+checks pass. Failed checks keep their original reason and unknown verification
+states. This mode still performs no financial report read, broker connection,
+publishing or configuration write.
