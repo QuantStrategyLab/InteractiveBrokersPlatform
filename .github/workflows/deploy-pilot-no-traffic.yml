@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       isolated_job_phase:
-        description: "With temporary Job mode, test TCP or the frozen application's isolation. Neither runs a strategy cycle."
+        description: "Temporary Job phase: TCP, application isolation, or one guarded original no-submit cycle during the real market session."
         type: choice
         required: false
         default: tcp
-        options: [tcp, isolation]
+        options: [tcp, isolation, cycle]
       isolated_job_network_preflight:
-        description: "Run one zero-retry Job on the original network/identity, then delete it. Phase selects TCP (60s) or application isolation (120s). Requires Job and billing authorization."
+        description: "Run one zero-retry Job on the original network/identity, then delete it. Requires Job, the selected phase and billing authorization."
         type: boolean
         required: false
         default: false

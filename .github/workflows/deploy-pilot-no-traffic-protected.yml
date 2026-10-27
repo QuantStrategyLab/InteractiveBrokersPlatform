@@ -78,7 +78,7 @@ jobs:
           PILOT_JOB_NETWORK_PREFLIGHT: ${{ inputs.isolated_job_network_preflight }}
           PILOT_JOB_PHASE: ${{ inputs.isolated_job_phase }}
         run: |
-          if { [ "$PILOT_JOB_PHASE" != tcp ] && [ "$PILOT_JOB_PHASE" != isolation ]; } || { [ "$PILOT_JOB_PHASE" = isolation ] && [ "$PILOT_JOB_NETWORK_PREFLIGHT" != true ]; }; then
+          if { [ "$PILOT_JOB_PHASE" != tcp ] && [ "$PILOT_JOB_PHASE" != isolation ] && [ "$PILOT_JOB_PHASE" != cycle ]; } || { [ "$PILOT_JOB_PHASE" != tcp ] && [ "$PILOT_JOB_NETWORK_PREFLIGHT" != true ]; }; then
             echo 'job_phase_invalid=true'; exit 1
           fi
           if [ "$PILOT_JOB_NETWORK_PREFLIGHT" = true ] && { [ "${{ inputs.isolated_network_preflight }}" = true ] || [ -n "$PILOT_CLEANUP_RUN_ID" ]; }; then
@@ -91,7 +91,7 @@ jobs:
       - name: Checkout exact application source
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.isolated_job_network_preflight && inputs.isolated_job_phase == 'isolation' && '15427acb0ecc5e4c2450adf5276f90625a32e01a' || inputs.source_commit }}
+          ref: ${{ inputs.isolated_job_network_preflight && inputs.isolated_job_phase != 'tcp' && '15427acb0ecc5e4c2450adf5276f90625a32e01a' || inputs.source_commit }}
           path: source
           persist-credentials: false
       - name: Authenticate through the original deployment identity
@@ -115,7 +115,7 @@ jobs:
         if: inputs.isolated_job_network_preflight
         env: *private_context
         run: |
-          if [ "$PILOT_JOB_PHASE" = isolation ]; then
+          if [ "$PILOT_JOB_PHASE" != tcp ]; then
             uv run --no-sync python -m scripts.run_pilot_job_tcp --application-source source --receipt "${RUNNER_TEMP}/pilot-release.safe.json"
           else
             uv run --no-sync python -m scripts.run_pilot_job_tcp --receipt "${RUNNER_TEMP}/pilot-release.safe.json"

@@ -20,6 +20,16 @@ TCP 与清理已获证后，在 Job 模式指定 `isolated_job_phase=isolation`�
 
 候选导入和依赖身份、六项目标及原账户/host/port/client ID 分别核验。通过实际 composer 构建器确认 dry-run、报告/对账/marker/lifecycle/锁路径及 cloud 写入位置隔离；仅保存带 `isolation_preflight` 标识的空运行报告并原路读回，同时验证本地路径可写。此报告没有行情、余额、信号或订单，不是策略周期或金融验收。预检不计算策略、不连接券商、不读取或初始化真实风险状态，不将实际 OPEN/unknown 改成 CLOSED。失败状态和安全类别按固定 schema 返回；沿同一 Job 所有权、Execution 终止、删除 404 和生产基线复核流程结束。下一阶段的真实周期需另行验证实际来源、原风险/订单状态及隔离报告。
 
+### 原策略真实禁提交周期
+
+仅在前述实际 TCP、应用隔离及清理通过后，选择 `isolated_job_phase=cycle`；此模式需要原 P4 真实只读周期及私有报告写入的明确授权。再次完整核对隔离后，使用候选的原市场日历判定当前交易时段。闭市时返回 `waiting_market / market_closed`，不连接券商、不强制开市，也不计为完整周期。当前入口没有自动排班。
+
+开市后只允许一次准确原 host/port、正 client ID 且 `readonly=True` 的 SDK 连接。依赖仍固定 ib_insync 0.9.86；交易/撤单/全局撤单/行权/what-if/FA 修改方法拒绝，底层 `Client.send` 只允许已核原 SDK 的账户、行情、合约与订阅读请求编号，未知编号拒绝。不更换账户、策略或风险政策，不批准原 RiskEngine 的拒绝，不初始化或解除实际 OPEN/unknown 状态。
+
+应用输出仍限于临时目录。允许原来源的只读数据请求；应用 HTTP 非 GET/HEAD 请求、GCP object/document store 修改均拒绝。原风险来源可读，原状态写入请求会准确停止本次周期，不另建状态代理或绕过保护。通知继续禁止。以实际连接、信号与再平衡函数完成、HTTP、原报告状态及零禁止操作分别核对，HTTP 200、闭市早退和缺失字段均不能单独通过。预览/跳过计数只采用报告明确字段；缺失保留 null，不能解读为成交。
+
+真实报告独立写到原私有报告根的 `p4-no-submit/<真实 Execution>/report.json`，明确标记 Job/Execution 和 no-submit，不能伪造生产 revision。只有受控保存线程可创建这个新对象；使用 generation=0、无 SDK 重试，随后原文下载比较。应用线程及后台线程没有该写入许可；原报告生产入口和 publisher binding 不改。未知写入不重复，读回失败不计成功。任务上限 600 秒、1 CPU/512Mi、1 task、零重试；总操作和清理仍在 15 分钟内，结束必须核 Job 删除 404 及完整生产基线。完整周期、正向预览、资金资格和后续采用分别判断。
+
 接口依据：[创建 Job 与 dryRun](https://docs.cloud.google.com/run/docs/reference/rest/v1/namespaces.jobs/create)、[执行 Job](https://docs.cloud.google.com/run/docs/reference/rest/v1/namespaces.jobs/run)、[删除 Job](https://docs.cloud.google.com/run/docs/reference/rest/v1/namespaces.jobs/delete)。
 
 ## 原 revision 模式

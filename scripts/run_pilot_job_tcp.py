@@ -136,7 +136,7 @@ def production_checks(before, after):
 
 
 def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=cloud.request,
-            pause=time.sleep, clock=time.monotonic, progress=None, application_source=None):
+            pause=time.sleep, clock=time.monotonic, progress=None, application_source=None, application_phase="isolation"):
     out = result() if progress is None else progress
     deadline = clock() + 600  # Leave cleanup time inside the 15-minute workflow.
     before = snapshot(ctx, run)
@@ -150,9 +150,10 @@ def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=clou
     desired = prepared(ctx, before, group, run_id)
     schema = "ibkr.cloud_tcp_probe.v1"
     if application_source is not None:
-        desired = app_isolation.prepared(ctx, before, group, desired, application_source)
-        schema = "ibkr.application_isolation.v1"
-        out["schema_version"] = "ibkr.job_application_isolation_lifecycle.v1"
+        desired = (app_isolation.prepared(ctx, before, group, desired, application_source, phase="cycle")
+            if application_phase == "cycle" else app_isolation.prepared(ctx, before, group, desired, application_source))
+        schema = "ibkr.guarded_cycle.v1" if application_phase == "cycle" else "ibkr.application_isolation.v1"
+        out["schema_version"] = "ibkr.job_guarded_cycle_lifecycle.v1" if application_phase == "cycle" else "ibkr.job_application_isolation_lifecycle.v1"
     name = desired["metadata"]["name"]
     out.update(binding_verified=True, probe_code_sha256=hashlib.sha256(
         desired["spec"]["template"]["spec"]["template"]["spec"]["containers"][0]["args"][3].encode()).hexdigest())
@@ -206,7 +207,7 @@ def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=clou
         out["job_execute_attempted"] = True
         execution = call(url + ":run", "POST", {}, "job_execute_unknown")
         execution_name = verify_execution(execution, desired)
-        for _ in range(90):
+        for _ in range(180 if application_source is not None and application_phase == "cycle" else 90):
             execution = call(endpoint + "/executions/" + execution_name)
             verify_execution(execution, desired)
             if execution.get("status", {}).get("completionTime"):
@@ -237,9 +238,17 @@ def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=clou
             out.update(status="observed", stage="port_observed", measurement_read=True,
                 tcp_connected=value["tcp_connected"], tcp_failure_class=value["failure_class"])
         else:
-            value = app_isolation.measurement(rows)
-            out.update(status="observed" if task_ok and value["isolation_passed"] else "unavailable",
-                stage="application_isolation_observed", measurement_read=True, application_isolation=value)
+            if application_phase == "cycle":
+                value = app_isolation.cycle_measurement(rows)
+                out.update(status="observed" if task_ok and value["cycle"]["cycle_completed"] else "unavailable",
+                    stage=value["cycle"]["stage"], measurement_read=True, guarded_cycle=value,
+                    broker_called=value["cycle"]["broker_called"], broker_protocol_sent=None,
+                    strategy_imported=value["isolation"]["application_imported"])
+            else:
+                value = app_isolation.measurement(rows)
+                out.update(status="observed" if task_ok and value["isolation_passed"] else "unavailable",
+                    stage="application_isolation_observed", measurement_read=True, application_isolation=value,
+                    strategy_imported=value["application_imported"])
     except cloud.CloudError as error:
         out.update(stage=str(error), cloud_http_status=error.http_status)
     except pilot.ReleaseError as error:
@@ -311,9 +320,9 @@ def main(argv=None):
         if os.environ.get("PILOT_JOB_NETWORK_PREFLIGHT") != "true" or os.environ.get("PILOT_CLEANUP_RUN_ID"):
             raise pilot.ReleaseError("job_mode_not_admitted")
         phase = os.environ.get("PILOT_JOB_PHASE", "tcp")
-        if phase not in {"tcp", "isolation"} or (phase == "isolation") != (args.application_source is not None):
+        if phase not in {"tcp", "isolation", "cycle"} or (phase != "tcp") != (args.application_source is not None):
             raise pilot.ReleaseError("job_phase_not_admitted")
-        execute(ctx, os.environ["GITHUB_RUN_ID"], progress=out, application_source=args.application_source)
+        execute(ctx, os.environ["GITHUB_RUN_ID"], progress=out, application_source=args.application_source, application_phase=phase)
     except cloud.CloudError as error:
         out.update(stage=str(error), cloud_http_status=error.http_status)
     except pilot.ReleaseError as error:
@@ -323,7 +332,8 @@ def main(argv=None):
     args.receipt.write_text(json.dumps(out, sort_keys=True) + "\n")
     args.receipt.chmod(0o600)
     print(json.dumps(out, sort_keys=True))
-    measured = out["tcp_connected"] or out.get("application_isolation", {}).get("isolation_passed")
+    measured = (out["tcp_connected"] or out.get("application_isolation", {}).get("isolation_passed")
+        or out.get("guarded_cycle", {}).get("cycle", {}).get("cycle_completed"))
     return 0 if out["status"] == "observed" and out["measurement_read"] and measured and out["job_deleted"] and out["baseline_unchanged"] else 1
 
 
