@@ -122,6 +122,20 @@ def test_ready_exact_revision_is_usable_even_when_service_latest_ready_stays_old
     assert out["measurement_read"] and out["revision_deleted"]
 
 
+def test_probe_keeps_approved_digest_and_restores_newer_normal_deployment(lifecycle):
+    newer = "us-central1-docker.pkg.dev/synthetic-project/runtime/app@sha256:" + "f" * 64
+    for state in (lifecycle.before, lifecycle.current):
+        for node in (state["serving_revision"], state["service"]["spec"]["template"]):
+            node["spec"]["containers"][0]["image"] = newer
+    body, _, _ = cloud.prepared(lifecycle.ctx, lifecycle.before, lifecycle.group, "123")
+    template = body["spec"]["template"]
+    assert template["spec"]["containers"][0]["image"].endswith("@" + cloud.BASE)
+    assert not (set(template["metadata"]["labels"]) & pilot.BUILD_LABELS)
+    out = lifecycle.execute()
+    assert out["baseline_unchanged"] and out["revision_deleted"]
+    assert lifecycle.current["service"]["spec"]["template"]["spec"]["containers"][0]["image"] == newer
+
+
 def test_controller_revision_version_is_diagnostic_not_runtime_configuration(lifecycle):
     lifecycle.controller_revision_change = True
     out = lifecycle.execute()

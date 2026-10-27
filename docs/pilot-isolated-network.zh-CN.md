@@ -2,9 +2,9 @@
 
 此入口会修改原服务模板并创建临时版本，需要用户对部署和本次按量费用的明确授权。它不是原镜像安装读取器，也不运行策略或完整禁提交周期。
 
-在既有 `Deploy IBKR pilot without traffic` 指定 `isolated_network_preflight=true`。默认关闭；沿用 main/首次 attempt、唯一 TQQQ 身份准入、原 WIF 身份和部署并发锁。先从准确 serving 配置读取原账户组，核单账户/live、正 client ID 和原直连 host/port；未通过或原固定 digest 已变化时不部署。
+在既有 `Deploy IBKR pilot without traffic` 指定 `isolated_network_preflight=true`。默认关闭；沿用 main/首次 attempt、唯一 TQQQ 身份准入、原 WIF 身份和部署并发锁。先从准确 serving 配置读取原账户组，核单账户/live、正 client ID 和原直连 host/port；未通过时不部署。探针在既有镜像仓库内明确使用已批准的固定原 digest，不随正常服务发布采用新镜像；临时版本移除继承的 build source labels。正常服务即使已更新，也按执行前的实际配置与流量完整保留，不回退它。
 
-复用现役 immutable 镜像，仅覆盖容器命令为 Python `-I -S` 的标准库程序。程序不导入应用、策略或 SDK；环境只传原 host/port，不转入账户配置、报告路径或凭据，不写文件或金融状态。原执行身份、网络及服务级设置保留，临时版本 min=0/max=1、并发 1、请求上限 60 秒；仅对临时版本显式设置 `run.googleapis.com/health-check-disabled=false`，与 gcloud 的 `--deploy-health-check` 对应，由平台调度一个实例完成启动检查。不新增 tag 或调用 URL，正常流量固定在原版本，原 tags、IAM 与 Scheduler 不变。
+复用获批的固定原镜像，仅覆盖容器命令为 Python `-I -S` 的标准库程序。程序不导入应用、策略或 SDK；环境只传原 host/port，不转入账户配置、报告路径或凭据，不写文件或金融状态。原执行身份、网络及服务级设置保留，临时版本 min=0/max=1、并发 1、请求上限 60 秒；仅对临时版本显式设置 `run.googleapis.com/health-check-disabled=false`，与 gcloud 的 `--deploy-health-check` 对应，由平台调度一个实例完成启动检查。不新增 tag 或调用 URL，正常流量固定在原版本，原 tags、IAM 与 Scheduler 不变。
 
 部署前分别使用 Cloud Run `dryRun=all` 校验原模板恢复请求和临时模板，实际写入携带准确 resourceVersion；原流量必须已明确绑定 revision，不能依赖动态 latest；否则无法安全确认恢复时的路由，不执行部署。遇拒绝或来源变化不执行部署。不重试结果未知的写入。
 
