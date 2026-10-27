@@ -497,7 +497,7 @@ def test_workflow_has_only_existing_wif_scheduler_path():
     assert 'print-identity-token' not in source
     assert 'continue-on-error' not in text
     assert 'cloudscheduler.googleapis.com/v1/' in source
-    assert 'd723ce5d0a7c4b6af81863c842823ed248b6d0eb5329f76dd905beaa14e29c86' not in source
+    assert re.search(r'(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])', source) is None
 
 
 @pytest.mark.parametrize('where', ['revision', 'static_evidence'])
