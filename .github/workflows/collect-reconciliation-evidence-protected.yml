@@ -40,7 +40,6 @@ on:
 
 permissions:
   contents: read
-  actions: read
   id-token: write
 
 env:
@@ -85,6 +84,10 @@ jobs:
           python3 scripts/render_runtime_target_matrix.py --profile reconciliation --private-config --github-output
 
   flex-runtime-binding:
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
     needs: resolve-matrix
     if: ${{ inputs.inspect_flex_runtime_binding_only && github.ref == 'refs/heads/main' && github.run_attempt == 1 }}
     name: Compare protected Flex and serving runtime identity
