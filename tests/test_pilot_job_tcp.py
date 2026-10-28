@@ -276,3 +276,50 @@ def test_closed_market_cycle_remains_unavailable_after_successful_cleanup(lifecy
     assert out["status"] == "unavailable" and out["stage"] == "market_closed"
     assert out["job_deleted"] and out["baseline_unchanged"] and out["measurement_read"]
     assert not out["guarded_cycle"]["cycle"]["cycle_completed"] and not out["broker_called"]
+
+
+def test_template_diagnostic_stops_after_dry_run_even_when_template_matches(lifecycle, monkeypatch):
+    monkeypatch.setattr(job.app_isolation, "prepared", lambda ctx, before, group, desired, source, phase: desired)
+    out = lifecycle.execute(diagnostic_only=True, application_source=Path("synthetic"), application_phase="cycle")
+    assert out["stage"] == "template_diagnostic" and out["template_match"] is True
+    assert [stage for _, stage in lifecycle.calls] == ["job_dry_run_failed"]
+    assert not out["job_create_attempted"] and not out["job_execute_attempted"]
+
+
+def test_template_diagnostic_reports_only_fixed_categories_and_never_creates(lifecycle, monkeypatch):
+    monkeypatch.setattr(job.app_isolation, "prepared", lambda ctx, before, group, desired, source, phase: desired)
+    lifecycle.fail = "bad_dry_run"
+    out = lifecycle.execute(diagnostic_only=True, application_source=Path("synthetic"), application_phase="cycle")
+    assert out["template_match"] is False and out["template_reason"] == "job_template_readback_unverified"
+    assert out["template_difference_categories"] == ["retries"]
+    assert [stage for _, stage in lifecycle.calls] == ["job_dry_run_failed"]
+    assert not out["job_create_attempted"] and not out["job_execute_attempted"]
+    assert "private-synthetic-token" not in json.dumps(out)
+
+
+def test_template_difference_never_exposes_env_names_or_values(lifecycle):
+    desired = job.prepared(lifecycle.ctx, lifecycle.before, lifecycle.group, "123")
+    actual = copy.deepcopy(desired)
+    d = desired["spec"]["template"]["spec"]["template"]["spec"]["containers"][0]["env"]
+    a = actual["spec"]["template"]["spec"]["template"]["spec"]["containers"][0]["env"]
+    d.append({"name": "LIFECYCLE_PERFORMANCE_BUCKET", "value": ""})
+    a.append({"name": "LIFECYCLE_PERFORMANCE_BUCKET"})
+    a.append({"name": "PRIVATE_NAME", "value": "PRIVATE_VALUE"})
+    result = job.template_difference_categories(actual, desired)
+    assert result == ["container_env", "lifecycle_empty_value_omitted"]
+    assert "PRIVATE" not in json.dumps(result)
+    actual["spec"]["template"]["spec"]["template"]["spec"]["containers"][0]["PRIVATE_FIELD"] = "PRIVATE_VALUE"
+    result = job.template_difference_categories(actual, desired)
+    assert result == ["container_env", "lifecycle_empty_value_omitted", "other_container"]
+    assert "PRIVATE" not in json.dumps(result)
+
+
+def test_diagnostic_cli_rejects_non_cycle_and_invalid_flags_before_execution(tmp_path, monkeypatch):
+    monkeypatch.setattr(job.pilot, "context", lambda env: object())
+    monkeypatch.setenv("PILOT_JOB_NETWORK_PREFLIGHT", "true")
+    monkeypatch.setenv("PILOT_JOB_PHASE", "tcp")
+    monkeypatch.setenv("PILOT_TEMPLATE_DIAGNOSTIC", "true")
+    monkeypatch.setattr(job, "execute", lambda *a, **k: pytest.fail("must not execute"))
+    receipt = tmp_path / "receipt.json"
+    assert job.main(["--receipt", str(receipt)]) == 1
+    assert json.loads(receipt.read_text())["stage"] == "template_diagnostic_mode_invalid"
