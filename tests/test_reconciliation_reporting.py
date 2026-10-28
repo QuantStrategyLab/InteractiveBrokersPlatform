@@ -189,3 +189,23 @@ def test_persistent_pin_main_raw_flow_roundtrip_preserves_unknowns(
         assert actual.get("source_complete") is source_complete
     assert "runtime_report_cloud_uri" not in local_payloads[0]["artifacts"]
     assert local_payloads[-1]["artifacts"]["runtime_report_cloud_uri"].startswith("gs://synthetic-only/")
+
+
+def test_log_comparison_distinguishes_missing_baseline_and_actual_mismatch():
+    from types import SimpleNamespace
+    from application.reconciliation_reporting import reconciliation_log_comparison
+
+    def candidate(configured, values, blockers):
+        fields = ('positions_match', 'cash_match', 'open_orders_match',
+                  'recent_executions_match', 'local_execution_ledger_match')
+        return SimpleNamespace(expected_digests_configured=configured,
+                               evidence=SimpleNamespace(**dict(zip(fields, values, strict=True))),
+                               recovery_blockers=[SimpleNamespace(value=value) for value in blockers])
+
+    mismatch = 'broker_reconciliation_cash_mismatch'
+    other = 'broker_reconciliation_baseline_target_mismatch'
+    missing = candidate(False, [False] * 5, [mismatch, other])
+    assert reconciliation_log_comparison(missing) == ('not_configured', [other])
+    assert reconciliation_log_comparison(candidate(True, [True] * 5, [other])) == ('matched', [other])
+    assert reconciliation_log_comparison(candidate(True, [True, False, True, True, True], [mismatch])) == ('mismatched', [mismatch])
+    assert reconciliation_log_comparison(candidate(True, [True, None, True, True, True], [])) == ('not_compared', [])

@@ -59,6 +59,27 @@ _RECONCILIATION_REQUEST_ID_PATTERN = re.compile(
 _RECONCILIATION_SCHEDULER_JOB_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 
+_COMPARISON_FIELDS = (
+    "positions_match", "cash_match", "open_orders_match",
+    "recent_executions_match", "local_execution_ledger_match",
+)
+_UNCOMPARED_FINDINGS = frozenset(
+    "broker_reconciliation_" + name.removesuffix("_match") + "_mismatch"
+    for name in _COMPARISON_FIELDS
+)
+
+
+def reconciliation_log_comparison(candidate: Any) -> tuple[str, list[str]]:
+    """Explain comparisons without changing the recovery decision or receipt."""
+    blockers = [finding.value for finding in candidate.recovery_blockers]
+    if not candidate.expected_digests_configured:
+        return "not_configured", [item for item in blockers if item not in _UNCOMPARED_FINDINGS]
+    values = [getattr(candidate.evidence, name, None) for name in _COMPARISON_FIELDS]
+    if any(type(value) is not bool for value in values):
+        return "not_compared", blockers
+    return ("matched" if all(values) else "mismatched"), blockers
+
+
 def normalize_reconciliation_request_id(value: object) -> str | None:
     """Return a safe opaque correlation ID or reject the untrusted value."""
     if not isinstance(value, str):

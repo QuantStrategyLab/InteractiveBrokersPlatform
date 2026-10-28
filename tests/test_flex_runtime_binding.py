@@ -218,3 +218,71 @@ def test_workflow_mode_is_default_off_and_excludes_broker_job():
     assert 'diagnose_ibkr_flex_runtime_binding --preflight' in job
     for unsafe in ('IBKR_FLEX_TOKEN', 'IBKR_FLEX_QUERY_ID', 'storage ', 'scheduler ', 'curl ', 'upload-artifact'):
         assert unsafe not in job
+
+
+def test_existing_receipt_compares_loaded_account_without_assuming_current_secret(materials):
+    import hashlib
+    import io
+    import zipfile
+
+    env, slots, _, revisions, reader, _ = materials
+    profile = diagnostic.PROFILES[0]
+    env['REQUESTED_TARGET'] = profile
+    env['RECONCILIATION_RUN_ID'] = '123'
+    revisions['private-revision-1']['spec']['containers'][0]['env'].append(
+        {'name': 'IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME', 'value': 'secret'})
+    revisions['private-revision-1']['metadata']['labels'] = {'commit-sha': 'd' * 40, 'github-run-id': '55'}
+    account = slots['additional-1']['account_selector']
+    digest = hashlib.sha256(json.dumps({'account_ids': account}, sort_keys=True,
+                                     separators=(',', ':')).encode()).hexdigest()
+    def zipped(value):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w') as archive:
+            archive.writestr('data.json', json.dumps(value))
+        return buf.getvalue()
+    receipt = {'strategy_profile': profile, 'report_status': 'ok',
+               'reconciliation_scheduler_job_sha256': 'a' * 64,
+               'reconciliation': {'evidence': {'platform_id': 'ibkr', 'strategy_profile': profile,
+                   'broker_connected': True, 'account_identity_match': True,
+                   'account_scope_sha256': digest, 'evidence_sha256': 'b' * 64}}}
+    receipt_zip = zipped(receipt)
+    name = f'ibkr-reconciliation-{profile}-123'
+    record = {'schema_version': 'ibkr_reconciliation_source_receipt_record.v1',
+              'repository': diagnostic.REPOSITORY, 'workflow_path': diagnostic.WORKFLOW,
+              'workflow_run_id': '123', 'workflow_run_attempt': '1', 'workflow_head_sha': 'c' * 40,
+              'artifact_id': '10', 'artifact_name': name, 'artifact_sha256': hashlib.sha256(receipt_zip).hexdigest(),
+              'service_name': 'private-service-1', 'service_revision': 'private-revision-1',
+              'service_revision_commit_sha': 'd' * 40, 'service_deploy_run_id': '55',
+              'evidence_sha256': 'b' * 64, 'scheduler_job_sha256': 'a' * 64}
+    run = {'id': 123, 'status': 'completed', 'conclusion': 'success', 'head_branch': 'main',
+           'event': 'workflow_dispatch', 'path': diagnostic.WORKFLOW, 'run_attempt': 1,
+           'head_sha': 'c' * 40, 'repository': {'full_name': diagnostic.REPOSITORY}}
+    listing = {'total_count': 2, 'artifacts': [
+        {'name': name, 'id': 10, 'expired': False},
+        {'name': f'ibkr-reconciliation-source-record-{profile}-123', 'id': 11, 'expired': False}]}
+    def receipt_reader(path):
+        data = {'actions/runs/123': json.dumps(run).encode(),
+                'actions/runs/123/artifacts?per_page=100': json.dumps(listing).encode(),
+                'actions/artifacts/10/zip': receipt_zip,
+                'actions/artifacts/11/zip': zipped(record)}
+        return data[path]
+    row = diagnostic.diagnose(env, reader=reader, receipt_reader=receipt_reader)['targets'][profile]
+    assert row['observed_group_account_match'] is True
+    assert row['actual_group_account_match'] is None and row['status'] == 'matched_at_observation'
+    assert diagnostic._receipt_account_match(
+        '123', profile, 'private-service-1', 'private-revision-1',
+        {'commit-sha': 'd' * 40, 'github-run-id': '55'}, ['DU9999999'], receipt_reader) is False
+    record['service_revision'] = 'different-revision'
+    row = diagnostic.diagnose(env, reader=reader, receipt_reader=receipt_reader)['targets'][profile]
+    assert row['reason'] == 'receipt_provenance_unverified'
+    assert 'observed_group_account_match' not in row
+
+
+def test_receipt_read_failure_and_invalid_archive_are_distinct(monkeypatch):
+    def timed_out(*args, **kwargs):
+        raise subprocess.TimeoutExpired('gh', 30)
+    monkeypatch.setattr(diagnostic.subprocess, 'run', timed_out)
+    with pytest.raises(diagnostic.BindingError, match='receipt_read_failed'):
+        diagnostic._gh('actions/runs/123')
+    with pytest.raises(diagnostic.BindingError, match='receipt_invalid'):
+        diagnostic._artifact_json(b'not a zip')
