@@ -1,0 +1,67 @@
+name: Publish one primary IBKR daily projection
+
+on:
+  workflow_dispatch:
+    inputs:
+      business_date:
+        description: One NYSE trading day in YYYY-MM-DD, after binding and writer checks
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ibkr-primary-daily-once
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: ${{ github.repository == 'QuantStrategyLab/InteractiveBrokersPlatform' && github.ref == 'refs/heads/main' && github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Require infrastructure variables
+        env:
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          QSL_CONSOLE_BASE_URL: ${{ vars.QSL_CONSOLE_BASE_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in IBKR_DEPLOY_SERVICE_ACCOUNT QSL_CONSOLE_BASE_URL; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is required" >&2
+              exit 2
+            fi
+          done
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+      - name: Install locked dependencies
+        run: uv sync --frozen --no-dev
+      - name: Authenticate with the existing primary read identity
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
+          service_account: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Publish one selected date once
+        run: uv run --no-sync python -m scripts.publish_primary_day_once
+        env:
+          IBKR_ACCOUNT_FACTS_TARGET: primary-live
+          IBKR_ACCOUNT_FACTS_PROJECT_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID }}
+          IBKR_ACCOUNT_FACTS_REPORT_PREFIX: ${{ secrets.IBKR_ACCOUNT_FACTS_REPORT_PREFIX }}
+          IBKR_ACCOUNT_FACTS_TARGET_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_TARGET_ID }}
+          IBKR_ACCOUNT_FACTS_SERVICE_NAME: ${{ secrets.IBKR_ACCOUNT_FACTS_SERVICE_NAME }}
+          IBKR_ACCOUNT_FACTS_RUNTIME_REVISION: ${{ secrets.IBKR_ACCOUNT_FACTS_RUNTIME_REVISION }}
+          IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE }}
+          IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON }}
+          IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR: ${{ secrets.IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR }}
+          IBKR_RUNTIME_DAILY_BUSINESS_DATE: ${{ inputs.business_date }}
+          IBKR_RUNTIME_DAILY_TARGET_KEY: ${{ secrets.IBKR_RUNTIME_DAILY_TARGET_KEY }}
+          IBKR_RUNTIME_DAILY_ACCOUNT_KEY: ${{ secrets.IBKR_PERIOD_RETURN_ACCOUNT_KEY }}
+          IBKR_RUNTIME_DAILY_SYNC_TOKEN: ${{ secrets.IBKR_RUNTIME_DAILY_SYNC_TOKEN }}
+          QSL_CONSOLE_BASE_URL: ${{ vars.QSL_CONSOLE_BASE_URL }}
+          CLOUD_RUN_REGION: us-central1
