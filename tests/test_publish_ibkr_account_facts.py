@@ -497,6 +497,47 @@ def test_publisher_posts_once_with_fresh_projected_payload_and_dedicated_token(m
     assert observed["timeout"] == 15
 
 
+@pytest.mark.parametrize("response,expected_status,expected_timestamp", [
+    ({"ok": True, "stored": True, "unchanged": False, "observed_finished_at": "2026-09-30T01:00:01Z"}, "published", True),
+    ({"ok": True, "stored": True, "unchanged": False, "observed_finished_at": "2026-09-30T01:00:02Z"}, "published", False),
+    ({"ok": False, "stored": False, "unchanged": False, "observed_finished_at": "2026-09-30T01:00:01Z"}, "skipped", False),
+    ({"ok": True, "stored": True, "unchanged": True, "observed_finished_at": "2026-09-30T01:00:01Z"}, "unchanged", False),
+])
+def test_published_receipt_only_reports_matching_receiver_time(monkeypatch, capsys, response, expected_status, expected_timestamp):
+    requests = []
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self, _limit):
+            return json.dumps(response).encode()
+
+    class Opener:
+        def open(self, request, *, timeout):
+            requests.append(request)
+            return Response()
+
+    monkeypatch.setattr(publisher, "build_opener", lambda *_args: Opener())
+    result = publisher.publish_ibkr_account_facts_history(
+        _report(), now=datetime(2026, 9, 30, 1, 1, tzinfo=timezone.utc), **_observability_publish_args(),
+    )
+    publisher._print_cli_result(result)
+    output = capsys.readouterr().out
+    assert result["status"] == expected_status
+    assert len(requests) == 1
+    assert ("published_observed_finished_at" in output) is expected_timestamp
+    if expected_timestamp:
+        assert json.loads(output.splitlines()[1]) == {"published_observed_finished_at": "2026-09-30T01:00:01Z"}
+    for private in ("TOKEN_CANARY", "U00000001", "gs://", "12345.6700", "ibkr-primary"):
+        assert private not in output
+
+
 def test_publisher_accepts_36_hour_boundary_and_rejects_older_or_future_without_http(monkeypatch):
     observed_requests = []
 

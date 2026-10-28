@@ -564,6 +564,16 @@ def publish_ibkr_account_facts_history(
                     )
                 if response_payload["unchanged"]:
                     return {"status": "unchanged", "reason": "observation_unchanged"}
+                # The receiver already returns the accepted observation time.
+                # Keep publishing semantics unchanged if an older receiver omits
+                # it or the returned value cannot be safely correlated.
+                accepted_observed = None
+                try:
+                    receipt_time = _observed_timestamp(response_payload.get("observed_finished_at"))
+                    if receipt_time == _observed_timestamp(projected.get("observed_finished_at")):
+                        accepted_observed = receipt_time.isoformat().replace("+00:00", "Z")
+                except _ProjectionError:
+                    pass
         except HTTPError as exc:
             return _publish_failed(
                 stage="http_response",
@@ -579,7 +589,7 @@ def publish_ibkr_account_facts_history(
             return _publish_failed(stage="request", category="transport_error")
         except Exception:
             return _publish_failed(stage="unknown", category="unknown")
-        return {"status": "published"}
+        return {"status": "published", **({"observed_finished_at": accepted_observed} if accepted_observed else {})}
     except _ProjectionError as exc:
         return _projection_error_result(exc)
 
@@ -767,6 +777,13 @@ def _format_identity_mismatch_diagnostic(result: Mapping[str, Any]) -> str | Non
 
 def _print_cli_result(result: Mapping[str, Any]) -> None:
     print(_format_cli_result(result))
+    if result.get("status") == "published" and result.get("observed_finished_at"):
+        try:
+            timestamp = _observed_timestamp(result["observed_finished_at"]).isoformat().replace("+00:00", "Z")
+        except _ProjectionError:
+            pass
+        else:
+            print(json.dumps({"published_observed_finished_at": timestamp}, sort_keys=True))
     diagnostic = _format_identity_mismatch_diagnostic(result)
     if diagnostic is not None:
         print(diagnostic)
