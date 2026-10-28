@@ -29,6 +29,20 @@ NOTIFY_ROUTE_ADDITIONAL_SECRET_CONTRACTS = {
 }
 
 
+RECONCILIATION_BINDING_SECRETS = frozenset({
+    "IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON",
+    "IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON", "IBKR_ACCOUNT_FACTS_PROJECT_ID",
+    "IBKR_ACCOUNT_FACTS_SERVICE_NAME", "IBKR_ACCOUNT_FACTS_RUNTIME_REVISION",
+    "IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE", "IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR",
+})
+
+
+def _assert_reconciliation_binding_secret_contract(key: str, declared: str, passed: str) -> None:
+    assert f"      {key}:\n        required: false" in declared
+    expression = f"inputs.inspect_flex_runtime_binding_only && secrets.{key} || ''"
+    assert f"      {key}: ${{{{ {expression} }}}}" in passed
+
+
 def _assert_notify_route_additional_secret_contract(key: str, declared: str, passed: str) -> None:
     required, expression = NOTIFY_ROUTE_ADDITIONAL_SECRET_CONTRACTS[key]
     assert f"      {key}:\n        required: {str(required).lower()}" in declared
@@ -92,6 +106,8 @@ def test_json_crosses_secret_boundary_before_any_execution(name: str) -> None:
     for key in referenced:
         if name == "notify-route-check" and key in NOTIFY_ROUTE_ADDITIONAL_SECRET_CONTRACTS:
             _assert_notify_route_additional_secret_contract(key, declared, passed)
+        elif name == "collect-reconciliation-evidence" and key in RECONCILIATION_BINDING_SECRETS:
+            _assert_reconciliation_binding_secret_contract(key, declared, passed)
         else:
             assert f"      {key}:\n        required: false" in declared
             value = f"vars.{key} || secrets.{key}" if key in PROTECTED else f"secrets.{key}"
@@ -151,11 +167,17 @@ def test_detector_accepts_secret_boundary_and_ignores_literal_script_text() -> N
 def test_reconciliation_keeps_both_inventory_consumers_behind_one_boundary() -> None:
     callee = (ROOT / "collect-reconciliation-evidence-protected.yml").read_text()
     jobs = _jobs(callee)
-    assert set(jobs) == {"resolve-matrix", "collect"}
+    assert set(jobs) == {"resolve-matrix", "flex-runtime-binding", "collect"}
     assert "needs: resolve-matrix" in jobs["collect"]
     assert "matrix: ${{ fromJSON(needs.resolve-matrix.outputs.matrix) }}" in jobs["collect"]
     for job in jobs.values():
         assert "CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}" in job
+    assert "if: ${{ !inputs.inspect_flex_runtime_binding_only }}" in jobs["collect"]
+    metadata = jobs["flex-runtime-binding"]
+    assert "inputs.inspect_flex_runtime_binding_only" in metadata
+    assert "diagnose_ibkr_flex_runtime_binding" in metadata
+    for unsafe in ("IBKR_FLEX_TOKEN", "IBKR_FLEX_QUERY_ID", "scheduler jobs", "storage cat"):
+        assert unsafe not in metadata
     # The event identity remains the original caller, including provenance validation.
     assert '.github/workflows/collect-reconciliation-evidence.yml@refs/heads/main' in jobs['collect']
 
@@ -189,3 +211,13 @@ def test_reusable_inputs_are_forwarded_without_changing_types_or_values(name: st
         assert f"type: {expected_type}" in _block(declared, key, 6)
         # Dispatch defaults are applied by the original entry point, not imposed on schedules.
         assert "default:" not in _block(declared, key, 6)
+
+
+@pytest.mark.parametrize("key", RECONCILIATION_BINDING_SECRETS)
+@pytest.mark.parametrize("mutation", ("default_on", "source"))
+def test_reconciliation_binding_secret_rejects_default_exposure_or_source_change(key, mutation):
+    declared = f"      {key}:\n        required: false\n"
+    expression = f"secrets.{key}" if mutation == "default_on" else f"inputs.inspect_flex_runtime_binding_only && vars.{key} || ''"
+    passed = f"      {key}: ${{{{ {expression} }}}}\n"
+    with pytest.raises(AssertionError):
+        _assert_reconciliation_binding_secret_contract(key, declared, passed)

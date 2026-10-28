@@ -14,6 +14,11 @@ on:
           - tqqq_growth_income
           - global_etf_rotation
           - russell_top50_leader_rotation
+      inspect_flex_runtime_binding_only:
+        description: "Compare protected Flex account configuration with serving runtime metadata only; no broker or report reads."
+        required: false
+        type: boolean
+        default: false
       inspect_execution_ledger:
         description: "Read only scoped execution-record types in the cloud runner; emit counts only."
         required: false
@@ -37,5 +42,14 @@ jobs:
     with:
       target: ${{ inputs.target }}
       inspect_execution_ledger: ${{ inputs.inspect_execution_ledger }}
+      inspect_flex_runtime_binding_only: ${{ inputs.inspect_flex_runtime_binding_only }}
     secrets:
       CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ vars.CLOUD_RUN_SERVICE_TARGETS_JSON || secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}
+      IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON: ${{ inputs.inspect_flex_runtime_binding_only && secrets.IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON || '' }}
+      IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ inputs.inspect_flex_runtime_binding_only && secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON || '' }}
+      IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ inputs.inspect_flex_runtime_binding_only && secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON || '' }}
+      IBKR_ACCOUNT_FACTS_PROJECT_ID: ${{ inputs.inspect_flex_runtime_binding_only && secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID || '' }}
+      IBKR_ACCOUNT_FACTS_SERVICE_NAME: ${{ inputs.inspect_flex_runtime_binding_only && secrets.IBKR_ACCOUNT_FACTS_SERVICE_NAME || '' }}
+      IBKR_ACCOUNT_FACTS_RUNTIME_REVISION: ${{ inputs.inspect_flex_runtime_binding_only && secrets.IBKR_ACCOUNT_FACTS_RUNTIME_REVISION || '' }}
+      IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE: ${{ inputs.inspect_flex_runtime_binding_only && secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE || '' }}
+      IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR: ${{ inputs.inspect_flex_runtime_binding_only && secrets.IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR || '' }}
