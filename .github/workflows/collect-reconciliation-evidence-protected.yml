@@ -64,7 +64,7 @@ jobs:
     needs: resolve-matrix
     name: Read ${{ matrix.profile }} baseline evidence
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.resolve-matrix.outputs.matrix) }}
@@ -227,11 +227,16 @@ jobs:
           mkdir -p reports
           log_entry=''
           logging_read_failures=0
+          logging_read_attempts=0
           receipt_marker_seen=false
-          for _ in $(seq 1 96); do
+          # Cover the longest dispatch delay, full request deadline and log ingestion.
+          log_wait_seconds=$((9 * 60 + 300 + 120))
+          log_deadline=$((SECONDS + log_wait_seconds))
+          while [ "$SECONDS" -lt "$log_deadline" ]; do
+            logging_read_attempts=$((logging_read_attempts + 1))
             logging_output=''
             logging_read_status=0
-            logging_output="$(gcloud logging read "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${SERVICE}\" AND timestamp>=\"${REQUESTED_AT}\" AND textPayload:\"reconciliation_receipt_ready\"" --project "$GCP_PROJECT_ID" --freshness=15m --limit=10 --format=json 2>/dev/null)" || logging_read_status=$?
+            logging_output="$(timeout --kill-after=5s 30s gcloud logging read "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${SERVICE}\" AND timestamp>=\"${REQUESTED_AT}\" AND textPayload:\"reconciliation_receipt_ready\"" --project "$GCP_PROJECT_ID" --freshness=30m --limit=10 --format=json 2>/dev/null)" || logging_read_status=$?
             if [ "$logging_read_status" -ne 0 ]; then
               logging_read_failures=$((logging_read_failures + 1))
               sleep 5
@@ -251,7 +256,7 @@ jobs:
             sleep 5
           done
           if [ -z "$log_entry" ]; then
-            if [ "$logging_read_failures" -eq 96 ]; then
+            if [ "$logging_read_failures" -eq "$logging_read_attempts" ]; then
               echo "reconciliation_log_query_failed class=logging_read_nonzero_exit" >&2
             elif [ "$logging_read_failures" -gt 0 ]; then
               echo "reconciliation_log_query_failed class=mixed_logging_read_failures_no_candidate" >&2

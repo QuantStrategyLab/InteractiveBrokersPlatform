@@ -129,6 +129,83 @@ def test_reconciliation_evidence_binds_scheduler_job_to_exact_receipt() -> None:
     assert 'textPayload:\\"reconciliation_receipt_ready\\"' in workflow
 
 
+def _run_receipt_wait(tmp_path, *, mode, ready_after=0):
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    step = workflow.split("      - name: Read private no-order reconciliation candidate", 1)[1].split("      - name:", 1)[0]
+    # Execute the actual wait and error classification, replacing only clock/cloud I/O.
+    fragment = "log_entry=''" + textwrap.dedent(step.split("          log_entry=''", 1)[1].split('          receipt="', 1)[0])
+    marker = json.dumps([{
+        "textPayload": "reconciliation_receipt_ready scheduler_job_sha256=" + "a" * 64 + " report_uri=gs://synthetic/report.json",
+        "resource": {"labels": {"revision_name": "synthetic-revision"}},
+    }])
+    script = '''set -euo pipefail
+unset SECONDS
+SECONDS=0
+sleep() { SECONDS=$((SECONDS + $1)); }
+timeout() {
+  test "$1" = '--kill-after=5s'
+  test "$2" = '30s'
+  shift 2
+  "$@"
+}
+gcloud() {
+  test "$1 $2" = 'logging read'
+  case "$MODE" in
+    error) return 7 ;;
+    invalid) printf '%s' 'invalid-json'; return ;;
+  esac
+  if [ "$MODE" = late ] && [ "$SECONDS" -ge "$READY_AFTER" ]; then
+    printf '%s' "$MARKER"
+  else
+    printf '%s' '[]'
+  fi
+}
+''' + fragment + '\nprintf "matched_after=%s\\n" "$SECONDS"\n'
+    return subprocess.run(
+        ["/bin/bash", "-c", script], cwd=tmp_path,
+        env={"PATH": "/usr/bin:/bin:/sbin", "LC_ALL": "C", "MODE": mode, "READY_AFTER": str(ready_after),
+             "MARKER": marker, "SCHEDULER_JOB_SHA256": "a" * 64, "SERVICE": "synthetic-service",
+             "REQUESTED_AT": "2026-10-28T00:00:00Z", "GCP_PROJECT_ID": "synthetic-project"},
+        capture_output=True, text=True, timeout=10, check=False,
+    )
+
+
+@pytest.mark.parametrize("ready_after", [550, 900])
+def test_real_receipt_wait_accepts_late_russell_receipt(tmp_path, ready_after):
+    result = _run_receipt_wait(tmp_path, mode="late", ready_after=ready_after)
+    assert result.returncode == 0, result.stderr
+    assert f"matched_after={ready_after}" in result.stdout
+
+
+@pytest.mark.parametrize(("mode", "expected"), [
+    ("empty", "reconciliation_log_query_timeout class=no_matching_candidate"),
+    ("error", "reconciliation_log_query_failed class=logging_read_nonzero_exit"),
+    ("invalid", "reconciliation_log_query_failed class=invalid_logging_json"),
+])
+def test_real_receipt_wait_preserves_bounded_failure_class(tmp_path, mode, expected):
+    result = _run_receipt_wait(tmp_path, mode=mode)
+    assert result.returncode != 0
+    assert expected in result.stderr
+    assert 'gs://' not in result.stdout + result.stderr
+
+
+def test_receipt_wait_budget_covers_scheduler_request_logs_and_cleanup():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    delays = [int(value) for value in re.findall(r"delay_minutes=(\d+)", workflow)]
+    request_deadline = int(re.search(r"--attempt-deadline '(\d+)s'", workflow).group(1))
+    wait = re.search(r"log_wait_seconds=\$\(\((\d+) \* 60 \+ (\d+) \+ (\d+)\)\)", workflow)
+    delay_minutes, request_seconds, log_margin = map(int, wait.groups())
+    assert delay_minutes >= max(delays)
+    assert request_seconds >= request_deadline
+    assert log_margin >= 120
+    wait_seconds = delay_minutes * 60 + request_seconds + log_margin
+    collect = workflow.split('  collect:', 1)[1]
+    job_minutes = int(re.search(r'timeout-minutes: (\d+)', collect).group(1))
+    assert job_minutes * 60 >= wait_seconds + 30 + 5 + 300
+    freshness_minutes = int(re.search(r'--freshness=(\d+)m', collect).group(1))
+    assert freshness_minutes * 60 >= wait_seconds + 35
+
+
 def test_producer_source_record_field_shape_reaches_strict_consumer():
     from application.broker_reconciliation_candidate import canonical_source_receipt_records_json
     from tests.test_broker_reconciliation_candidate import _expectations, _records
