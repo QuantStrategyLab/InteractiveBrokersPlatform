@@ -109,6 +109,8 @@ def project_ibkr_runtime_daily(
         status = status if isinstance(status, str) and status in _STATUSES else None
         if receipt and (errors or status in ("error", "failed", "failure", "blocked")):
             receipt = None
+        if receipt and status == "skipped" and receipt["outcome"] in {"submitted", "filled"}:
+            receipt = None
         if receipt and execution in {"error", "failed", "failure", "blocked", "risk_blocked"}:
             expected_outcome = "risk_blocked" if execution in {"blocked", "risk_blocked"} else "failed"
             if receipt["outcome"] != expected_outcome:

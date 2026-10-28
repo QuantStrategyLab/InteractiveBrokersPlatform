@@ -136,6 +136,19 @@ def test_non_execution_status_does_not_promote_submission_or_fill(execution, out
     assert run['evidence']['receipt_outcome'] is None
 
 
+@pytest.mark.parametrize('outcome,confirmation', [('filled', 'filled'), ('submitted', 'not_observed')])
+def test_skipped_report_does_not_promote_submission_or_fill(outcome, confirmation):
+    report = source()
+    attach_runtime_execution_receipt(report, outcome=outcome, broker_confirmation=confirmation,
+        observed_at='2026-09-30T01:00:01Z')
+    report['status'] = 'skipped'
+    report['summary'].pop('execution_status', None)
+    run = project([report])['records'][0]['runs'][0]
+    assert run['activity'] == 'unknown'
+    assert run['report_status'] == 'skipped'
+    assert run['evidence']['receipt_outcome'] is None
+
+
 @pytest.mark.parametrize('execution', ['failed', 'failure', 'error', 'blocked', 'risk_blocked'])
 @pytest.mark.parametrize('outcome,confirmation', [
     ('filled', 'filled'), ('submitted', 'not_observed'), ('no_action', 'not_applicable'),
