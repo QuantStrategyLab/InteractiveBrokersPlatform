@@ -81,6 +81,25 @@ def test_manual_healthy_notify_is_typed_and_explicitly_opt_in() -> None:
     assert "github.event_name == 'workflow_dispatch'" in line
 
 
+def test_reusable_heartbeat_boolean_inputs_accept_schedule_and_manual_values() -> None:
+    import ast
+
+    caller = (ROOT / ".github/workflows/execution-report-heartbeat.yml").read_text()
+    call = _job_block(caller, "heartbeat")
+    callee = (ROOT / ".github/workflows/execution-report-heartbeat-protected.yml").read_text()
+    for key in ("notify_on_success", "send_daily_dry_run_digest"):
+        assert "type: boolean" in _manual_input_block(callee, key)
+        match = re.search(rf"(?m)^      {key}: \$\{{\{{ (.*?) \}}\}}$", call)
+        assert match is not None
+        expression = match.group(1)
+        for value, expected in (("", False), (False, False), (True, True)):
+            evaluated = expression.replace(f"inputs.{key}", repr(value)).replace("true", "True").replace("false", "False")
+            parsed = ast.parse(evaluated, mode="eval")
+            assert all(isinstance(node, (ast.Expression, ast.Compare, ast.Eq, ast.Constant)) for node in ast.walk(parsed))
+            actual = eval(compile(parsed, "<offline Actions expression>", "eval"), {"__builtins__": {}}, {})
+            assert type(actual) is bool and actual is expected
+
+
 def test_schedule_and_manual_default_never_inherit_legacy_success_variable() -> None:
     workflow = (ROOT / ".github/workflows/execution-report-heartbeat-protected.yml").read_text()
     for event in ("schedule", "workflow_dispatch", "repository_dispatch"):

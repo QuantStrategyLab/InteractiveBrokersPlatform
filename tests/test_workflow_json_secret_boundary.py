@@ -205,7 +205,9 @@ def test_reusable_inputs_are_forwarded_without_changing_types_or_values(name: st
     manual = _block(_block(caller, "workflow_dispatch", 2), "inputs", 4)
     declared = _block(_block(callee, "workflow_call", 2), "inputs", 4)
     for key in referenced:
-        assert f"      {key}: ${{{{ inputs.{key} }}}}" in _block(call, "with", 4)
+        boolean_schedule_inputs = {"notify_on_success", "send_daily_dry_run_digest"}
+        expression = f"inputs.{key} == true" if name == "execution-report-heartbeat" and key in boolean_schedule_inputs else f"inputs.{key}"
+        assert f"      {key}: ${{{{ {expression} }}}}" in _block(call, "with", 4)
         source_type = re.search(r"type: (\w+)", _block(manual, key, 6)).group(1)
         expected_type = "string" if source_type == "choice" else source_type
         assert f"type: {expected_type}" in _block(declared, key, 6)
