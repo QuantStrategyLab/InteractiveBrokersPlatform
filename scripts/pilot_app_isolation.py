@@ -115,8 +115,12 @@ def cycle_measurement(rows):
     if not isinstance(value, dict) or set(value) != {"schema_version", "isolation", "cycle"} or value["schema_version"] != "ibkr.guarded_cycle.v1":
         raise pilot.ReleaseError("cycle_response_invalid")
     measurement([{"jsonPayload": value["isolation"]}])
-    from scripts.pilot_cycle_entry import result
+    from scripts.pilot_cycle_entry import CLOUD_DENIAL_KINDS, ISOLATION_DENIAL_KINDS, result
     cycle = value["cycle"]
+    def valid_counts(counts, kinds, total):
+        return (isinstance(counts, dict) and set(counts) == set(kinds)
+                and all(type(count) is int and 0 <= count <= 1_000_000 for count in counts.values())
+                and sum(counts.values()) == total)
     if (not isinstance(cycle, dict) or set(cycle) != set(result())
             or cycle["status"] not in {"unavailable", "waiting_market", "cycle_observed", "stopped"}
             or cycle["stage"] not in {"calendar", "market_closed", "original_dry_run", "private_report_save", "cycle_observed",
@@ -124,6 +128,8 @@ def cycle_measurement(rows):
             or any(type(cycle[key]) is not bool for key in ("cycle_completed", "broker_called", "signals_completed", "rebalance_completed", "saved_readback_verified"))
             or (cycle["market_open"] is not None and type(cycle["market_open"]) is not bool)
             or any(type(cycle[key]) is not int or not 0 <= cycle[key] <= 1_000_000 for key in ("broker_write_attempts", "cloud_write_attempts", "isolated_effect_attempts"))
+            or not valid_counts(cycle["cloud_denials"], CLOUD_DENIAL_KINDS, cycle["cloud_write_attempts"])
+            or not valid_counts(cycle["isolation_denials"], ISOLATION_DENIAL_KINDS, cycle["isolated_effect_attempts"])
             or any(cycle[key] is not None and (type(cycle[key]) is not int or not 0 <= cycle[key] <= 1_000_000)
                 for key in ("http_status", "orders_previewed_count", "orders_skipped_count"))
             or cycle["report_status"] not in {None, "ok", "error", "skipped", "started", "unavailable"}

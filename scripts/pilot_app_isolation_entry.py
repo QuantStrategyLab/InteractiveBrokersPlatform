@@ -41,23 +41,23 @@ def unpack(data, expected, source):
 
 
 def install_audit(root, violations, network_policy=None):
-    def reject():
-        violations.append(True)
+    def reject(kind):
+        violations.append(kind)
         raise IsolationError("external_effect_forbidden")
     def check_path(value):
         if isinstance(value, (str, bytes, os.PathLike)):
             path = Path(os.fsdecode(value)).resolve()
             if path != Path("/dev/null") and not path.is_relative_to(root):
-                reject()
+                reject("outside_path")
     def audit(event, args):
         if event in {"subprocess.Popen", "os.system"}:
-            reject()
+            reject("subprocess")
         if event in {"socket.connect", "socket.getaddrinfo", "socket.sendto"} and not (network_policy and network_policy["enabled"]):
-            reject()
+            reject("network")
         if event == "open" and isinstance(args[0], (str, bytes, os.PathLike)):
             path = Path(os.fsdecode(args[0])).resolve()
             if any(part in path.parts for part in (".codex", ".aws")) or "/.config/gcloud/" in str(path):
-                reject()
+                reject("credential_path")
             mode, flags = args[1:3]
             if (isinstance(mode, str) and any(x in mode for x in "wax+")) or (
                     flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND)):
@@ -97,7 +97,7 @@ def isolation(root, source, out):
     sdk_originals = {(cls, name): getattr(cls, name) for cls, names in (
         (ib_insync.IB, ("connect",)), (ib_insync.client.Client, ("connect", "send", "sendMsg"))) for name in names}
     def forbidden(*args, **kwargs):
-        violations.append(True)
+        violations.append("broker_notification")
         raise IsolationError("broker_or_notification_forbidden")
     for cls, names in ((ib_insync.IB, ("connect", "placeOrder", "cancelOrder", "reqGlobalCancel", "whatIfOrder", "whatIfOrderAsync")),
             (ib_insync.client.Client, ("connect", "sendMsg", "placeOrder", "cancelOrder", "reqGlobalCancel"))):

@@ -88,7 +88,10 @@ def test_cloud_guards_reject_application_writes_and_allow_only_controlled_thread
         GcpDocumentStore().set("synthetic", "synthetic", {})
     with pytest.raises(cycle.CycleEffectForbidden):
         GcpObjectStore().write_text("gs://synthetic/forbidden", "synthetic")
-    assert calls == ["GET"] and counters["cloud_write_attempts"] == 3
+    with pytest.raises(cycle.CycleEffectForbidden):
+        urllib.request.OpenerDirector().open(urllib.request.Request("https://synthetic.invalid", data=b"private"))
+    assert calls == ["GET"] and counters["cloud_write_attempts"] == 4
+    assert counters["cloud_denials"] == dict(object_store=1, document_store=1, requests_http=1, urllib_http=1)
     allowed.enabled = True
     assert session.request("POST", "https://synthetic.invalid") == "read"
     import threading
@@ -102,6 +105,14 @@ def test_cloud_guards_reject_application_writes_and_allow_only_controlled_thread
     thread.start()
     thread.join()
     assert blocked == [True] and calls == ["GET", "POST"]
+
+
+def test_denial_summary_has_only_bounded_categories():
+    counters = {"cloud_denials": dict(object_store=0, document_store=0, requests_http=2, urllib_http=0)}
+    cloud, isolated = cycle.denial_counts(counters, ["credential_path", "outside_path", "outside_path"])
+    assert cloud["requests_http"] == 2 and sum(cloud.values()) == 2
+    assert isolated["credential_path"] == 1 and isolated["outside_path"] == 2
+    assert sum(isolated.values()) == 3 and "private" not in json.dumps([cloud, isolated])
 
 
 def test_real_closed_calendar_stops_before_enabling_network_or_sdk(monkeypatch):
@@ -128,6 +139,52 @@ def test_cycle_schema_cannot_claim_completion_from_http_alone():
     value["cycle"].update(status="waiting_market", stage="market_closed", market_open=False)
     assert isolation.cycle_measurement([{"jsonPayload": value}]) == value
     value["cycle"]["private_error"] = "must never be emitted"
+    with pytest.raises(pilot.ReleaseError, match="cycle_response_invalid"):
+        isolation.cycle_measurement([{"jsonPayload": value}])
+    value["cycle"] = cycle.result()
+    value["cycle"]["cloud_write_attempts"] = 1
+    with pytest.raises(pilot.ReleaseError, match="cycle_response_invalid"):
+        isolation.cycle_measurement([{"jsonPayload": value}])
+    value["cycle"]["cloud_denials"]["requests_http"] = 1
+    value["cycle"]["isolation_denials"]["private-path"] = 1
+    with pytest.raises(pilot.ReleaseError, match="cycle_response_invalid"):
+        isolation.cycle_measurement([{"jsonPayload": value}])
+
+
+
+@pytest.mark.parametrize("field,kind,invalid", [
+    (field, kind, invalid)
+    for field, kinds in (("cloud_denials", cycle.CLOUD_DENIAL_KINDS),
+                         ("isolation_denials", cycle.ISOLATION_DENIAL_KINDS))
+    for kind in kinds for invalid in (True, -1, 1_000_001)
+])
+def test_cycle_rejects_invalid_category_counts(field, kind, invalid):
+    app = dict(schema_version="ibkr.application_isolation.v1", stage="isolation_observed", isolation_passed=True,
+        candidate_source_verified=True, dependencies_verified=True, application_imported=True, binding_verified=True,
+        outputs_isolated=True, report_saved_readback=True, sdk_guards_installed=True, notification_guards_installed=True,
+        external_effect_attempts=0, broker_called=False, strategy_computed=False, production_state_read=False)
+    value = dict(schema_version="ibkr.guarded_cycle.v1", isolation=app, cycle=cycle.result())
+    value["cycle"][field][kind] = invalid
+    with pytest.raises(pilot.ReleaseError, match="cycle_response_invalid"):
+        isolation.cycle_measurement([{"jsonPayload": value}])
+
+
+@pytest.mark.parametrize("field", ["cloud_denials", "isolation_denials"])
+@pytest.mark.parametrize("mutation", ["missing_map", "missing_kind", "unknown_kind", "wrong_total"])
+def test_cycle_rejects_old_or_inconsistent_category_schema(field, mutation):
+    app = dict(schema_version="ibkr.application_isolation.v1", stage="isolation_observed", isolation_passed=True,
+        candidate_source_verified=True, dependencies_verified=True, application_imported=True, binding_verified=True,
+        outputs_isolated=True, report_saved_readback=True, sdk_guards_installed=True, notification_guards_installed=True,
+        external_effect_attempts=0, broker_called=False, strategy_computed=False, production_state_read=False)
+    value = dict(schema_version="ibkr.guarded_cycle.v1", isolation=app, cycle=cycle.result())
+    if mutation == "missing_map":
+        del value["cycle"][field]
+    elif mutation == "missing_kind":
+        value["cycle"][field].pop(next(iter(value["cycle"][field])))
+    elif mutation == "unknown_kind":
+        value["cycle"][field]["unknown"] = 0
+    else:
+        value["cycle"][field][next(iter(value["cycle"][field]))] = 1
     with pytest.raises(pilot.ReleaseError, match="cycle_response_invalid"):
         isolation.cycle_measurement([{"jsonPayload": value}])
 
