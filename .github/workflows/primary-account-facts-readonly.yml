@@ -61,9 +61,12 @@ jobs:
       IBKR_PERIOD_RETURN_SOURCE_BINDING_ID: ${{ secrets.IBKR_PERIOD_RETURN_SOURCE_BINDING_ID }}
       IBKR_PERIOD_RETURN_TARGET_ID: ${{ secrets.IBKR_PERIOD_RETURN_TARGET_ID }}
     steps:
-      - name: Reject unrelated modes
-        if: ${{ inputs.maintenance_source_commit != '' || inputs.maintenance_job || inputs.maintenance_job_readback || inputs.completed_summary_logs }}
-        run: exit 1
+      - name: Validate isolated comparison inputs
+        env:
+          OTHER_MODES: ${{ inputs.maintenance_source_commit != '' || inputs.maintenance_job || inputs.maintenance_job_readback || inputs.completed_summary_logs }}
+        run: |
+          set -euo pipefail
+          [[ "$OTHER_MODES" == "false" && "$DAILY_COMPARISON_NONCE" =~ ^[a-f0-9]{64}$ ]] || exit 1
       - uses: actions/checkout@v6
       - name: Compare the fixed primary binding without a report read
         run: python3 -m scripts.compare_website_daily_binding

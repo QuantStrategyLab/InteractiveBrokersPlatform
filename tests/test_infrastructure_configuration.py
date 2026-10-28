@@ -53,9 +53,10 @@ def test_workflow_variables_are_checked_before_cloud_actions():
     }
     for path in (root / ".github/workflows").glob("*.yml"):
         text = path.read_text()
-        if not any(f"vars.{name}" in text for name in variable_names):
-            continue
-        for steps in text.split("    steps:\n")[1:]:
+        for job in re.split(r"(?m)^  [a-zA-Z0-9_-]+:\n", text)[1:]:
+            if "    steps:\n" not in job or not any(f"vars.{name}" in job for name in variable_names):
+                continue
+            steps = job.split("    steps:\n", 1)[1]
             assert steps.startswith("      - name: Require infrastructure variables\n"), path.name
             guard = steps.split("\n      - ", 1)[0]
             names = set(re.findall(r"vars\.([A-Z_]+)", guard))
