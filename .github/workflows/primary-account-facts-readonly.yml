@@ -4,6 +4,11 @@ name: Read Primary TQQQ Account Facts
 on:
   workflow_dispatch:
     inputs:
+      daily_comparison_nonce:
+        description: "Optional 64 lowercase hex nonce for the isolated website binding comparison."
+        type: string
+        required: false
+        default: ""
       maintenance_source_commit:
         description: "Optional exact 40-character source SHA for one zero-traffic /probe; empty reads existing reports only."
         type: string
@@ -34,8 +39,37 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  compare-website-binding:
+    if: ${{ github.ref == 'refs/heads/main' && inputs.daily_comparison_nonce != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      DAILY_COMPARISON_NONCE: ${{ inputs.daily_comparison_nonce }}
+      IBKR_ACCOUNT_FACTS_TARGET: primary-live
+      IBKR_ACCOUNT_FACTS_PROJECT_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID }}
+      IBKR_ACCOUNT_FACTS_REPORT_PREFIX: ${{ secrets.IBKR_ACCOUNT_FACTS_REPORT_PREFIX }}
+      IBKR_ACCOUNT_FACTS_TARGET_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_TARGET_ID }}
+      IBKR_ACCOUNT_FACTS_SERVICE_NAME: ${{ secrets.IBKR_ACCOUNT_FACTS_SERVICE_NAME }}
+      IBKR_ACCOUNT_FACTS_RUNTIME_REVISION: ${{ secrets.IBKR_ACCOUNT_FACTS_RUNTIME_REVISION }}
+      IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE }}
+      IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON }}
+      IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR: ${{ secrets.IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR }}
+      IBKR_PERIOD_RETURN_ACCOUNT_KEY: ${{ secrets.IBKR_PERIOD_RETURN_ACCOUNT_KEY }}
+      IBKR_PERIOD_RETURN_ACCOUNT_SCOPE: ${{ secrets.IBKR_PERIOD_RETURN_ACCOUNT_SCOPE }}
+      IBKR_PERIOD_RETURN_SOURCE_BINDING_ID: ${{ secrets.IBKR_PERIOD_RETURN_SOURCE_BINDING_ID }}
+      IBKR_PERIOD_RETURN_TARGET_ID: ${{ secrets.IBKR_PERIOD_RETURN_TARGET_ID }}
+    steps:
+      - name: Reject unrelated modes
+        if: ${{ inputs.maintenance_source_commit != '' || inputs.maintenance_job || inputs.maintenance_job_readback || inputs.completed_summary_logs }}
+        run: exit 1
+      - uses: actions/checkout@v6
+      - name: Compare the fixed primary binding without a report read
+        run: python3 -m scripts.compare_website_daily_binding
+
   inspect:
-    if: ${{ github.ref == 'refs/heads/main' }}
+    if: ${{ github.ref == 'refs/heads/main' && inputs.daily_comparison_nonce == '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
