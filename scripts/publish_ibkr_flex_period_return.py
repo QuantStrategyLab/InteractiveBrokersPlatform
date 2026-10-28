@@ -243,7 +243,17 @@ def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def publish_period_return(payload: Mapping[str, Any], *, sync_token: str, expected_account_key: str, historical: bool = False) -> str:
+def _rejection_status(code: object, diagnostics: dict[str, int] | None, field: str) -> str:
+    try:
+        rejected = 300 <= code < 500
+    except TypeError:
+        return "sync_unknown"
+    if rejected and type(code) is int and diagnostics is not None:
+        diagnostics[field] = code
+    return "sync_rejected" if rejected else "sync_unknown"
+
+
+def publish_period_return(payload: Mapping[str, Any], *, sync_token: str, expected_account_key: str, historical: bool = False, diagnostics: dict[str, int] | None = None) -> str:
     """One POST. A lost/invalid ACK is unknown, never success or an automatic retry."""
     request = Request(SYNC_URL + ("?historical=true" if historical else ""), data=json.dumps(payload, separators=(",", ":")).encode(),
         headers={"Authorization": f"Bearer {sync_token}", "Content-Type": "application/json",
@@ -252,7 +262,7 @@ def publish_period_return(payload: Mapping[str, Any], *, sync_token: str, expect
         opener = build_opener(ProxyHandler({}), _NoRedirect())
         with opener.open(request, timeout=15) as response:
             if response.status != 200:
-                return "sync_rejected" if 300 <= response.status < 500 else "sync_unknown"
+                return _rejection_status(response.status, diagnostics, "period_return_http_status")
             body = response.read(_ACK_LIMIT + 1)
             if not isinstance(body, bytes) or len(body) > _ACK_LIMIT:
                 return "sync_unknown"
@@ -267,12 +277,12 @@ def publish_period_return(payload: Mapping[str, Any], *, sync_token: str, expect
                 return "sync_unknown"
             return "unchanged" if ack["unchanged"] else "published"
     except HTTPError as exc:
-        return "sync_rejected" if 300 <= exc.code < 500 else "sync_unknown"
+        return _rejection_status(exc.code, diagnostics, "period_return_http_status")
     except Exception:
         return "sync_unknown"
 
 
-def publish_executions(payload: Mapping[str, Any], *, sync_token: str, expected_account_key: str) -> str:
+def publish_executions(payload: Mapping[str, Any], *, sync_token: str, expected_account_key: str, diagnostics: dict[str, int] | None = None) -> str:
     """One independent execution POST; never retry an uncertain remote write."""
     request = Request(EXECUTIONS_SYNC_URL, data=json.dumps(payload, separators=(",", ":")).encode(),
         headers={"Authorization": f"Bearer {sync_token}", "Content-Type": "application/json",
@@ -281,7 +291,7 @@ def publish_executions(payload: Mapping[str, Any], *, sync_token: str, expected_
         opener = build_opener(ProxyHandler({}), _NoRedirect())
         with opener.open(request, timeout=15) as response:
             if response.status != 200:
-                return "sync_rejected" if 300 <= response.status < 500 else "sync_unknown"
+                return _rejection_status(response.status, diagnostics, "executions_http_status")
             body = response.read(_ACK_LIMIT + 1)
             if not isinstance(body, bytes) or len(body) > _ACK_LIMIT:
                 return "sync_unknown"
@@ -297,12 +307,12 @@ def publish_executions(payload: Mapping[str, Any], *, sync_token: str, expected_
                 return "sync_unknown"
             return "unchanged" if ack["unchanged"] else "published"
     except HTTPError as exc:
-        return "sync_rejected" if 300 <= exc.code < 500 else "sync_unknown"
+        return _rejection_status(exc.code, diagnostics, "executions_http_status")
     except Exception:
         return "sync_unknown"
 
 
-def publish_external_flow(payload, *, sync_token, expected_account_key):
+def publish_external_flow(payload, *, sync_token, expected_account_key, diagnostics=None):
     """One independent POST of date-only facts, with bounded, fixed ACK readback."""
     request = Request(EXTERNAL_FLOW_SYNC_URL, data=json.dumps(payload, separators=(",", ":")).encode(),
         headers={"Authorization": f"Bearer {sync_token}", "Content-Type": "application/json",
@@ -312,7 +322,7 @@ def publish_external_flow(payload, *, sync_token, expected_account_key):
         opener = build_opener(ProxyHandler({}), _NoRedirect())
         with opener.open(request, timeout=15) as response:
             if response.status != 200:
-                return "sync_rejected" if 300 <= response.status < 500 else "sync_unknown"
+                return _rejection_status(response.status, diagnostics, "external_flow_http_status")
             body = response.read(_ACK_LIMIT + 1)
             if not isinstance(body, bytes) or len(body) > _ACK_LIMIT:
                 return "sync_unknown"
@@ -325,19 +335,19 @@ def publish_external_flow(payload, *, sync_token, expected_account_key):
                 return "sync_unknown"
             return "unchanged" if ack["unchanged"] else "published"
     except HTTPError as exc:
-        return "sync_rejected" if 300 <= exc.code < 500 else "sync_unknown"
+        return _rejection_status(exc.code, diagnostics, "external_flow_http_status")
     except Exception:
         return "sync_unknown"
 
 
-def _external_flow_result(ledger, config):
+def _external_flow_result(ledger, config, diagnostics=None):
     if (ledger.get("external_flow_facts") or {}).get("status") != "available":
         return {"external_flow_status": "source_unavailable"}
     try:
         payload = build_ibkr_external_flow(ledger, **{key: config[key] for key in (
             "target_id", "source_binding_id", "account_scope", "expected_account_ids")})
         windows = payload["externalFlow"]["windows"]
-        return {"external_flow_status": publish_external_flow(payload, sync_token=config["sync_token"], expected_account_key=config["account_key"]),
+        return {"external_flow_status": publish_external_flow(payload, sync_token=config["sync_token"], expected_account_key=config["account_key"], diagnostics=diagnostics),
                 "external_flow_period": ledger["external_flow_facts"]["period"],
                 "external_flow_record_count": len({r["source_ref"] for w in windows for r in w["records"]}),
                 "external_flow_currencies": sorted(w["currency"] for w in windows), "external_flow_time_precision": "date",
@@ -379,7 +389,7 @@ def _cashflow_only():
     return 0 if result["external_flow_status"] in {"published", "unchanged"} else 1
 
 
-def _execution_result(ledger, config, observed_at):
+def _execution_result(ledger, config, observed_at, diagnostics=None):
     """Status/shape only: raw execution values never enter stdout."""
     projection = ledger.get("executions") or {}
     diagnostic = projection.get("diagnostic", {})
@@ -393,7 +403,7 @@ def _execution_result(ledger, config, observed_at):
             result["executions_status"] = "historical_period_mismatch"
         else:
             result["executions_status"] = publish_executions(payload,
-                sync_token=config["sync_token"], expected_account_key=config["account_key"])
+                sync_token=config["sync_token"], expected_account_key=config["account_key"], diagnostics=diagnostics)
     except Exception:
         result["executions_status"] = "projection_rejected"
     return result
@@ -530,9 +540,9 @@ def main(argv: Sequence[str] = ()) -> int:
                         status = "historical_period_mismatch"
                     else:
                         kwargs = {"historical": True} if config.get("report_date") else {}
-                        status = publish_period_return(payload, sync_token=config["sync_token"], expected_account_key=config["account_key"], **kwargs)
-                diagnostics.update(_execution_result(ledger, config, observed_at))
-                diagnostics.update(_external_flow_result(ledger, config))
+                        status = publish_period_return(payload, sync_token=config["sync_token"], expected_account_key=config["account_key"], diagnostics=diagnostics, **kwargs)
+                diagnostics.update(_execution_result(ledger, config, observed_at, diagnostics))
+                diagnostics.update(_external_flow_result(ledger, config, diagnostics))
                 failed_primary = status not in {"published", "unchanged"} or any(
                     diagnostics.get(name) in {"sync_unknown", "sync_rejected", "projection_rejected", "historical_period_mismatch"}
                     for name in ("executions_status", "external_flow_status"))

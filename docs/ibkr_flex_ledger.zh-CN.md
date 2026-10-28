@@ -246,7 +246,9 @@ reference Secret 或自动调度；若需要跨进程续领，必须先核实已
 ACK 恰好包含 `ok/stored/unchanged/account_key/period/currency/method`，布尔类型正确，
 `ok/stored=true`，并且独立预期 key、期间、币种、方法全部精确匹配时才报告成功。
 超时、5xx、超长或无效 ACK 返回 `sync_unknown`，立即停止，不自动重发；3xx/4xx 返回
-`sync_rejected`。stdout 只输出固定 `status`，不输出账户、收益数值、令牌或原始异常。
+`sync_rejected`。主发布流程还会分别输出收益、成交和资金流端点的
+`period_return_http_status`、`executions_http_status`、`external_flow_http_status`，
+仅限实际收到的整数 3xx/4xx；不读取拒绝响应正文，不输出账户、收益数值、令牌或原始异常。
 `published/unchanged` 退出码为 0，`disabled/configuration_incomplete` 为 2，其余为 1。
 
 此入口只更新每账户最新一个原生期间，不生成每日收益曲线、不触发交易或通知，不新增
