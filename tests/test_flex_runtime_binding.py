@@ -40,7 +40,14 @@ def materials():
                                         'status': {'traffic': [{'revisionName': row['runtime_revision'], 'percent': 100}]}}
         revisions[row['runtime_revision']] = {
             'metadata': {'name': row['runtime_revision']}, 'status': {'conditions': [{'type': 'Ready', 'status': 'True'}]},
-            'spec': {'containers': [{'env': [{'name': 'RUNTIME_TARGET_JSON', 'value': json.dumps(target)}]}]},
+            'spec': {'containers': [{'env': [
+                {'name': 'RUNTIME_TARGET_JSON', 'value': json.dumps(target)},
+                {'name': 'ACCOUNT_GROUP', 'value': row['account_scope']},
+                {'name': 'IB_ACCOUNT_GROUP_CONFIG_JSON', 'value': json.dumps({'groups': {
+                    row['account_scope']: {'account_ids': row['account_selector']},
+                    'private-other-group': {'account_ids': ['DU0000099']},
+                }})},
+            ]}]},
         }
     env['CLOUD_RUN_SERVICE_TARGETS_JSON'] = json.dumps({'targets': entries})
     calls = []
@@ -59,7 +66,7 @@ def test_two_targets_require_unique_slots_and_exact_serving_identity(materials):
     assert set(result['targets']) == set(diagnostic.PROFILES)
     for row in result['targets'].values():
         assert row == {'status': 'matched', 'reason': 'binding_verified', 'unique_slot_match': True,
-                       'serving_revision_match': True, 'runtime_scope_match': True}
+                       'serving_revision_match': True, 'runtime_scope_match': True, 'actual_group_account_match': True}
     assert all(value not in json.dumps(result) for value in ('private-', 'DU000000', 'additional-1', 'additional-2', 'gs://'))
 
 
@@ -123,6 +130,38 @@ def test_revision_drift_during_read_is_rejected(materials):
             if count == 2: result['metadata']['resourceVersion'] = '2'
         return result
     assert diagnostic.diagnose(env, reader=reader)['targets'][diagnostic.PROFILES[0]]['reason'] == 'serving_changed_during_read'
+
+
+@pytest.mark.parametrize('change', ['secret', 'secret_ref', 'wrong_account', 'missing_group', 'invalid_json', 'invalid_ids'])
+def test_actual_group_account_source_never_falls_back_or_guesses(materials, change):
+    env, _, _, revisions, reader, calls = materials
+    rows = revisions['private-revision-1']['spec']['containers'][0]['env']
+    if change == 'secret':
+        # Even matching inline JSON cannot override the actual runtime Secret source.
+        rows.append({'name': 'IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME', 'value': 'PRIVATE_CANARY'})
+    elif change == 'secret_ref':
+        rows.append({'name': 'IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME', 'valueFrom': {'secretKeyRef': {'name': 'PRIVATE_CANARY'}}})
+    elif change == 'wrong_account':
+        rows[2]['value'] = json.dumps({'private-scope-1': {'account_ids': ['DU0000099']}})
+    elif change == 'missing_group': rows[1]['value'] = 'PRIVATE_CANARY'
+    elif change == 'invalid_json': rows[2]['value'] = 'PRIVATE_CANARY'
+    else: rows[2]['value'] = json.dumps({'private-scope-1': {'account_ids': 'DU0000001'}})
+    result = diagnostic.diagnose(env, reader=reader)
+    row = result['targets'][diagnostic.PROFILES[0]]
+    assert row['status'] == 'unknown' and row['runtime_scope_match'] is True
+    assert row['actual_group_account_match'] is (False if change == 'wrong_account' else None)
+    if change == 'secret': assert row['reason'] == 'worker_secret_version_unverified'
+    assert len(calls) == 6  # Only service/revision metadata; never a Secret access.
+    assert 'PRIVATE_CANARY' not in json.dumps(result) and 'DU000' not in json.dumps(result)
+
+
+def test_inline_group_parser_matches_runtime_normalization():
+    from runtime_config_support import parse_account_ids
+
+    values = [None, ' DU0000001 ', '', '  ']
+    env = {'ACCOUNT_GROUP': ' selected ', 'IB_ACCOUNT_GROUP_CONFIG_JSON': json.dumps({
+        'selected': {'account_ids': values}, 'other': {'account_ids': ['DU0000099']}})}
+    assert diagnostic._actual_group_match(env, parse_account_ids(values)) == (True, 'binding_verified')
 
 
 @pytest.mark.parametrize('change', ['duplicate_target', 'duplicate_slot', 'missing_secret', 'bad_json', 'bad_target'])

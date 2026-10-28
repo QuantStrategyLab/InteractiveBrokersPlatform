@@ -106,13 +106,45 @@ def _read(kind, name, project, region):
     return value
 
 
+def _actual_group_match(env, expected):
+    # load_account_group_config gives Secret precedence over inline JSON.
+    # A current latest-version read cannot prove the worker's startup version.
+    secret = env.get("IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME")
+    if secret:
+        return None, "worker_secret_version_unverified"
+    if any(key in env and env[key] is None for key in (
+        "IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME", "IB_ACCOUNT_GROUP_CONFIG_JSON", "ACCOUNT_GROUP",
+    )):
+        return None, "group_config_reference_unverified"
+    raw, group = env.get("IB_ACCOUNT_GROUP_CONFIG_JSON"), env.get("ACCOUNT_GROUP")
+    if not isinstance(raw, str) or not raw or not isinstance(group, str) or not group.strip():
+        return None, "group_config_unavailable"
+    try:
+        payload = _json(raw)
+        groups = payload.get("groups", payload) if isinstance(payload, dict) else None
+        selected = groups.get(group.strip()) if isinstance(groups, dict) else None
+        if not isinstance(selected, dict):
+            return None, "group_config_unavailable"
+        values = selected.get("account_ids")
+        if values is None:
+            values = []
+        if not isinstance(values, list):
+            return None, "group_config_invalid"
+        # Match runtime_config_support.parse_account_ids normalization exactly.
+        accounts = tuple(str(value).strip() for value in values if value is not None and str(value).strip())
+        match = accounts == tuple(expected)
+        return match, "binding_verified" if match else "group_account_mismatch"
+    except Exception:
+        return None, "group_config_invalid"
+
+
 def observe(profile, service_name, target, slots, project, region, reader=_read):
     candidate = [(slot, row) for slot, row in slots.items()
                  if row["project_id"] == project and all(
                      tuple(row[field]) == account_selector(target.get(field)) if field == "account_selector"
                      else row[field] == target.get(field) for field in IDENTITY_FIELDS)]
     result = {"status": "unknown", "unique_slot_match": len(candidate) == 1,
-              "serving_revision_match": None, "runtime_scope_match": None}
+              "serving_revision_match": None, "runtime_scope_match": None, "actual_group_account_match": None}
     if len(candidate) != 1:
         return {**result, "reason": "slot_not_unique"}
     _, configured = candidate[0]
@@ -129,16 +161,20 @@ def observe(profile, service_name, target, slots, project, region, reader=_read)
                 any(row.get("type") == "Ready" and row.get("status") == "True"
                     for row in revision.get("status", {}).get("conditions", []) if isinstance(row, dict)),
                 "runtime_identity_unavailable")
-        runtime = _json(_environment(revision.get("spec", {})).get("RUNTIME_TARGET_JSON", ""))
+        env = _environment(revision.get("spec", {}))
+        runtime = _json(env.get("RUNTIME_TARGET_JSON", ""))
         require(isinstance(runtime, dict), "runtime_identity_unavailable")
         equal = runtime.get("strategy_profile") == profile and runtime.get("execution_mode") == "live" and all(
             account_selector(runtime.get(field)) == account_selector(target.get(field)) if field == "account_selector"
             else runtime.get(field) == target.get(field) for field in IDENTITY_FIELDS)
         result["runtime_scope_match"] = equal
         require(equal, "runtime_scope_mismatch")
+        result["actual_group_account_match"], group_reason = _actual_group_match(env, configured["account_selector"])
         after = reader("services", service_name, project, region)
         require(after.get("metadata", {}).get("resourceVersion") == resource_version
                 and _serving(after) == revision_name, "serving_changed_during_read")
+        if result["actual_group_account_match"] is not True:
+            return {**result, "reason": group_reason}
         return {**result, "status": "matched", "reason": "binding_verified"}
     except BindingError as exc:
         return {**result, "reason": str(exc)}
