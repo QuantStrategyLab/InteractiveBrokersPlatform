@@ -75,9 +75,9 @@ jobs:
     uses: ./.github/workflows/execution-report-heartbeat-protected.yml
     with:
       lookback_hours: ${{ inputs.lookback_hours }}
-      notify_on_success: ${{ inputs.notify_on_success }}
+      notify_on_success: ${{ inputs.notify_on_success == true }}
       fail_workflow_on_alert: ${{ inputs.fail_workflow_on_alert }}
-      send_daily_dry_run_digest: ${{ inputs.send_daily_dry_run_digest }}
+      send_daily_dry_run_digest: ${{ inputs.send_daily_dry_run_digest == true }}
       account_facts_target: ${{ inputs.account_facts_target }}
       account_facts_report_name: ${{ inputs.account_facts_report_name }}
     secrets:
