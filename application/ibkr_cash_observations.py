@@ -117,12 +117,14 @@ def _decimal_text(value):
     return format(amount, "f")
 
 
-def capture_cash_observation_rows(account_values, *, account_ids):
+def capture_cash_observation_rows(account_values, *, account_ids, source_method="unspecified"):
     """Keep selected native fields before float conversion and key overwrite.
 
     Invalid raw values become None, never stored raw error text. Duplicate
     rows remain separate so the projection can mark that field ambiguous.
     """
+    if source_method not in {"account_values_cache", "unspecified"}:
+        raise ValueError("cash observation source is unsupported")
     rows = []
     for item in account_values:
         account = str(getattr(item, "account", "") or "").strip()
@@ -130,8 +132,13 @@ def capture_cash_observation_rows(account_values, *, account_ids):
         tag = str(getattr(item, "tag", "") or "").strip()
         if account not in account_ids or not re.fullmatch(r"[A-Z]{3}", currency) or tag not in TAGS:
             continue
+        raw = getattr(item, "value", None)
+        model = getattr(item, "modelCode", None)
+        model_scope = "no_model_code" if model == "" else "model_specific" if isinstance(model, str) and model.strip() else "unknown"
         rows.append(dict(account_id=account, currency=currency,
-            **{tag: _decimal_text(getattr(item, "value", None))}))
+            source_method=source_method, model_scope=model_scope,
+            value_representation="native_text" if isinstance(raw, str) else "non_text",
+            segment_key="unsuffixed", **{tag: _decimal_text(raw)}))
     return tuple(rows)
 
 
@@ -209,4 +216,52 @@ def inspect_cash_observations(value, *, observed_at, currency="USD", selected_ca
         if key in seen and (key not in amounts or amounts[key] != _decimal(selected_cash.get("cash_balance"))):
             return result
     result.update(status="OBSERVED_FIELDS_ONLY", fields=fields)
+    return result
+
+
+_DETAIL_KEYS = ("source_method", "model_scope", "value_representation", "segment_key")
+
+
+def build_cash_source_details(rows, *, observed_at):
+    """Optional metadata for valid, unambiguous values in the original attachment."""
+    details, seen, invalid = {}, set(), set()
+    for row in rows:
+        currency = str(row.get("currency") or "").strip().upper()
+        for tag in sorted(TAGS & row.keys()):
+            key = (currency, tag)
+            if key in seen or _decimal_text(row[tag]) is None:
+                invalid.add(key)
+                details.pop(key, None)
+            elif (key not in invalid and row.get("source_method") == "account_values_cache"
+                    and all(k in row for k in _DETAIL_KEYS)):
+                details[key] = {k: row[k] for k in _DETAIL_KEYS}
+            seen.add(key)
+    if not details:
+        return None
+    return dict(observed_at=observed_at, fields=[dict(currency=currency, source_tag=tag, **detail)
+        for (currency, tag), detail in sorted(details.items())])
+
+
+def inspect_cash_source_details(value, *, cash_observations, observed_at, currency="USD", selected_cash=None):
+    """Expose bounded metadata only for validated, present cash values."""
+    result = dict(status="NOT_REPORTED" if value is None else "INVALID", fields={})
+    if (not isinstance(value, Mapping) or set(value) != {"observed_at", "fields"}
+            or value["observed_at"] != observed_at or not isinstance(value["fields"], list)
+            or inspect_cash_observations(cash_observations, observed_at=observed_at, currency=currency, selected_cash=selected_cash)["status"] != "OBSERVED_FIELDS_ONLY"):
+        return result
+    allowed = {(row["currency"], row["source_tag"]) for row in cash_observations.get("values", [])}
+    details = {}
+    for row in value["fields"]:
+        if (not isinstance(row, Mapping) or set(row) != {"currency", "source_tag", *_DETAIL_KEYS}
+                or row.get("source_method") not in ("account_values_cache", "unspecified")
+                or row.get("model_scope") not in ("no_model_code", "model_specific", "unknown")
+                or row.get("value_representation") not in ("native_text", "non_text")
+                or row.get("segment_key") != "unsuffixed"
+                or not isinstance(row.get("currency"), str) or not isinstance(row.get("source_tag"), str)):
+            return result
+        key = (row["currency"], row["source_tag"])
+        if key not in allowed or key in details:
+            return result
+        details[key] = {k: row[k] for k in _DETAIL_KEYS}
+    result.update(status="OBSERVED_DETAILS", fields={tag: detail for (cur, tag), detail in details.items() if cur == currency})
     return result

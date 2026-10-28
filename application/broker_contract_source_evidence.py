@@ -6,7 +6,7 @@ security permission grant or a complete account-obligation enumeration.
 """
 from collections.abc import Mapping
 
-from application.ibkr_cash_observations import inspect_cash_observations, inspect_cash_schedule_observations
+from application.ibkr_cash_observations import inspect_cash_observations, inspect_cash_schedule_observations, inspect_cash_source_details
 
 SCHEMA = "ibkr.broker_contract_source_evidence.v1"
 GAPS = (
@@ -88,6 +88,9 @@ def inspect_broker_contract_sources(report):
         routing_observation=dict(status=routing_status, source_path="market_exchange",
             scope="RUNTIME_REPORT_CONFIGURATION_ONLY", actual_order_route_verified=False),
         native_cash_fields=native,
+        native_cash_source_details=inspect_cash_source_details(facts.get("broker_cash_source_details"),
+            cash_observations=facts.get("broker_cash_observations"), observed_at=facts.get("observed_at"),
+            selected_cash=usd[0] if len(usd) == 1 else None),
         native_cash_schedule_fields=inspect_cash_schedule_observations(
             facts.get("broker_cash_schedule_observations"), observed_at=facts.get("observed_at")),
         usd_cash_observation=dict(status=cash_status, source_tag=cash_tag,

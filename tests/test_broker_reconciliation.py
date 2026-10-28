@@ -117,11 +117,27 @@ def test_collects_scoped_read_only_broker_observations() -> None:
     assert calls == [{"account_ids": ("U123",), "currency": "USD", "cash_only_execution": True}]
     assert observations.account_scope == {"account_ids": ["U123"]}
     assert observations.account_identity_match is True
+    assert observations.comparison_covered == frozenset({"open_orders"})
     assert len(observations.positions) == 1
     assert len(observations.cash) == 1
     assert len(observations.open_orders) == 1
     assert len(observations.recent_executions) == 1
     assert observations.open_orders[0]["account"] == "U123"
+
+
+
+def test_unmatched_account_never_claims_coverage():
+    ib = _IB()
+    observations = collect_read_only_reconciliation_observations(
+        ib, account_ids=("U123",), fetch_portfolio_snapshot=lambda *_a, **_k: _snapshot(),
+        market_currency="USD", cash_only_execution=True,
+    )
+    assert observations.comparison_covered == frozenset({"open_orders"})
+    ib.managedAccounts = lambda: ["U999"]
+    assert collect_read_only_reconciliation_observations(
+        ib, account_ids=("U123",), fetch_portfolio_snapshot=lambda *_a, **_k: _snapshot(),
+        market_currency="USD", cash_only_execution=True,
+    ).comparison_covered == frozenset()
 
 
 def test_all_client_response_is_read_even_when_cache_is_empty() -> None:

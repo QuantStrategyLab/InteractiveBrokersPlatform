@@ -382,7 +382,7 @@ def _handle_reconciliation():
             },
             diagnostics={"broker_reconciliation": payload},
         )
-        comparison_status, log_blockers = reconciliation_log_comparison(candidate)
+        comparison_status, log_blockers, comparison_fields = reconciliation_log_comparison(candidate)
         main.log_runtime_event(
             log_context,
             "broker_reconciliation_completed",
@@ -392,6 +392,7 @@ def _handle_reconciliation():
             blockers=log_blockers,
             expected_digests_configured=candidate.expected_digests_configured,
             comparison_status=comparison_status,
+            comparison_fields=comparison_fields,
             account_identity_match=observations.account_identity_match,
             positions_record_count=len(observations.positions),
             cash_record_count=len(observations.cash),

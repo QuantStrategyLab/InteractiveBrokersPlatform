@@ -191,21 +191,33 @@ def test_persistent_pin_main_raw_flow_roundtrip_preserves_unknowns(
     assert local_payloads[-1]["artifacts"]["runtime_report_cloud_uri"].startswith("gs://synthetic-only/")
 
 
-def test_log_comparison_distinguishes_missing_baseline_and_actual_mismatch():
+def test_log_comparison_distinguishes_coverage_from_digest_flags():
     from types import SimpleNamespace
     from application.reconciliation_reporting import reconciliation_log_comparison
 
-    def candidate(configured, values, blockers):
-        fields = ('positions_match', 'cash_match', 'open_orders_match',
-                  'recent_executions_match', 'local_execution_ledger_match')
+    fields = ('positions_match', 'cash_match', 'open_orders_match',
+              'recent_executions_match', 'local_execution_ledger_match')
+
+    def candidate(configured, values, blockers, covered=()):
         return SimpleNamespace(expected_digests_configured=configured,
+                               comparison_covered=frozenset(covered),
                                evidence=SimpleNamespace(**dict(zip(fields, values, strict=True))),
                                recovery_blockers=[SimpleNamespace(value=value) for value in blockers])
 
-    mismatch = 'broker_reconciliation_cash_mismatch'
-    other = 'broker_reconciliation_baseline_target_mismatch'
-    missing = candidate(False, [False] * 5, [mismatch, other])
-    assert reconciliation_log_comparison(missing) == ('not_configured', [other])
-    assert reconciliation_log_comparison(candidate(True, [True] * 5, [other])) == ('matched', [other])
-    assert reconciliation_log_comparison(candidate(True, [True, False, True, True, True], [mismatch])) == ('mismatched', [mismatch])
-    assert reconciliation_log_comparison(candidate(True, [True, None, True, True, True], [])) == ('not_compared', [])
+    cash = 'broker_reconciliation_cash_mismatch'
+    orders = 'broker_reconciliation_open_orders_mismatch'
+    baseline = 'broker_reconciliation_baseline_target_mismatch'
+    overall, blockers, states = reconciliation_log_comparison(candidate(False, [False] * 5, [cash, baseline]))
+    assert overall == 'not_configured' and blockers == [baseline]
+    assert set(states.values()) == {'not_configured'}
+    overall, blockers, states = reconciliation_log_comparison(candidate(
+        True, [True, False, True, True, True], [cash, baseline], covered={'open_orders'}))
+    assert overall == 'not_compared' and blockers == [baseline]
+    assert states['cash'] == 'not_compared' and states['open_orders'] == 'matched'
+    overall, blockers, states = reconciliation_log_comparison(candidate(
+        True, [False, False, False, False, False], [cash, orders], covered={'open_orders'}))
+    assert overall == 'mismatched' and blockers == [orders]
+    assert states['cash'] == 'not_compared' and states['open_orders'] == 'mismatched'
+    all_covered = {field.removesuffix('_match') for field in fields}
+    assert reconciliation_log_comparison(candidate(True, [True] * 5, [], all_covered))[0] == 'matched'
+    assert reconciliation_log_comparison(candidate(True, [True, None, True, True, True], [], all_covered))[0] == 'not_compared'

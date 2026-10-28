@@ -63,21 +63,34 @@ _COMPARISON_FIELDS = (
     "positions_match", "cash_match", "open_orders_match",
     "recent_executions_match", "local_execution_ledger_match",
 )
-_UNCOMPARED_FINDINGS = frozenset(
-    "broker_reconciliation_" + name.removesuffix("_match") + "_mismatch"
-    for name in _COMPARISON_FIELDS
-)
 
 
-def reconciliation_log_comparison(candidate: Any) -> tuple[str, list[str]]:
-    """Explain comparisons without changing the recovery decision or receipt."""
+def reconciliation_log_comparison(candidate: Any) -> tuple[str, list[str], dict[str, str]]:
+    """Describe v1 digest comparisons without claiming missing source coverage."""
     blockers = [finding.value for finding in candidate.recovery_blockers]
+    covered = getattr(candidate, "comparison_covered", frozenset())
+    states = {}
+    for field in _COMPARISON_FIELDS:
+        name = field.removesuffix("_match")
+        value = getattr(candidate.evidence, field, None)
+        if not candidate.expected_digests_configured:
+            states[name] = "not_configured"
+        elif name not in covered or type(value) is not bool:
+            states[name] = "not_compared"
+        else:
+            states[name] = "matched" if value else "mismatched"
+    unverified = {"broker_reconciliation_" + name + "_mismatch"
+                  for name, state in states.items() if state in {"not_configured", "not_compared"}}
+    blockers = [item for item in blockers if item not in unverified]
     if not candidate.expected_digests_configured:
-        return "not_configured", [item for item in blockers if item not in _UNCOMPARED_FINDINGS]
-    values = [getattr(candidate.evidence, name, None) for name in _COMPARISON_FIELDS]
-    if any(type(value) is not bool for value in values):
-        return "not_compared", blockers
-    return ("matched" if all(values) else "mismatched"), blockers
+        overall = "not_configured"
+    elif any(state == "mismatched" for state in states.values()):
+        overall = "mismatched"
+    elif any(state == "not_compared" for state in states.values()):
+        overall = "not_compared"
+    else:
+        overall = "matched"
+    return overall, blockers, states
 
 
 def normalize_reconciliation_request_id(value: object) -> str | None:

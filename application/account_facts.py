@@ -9,7 +9,7 @@ import re
 from typing import Any
 
 from application.ibkr_portfolio import MARKET_CURRENCY_CASH_TAG_PRIORITY
-from application.ibkr_cash_observations import build_cash_observations, build_cash_schedule_observations
+from application.ibkr_cash_observations import build_cash_observations, build_cash_schedule_observations, build_cash_source_details
 
 
 def _finite_decimal_text(value: Any) -> str | None:
@@ -186,6 +186,9 @@ def build_ibkr_account_facts(snapshot: Any) -> dict[str, Any]:
         "cash": cash,
         "broker_cash_observations": build_cash_observations(observation_rows, observed_at=observed_at),
     }
+    source_details = build_cash_source_details(observation_rows, observed_at=observed_at)
+    if source_details is not None:
+        facts["broker_cash_source_details"] = source_details
     schedule = build_cash_schedule_observations(metadata.get("cash_schedule_rows"),
         account_id=account_id, observed_at=observed_at)
     if schedule is not None:

@@ -153,3 +153,61 @@ def test_absent_and_empty_schedule_do_not_imply_a_zero_balance():
     assert "values" not in value
     out = inspect_cash_schedule_observations(value, observed_at=TIME)
     assert out["status"] == "RAW_FIELDS_ONLY" and set(out["fields"].values()) == {"MISSING"}
+
+
+def test_native_cash_source_details_preserve_precision_and_model_scope_without_model_identifier():
+    from application.ibkr_cash_observations import capture_cash_observation_rows, build_cash_source_details, inspect_cash_source_details
+    rows = capture_cash_observation_rows([
+        SimpleNamespace(account='DU123', currency='USD', tag='CashBalance', value='1.234567890123456789', modelCode=''),
+        SimpleNamespace(account='DU123', currency='USD', tag='SettledCash', value='4.50', modelCode='PRIVATE_MODEL'),
+        SimpleNamespace(account='DU123', currency='USD', tag='AvailableFunds', value=3.1),
+    ], account_ids=('DU123',), source_method='account_values_cache')
+    saved = build_cash_observations(rows, observed_at=TIME)
+    observed = inspect_cash_source_details(build_cash_source_details(rows, observed_at=TIME), cash_observations=saved, observed_at=TIME)
+    assert observed['status'] == 'OBSERVED_DETAILS'
+    assert next(row['value'] for row in saved['values'] if row['source_tag'] == 'CashBalance') == '1.234567890123456789'
+    assert observed['fields']['CashBalance'] == {
+        'source_method': 'account_values_cache', 'model_scope': 'no_model_code',
+        'value_representation': 'native_text', 'segment_key': 'unsuffixed'}
+    assert observed['fields']['SettledCash']['model_scope'] == 'model_specific'
+    assert observed['fields']['AvailableFunds']['model_scope'] == 'unknown'
+    assert observed['fields']['AvailableFunds']['value_representation'] == 'non_text'
+    assert 'PRIVATE_MODEL' not in json.dumps(saved)
+    assert '1.234567890123456789' not in json.dumps(observed)
+
+
+def test_duplicate_and_invalid_cash_never_claim_source_scope():
+    from application.ibkr_cash_observations import capture_cash_observation_rows, build_cash_source_details
+    rows = [SimpleNamespace(account='DU123', currency='USD', tag='CashBalance', value='10', modelCode=code)
+            for code in ('', 'MODEL')]
+    rows.append(SimpleNamespace(account='DU123', currency='USD', tag='SettledCash', value='bad', modelCode=''))
+    captured = capture_cash_observation_rows(rows, account_ids=('DU123',), source_method='account_values_cache')
+    saved = build_cash_observations(captured, observed_at=TIME)
+    assert build_cash_source_details(captured, observed_at=TIME) is None
+    fields = inspect_cash_observations(saved, observed_at=TIME)['fields']
+    assert fields['CashBalance'] == fields['SettledCash'] == 'INVALID'
+
+
+def test_invalid_or_orphan_source_details_do_not_claim_source_scope():
+    from application.ibkr_cash_observations import inspect_cash_source_details
+    cash = attachment()
+    details = {'observed_at': TIME, 'fields': [{'currency':'USD', 'source_tag':'CashBalance',
+        'source_method':['PRIVATE'], 'model_scope':'no_model_code',
+        'value_representation':'native_text', 'segment_key':'unsuffixed'}]}
+    assert inspect_cash_source_details(details, cash_observations=cash, observed_at=TIME)['status'] == 'INVALID'
+    details['fields'][0]['source_method'] = 'account_values_cache'
+    details['fields'][0]['source_tag'] = 'FullAvailableFunds'
+    assert inspect_cash_source_details(details, cash_observations=cash, observed_at=TIME)['status'] == 'INVALID'
+    cash['invalid_fields'] = [{'currency':'USD', 'source_tag':'FullAvailableFunds'}]
+    assert inspect_cash_source_details(details, cash_observations=cash, observed_at=TIME)['status'] == 'INVALID'
+
+
+def test_source_details_reject_cash_attachment_when_selected_cash_disagrees():
+    from application.ibkr_cash_observations import inspect_cash_source_details
+    cash = attachment()
+    details = {'observed_at': TIME, 'fields': [{'currency': 'USD', 'source_tag': 'CashBalance',
+        'source_method': 'account_values_cache', 'model_scope': 'no_model_code',
+        'value_representation': 'native_text', 'segment_key': 'unsuffixed'}]}
+    result = inspect_cash_source_details(details, cash_observations=cash, observed_at=TIME,
+        selected_cash={'source_tag': 'CashBalance', 'cash_balance': '999999'})
+    assert result['status'] == 'INVALID' and result['fields'] == {}

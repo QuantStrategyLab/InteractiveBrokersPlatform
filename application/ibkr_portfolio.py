@@ -438,7 +438,7 @@ def fetch_portfolio_snapshot(
             )
         ),
         "cash_observation_rows": capture_cash_observation_rows(
-            account_values, account_ids=selected_account_ids),
+            account_values, account_ids=selected_account_ids, source_method="account_values_cache"),
         "cash_schedule_rows": capture_cash_schedule_rows(
             account_values, account_ids=selected_account_ids),
         "total_equity_source": (
@@ -584,7 +584,7 @@ def fetch_reconciled_paper_portfolio_snapshot(
                 )
             ),
             "cash_observation_rows": capture_cash_observation_rows(
-                raw_account_values, account_ids=selected_account_ids),
+                raw_account_values, account_ids=selected_account_ids, source_method="account_values_cache"),
             "cash_schedule_rows": capture_cash_schedule_rows(
                 raw_account_values, account_ids=selected_account_ids),
         },
