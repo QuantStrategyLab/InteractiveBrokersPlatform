@@ -241,6 +241,10 @@ def test_profile_slot_is_unique_and_checked_before_archive_access(monkeypatch):
         {'additional-2': slot}, {'global_etf_rotation': ('private-service', target)},
         'private-project', 'us-central1'))
     assert archive.resolve_profile_slot({}) == 'additional-2'
+    monkeypatch.setattr(archive.binding, 'configuration', lambda env: (
+        {'primary': slot}, {'global_etf_rotation': ('private-service', target)},
+        'private-project', 'us-central1'))
+    assert archive.resolve_profile_slot({}) == 'primary-live'
     slot['account_scope'] = 'different'
     with pytest.raises(archive.ArchiveError, match='archive_target_not_unique'):
         archive.resolve_profile_slot({})

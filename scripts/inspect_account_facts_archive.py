@@ -68,6 +68,8 @@ def resolve_profile_slot(env: dict) -> str:
         else row[field] == target.get(field) for field in binding.IDENTITY_FIELDS)]
     if len(matches) != 1:
         raise ArchiveError("archive_target_not_unique")
+    if matches[0] == "primary":
+        return publisher.IBKR_ACCOUNT_FACTS_PRIMARY_TARGET
     if matches[0] not in publisher.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS:
         raise ArchiveError("archive_target_not_supported")
     return matches[0]
@@ -128,7 +130,8 @@ def main() -> int:
         requested = os.environ.get("IBKR_ACCOUNT_FACTS_TARGET")
         profile_mode = requested in binding.PROFILES
         slot = resolve_profile_slot(os.environ) if profile_mode else requested
-        if slot not in publisher.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS:
+        if slot not in publisher.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS and not (
+                profile_mode and slot == publisher.IBKR_ACCOUNT_FACTS_PRIMARY_TARGET):
             raise ArchiveError("archive_target_invalid")
         now = datetime.now(timezone.utc)
         day = archive_day(os.environ.get("IBKR_ACCOUNT_FACTS_ARCHIVE_DATE", ""), now=now, allow_today=profile_mode)
