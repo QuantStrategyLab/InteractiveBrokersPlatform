@@ -258,14 +258,17 @@ consumer 实际接线，不证明任何真实账户安全。历史无来源 v1 �
 
 ## 利用既有对账回执核实账户绑定
 
-在批准的受保护环境中，可用已完成的对账工作流原回执核实其**当次**运行账户。
+在 `Collect IBKR Reconciliation Evidence` 的 `inspect_flex_runtime_binding_only` 模式中，
+选一个目标并填入该目标已完成的 `reconciliation_run_id`，可以在受保护 runner 中只读
+既有 artifacts，核实**当次**运行账户；留空则只检查现有配置，不读取 artifacts。
+工作流读取权限仅用于同仓库 Actions，不发券商请求，也不提交订单。
 `evidence.account_scope_sha256` 是运行进程读取的账户集合的摘要：按对账代码将
 `account_ids` 去重、排序，构成 `{"account_ids": [...]}`，再使用
 `calculate_broker_observation_sha256`。用同一函数计算对应 Flex 槽选择器的摘要，
-只输出是否相等；账号、摘要和原始回执不离开受保护环境。
+只输出 `observed_group_account_match`；账号、摘要和原始回执不离开受保护环境。
 
-先独立核对 workflow 成功状态、准确源码版本、目标和调度 job 哈希，并用原工作流
-日志所绑定的 Cloud Run revision 及其来源核实回执归属。若 revision、回执来源或
+诊断核对 workflow 来源、成功状态、run/attempt/head、artifact 摘要、目标及调度 job 哈希，
+并将来源记录中原工作流日志绑定的 revision 和部署标签与现役 metadata 比较。若 revision、回执来源或
 账户选择器不可核验，结果保持 unknown。相等仅证明该次运行的账户集合与该槽一致；
 不证明当前 worker 的 Secret 版本、当前账户状态或现金已经对账。不同 revision、
 后续进程重新加载配置、运行失败或来源不完整都不能沿用该次结果证明当前绑定。

@@ -11,6 +11,9 @@ on:
       inspect_flex_runtime_binding_only:
         type: boolean
         required: false
+      reconciliation_run_id:
+        type: string
+        required: false
       inspect_execution_ledger:
         type: boolean
         required: false
@@ -37,6 +40,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   id-token: write
 
 env:
@@ -88,6 +92,7 @@ jobs:
     timeout-minutes: 10
     env:
       REQUESTED_TARGET: ${{ inputs.target }}
+      RECONCILIATION_RUN_ID: ${{ inputs.reconciliation_run_id }}
       CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}
       IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON: ${{ secrets.IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON }}
       IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON }}
@@ -125,6 +130,8 @@ jobs:
       - name: Set up metadata commands
         uses: google-github-actions/setup-gcloud@v3
       - name: Compare configuration with the exact serving revisions
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: python3 -m scripts.diagnose_ibkr_flex_runtime_binding
 
   collect:
