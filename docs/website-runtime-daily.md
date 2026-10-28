@@ -34,3 +34,12 @@ reader checks the 8 MiB report size only after the subprocess has read it into
 memory, not before transfer. Filename dates are only a bounded search window:
 late reports, listing races and day coverage are not established. Output always
 remains incomplete and no publishing or broker request occurs.
+
+`scripts/publish_ibkr_runtime_daily.py` is a separate single-attempt publisher.
+It requires the existing protected account-facts target configuration, an
+explicit business date, account key, target key, console origin and dedicated
+IBKR daily token in its environment. It derives the source-binding header from
+the same trusted source configuration, never prints these values, and validates
+the receiver's account, target, date and observation in the acknowledgement.
+An error or an unverifiable acknowledgement is `unconfirmed`; no retry is made.
+The script does not provision credentials, register a target or schedule itself.
