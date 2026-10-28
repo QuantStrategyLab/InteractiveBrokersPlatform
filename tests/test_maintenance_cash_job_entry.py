@@ -333,6 +333,8 @@ def test_real_sdk_wrapper_completes_summary_without_network(monkeypatch, amounts
             assert group == "All" and tags == "$LEDGER:USD"
             for amount in amounts:
                 broker.client.decoder.interpret(["63", "1", str(req), "DU00000001", "SettledCash", amount, "USD"])
+            broker.client.decoder.interpret(["63", "1", str(req), "DU00000002", "SettledCash", "888", "USD"])
+            broker.client.decoder.interpret(["63", "1", str(req + 1), "DU00000003", "SettledCash", "777", "USD"])
             broker.client.decoder.interpret(["64", "1", str(req)])
             # A subsequent subscription update is not part of the initial snapshot.
             broker.client.decoder.interpret(["63", "1", str(req), "DU00000001", "SettledCash", "9999", "USD"])
@@ -340,6 +342,9 @@ def test_real_sdk_wrapper_completes_summary_without_network(monkeypatch, amounts
         monkeypatch.setattr(broker.client, "cancelAccountSummary", lambda req: calls.append(("cancel", req)))
         value = entry.read_account_summary_cash(broker, ["DU00000001"])
         assert value["query_completed"] is True
+        assert ("DU00000002", "SettledCash", "USD") not in broker.wrapper.acctSummary
+        assert broker.wrapper.acctSummary[("DU00000003", "SettledCash", "USD")].value == "777"
+        assert broker.wrapper.acctSummary[("DU00000001", "SettledCash", "USD")].value == amounts[-1]
         if valid:
             assert value["broker_cash_observations"]["values"] == [dict(currency="USD", source_tag="SettledCash", value="40.0123")]
         else:
