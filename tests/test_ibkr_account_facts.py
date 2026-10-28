@@ -261,7 +261,7 @@ def test_optional_schedule_is_not_reconstructed_from_legacy_cache_or_misbound_ro
 
 def test_cash_source_scope_survives_private_runtime_report(tmp_path):
     from types import SimpleNamespace
-    from application.ibkr_cash_observations import capture_cash_observation_rows, inspect_cash_observations
+    from application.ibkr_cash_observations import capture_cash_observation_rows, inspect_cash_observations, inspect_cash_source_details
     from quant_platform_kit.common.runtime_reports import build_runtime_report_base, finalize_runtime_report, write_runtime_report_json
 
     snapshot = _snapshot(observed_at=datetime(2026, 9, 30, 12, tzinfo=timezone.utc),
@@ -276,7 +276,9 @@ def test_cash_source_scope_survives_private_runtime_report(tmp_path):
     path = write_runtime_report_json(report, output_path=tmp_path / 'report.json')
     stored = json.loads(path.read_text(encoding='utf-8'))['summary']['account_facts']
     safe = inspect_cash_observations(stored['broker_cash_observations'], observed_at=stored['observed_at'])
-    assert safe['source_details']['CashBalance'] == {
+    assert set(stored['broker_cash_observations']) <= {'schema_version', 'observed_at', 'values', 'invalid_fields'}
+    details = inspect_cash_source_details(stored['broker_cash_source_details'], cash_observations=stored['broker_cash_observations'], observed_at=stored['observed_at'])
+    assert details['fields']['CashBalance'] == {
         'source_method': 'account_values_cache', 'model_scope': 'no_model_code',
         'value_representation': 'native_text', 'segment_key': 'unsuffixed'}
     assert safe['spendable_cash_verified'] is False

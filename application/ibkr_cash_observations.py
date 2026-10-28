@@ -144,7 +144,7 @@ def capture_cash_observation_rows(account_values, *, account_ids, source_method=
 
 def build_cash_observations(rows, *, observed_at):
     """Keep every supported field after the parent has checked account scope."""
-    values, invalid, seen, details = {}, set(), set(), {}
+    values, invalid, seen = {}, set(), set()
     for row in rows:
         currency = str(row.get("currency") or "").strip().upper()
         if currency == "BASE":
@@ -157,12 +157,6 @@ def build_cash_observations(rows, *, observed_at):
                 values.pop(identity, None)
             else:
                 values[identity] = amount
-            if identity in details:
-                details.pop(identity, None)
-            elif identity not in seen and all(key in row for key in (
-                    "source_method", "model_scope", "value_representation", "segment_key")):
-                details[identity] = {key: row[key] for key in (
-                    "source_method", "model_scope", "value_representation", "segment_key")}
             seen.add(identity)
     result = dict(schema_version=SCHEMA, observed_at=observed_at)
     # Runtime reports omit empty containers. Optional arrays keep the source
@@ -170,9 +164,6 @@ def build_cash_observations(rows, *, observed_at):
     if values:
         result["values"] = [dict(currency=currency, source_tag=tag, value=amount)
             for (currency, tag), amount in sorted(values.items())]
-    if details:
-        result["source_details"] = [dict(currency=currency, source_tag=tag, **detail)
-            for (currency, tag), detail in sorted(details.items())]
     if invalid:
         result["invalid_fields"] = [dict(currency=currency, source_tag=tag)
             for currency, tag in sorted(invalid)]
@@ -190,12 +181,11 @@ def inspect_cash_observations(value, *, observed_at, currency="USD", selected_ca
         spendable_cash_verified=False, complete_cash_obligations_verified=False)
     if (not isinstance(value, Mapping)
             or not {"schema_version", "observed_at"} <= set(value)
-            or set(value) - {"schema_version", "observed_at", "values", "invalid_fields", "source_details"}
+            or set(value) - {"schema_version", "observed_at", "values", "invalid_fields"}
             or value["schema_version"] != SCHEMA or value["observed_at"] != observed_at
             or not isinstance(observed_at, str) or not observed_at
             or not isinstance(value.get("values", []), list)
-            or not isinstance(value.get("invalid_fields", []), list)
-            or not isinstance(value.get("source_details", []), list)):
+            or not isinstance(value.get("invalid_fields", []), list)):
         return result
     seen, fields, amounts = set(), dict(result["fields"]), {}
     for name, state in (("values", "OBSERVED"), ("invalid_fields", "INVALID")):
@@ -216,24 +206,6 @@ def inspect_cash_observations(value, *, observed_at, currency="USD", selected_ca
                 amounts[key] = amount
             if key[0] == currency:
                 fields[key[1]] = state
-    source_details = {}
-    for row in value.get("source_details", []):
-        if (not isinstance(row, Mapping) or set(row) != {
-                "currency", "source_tag", "source_method", "model_scope", "value_representation", "segment_key"}
-                or row.get("source_method") not in ("account_values_cache", "unspecified")
-                or row.get("model_scope") not in ("no_model_code", "model_specific", "unknown")
-                or row.get("value_representation") not in ("native_text", "non_text")
-                or row.get("segment_key") != "unsuffixed"
-                or not isinstance(row.get("currency"), str)
-                or not isinstance(row.get("source_tag"), str)):
-            return result
-        key = (row.get("currency"), row.get("source_tag"))
-        if key not in seen or key in source_details:
-            return result
-        source_details[key] = {key: row[key] for key in (
-            "source_method", "model_scope", "value_representation", "segment_key")}
-    result["source_details"] = {tag: detail for (row_currency, tag), detail in source_details.items()
-                                if row_currency == currency}
     # Two projections of the same native field must agree. Different native
     # tags can legitimately differ and are never forced to equal one another.
     if isinstance(selected_cash, Mapping):
@@ -244,4 +216,52 @@ def inspect_cash_observations(value, *, observed_at, currency="USD", selected_ca
         if key in seen and (key not in amounts or amounts[key] != _decimal(selected_cash.get("cash_balance"))):
             return result
     result.update(status="OBSERVED_FIELDS_ONLY", fields=fields)
+    return result
+
+
+_DETAIL_KEYS = ("source_method", "model_scope", "value_representation", "segment_key")
+
+
+def build_cash_source_details(rows, *, observed_at):
+    """Optional metadata for valid, unambiguous values in the original attachment."""
+    details, seen, invalid = {}, set(), set()
+    for row in rows:
+        currency = str(row.get("currency") or "").strip().upper()
+        for tag in sorted(TAGS & row.keys()):
+            key = (currency, tag)
+            if key in seen or _decimal_text(row[tag]) is None:
+                invalid.add(key)
+                details.pop(key, None)
+            elif (key not in invalid and row.get("source_method") == "account_values_cache"
+                    and all(k in row for k in _DETAIL_KEYS)):
+                details[key] = {k: row[k] for k in _DETAIL_KEYS}
+            seen.add(key)
+    if not details:
+        return None
+    return dict(observed_at=observed_at, fields=[dict(currency=currency, source_tag=tag, **detail)
+        for (currency, tag), detail in sorted(details.items())])
+
+
+def inspect_cash_source_details(value, *, cash_observations, observed_at, currency="USD"):
+    """Expose bounded metadata only for validated, present cash values."""
+    result = dict(status="NOT_REPORTED" if value is None else "INVALID", fields={})
+    if (not isinstance(value, Mapping) or set(value) != {"observed_at", "fields"}
+            or value["observed_at"] != observed_at or not isinstance(value["fields"], list)
+            or inspect_cash_observations(cash_observations, observed_at=observed_at)["status"] != "OBSERVED_FIELDS_ONLY"):
+        return result
+    allowed = {(row["currency"], row["source_tag"]) for row in cash_observations.get("values", [])}
+    details = {}
+    for row in value["fields"]:
+        if (not isinstance(row, Mapping) or set(row) != {"currency", "source_tag", *_DETAIL_KEYS}
+                or row.get("source_method") not in ("account_values_cache", "unspecified")
+                or row.get("model_scope") not in ("no_model_code", "model_specific", "unknown")
+                or row.get("value_representation") not in ("native_text", "non_text")
+                or row.get("segment_key") != "unsuffixed"
+                or not isinstance(row.get("currency"), str) or not isinstance(row.get("source_tag"), str)):
+            return result
+        key = (row["currency"], row["source_tag"])
+        if key not in allowed or key in details:
+            return result
+        details[key] = {k: row[k] for k in _DETAIL_KEYS}
+    result.update(status="OBSERVED_DETAILS", fields={tag: detail for (cur, tag), detail in details.items() if cur == currency})
     return result
