@@ -982,18 +982,8 @@ def main() -> int:
             print(json.dumps({"report_selection": activity}, sort_keys=True))
 
 
-def _project_ibkr_account_facts_history(
-    report: Mapping[str, Any],
-    **expected: Any,
-) -> dict[str, Any]:
-    if not isinstance(report, Mapping):
-        raise _ProjectionError("runtime_report_invalid")
-    target_id = _text(expected["target_id"])
-    if not target_id or _TARGET_ID.fullmatch(target_id) is None:
-        raise _ProjectionError("expected_target_invalid")
-    source_report_uri = _source_report_uri(
-        _text(expected["source_report_uri"]), _text(expected["expected_report_prefix"])
-    )
+def _validate_report_account_identity(report: Mapping[str, Any], **expected: Any):
+    """Validate report deployment and single-account identity without projecting balances."""
     expected_fields = {
         "project_id": _text(expected["expected_project_id"]),
         "service_name": _text(expected["expected_service_name"]),
@@ -1051,6 +1041,22 @@ def _project_ibkr_account_facts_history(
         or _ACCOUNT_ID.fullmatch(account_ids[0]) is None
     ):
         raise _ProjectionError("account_identity_mismatch")
+    return actual_fields, actual_selector, facts
+
+
+def _project_ibkr_account_facts_history(
+    report: Mapping[str, Any],
+    **expected: Any,
+) -> dict[str, Any]:
+    if not isinstance(report, Mapping):
+        raise _ProjectionError("runtime_report_invalid")
+    target_id = _text(expected["target_id"])
+    if not target_id or _TARGET_ID.fullmatch(target_id) is None:
+        raise _ProjectionError("expected_target_invalid")
+    source_report_uri = _source_report_uri(
+        _text(expected["source_report_uri"]), _text(expected["expected_report_prefix"])
+    )
+    actual_fields, actual_selector, facts = _validate_report_account_identity(report, **expected)
     if facts.get("currency") != "USD":
         raise _ProjectionError("account_facts_invalid")
 
@@ -1088,7 +1094,7 @@ def _project_ibkr_account_facts_history(
         "observation_date": observed.date().isoformat(),
         "broker_reported_balances": [{"currency": "USD", "net_assets": net_assets}],
         "cash": cash,
-        "account_ids": [account_ids[0]],
+        "account_ids": [actual_selector[0]],
     }
     positions = _project_positions(facts)
     if positions is not None:
