@@ -67,6 +67,29 @@ def test_serving_target_to_cash_entry_and_unverified_candidate_rejected(profile,
     with pytest.raises(ValueError, match="serving_changed_after_image_verification"):
         candidate.prepare(second, expected, reader=lambda kind, *args: service if kind == "services" else rev)
     monkeypatch.setattr(candidate.preflight, "inspect", original_inspect)
+    monkeypatch.setitem(candidate.POSTBUILD_BASES, profile, "sha256:" + "1" * 64)
+    postbuild = {key: value for key, value in second.items() if key != "CASH_BUILD_INPUT"}
+    postbuild["CASH_IMAGE_EVIDENCE_MODE"] = "postbuild"
+    assert candidate.prepare(postbuild, expected, reader=lambda kind, *args: service if kind == "services" else rev)[3]
+    with pytest.raises(ValueError, match="postbuild_source_mismatch"):
+        candidate.prepare({**postbuild, "CASH_BUILD_INPUT": str(path)}, expected,
+                          reader=lambda kind, *args: service if kind == "services" else rev)
+    monkeypatch.setitem(candidate.POSTBUILD_BASES, profile, "sha256:" + "9" * 64)
+    with pytest.raises(ValueError, match="postbuild_source_mismatch"):
+        candidate.prepare(postbuild, expected, reader=lambda kind, *args: service if kind == "services" else rev)
+    monkeypatch.setitem(candidate.POSTBUILD_BASES, profile, "sha256:" + "1" * 64)
+    monkeypatch.setattr(candidate.image_verifier, "verify", lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("unverified")))
+    with pytest.raises(ValueError, match="unverified"):
+        candidate.prepare(postbuild, expected, reader=lambda kind, *args: service if kind == "services" else rev)
+    monkeypatch.setattr(candidate.image_verifier, "verify", lambda *args, **kwargs: None)
+    count = 0
+    monkeypatch.setattr(candidate.preflight, "inspect", drift)
+    with pytest.raises(ValueError, match="serving_changed_after_image_verification"):
+        candidate.prepare(postbuild, expected, reader=lambda kind, *args: service if kind == "services" else rev)
+    monkeypatch.setattr(candidate.preflight, "inspect", original_inspect)
+    with pytest.raises(ValueError, match="image_evidence_mode_invalid"):
+        candidate.prepare({**postbuild, "CASH_IMAGE_EVIDENCE_MODE": "unknown"}, expected,
+                          reader=lambda kind, *args: service if kind == "services" else rev)
     altered = dict(manifest, serving_revision_sha256="0" * 64)
     path.write_text(json.dumps(altered))
     with pytest.raises(ValueError, match="build_input_changed"):
