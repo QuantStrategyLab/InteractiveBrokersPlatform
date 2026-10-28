@@ -36,6 +36,7 @@ from google.api_core.exceptions import PreconditionFailed
 from google.cloud import storage
 
 from application.account_facts import build_ibkr_account_facts
+from application.reconciliation_reporting import reconciliation_log_comparison
 
 
 class _MainModuleProxy:
@@ -381,19 +382,16 @@ def _handle_reconciliation():
             },
             diagnostics={"broker_reconciliation": payload},
         )
+        comparison_status, log_blockers = reconciliation_log_comparison(candidate)
         main.log_runtime_event(
             log_context,
             "broker_reconciliation_completed",
             message="Broker reconciliation candidate completed",
             execution_window="reconciliation",
             permits_active_lkg=candidate.permits_active_lkg,
-            blockers=[finding.value for finding in candidate.recovery_blockers],
+            blockers=log_blockers,
             expected_digests_configured=candidate.expected_digests_configured,
-            comparison_status=(
-                "not_configured"
-                if not candidate.expected_digests_configured
-                else "matched" if candidate.permits_active_lkg else "blocked"
-            ),
+            comparison_status=comparison_status,
             account_identity_match=observations.account_identity_match,
             positions_record_count=len(observations.positions),
             cash_record_count=len(observations.cash),
