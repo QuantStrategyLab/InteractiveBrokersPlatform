@@ -323,3 +323,28 @@ def test_diagnostic_cli_rejects_non_cycle_and_invalid_flags_before_execution(tmp
     receipt = tmp_path / "receipt.json"
     assert job.main(["--receipt", str(receipt)]) == 1
     assert json.loads(receipt.read_text())["stage"] == "template_diagnostic_mode_invalid"
+
+
+def test_only_exact_lifecycle_empty_value_omission_is_equivalent(lifecycle):
+    desired = job.prepared(lifecycle.ctx, lifecycle.before, lifecycle.group, "123")
+    env = desired["spec"]["template"]["spec"]["template"]["spec"]["containers"][0]["env"]
+    env.append({"name": "LIFECYCLE_PERFORMANCE_BUCKET", "value": ""})
+    actual = copy.deepcopy(desired)
+    actual_env = actual["spec"]["template"]["spec"]["template"]["spec"]["containers"][0]["env"]
+    actual_env[-1] = {"name": "LIFECYCLE_PERFORMANCE_BUCKET"}
+    job.verify_job(actual, desired)
+    for replacement in [None, {"name": "LIFECYCLE_PERFORMANCE_BUCKET", "value": "nonempty"},
+                        {"name": "LIFECYCLE_PERFORMANCE_BUCKET", "valueFrom": {"secretKeyRef": {}}},
+                        {"name": "LIFECYCLE_PERFORMANCE_BUCKET", "extra": "unexpected"}]:
+        candidate = copy.deepcopy(actual)
+        rows = candidate["spec"]["template"]["spec"]["template"]["spec"]["containers"][0]["env"]
+        if replacement is None:
+            rows.pop()
+        else:
+            rows[-1] = replacement
+        with pytest.raises(pilot.ReleaseError, match="job_template_readback_unverified"):
+            job.verify_job(candidate, desired)
+    # A lifecycle normalization never hides a difference in another env row.
+    actual_env[0]["value"] = "changed"
+    with pytest.raises(pilot.ReleaseError, match="job_template_readback_unverified"):
+        job.verify_job(actual, desired)
