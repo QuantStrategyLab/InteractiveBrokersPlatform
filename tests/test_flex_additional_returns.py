@@ -1,6 +1,7 @@
 """Additional native returns share one report, without publishing other facts."""
 import json
 import time
+from urllib.error import HTTPError
 
 import pytest
 
@@ -99,7 +100,8 @@ def test_wrong_ack_stops_before_next_account_without_retry(monkeypatch, capsys):
     monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
     monkeypatch.setattr(cli, "publish_period_return", REAL_PUBLISH)
     assert cli.main(("--additional-returns-only",)) == 1
-    assert json.loads(capsys.readouterr().out) == {"additional_returns": {"additional-2": "sync_unknown"}}
+    assert json.loads(capsys.readouterr().out) == {"additional_returns": {"additional-2": "sync_unknown"},
+        "additional_return_sync_diagnostics": {"additional-2": {"period_return_sync_reason": "invalid_ack"}}}
     assert len(opener.calls) == 1 and len(session.calls) == 2
 
 
@@ -202,3 +204,21 @@ def test_default_primary_failure_prevents_all_additional_posts(monkeypatch, caps
     else:
         assert len(published) == 1 and published[0][1]["expected_account_key"] == "synthetic-account-key"
     assert "private-transport-details" not in output
+
+
+@pytest.mark.parametrize("additional_only", [False, True])
+def test_additional_failure_reports_safe_http_status_in_both_modes(monkeypatch, capsys, additional_only):
+    setup(monkeypatch)
+    opener = Opener(error=HTTPError(cli.SYNC_URL, 403, "synthetic-secret", {}, None))
+    monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
+    def publish(payload, **kwargs):
+        if kwargs["expected_account_key"] == "synthetic-account-key":
+            return "published"
+        return REAL_PUBLISH(payload, **kwargs)
+    monkeypatch.setattr(cli, "publish_period_return", publish)
+    assert cli.main(("--additional-returns-only",) if additional_only else ()) == 1
+    output = capsys.readouterr().out
+    result = json.loads(output)
+    assert result["additional_returns"] == {"additional-2": "sync_rejected"}
+    assert result["additional_return_sync_diagnostics"] == {"additional-2": {"period_return_http_status": 403}}
+    assert len(opener.calls) == 1 and "synthetic-secret" not in output and "synthetic-key" not in output

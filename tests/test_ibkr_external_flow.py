@@ -1,5 +1,6 @@
 import json
 from datetime import datetime, timezone
+from urllib.error import HTTPError
 from xml.etree import ElementTree
 
 import pytest
@@ -98,7 +99,9 @@ def test_invalid_ack_is_unknown_and_never_retried(monkeypatch, patch):
     payload = build_ibkr_external_flow(ledger(), **{k:config[k] for k in ("target_id", "source_binding_id", "account_scope", "expected_account_ids")})
     opener = FlowOpener(patch)
     monkeypatch.setattr(cli, "build_opener", lambda *_: opener)
-    assert cli.publish_external_flow(payload, sync_token=config["sync_token"], expected_account_key=config["account_key"]) == "sync_unknown"
+    detail = {}
+    assert cli.publish_external_flow(payload, sync_token=config["sync_token"], expected_account_key=config["account_key"], diagnostics=detail) == "sync_unknown"
+    assert detail == {"external_flow_sync_reason": "invalid_ack"}
     assert len(opener.calls) == 1
 
 
@@ -117,3 +120,17 @@ def test_bad_flow_range_stops_before_requests(monkeypatch, capsys, start, end):
     monkeypatch.setattr(cli.requests, "Session", lambda: pytest.fail("invalid range must not request"))
     assert cli.main(("--cashflow-only",)) == 2
     assert json.loads(capsys.readouterr().out) == {"external_flow_status": "configuration_incomplete"}
+
+
+def test_flow_only_rejection_reports_status_without_private_response_or_retry(monkeypatch, capsys):
+    configure(monkeypatch)
+    session = FlexSession(report())
+    opener = FlowOpener(error=HTTPError(cli.EXTERNAL_FLOW_SYNC_URL, 409, "synthetic-secret", {}, None))
+    monkeypatch.setattr(cli.requests, "Session", lambda: session)
+    monkeypatch.setattr(cli, "build_opener", lambda *_: opener)
+    assert cli.main(("--cashflow-only",)) == 1
+    output = capsys.readouterr().out
+    result = json.loads(output)
+    assert result["external_flow_status"] == "sync_rejected"
+    assert result["external_flow_http_status"] == 409
+    assert len(opener.calls) == 1 and "synthetic-secret" not in output and ACCOUNT not in output
