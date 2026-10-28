@@ -294,4 +294,4 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Send one fixed account-facts ingress diagnostic
-        run: python3 scripts/publish_account_facts_from_report.py
+        run: python3 -m scripts.publish_account_facts_from_report
