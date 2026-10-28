@@ -120,12 +120,12 @@ for effect in (lambda: (root.parent / "outside-forbidden").write_text("blocked")
     except IsolationError:
         blocked.append(True)
 (root / "canary").write_text("allowed")
-print(json.dumps(dict(blocked=blocked, violations=len(violations), readback=(root / "canary").read_text())))
+print(json.dumps(dict(blocked=blocked, violations=violations, readback=(root / "canary").read_text())))
 '''
     result = subprocess.run([sys.executable, "-I", "-B", "-c", script, str(tmp_path)], capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
     value = json.loads(result.stdout)
-    assert value == dict(blocked=[True] * 4, violations=4, readback="allowed")
+    assert value == dict(blocked=[True] * 4, violations=["outside_path", "network", "subprocess", "credential_path"], readback="allowed")
     assert not (tmp_path.parent / "outside-forbidden").exists()
 
 

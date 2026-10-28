@@ -9,6 +9,8 @@ from pathlib import Path
 # Order placement/cancellation, exercise, FA replacement and unknown IDs reject.
 READ_IDS = frozenset({1, 2, 5, 6, 7, 8, 9, 16, 20, 25, 49, 59, 61, 62, 63, 64,
     71, 76, 77, 78, 87, 90, 91, 99})
+CLOUD_DENIAL_KINDS = ("object_store", "document_store", "requests_http", "urllib_http")
+ISOLATION_DENIAL_KINDS = ("subprocess", "network", "credential_path", "outside_path", "broker_notification")
 
 
 class CycleEffectForbidden(RuntimeError):
@@ -21,24 +23,28 @@ def install_cloud_guards():
     from quant_platform_kit.cloud.gcp_provider import GcpDocumentStore, GcpObjectStore
     counters = dict(cloud_write_attempts=0, broker_write_attempts=0, connects=0,
         signals_started=0, signals_completed=0, rebalance_started=0, rebalance_completed=0)
+    counters["cloud_denials"] = dict.fromkeys(CLOUD_DENIAL_KINDS, 0)
     private_save = threading.local()
     original_request = requests.Session.request
     original_open = urllib.request.OpenerDirector.open
-    def deny_cloud(*args, **kwargs):
-        counters["cloud_write_attempts"] += 1
-        raise CycleEffectForbidden("cloud_write_forbidden")
+    def deny_cloud(kind):
+        def denied(*args, **kwargs):
+            counters["cloud_write_attempts"] += 1
+            counters["cloud_denials"][kind] += 1
+            raise CycleEffectForbidden("cloud_write_forbidden")
+        return denied
     for cls, names in ((GcpObjectStore, ("write_text", "write_bytes")),
             (GcpDocumentStore, ("set", "update", "delete", "create_if_absent", "delete_if_owner"))):
         for name in names:
-            setattr(cls, name, deny_cloud)
+            setattr(cls, name, deny_cloud("object_store" if cls is GcpObjectStore else "document_store"))
     def http(self, method, url, *args, **kwargs):
         if str(method).upper() not in {"GET", "HEAD"} and not getattr(private_save, "enabled", False):
-            return deny_cloud()
+            return deny_cloud("requests_http")()
         return original_request(self, method, url, *args, **kwargs)
     def urlopen(self, fullurl, data=None, *args, **kwargs):
         method = fullurl.get_method() if isinstance(fullurl, urllib.request.Request) else "POST" if data is not None else "GET"
         if method not in {"GET", "HEAD"} and not getattr(private_save, "enabled", False):
-            return deny_cloud()
+            return deny_cloud("urllib_http")()
         return original_open(self, fullurl, data, *args, **kwargs)
     requests.Session.request = http
     urllib.request.OpenerDirector.open = urlopen
@@ -81,7 +87,15 @@ def result():
     return dict(status="unavailable", stage="calendar", market_open=None, cycle_completed=False,
         broker_called=False, signals_completed=False, rebalance_completed=False,
         broker_write_attempts=0, cloud_write_attempts=0, isolated_effect_attempts=0, http_status=None, report_status=None,
-        orders_previewed_count=None, orders_skipped_count=None, saved_readback_verified=False)
+        orders_previewed_count=None, orders_skipped_count=None, saved_readback_verified=False,
+        cloud_denials=dict.fromkeys(CLOUD_DENIAL_KINDS, 0),
+        isolation_denials=dict.fromkeys(ISOLATION_DENIAL_KINDS, 0))
+
+
+def denial_counts(counters, violations):
+    cloud = counters.get("cloud_denials", {})
+    return (dict((kind, cloud.get(kind, 0)) for kind in CLOUD_DENIAL_KINDS),
+            dict((kind, violations.count(kind)) for kind in ISOLATION_DENIAL_KINDS))
 
 
 def save_private(report_path, store, private_save):
@@ -157,6 +171,7 @@ def run(context, counters, private_save, store):
             signals_completed=counters["signals_completed"] > 0, rebalance_completed=counters["rebalance_completed"] > 0,
             broker_write_attempts=counters["broker_write_attempts"], cloud_write_attempts=counters["cloud_write_attempts"],
             isolated_effect_attempts=len(context["violations"]))
+        out["cloud_denials"], out["isolation_denials"] = denial_counts(counters, context["violations"])
         complete = (response.status_code == 200 and out["report_status"] == "ok" and out["broker_called"]
             and out["signals_completed"] and out["rebalance_completed"] and not out["broker_write_attempts"]
             and not out["cloud_write_attempts"] and not out["isolated_effect_attempts"])
@@ -166,6 +181,7 @@ def run(context, counters, private_save, store):
             signals_completed=counters["signals_completed"] > 0, rebalance_completed=counters["rebalance_completed"] > 0,
             broker_write_attempts=counters["broker_write_attempts"], cloud_write_attempts=counters["cloud_write_attempts"],
             isolated_effect_attempts=len(context["violations"]))
+        out["cloud_denials"], out["isolation_denials"] = denial_counts(counters, context["violations"])
         if isinstance(error, CycleEffectForbidden) and str(error) in {
                 "private_report_binding_unverified", "private_report_readback_unverified", "cycle_report_unverified", "broker_write_forbidden", "cloud_write_forbidden"}:
             out["stage"] = str(error)
