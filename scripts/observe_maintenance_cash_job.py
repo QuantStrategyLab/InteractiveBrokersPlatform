@@ -228,36 +228,21 @@ def inspect_report(report, uri, expected, *, job, execution, started, now, names
     return result
 
 
-def observe(expected, env, receipt, *, run=pilot.command, snapshot=pilot.snapshot,
-            sleep=time.sleep, now=lambda: datetime.now(timezone.utc), load_report=publisher._load_gcs_report):
-    if (env.get("GITHUB_REF") != "refs/heads/main" or env.get("GITHUB_RUN_ATTEMPT") != "1"
-            or env.get("GITHUB_EVENT_NAME") != "workflow_dispatch" or env.get("GITHUB_REPOSITORY") != pilot.REPOSITORY
-            or not re.fullmatch(r"[0-9]+", env.get("GITHUB_RUN_ID", ""))
-            or env.get("MAINTENANCE_SOURCE_COMMIT") != SOURCE or env.get("MAINTENANCE_JOB") != "true"):
-        raise pilot.ReleaseError("dispatch_not_admitted")
-    ctx = SimpleNamespace(project=expected["expected_project_id"], region=env["CLOUD_RUN_REGION"], service=expected["expected_service_name"])
+def execute_job(ctx, receipt, *, document, before, collect, result, run=pilot.command,
+                snapshot=pilot.snapshot, sleep=time.sleep, now=lambda: datetime.now(timezone.utc)):
+    """Execute the verified one-task definition once; preserve ownership and baseline checks."""
     common = ["--project=" + ctx.project, "--region=" + ctx.region]
-    job = "ibkr-cash-read-" + env["GITHUB_RUN_ID"]
+    job = document["metadata"]["name"]
+    if not pilot.NAME.fullmatch(job):
+        raise pilot.ReleaseError("job_name_invalid")
     def read(args, stage="job_read_failed"):
         return pilot._json(run(["gcloud", *args, "--format=json"], stage=stage))
     def jobs():
         return read(["run", "jobs", "list", *common])
     def executions():
         return read(["run", "jobs", "executions", "list", "--job=" + job, *common])
-    before = snapshot(ctx, run)
-    candidate = before["service"]["status"].get("latestCreatedRevisionName")
-    if not pilot.NAME.fullmatch(candidate or ""):
-        raise pilot.ReleaseError("candidate_not_admitted")
-    revision = read(["run", "revisions", "describe", candidate, *common])
-    observer.admit(expected, before, revision, SOURCE)
-    document = job_document(revision, job, ENTRY.read_text())
-    namespace = report_namespace(revision, expected)
     if any(row.get("metadata", {}).get("name") == job for row in jobs()):
         raise pilot.ReleaseError("job_name_occupied")
-    result = dict(status="STOPPED", reason="job_not_completed", source_commit=SOURCE, image_digest=IMAGE_DIGEST,
-        entry_sha256=observer.digest(ENTRY.read_text()), runtime_adopted=False, publisher_binding_changed=False,
-        broker_write_requested=False, strategy_executed=False, job_create_attempted=False, job_execute_attempted=False,
-        job_cleanup_verified=False, baseline_unchanged=False)
     def save():
         receipt.write_text(json.dumps(result, indent=2) + "\n")
         receipt.chmod(0o600)
@@ -295,25 +280,8 @@ def observe(expected, env, receipt, *, run=pilot.command, snapshot=pilot.snapsho
         result["execution_completed"] = True
         if status.get("succeededCount", 0) != 1 or status.get("failedCount", 0) or status.get("retriedCount", 0):
             raise pilot.ReleaseError("job_task_failed")
-        for _ in range(12):
-            logs = read(["logging", "read", f'resource.type="cloud_run_job" AND resource.labels.job_name="{job}" AND labels."run.googleapis.com/execution_name"="{name}" AND timestamp>="{started.isoformat()}" AND textPayload:"execution_report gs://"',
-                "--project=" + ctx.project, "--limit=10"])
-            uris = set()
-            for row in logs:
-                match = re.search(r"execution_report (gs://[^\s]+)", row.get("textPayload", ""))
-                if match:
-                    uris.add(publisher._source_report_uri(match[1], namespace))
-            if len(uris) > 1:
-                raise pilot.ReleaseError("job_report_ambiguous")
-            if uris:
-                uri = uris.pop()
-                result.update(inspect_report(load_report(uri, project_id=ctx.project), uri, expected,
-                    job=job, execution=name, started=started, now=now(), namespace=namespace))
-                result.pop("reason", None)
-                break
-            sleep(5)
-        else:
-            raise pilot.ReleaseError("job_report_not_observed")
+        result.update(collect(read, actual, execution, name, started))
+        result.pop("reason", None)
     except Exception as error:
         result.update(status="STOPPED", reason=str(error) if isinstance(error, pilot.ReleaseError) else "job_observation_failed")
     finally:
@@ -355,6 +323,53 @@ def observe(expected, env, receipt, *, run=pilot.command, snapshot=pilot.snapsho
             result.update(status="STOPPED", baseline_reason="baseline_unverified")
         save()
     return result
+
+
+def observe(expected, env, receipt, *, run=pilot.command, snapshot=pilot.snapshot,
+            sleep=time.sleep, now=lambda: datetime.now(timezone.utc), load_report=publisher._load_gcs_report):
+    if (env.get("GITHUB_REF") != "refs/heads/main" or env.get("GITHUB_RUN_ATTEMPT") != "1"
+            or env.get("GITHUB_EVENT_NAME") != "workflow_dispatch" or env.get("GITHUB_REPOSITORY") != pilot.REPOSITORY
+            or not re.fullmatch(r"[0-9]+", env.get("GITHUB_RUN_ID", ""))
+            or env.get("MAINTENANCE_SOURCE_COMMIT") != SOURCE or env.get("MAINTENANCE_JOB") != "true"):
+        raise pilot.ReleaseError("dispatch_not_admitted")
+    ctx = SimpleNamespace(project=expected["expected_project_id"], region=env["CLOUD_RUN_REGION"], service=expected["expected_service_name"])
+    common = ["--project=" + ctx.project, "--region=" + ctx.region]
+    job = "ibkr-cash-read-" + env["GITHUB_RUN_ID"]
+    def read(args, stage="job_read_failed"):
+        return pilot._json(run(["gcloud", *args, "--format=json"], stage=stage))
+    before = snapshot(ctx, run)
+    candidate = before["service"]["status"].get("latestCreatedRevisionName")
+    if not pilot.NAME.fullmatch(candidate or ""):
+        raise pilot.ReleaseError("candidate_not_admitted")
+    revision = read(["run", "revisions", "describe", candidate, *common])
+    observer.admit(expected, before, revision, SOURCE)
+    document = job_document(revision, job, ENTRY.read_text())
+    namespace = report_namespace(revision, expected)
+    result = dict(status="STOPPED", reason="job_not_completed", source_commit=SOURCE, image_digest=IMAGE_DIGEST,
+        entry_sha256=observer.digest(ENTRY.read_text()), runtime_adopted=False, publisher_binding_changed=False,
+        broker_write_requested=False, strategy_executed=False, job_create_attempted=False, job_execute_attempted=False,
+        job_cleanup_verified=False, baseline_unchanged=False)
+    def collect(read, actual, execution, name, started):
+        for _ in range(12):
+            logs = read(["logging", "read", f'resource.type="cloud_run_job" AND resource.labels.job_name="{job}" AND labels."run.googleapis.com/execution_name"="{name}" AND timestamp>="{started.isoformat()}" AND textPayload:"execution_report gs://"',
+                "--project=" + ctx.project, "--limit=10"])
+            uris = set()
+            for row in logs:
+                match = re.search(r"execution_report (gs://[^\s]+)", row.get("textPayload", ""))
+                if match:
+                    uris.add(publisher._source_report_uri(match[1], namespace))
+            if len(uris) > 1:
+                raise pilot.ReleaseError("job_report_ambiguous")
+            if uris:
+                uri = uris.pop()
+                return inspect_report(load_report(uri, project_id=ctx.project), uri, expected,
+                    job=job, execution=name, started=started, now=now(), namespace=namespace)
+            sleep(5)
+        else:
+            raise pilot.ReleaseError("job_report_not_observed")
+    return execute_job(ctx, receipt, document=document, before=before, collect=collect, result=result,
+                       run=run, snapshot=snapshot, sleep=sleep, now=now)
+
 
 
 def main():

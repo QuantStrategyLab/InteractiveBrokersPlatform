@@ -51,7 +51,8 @@ def test_serving_target_to_cash_entry_and_unverified_candidate_rejected(profile,
     _, _, _, document = candidate.prepare(second, expected, reader=lambda kind, *args: service if kind == "services" else rev)
     task = document["spec"]["template"]["spec"]["template"]["spec"]
     assert task["maxRetries"] == 0 and task["containers"][0]["image"] == image
-    assert "COPY --chown=1000:1000 --chmod=0644" in dockerfile
+    assert "COPY --chown=1000:1000" in dockerfile
+    assert "RUN chmod 0644 " in dockerfile and "--chmod" not in dockerfile
     assert "USER root" in dockerfile and dockerfile.endswith("USER appuser\n")
     original_inspect = candidate.preflight.inspect
     count = 0

@@ -48,8 +48,9 @@ def prepare(env, expected, *, reader=preflight.binding._read):
         raise ValueError("base_image_invalid")
     sources = {name: (ROOT / name).read_bytes() for name in FILES}
     dockerfile = ("FROM " + base + "\nUSER root\n" + "".join(
-        "COPY --chown=1000:1000 --chmod=0644 " + name + " /app/" + name + "\n" for name in FILES)
-        + "RUN /app/.venv/bin/python /app/scripts/patch_cash_candidate_image.py\nUSER appuser\n")
+        "COPY --chown=1000:1000 " + name + " /app/" + name + "\n" for name in FILES)
+        + "RUN chmod 0644 " + " ".join("/app/" + name for name in FILES)
+        + " && /app/.venv/bin/python /app/scripts/patch_cash_candidate_image.py\nUSER appuser\n")
     manifest = {"base_image": base, "serving_revision_sha256": evidence["serving_revision_sha256"],
         "target_binding_sha256": evidence["target_binding_sha256"],
         "report_prefix_sha256": evidence["report_prefix_sha256"],

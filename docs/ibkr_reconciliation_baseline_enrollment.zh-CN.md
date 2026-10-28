@@ -338,3 +338,16 @@ Docker 主机核对实际镜像：基底层、完整文件树、允许修改文�
 新入口在公开结果中只返回报告 URI 的 SHA256，受保护读回函数按唯一 Job、
 execution、隔离前缀及对象代际定位报告，复用原报告身份与时点检查；它不打印
 URI 或金额。当前尚无调用该读回函数的真实执行入口；列表和读取权限仍须实证。
+
+`scripts/execute_account_cash_job.py` connects the existing protected target
+preflight, image verification, temporary Job lifecycle and report readback. It
+accepts one selected profile from an explicitly dispatched protected runner,
+resolves the expected account from existing private target configuration, and
+requires the original pre-build `CASH_BUILD_INPUT` for that target. It reuses
+the existing single-execution, ownership, cleanup and before/after baseline
+checks; the report lookup accepts structured Cloud Run `jsonPayload` as well as
+text payload, while still checking the exact execution and report generation.
+The script does not add a schedule or workflow. Its present checks are synthetic;
+actual use still requires the original protected build input, the existing target
+configuration and a reviewed caller, plus verification of runtime identity,
+network and storage conditions. A current balance is never an expected value.
