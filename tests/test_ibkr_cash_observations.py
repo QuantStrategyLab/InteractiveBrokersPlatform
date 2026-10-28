@@ -200,3 +200,14 @@ def test_invalid_or_orphan_source_details_do_not_claim_source_scope():
     assert inspect_cash_source_details(details, cash_observations=cash, observed_at=TIME)['status'] == 'INVALID'
     cash['invalid_fields'] = [{'currency':'USD', 'source_tag':'FullAvailableFunds'}]
     assert inspect_cash_source_details(details, cash_observations=cash, observed_at=TIME)['status'] == 'INVALID'
+
+
+def test_source_details_reject_cash_attachment_when_selected_cash_disagrees():
+    from application.ibkr_cash_observations import inspect_cash_source_details
+    cash = attachment()
+    details = {'observed_at': TIME, 'fields': [{'currency': 'USD', 'source_tag': 'CashBalance',
+        'source_method': 'account_values_cache', 'model_scope': 'no_model_code',
+        'value_representation': 'native_text', 'segment_key': 'unsuffixed'}]}
+    result = inspect_cash_source_details(details, cash_observations=cash, observed_at=TIME,
+        selected_cash={'source_tag': 'CashBalance', 'cash_balance': '999999'})
+    assert result['status'] == 'INVALID' and result['fields'] == {}

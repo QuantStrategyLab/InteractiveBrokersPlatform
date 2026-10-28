@@ -242,12 +242,12 @@ def build_cash_source_details(rows, *, observed_at):
         for (currency, tag), detail in sorted(details.items())])
 
 
-def inspect_cash_source_details(value, *, cash_observations, observed_at, currency="USD"):
+def inspect_cash_source_details(value, *, cash_observations, observed_at, currency="USD", selected_cash=None):
     """Expose bounded metadata only for validated, present cash values."""
     result = dict(status="NOT_REPORTED" if value is None else "INVALID", fields={})
     if (not isinstance(value, Mapping) or set(value) != {"observed_at", "fields"}
             or value["observed_at"] != observed_at or not isinstance(value["fields"], list)
-            or inspect_cash_observations(cash_observations, observed_at=observed_at)["status"] != "OBSERVED_FIELDS_ONLY"):
+            or inspect_cash_observations(cash_observations, observed_at=observed_at, currency=currency, selected_cash=selected_cash)["status"] != "OBSERVED_FIELDS_ONLY"):
         return result
     allowed = {(row["currency"], row["source_tag"]) for row in cash_observations.get("values", [])}
     details = {}
