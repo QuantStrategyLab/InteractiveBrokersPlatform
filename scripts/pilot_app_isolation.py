@@ -63,6 +63,7 @@ def prepared(ctx, before, group, desired, source, *, phase="isolation"):
             raise pilot.ReleaseError("application_secret_scope_unverified")
         kept.append(copy.deepcopy(row))
     overrides = dict(IB_ACCOUNT_GROUP_CONFIG_JSON=json.dumps({"groups": {groups[0]: asdict(group)}}),
+        LIFECYCLE_PERFORMANCE_BUCKET="",
         GCP_PROJECT_ID=ctx.project, GOOGLE_CLOUD_PROJECT=ctx.project,
         PILOT_EXPECTED_TARGET=json.dumps(dict(project=ctx.project, accounts=list(group.account_ids),
             host=group.ib_gateway_instance_name, port=group.ib_gateway_port, client_id=group.ib_client_id,

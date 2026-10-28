@@ -81,7 +81,8 @@ def test_application_job_retains_binding_but_drops_notification_and_credential_r
         image="us-central1-docker.pkg.dev/synthetic-project/runtime/app@" + job.cloud.BASE,
         resources={"limits": {"cpu": "1", "memory": "512Mi"}})
     env = revision["spec"]["containers"][0]["env"]
-    env.extend([dict(name="ACCOUNT_GROUP", value="synthetic"), dict(name="GLOBAL_TELEGRAM_CHAT_ID", value="synthetic-chat"),
+    env.extend([dict(name="ACCOUNT_GROUP", value="synthetic"), dict(name="LIFECYCLE_PERFORMANCE_BUCKET", value="synthetic-bucket"),
+        dict(name="GLOBAL_TELEGRAM_CHAT_ID", value="synthetic-chat"),
         dict(name="NOTIFICATION_WEBHOOK_URL", value="https://synthetic.invalid"),
         dict(name="IB_ACCOUNT_GROUP_CONFIG_SECRET_NAME", value="synthetic-secret"),
         dict(name="IBKR_API_KEY", valueFrom={"secretKeyRef": {"name": "synthetic-key", "key": "latest"}})])
@@ -98,6 +99,7 @@ def test_application_job_retains_binding_but_drops_notification_and_credential_r
     values = {row["name"]: row.get("value") for row in container["env"]}
     assert not any(isolation.SENSITIVE.search(name) for name in values)
     assert values["ACCOUNT_GROUP"] == "synthetic"
+    assert values["LIFECYCLE_PERFORMANCE_BUCKET"] == ""
     assert json.loads(values["IB_ACCOUNT_GROUP_CONFIG_JSON"])["groups"]["synthetic"]["ib_client_id"] == 7
     assert json.loads(values["PILOT_EXPECTED_TARGET"])["target"]["account_selector"] == ctx.target["account_selector"]
     assert before == original and tcp["spec"]["template"]["spec"]["template"]["spec"]["timeoutSeconds"] == "60"
