@@ -43,6 +43,8 @@ CI also validates the Cloud Run startup path, the QPK pin and an isolated TQQQ
 research consumer. Keep the offline and isolated jobs distinct when reporting
 results.
 
+Organization documentation rules are checked by `python scripts/check_style.py`, which also runs in CI as the `Documentation check` job.
+
 ## Naming and documentation
 
 - Developer documentation is English by default; Chinese siblings use
