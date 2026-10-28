@@ -7,6 +7,7 @@ import sys
 import pytest
 from quant_platform_kit.common.execution_receipts import attach_runtime_execution_receipt
 
+from scripts import project_ibkr_runtime_daily as daily
 from scripts.project_ibkr_runtime_daily import project_ibkr_runtime_daily
 from tests.test_publish_ibkr_account_facts import _report, _observability_publish_args
 
@@ -36,6 +37,114 @@ def test_missing_report_is_incomplete_and_does_not_mean_not_run():
     assert record['schedule']['state'] == 'unevaluable'
     assert result['read_errors'] == ['coverage_unconfirmed']
     assert record['runs'] == [] and record['fills']['count'] is None
+
+
+def test_archive_read_reuses_daily_listing_and_projects_only_verified_records(monkeypatch):
+    listed = []
+    prefix = EXPECTED['expected_report_prefix']
+    good = prefix + '/2026-09/20260930T010002Z.json'
+    bad = prefix + '/2026-09/20260930T010003Z.json'
+    report = source()
+
+    def listing(*, day, expected, now):
+        listed.append(day.isoformat())
+        return [good, bad] if day.isoformat() == '2026-09-30' else []
+
+    def load(uri, *, project_id):
+        assert project_id == EXPECTED['expected_project_id']
+        if uri == bad:
+            raise daily.account_facts_publisher._ProjectionError('private_failure')
+        return report
+
+    monkeypatch.setattr(daily.account_facts_archive, 'report_uris', listing)
+    monkeypatch.setattr(daily.account_facts_publisher, '_load_gcs_report', load)
+    result = daily.project_ibkr_runtime_daily_from_archive(expected=EXPECTED, target_key=TARGET,
+        business_date='2026-09-29', observed_at=OBSERVED)
+    assert listed == ['2026-09-29', '2026-09-30']
+    assert len(result['records'][0]['runs']) == 1
+    assert result['read_errors'] == ['coverage_unconfirmed', 'report_read_error']
+    rendered = json.dumps(result)
+    for private in (prefix, 'private_failure', 'U00000001', '12345.6700', 'private-run'):
+        assert private not in rendered
+
+
+def test_archive_truncation_or_listing_failure_never_claims_an_empty_day(monkeypatch):
+    prefix = EXPECTED['expected_report_prefix']
+    read_calls = []
+    monkeypatch.setattr(daily.account_facts_archive, 'report_uris',
+        lambda **kwargs: [f'{prefix}/2026-09/20260930T0000{i:02d}Z.json' for i in range(21)])
+    monkeypatch.setattr(daily.account_facts_publisher, '_load_gcs_report', lambda *args, **kwargs: read_calls.append(args))
+    result = daily.project_ibkr_runtime_daily_from_archive(expected=EXPECTED, target_key=TARGET,
+        business_date='2026-09-29', observed_at=OBSERVED)
+    assert result['read_errors'] == ['coverage_unconfirmed', 'read_truncated']
+    assert result['records'][0]['completeness'] == 'incomplete' and read_calls == []
+
+    def fail(**kwargs):
+        raise daily.account_facts_archive.ArchiveError('private-listing-details')
+
+    monkeypatch.setattr(daily.account_facts_archive, 'report_uris', fail)
+    result = daily.project_ibkr_runtime_daily_from_archive(expected=EXPECTED, target_key=TARGET,
+        business_date='2026-09-29', observed_at=OBSERVED)
+    assert result['read_errors'] == ['coverage_unconfirmed', 'list_failed']
+    assert 'private-listing-details' not in json.dumps(result) and read_calls == []
+
+    def listing_limit(**kwargs):
+        raise daily.account_facts_archive.ArchiveError('archive_listing_limit')
+
+    monkeypatch.setattr(daily.account_facts_archive, 'report_uris', listing_limit)
+    result = daily.project_ibkr_runtime_daily_from_archive(expected=EXPECTED, target_key=TARGET,
+        business_date='2026-09-29', observed_at=OBSERVED)
+    assert result['read_errors'] == ['coverage_unconfirmed', 'read_truncated'] and read_calls == []
+
+
+@pytest.mark.parametrize('day,start_before,start_first,end_last,end_after,now', [
+    ('2026-03-08', '2026-03-08T04:59:59Z', '2026-03-08T05:00:00Z',
+     '2026-03-09T03:59:59Z', '2026-03-09T04:00:00Z', '2026-03-09T06:00:00+00:00'),
+    ('2026-11-01', '2026-11-01T03:59:59Z', '2026-11-01T04:00:00Z',
+     '2026-11-02T04:59:59Z', '2026-11-02T05:00:00Z', '2026-11-02T07:00:00+00:00'),
+])
+def test_archive_business_day_boundaries_across_dst(monkeypatch, day, start_before, start_first, end_last, end_after, now):
+    prefix = EXPECTED['expected_report_prefix']
+    reports = {}
+    for index, instant in enumerate((start_before, start_first, end_last, end_after)):
+        report = source()
+        report.update(run_id=f'synthetic-{index}', started_at=instant, finished_at=instant)
+        reports[f'{prefix}/synthetic-{index}.json'] = report
+    monkeypatch.setattr(daily.account_facts_archive, 'report_uris',
+        lambda **kwargs: list(reports) if kwargs['day'].isoformat() == day else [])
+    monkeypatch.setattr(daily.account_facts_publisher, '_load_gcs_report', lambda uri, **kwargs: reports[uri])
+    result = daily.project_ibkr_runtime_daily_from_archive(expected=EXPECTED, target_key=TARGET,
+        business_date=day, observed_at=datetime.fromisoformat(now))
+    assert len(result['records'][0]['runs']) == 2
+    assert len(result['records'][0]['excluded_reports']) == 2
+    assert result['read_errors'] == ['coverage_unconfirmed']
+
+
+def test_archive_rejects_unsafe_prefix_before_listing(monkeypatch):
+    def unexpected(**kwargs):
+        pytest.fail('invalid prefix must not reach archive listing')
+
+    monkeypatch.setattr(daily.account_facts_archive, 'report_uris', unexpected)
+    result = daily.project_ibkr_runtime_daily_from_archive(
+        expected={**EXPECTED, 'expected_report_prefix': 'gs://private/../other/*'},
+        target_key=TARGET, business_date='2026-09-29', observed_at=OBSERVED)
+    assert result['read_errors'] == ['coverage_unconfirmed', 'list_failed']
+
+
+@pytest.mark.parametrize('stage', ['listing', 'read'])
+def test_archive_decode_failure_is_sanitized(monkeypatch, stage):
+    uri = EXPECTED['expected_report_prefix'] + '/2026-09/20260930T010002Z.json'
+
+    def fail(*args, **kwargs):
+        raise UnicodeDecodeError('utf-8', b'PRIVATE-CANARY\xff', 14, 15, 'invalid byte')
+
+    monkeypatch.setattr(daily.account_facts_archive, 'report_uris',
+        fail if stage == 'listing' else lambda **kwargs: [uri])
+    monkeypatch.setattr(daily.account_facts_publisher, '_load_gcs_report', fail)
+    result = daily.project_ibkr_runtime_daily_from_archive(expected=EXPECTED, target_key=TARGET,
+        business_date='2026-09-29', observed_at=OBSERVED)
+    assert result['read_errors'] == ['coverage_unconfirmed', 'list_failed' if stage == 'listing' else 'report_read_error']
+    assert 'PRIVATE-CANARY' not in json.dumps(result)
 
 
 def test_identity_mismatch_remains_unmatched_after_publisher_reload():

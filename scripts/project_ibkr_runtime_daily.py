@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import hashlib
 import re
+import subprocess
 from collections.abc import Mapping, Sequence
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from quant_platform_kit.common.execution_receipts import attach_execution_receipt
+from scripts import inspect_account_facts_archive as account_facts_archive
 from scripts import publish_account_facts_from_report as account_facts_publisher
 
 _ZONE = ZoneInfo("America/New_York")
@@ -21,6 +23,58 @@ _OPAQUE = re.compile(r"^[a-f0-9]{32}$")
 _STATUSES = frozenset({"ok", "success", "completed", "skipped", "error", "failed", "failure", "blocked"})
 _EXECUTION_STATUSES = frozenset({"no_op", "no_action", "no_signal", "no_rebalance", "skipped", "outside_market_hours", "submitted", "pending_reconciliation", "reconciliation_required", "unknown", "unknown_order", "blocked", "risk_blocked", "error", "failed", "failure", "dry_run", "previewed", "partial", "partially_filled", "filled", "completed"})
 _ACTIVITIES = {"no_action": "no_submission", "no_signal": "no_signal", "no_rebalance": "no_rebalance", "submitted": "submitted", "filled": "filled", "reconciliation_required": "reconciliation_required", "risk_blocked": "blocked", "failed": "failed"}
+
+
+def project_ibkr_runtime_daily_from_archive(
+    *, expected: Mapping[str, Any], target_key: str, business_date: str, observed_at: datetime,
+) -> dict[str, Any]:
+    """Read a bounded set from the existing protected report prefix and project it.
+
+    Filename dates are only a search window, not evidence of complete coverage.
+    No object path or raw report is included in the returned projection.
+    """
+    empty = project_ibkr_runtime_daily([], expected=expected, target_key=target_key,
+                                       business_date=business_date, observed_at=observed_at)
+    try:
+        prefix = expected["expected_report_prefix"]
+        project = expected["expected_project_id"]
+        if not isinstance(prefix, str) or not isinstance(project, str) or not project.strip():
+            raise ValueError
+        if any(c in prefix for c in "*[]\\\n\r") or any(part in {".", ".."} for part in prefix.split("/")):
+            raise ValueError
+        account_facts_publisher._source_report_uri(f"{prefix.rstrip('/')}/2000-01/20000101T000000Z.json", prefix)
+    except (KeyError, AttributeError, ValueError, account_facts_publisher._ProjectionError):
+        empty["read_errors"].append("list_failed")
+        return empty
+    day = date.fromisoformat(business_date)
+    utc_today = observed_at.astimezone(timezone.utc).date()
+    try:
+        uris = set()
+        for utc_day in (day, day + timedelta(days=1)):
+            if utc_day <= utc_today:
+                uris.update(account_facts_archive.report_uris(day=utc_day, expected=dict(expected), now=observed_at))
+    except account_facts_archive.ArchiveError as error:
+        empty["read_errors"].append("read_truncated" if str(error) == "archive_listing_limit" else "list_failed")
+        return empty
+    except (OSError, UnicodeError, subprocess.TimeoutExpired):
+        empty["read_errors"].append("list_failed")
+        return empty
+    if len(uris) > 20:
+        empty["read_errors"].append("read_truncated")
+        return empty
+    reports = []
+    read_failed = False
+    for uri in sorted(uris):
+        try:
+            account_facts_publisher._source_report_uri(uri, prefix)
+            reports.append(account_facts_publisher._load_gcs_report(uri, project_id=project))
+        except (account_facts_publisher._ProjectionError, OSError, UnicodeError, subprocess.TimeoutExpired):
+            read_failed = True
+    projection = project_ibkr_runtime_daily(reports, expected=expected, target_key=target_key,
+                                            business_date=business_date, observed_at=observed_at)
+    if read_failed:
+        projection["read_errors"].append("report_read_error")
+    return projection
 
 
 def project_ibkr_runtime_daily(
