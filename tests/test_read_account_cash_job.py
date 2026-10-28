@@ -118,3 +118,9 @@ def test_missing_ambiguous_or_untrusted_report_fails(monkeypatch, case):
         bucket.blob.return_value.download_as_bytes.side_effect = RuntimeError("generation changed")
     with pytest.raises((ValueError, RuntimeError)):
         reader.readback(**args)
+
+
+def test_cloud_run_structured_json_payload_is_read(monkeypatch):
+    args, _, _, _ = fixture(monkeypatch)
+    args["logs"][0]["jsonPayload"] = json.loads(args["logs"][0].pop("textPayload"))
+    assert reader.readback(**args)["saved_readback_verified"] is True

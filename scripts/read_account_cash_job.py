@@ -38,10 +38,12 @@ def readback(expected, *, actual_job, document, execution, logs, namespace, regi
                 or row.get("labels", {}).get("run.googleapis.com/execution_name") != name
                 or not started <= stamp <= finished):
             raise ValueError("log_identity_invalid")
-        try:
-            payload = json.loads(row.get("textPayload", ""))
-        except (TypeError, json.JSONDecodeError):
-            continue
+        payload = row.get("jsonPayload")
+        if payload is None:
+            try:
+                payload = json.loads(row.get("textPayload", ""))
+            except (TypeError, json.JSONDecodeError):
+                continue
         if isinstance(payload, dict) and payload.get("status") == "observation_saved":
             digest = payload.get("report_uri_sha256")
             if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
