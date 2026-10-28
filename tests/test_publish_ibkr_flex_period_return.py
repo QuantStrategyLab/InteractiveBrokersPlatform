@@ -345,7 +345,10 @@ def test_transport_failures_are_fixed_one_attempt(monkeypatch, capsys, error, st
     opener = Opener(error=error)
     monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
     assert cli.main() == 1
-    assert json.loads(capsys.readouterr().out) == _missing_executions(status)
+    expected = _missing_executions(status)
+    if isinstance(error, HTTPError) and 300 <= error.code < 500:
+        expected["period_return_http_status"] = error.code
+    assert json.loads(capsys.readouterr().out) == expected
     assert len(opener.calls) == 1
 
 
@@ -649,7 +652,9 @@ def test_execution_transport_failure_is_one_attempt_and_redacted(monkeypatch, ca
     monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
     assert cli.main() == 1
     output = capsys.readouterr().out
-    assert json.loads(output)["executions_status"] == status and "synthetic-private-value" not in output
+    result = json.loads(output)
+    assert result["executions_status"] == status and "synthetic-private-value" not in output
+    assert result.get("executions_http_status") == (error.code if isinstance(error, HTTPError) and 300 <= error.code < 500 else None)
     assert len(opener.calls) == 2
 
 
@@ -755,3 +760,66 @@ def test_optional_nav_amount_uses_existing_post_and_never_reaches_safe_stdout(mo
     assert all(params == gets[0] for params in gets) and len(gets) == (2 if pending else 1)
     assert not any(value in output for value in ("DU0000000", "98765.432101", "99999.876543", "1000.012345",
         "234.432097", "77777.555555", "-44444.555555", "synthetic-flex-token", "synthetic-sync-token"))
+
+
+@pytest.mark.parametrize("function,field,payload", [
+    (cli.publish_period_return, "period_return_http_status", {}),
+    (cli.publish_executions, "executions_http_status", {}),
+    (cli.publish_external_flow, "external_flow_http_status", {"externalFlow": {"windows": []}}),
+])
+@pytest.mark.parametrize("code", [302, 403, 429, 503, 403.0, True, "403", None])
+@pytest.mark.parametrize("http_error", [False, True])
+def test_rejection_status_is_bounded_and_body_is_never_read(monkeypatch, capsys, function, field, payload, code, http_error):
+    class RejectedResponse:
+        status = code
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            pass
+        def read(self, *_args):
+            pytest.fail("rejected response body must not be read")
+
+    class RejectingOpener:
+        calls = 0
+        def open(self, *_args, **_kwargs):
+            self.calls += 1
+            if http_error:
+                raise HTTPError("https://synthetic.invalid/private", code, "synthetic-secret", {}, None)
+            return RejectedResponse()
+
+    opener = RejectingOpener()
+    monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
+    diagnostics = {}
+    result = function(payload, sync_token="synthetic-secret", expected_account_key="synthetic-key", diagnostics=diagnostics)
+    valid = type(code) is int and 300 <= code < 500
+    assert result == ("sync_rejected" if valid or code == 403.0 else "sync_unknown")
+    assert diagnostics == ({field: code} if valid else {})
+    assert opener.calls == 1
+    assert "synthetic-secret" not in capsys.readouterr().out
+
+
+def test_main_reports_each_rejected_endpoint_without_exposing_content(monkeypatch, capsys):
+    configure(monkeypatch)
+    session = FlexSession(xml())
+    monkeypatch.setattr(cli.requests, "Session", lambda: session)
+    ledger = {"cashflow_source_diagnostic": {}, "nav_source_diagnostic": {},
+              "executions": {"status": "available", "diagnostic": {}},
+              "external_flow_facts": {"status": "available", "period": {}}}
+    monkeypatch.setattr(cli, "_collect_configured_ledger", lambda *_args: ledger)
+    monkeypatch.setattr(cli, "build_ibkr_period_return", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(cli, "build_ibkr_executions", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(cli, "build_ibkr_external_flow", lambda *_args, **_kwargs: {"externalFlow": {"windows": []}})
+    codes = {cli.SYNC_URL: 403, cli.EXECUTIONS_SYNC_URL: 429, cli.EXTERNAL_FLOW_SYNC_URL: 302}
+    calls = []
+    class RejectedOpener:
+        def open(self, request, **_kwargs):
+            calls.append(request.full_url)
+            raise HTTPError(request.full_url, codes[request.full_url], "synthetic-secret", {}, None)
+    monkeypatch.setattr(cli, "build_opener", lambda *_args: RejectedOpener())
+    assert cli.main() == 1
+    output = capsys.readouterr().out
+    result = json.loads(output)
+    assert result["status"] == result["executions_status"] == result["external_flow_status"] == "sync_rejected"
+    assert (result["period_return_http_status"], result["executions_http_status"], result["external_flow_http_status"]) == (403, 429, 302)
+    assert calls == [cli.SYNC_URL, cli.EXECUTIONS_SYNC_URL, cli.EXTERNAL_FLOW_SYNC_URL]
+    assert "synthetic-secret" not in output and "synthetic-sync-token" not in output
