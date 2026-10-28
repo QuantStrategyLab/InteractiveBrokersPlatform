@@ -13,9 +13,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from quant_platform_kit.common.execution_receipts import attach_execution_receipt
-from scripts.publish_account_facts_from_report import (
-    _ProjectionError, _observed_timestamp, _validate_report_account_identity,
-)
+from scripts import publish_account_facts_from_report as account_facts_publisher
 
 _ZONE = ZoneInfo("America/New_York")
 _IDENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$")
@@ -59,20 +57,20 @@ def project_ibkr_runtime_daily(
     for report in reports:
         try:
             if not isinstance(report, Mapping):
-                raise _ProjectionError("runtime_report_invalid")
-            _validate_report_account_identity(report, **expected)
+                raise account_facts_publisher._ProjectionError("runtime_report_invalid")
+            account_facts_publisher._validate_report_account_identity(report, **expected)
             if report.get("strategy_profile") != profile:
-                raise _ProjectionError("runtime_target_mismatch")
-        except (KeyError, TypeError, _ProjectionError):
+                raise account_facts_publisher._ProjectionError("runtime_target_mismatch")
+        except (KeyError, TypeError, account_facts_publisher._ProjectionError):
             unmatched.append({"run_id": None, "platform": None, "service": None,
                               "strategy_profile": None, "account_scope": None, "reason": "identity_unverified"})
             continue
         try:
-            start = _observed_timestamp(report.get("started_at"))
-            end = _observed_timestamp(report.get("finished_at"))
+            start = account_facts_publisher._observed_timestamp(report.get("started_at"))
+            end = account_facts_publisher._observed_timestamp(report.get("finished_at"))
             if end < start or end > observed:
-                raise _ProjectionError("observation_invalid")
-        except _ProjectionError:
+                raise account_facts_publisher._ProjectionError("observation_invalid")
+        except account_facts_publisher._ProjectionError:
             excluded.append({"run_id": None, "reason": "invalid_run_time"})
             continue
         if start.astimezone(_ZONE).date() != day:
@@ -97,10 +95,10 @@ def project_ibkr_runtime_daily(
         try:
             if report.get("execution_receipt") is not None:
                 receipt = attach_execution_receipt(dict(report), report["execution_receipt"])["execution_receipt"]
-                receipt_time = _observed_timestamp(receipt["observed_at"])
+                receipt_time = account_facts_publisher._observed_timestamp(receipt["observed_at"])
                 if not start.replace(microsecond=0) <= receipt_time <= end:
                     receipt = None
-        except (TypeError, ValueError, _ProjectionError):
+        except (TypeError, ValueError, account_facts_publisher._ProjectionError):
             pass
         summary = report.get("summary")
         execution = summary.get("execution_status") if isinstance(summary, Mapping) else None

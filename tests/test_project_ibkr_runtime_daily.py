@@ -1,6 +1,8 @@
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
+import subprocess
+import sys
 
 import pytest
 from quant_platform_kit.common.execution_receipts import attach_runtime_execution_receipt
@@ -34,6 +36,21 @@ def test_missing_report_is_incomplete_and_does_not_mean_not_run():
     assert record['schedule']['state'] == 'unevaluable'
     assert result['read_errors'] == ['coverage_unconfirmed']
     assert record['runs'] == [] and record['fills']['count'] is None
+
+
+def test_identity_mismatch_remains_unmatched_after_publisher_reload():
+    script = '''
+import importlib
+from tests.test_project_ibkr_runtime_daily import source, project
+import scripts.publish_account_facts_from_report as publisher
+importlib.reload(publisher)
+report = source()
+report["platform"] = "other"
+result = project([report])
+assert result["unmatched_reports"][0]["reason"] == "identity_unverified"
+assert result["records"][0]["runs"] == []
+'''
+    subprocess.run([sys.executable, '-c', script], check=True, capture_output=True, text=True)
 
 
 def test_real_contract_receipt_binding_and_private_fields_stay_out():
