@@ -142,7 +142,7 @@ def read_native_funding_inputs(ib, account_ids, *, configured_quantity_step, tim
         complete_cash_obligations_verified=False, account_fee_plan_verified=False, account_trading_permissions_verified=False)
 
 
-def observe(runtime, build_facts, env, *, summary_reader=None, funding_reader=None):
+def observe(runtime, build_facts, env, *, summary_reader=None, funding_reader=None, report_sink=None):
     job, execution = env.get("CLOUD_RUN_JOB", ""), env.get("CLOUD_RUN_EXECUTION", "")
     if (not re.fullmatch(r"[a-z][a-z0-9-]{0,62}", job)
             or not re.fullmatch(re.escape(job) + r"-[a-z0-9]+", execution)
@@ -186,7 +186,10 @@ def observe(runtime, build_facts, env, *, summary_reader=None, funding_reader=No
         uri = runtime.persist_execution_report(report, dry_run_only_override=True)
         if not isinstance(uri, str) or not uri.startswith("gs://"):
             raise ValueError("private_report_save_unverified")
-        print("execution_report " + uri, flush=True)
+        if report_sink is None:
+            print("execution_report " + uri, flush=True)
+        else:
+            report_sink(uri)
     return result
 
 

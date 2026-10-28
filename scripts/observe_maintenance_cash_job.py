@@ -29,7 +29,7 @@ NETWORK_KEYS = {"run.googleapis.com/network-interfaces", "run.googleapis.com/vpc
 ENTRY = Path(__file__).with_name("maintenance_cash_job_entry.py")
 
 
-def job_document(revision, job, entry):
+def job_document(revision, job, entry, *, image_digest=IMAGE_DIGEST):
     """Translate only reviewed service fields; keep every env/Secret reference."""
     spec = revision["spec"]
     if set(spec) - {"containers", "serviceAccountName", "timeoutSeconds", "containerConcurrency", "volumes"}:
@@ -38,7 +38,7 @@ def job_document(revision, job, entry):
     if set(container) - {"image", "name", "env", "resources", "workingDir", "volumeMounts",
             "command", "args", "ports", "startupProbe", "livenessProbe"}:
         raise pilot.ReleaseError("job_container_translation_unsupported")
-    if (not container["image"].endswith("@" + IMAGE_DIGEST)
+    if (not container["image"].endswith("@" + image_digest)
             or not spec.get("serviceAccountName") or not container.get("resources", {}).get("limits")
             or any(row["name"].startswith(("K_", "CLOUD_RUN_")) for row in container.get("env", []))):
         raise pilot.ReleaseError("job_runtime_unverified")
