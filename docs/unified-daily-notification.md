@@ -49,3 +49,9 @@ produce an `actually_ran=false` marker without inventing zero trading counts.
 Fill counts require individual execution identifiers. A completed order response
 proves an order completed, not how many fills it received. Missing fill counts
 remain unknown; confirmed routine orders still appear without a false diagnostic.
+
+Runtime Guard notifications keep the localized summary and workflow link. Raw
+provider audit entries remain in their original restricted logs and are not
+passed as Telegram technical details, including when the deployed formatter is
+pinned to an older shared package. Guard detection, deduplication and failure
+exit codes are unchanged.
