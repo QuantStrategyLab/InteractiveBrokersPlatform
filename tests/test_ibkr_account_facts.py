@@ -257,3 +257,26 @@ def test_optional_schedule_is_not_reconstructed_from_legacy_cache_or_misbound_ro
     snapshot.metadata["cash_schedule_rows"] = ({"account_id": "DU999", "currency": "USD",
         "source_tag": "SettledCashByDate", "raw_value": "20991231:100"},)
     assert build_ibkr_account_facts(snapshot) == facts
+
+
+def test_cash_source_scope_survives_private_runtime_report(tmp_path):
+    from types import SimpleNamespace
+    from application.ibkr_cash_observations import capture_cash_observation_rows, inspect_cash_observations
+    from quant_platform_kit.common.runtime_reports import build_runtime_report_base, finalize_runtime_report, write_runtime_report_json
+
+    snapshot = _snapshot(observed_at=datetime(2026, 9, 30, 12, tzinfo=timezone.utc),
+        cash_balances=({'account_id': 'DU123', 'currency': 'USD', 'CashBalance': 1.25},))
+    snapshot.metadata['cash_observation_rows'] = capture_cash_observation_rows([
+        SimpleNamespace(account='DU123', currency='USD', tag='CashBalance', value='1.250000', modelCode='')],
+        account_ids=('DU123',), source_method='account_values_cache')
+    facts = build_ibkr_account_facts(snapshot)
+    report = build_runtime_report_base(platform='interactive_brokers', deploy_target='offline',
+        service_name='example-runtime', strategy_profile='example', run_id='cash-scope', run_source='test')
+    finalize_runtime_report(report, status='ok', summary={'account_facts': facts})
+    path = write_runtime_report_json(report, output_path=tmp_path / 'report.json')
+    stored = json.loads(path.read_text(encoding='utf-8'))['summary']['account_facts']
+    safe = inspect_cash_observations(stored['broker_cash_observations'], observed_at=stored['observed_at'])
+    assert safe['source_details']['CashBalance'] == {
+        'source_method': 'account_values_cache', 'model_scope': 'no_model_code',
+        'value_representation': 'native_text', 'segment_key': 'unsuffixed'}
+    assert safe['spendable_cash_verified'] is False

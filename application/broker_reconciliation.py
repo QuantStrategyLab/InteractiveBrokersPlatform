@@ -284,6 +284,8 @@ class IBKRReconciliationObservations:
     cash: tuple[Mapping[str, object], ...]
     open_orders: tuple[Mapping[str, object], ...]
     recent_executions: tuple[Mapping[str, object], ...]
+    # The v1 receipt has no per-surface coverage information.
+    comparison_covered: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -294,6 +296,7 @@ class IBKRReconciliationCandidate:
     recovery_blockers: tuple[BrokerReconciliationFinding, ...]
     expected_digests_configured: bool
     execution_ledger_records_count: int
+    comparison_covered: frozenset[str] = frozenset()
 
     @property
     def permits_active_lkg(self) -> bool:
@@ -379,6 +382,7 @@ def collect_read_only_reconciliation_observations(
     return IBKRReconciliationObservations(
         account_scope={"account_ids": sorted(selected_account_ids)},
         account_identity_match=identity_match,
+        comparison_covered=frozenset({"open_orders"}) if identity_match else frozenset(),
         positions=tuple(_sorted_records(positions)),
         cash=tuple(
             _sorted_records(
@@ -525,6 +529,7 @@ def build_reconciliation_candidate(
         recovery_blockers=blockers,
         expected_digests_configured=expected_digests is not None,
         execution_ledger_records_count=ledger_records_count,
+        comparison_covered=observations.comparison_covered,
     )
 
 
