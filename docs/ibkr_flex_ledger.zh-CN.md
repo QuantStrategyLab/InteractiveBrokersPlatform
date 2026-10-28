@@ -248,7 +248,10 @@ ACK 恰好包含 `ok/stored/unchanged/account_key/period/currency/method`，布�
 超时、5xx、超长或无效 ACK 返回 `sync_unknown`，立即停止，不自动重发；3xx/4xx 返回
 `sync_rejected`。主发布流程还会分别输出收益、成交和资金流端点的
 `period_return_http_status`、`executions_http_status`、`external_flow_http_status`，
-仅限实际收到的整数 3xx/4xx；不读取拒绝响应正文，不输出账户、收益数值、令牌或原始异常。
+仅限实际收到的整数 100–599；流水专用模式使用同一字段，附加账户按 slot 输出在
+`additional_return_sync_diagnostics`。未知结果另按端点输出固定 `*_sync_reason`：
+`http_response`、`invalid_ack` 或 `transport_error`。不读取非 200 响应正文，不输出账户、
+收益数值、令牌或原始异常。
 `published/unchanged` 退出码为 0，`disabled/configuration_incomplete` 为 2，其余为 1。
 
 此入口只更新每账户最新一个原生期间，不生成每日收益曲线、不触发交易或通知，不新增

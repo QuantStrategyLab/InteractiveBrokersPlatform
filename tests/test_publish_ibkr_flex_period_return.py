@@ -329,7 +329,9 @@ def test_invalid_ack_never_claims_success_or_retries(monkeypatch, capsys, patch,
     opener = Opener(patch=patch, raw=raw)
     monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
     assert cli.main() == 1
-    assert json.loads(capsys.readouterr().out) == _missing_executions("sync_unknown")
+    output = json.loads(capsys.readouterr().out)
+    assert output.pop("period_return_sync_reason") == "invalid_ack"
+    assert output == _missing_executions("sync_unknown")
     assert len(opener.calls) == 1
 
 
@@ -346,8 +348,12 @@ def test_transport_failures_are_fixed_one_attempt(monkeypatch, capsys, error, st
     monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
     assert cli.main() == 1
     expected = _missing_executions(status)
-    if isinstance(error, HTTPError) and 300 <= error.code < 500:
+    if isinstance(error, HTTPError):
         expected["period_return_http_status"] = error.code
+        if status == "sync_unknown":
+            expected["period_return_sync_reason"] = "http_response"
+    else:
+        expected["period_return_sync_reason"] = "transport_error"
     assert json.loads(capsys.readouterr().out) == expected
     assert len(opener.calls) == 1
 
@@ -636,6 +642,7 @@ def test_execution_ack_mismatch_is_unknown_without_retry_or_losing_twr(monkeypat
     assert cli.main() == 1
     result = json.loads(capsys.readouterr().out)
     assert result["status"] == "published" and result["executions_status"] == "sync_unknown"
+    assert result["executions_sync_reason"] == "invalid_ack"
     assert len(opener.calls) == 2
 
 
@@ -654,7 +661,9 @@ def test_execution_transport_failure_is_one_attempt_and_redacted(monkeypatch, ca
     output = capsys.readouterr().out
     result = json.loads(output)
     assert result["executions_status"] == status and "synthetic-private-value" not in output
-    assert result.get("executions_http_status") == (error.code if isinstance(error, HTTPError) and 300 <= error.code < 500 else None)
+    assert result.get("executions_http_status") == (error.code if isinstance(error, HTTPError) else None)
+    if status == "sync_unknown":
+        assert result["executions_sync_reason"] == ("http_response" if isinstance(error, HTTPError) else "transport_error")
     assert len(opener.calls) == 2
 
 
@@ -793,7 +802,10 @@ def test_rejection_status_is_bounded_and_body_is_never_read(monkeypatch, capsys,
     result = function(payload, sync_token="synthetic-secret", expected_account_key="synthetic-key", diagnostics=diagnostics)
     valid = type(code) is int and 300 <= code < 500
     assert result == ("sync_rejected" if valid or code == 403.0 else "sync_unknown")
-    assert diagnostics == ({field: code} if valid else {})
+    expected = {field: code} if type(code) is int and 100 <= code <= 599 else {}
+    if code in (503, True, "403", None) and code != 403.0:
+        expected[field.replace("_http_status", "_sync_reason")] = "http_response"
+    assert diagnostics == expected
     assert opener.calls == 1
     assert "synthetic-secret" not in capsys.readouterr().out
 

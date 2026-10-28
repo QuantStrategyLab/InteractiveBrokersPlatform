@@ -243,17 +243,26 @@ def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _rejection_status(code: object, diagnostics: dict[str, int] | None, field: str) -> str:
+def _rejection_status(code: object, diagnostics: dict[str, Any] | None, field: str) -> str:
     try:
         rejected = 300 <= code < 500
     except TypeError:
-        return "sync_unknown"
-    if rejected and type(code) is int and diagnostics is not None:
-        diagnostics[field] = code
+        return _unknown(diagnostics, field.replace("_http_status", "_sync_reason"), "http_response")
+    if diagnostics is not None:
+        if type(code) is int and 100 <= code <= 599:
+            diagnostics[field] = code
+        if not rejected:
+            diagnostics[field.replace("_http_status", "_sync_reason")] = "http_response"
     return "sync_rejected" if rejected else "sync_unknown"
 
 
-def publish_period_return(payload: Mapping[str, Any], *, sync_token: str, expected_account_key: str, historical: bool = False, diagnostics: dict[str, int] | None = None) -> str:
+def _unknown(diagnostics, field, reason):
+    if diagnostics is not None:
+        diagnostics[field] = reason
+    return "sync_unknown"
+
+
+def publish_period_return(payload: Mapping[str, Any], *, sync_token: str, expected_account_key: str, historical: bool = False, diagnostics: dict[str, Any] | None = None) -> str:
     """One POST. A lost/invalid ACK is unknown, never success or an automatic retry."""
     request = Request(SYNC_URL + ("?historical=true" if historical else ""), data=json.dumps(payload, separators=(",", ":")).encode(),
         headers={"Authorization": f"Bearer {sync_token}", "Content-Type": "application/json",
@@ -265,8 +274,11 @@ def publish_period_return(payload: Mapping[str, Any], *, sync_token: str, expect
                 return _rejection_status(response.status, diagnostics, "period_return_http_status")
             body = response.read(_ACK_LIMIT + 1)
             if not isinstance(body, bytes) or len(body) > _ACK_LIMIT:
-                return "sync_unknown"
-            ack = json.loads(body, object_pairs_hook=_unique_keys)
+                return _unknown(diagnostics, "period_return_sync_reason", "invalid_ack")
+            try:
+                ack = json.loads(body, object_pairs_hook=_unique_keys)
+            except (ValueError, UnicodeError):
+                return _unknown(diagnostics, "period_return_sync_reason", "invalid_ack")
             if (
                 not isinstance(ack, dict) or set(ack) != {"ok", "stored", "unchanged", "account_key", "period", "currency", "method"}
                 or ack.get("ok") is not True or ack.get("stored") is not True
@@ -274,15 +286,15 @@ def publish_period_return(payload: Mapping[str, Any], *, sync_token: str, expect
                 or ack.get("period") != payload["period"] or ack.get("currency") != payload["currency"]
                 or ack.get("method") != payload["method"]
             ):
-                return "sync_unknown"
+                return _unknown(diagnostics, "period_return_sync_reason", "invalid_ack")
             return "unchanged" if ack["unchanged"] else "published"
     except HTTPError as exc:
         return _rejection_status(exc.code, diagnostics, "period_return_http_status")
     except Exception:
-        return "sync_unknown"
+        return _unknown(diagnostics, "period_return_sync_reason", "transport_error")
 
 
-def publish_executions(payload: Mapping[str, Any], *, sync_token: str, expected_account_key: str, diagnostics: dict[str, int] | None = None) -> str:
+def publish_executions(payload: Mapping[str, Any], *, sync_token: str, expected_account_key: str, diagnostics: dict[str, Any] | None = None) -> str:
     """One independent execution POST; never retry an uncertain remote write."""
     request = Request(EXECUTIONS_SYNC_URL, data=json.dumps(payload, separators=(",", ":")).encode(),
         headers={"Authorization": f"Bearer {sync_token}", "Content-Type": "application/json",
@@ -294,8 +306,11 @@ def publish_executions(payload: Mapping[str, Any], *, sync_token: str, expected_
                 return _rejection_status(response.status, diagnostics, "executions_http_status")
             body = response.read(_ACK_LIMIT + 1)
             if not isinstance(body, bytes) or len(body) > _ACK_LIMIT:
-                return "sync_unknown"
-            ack = json.loads(body, object_pairs_hook=_unique_keys)
+                return _unknown(diagnostics, "executions_sync_reason", "invalid_ack")
+            try:
+                ack = json.loads(body, object_pairs_hook=_unique_keys)
+            except (ValueError, UnicodeError):
+                return _unknown(diagnostics, "executions_sync_reason", "invalid_ack")
             if (
                 not isinstance(ack, dict)
                 or set(ack) != {"ok", "stored", "unchanged", "account_key", "period", "record_count"}
@@ -304,12 +319,12 @@ def publish_executions(payload: Mapping[str, Any], *, sync_token: str, expected_
                 or ack.get("period") != payload["period"] or type(ack.get("record_count")) is not int
                 or ack.get("record_count") != len(payload["records"])
             ):
-                return "sync_unknown"
+                return _unknown(diagnostics, "executions_sync_reason", "invalid_ack")
             return "unchanged" if ack["unchanged"] else "published"
     except HTTPError as exc:
         return _rejection_status(exc.code, diagnostics, "executions_http_status")
     except Exception:
-        return "sync_unknown"
+        return _unknown(diagnostics, "executions_sync_reason", "transport_error")
 
 
 def publish_external_flow(payload, *, sync_token, expected_account_key, diagnostics=None):
@@ -325,19 +340,22 @@ def publish_external_flow(payload, *, sync_token, expected_account_key, diagnost
                 return _rejection_status(response.status, diagnostics, "external_flow_http_status")
             body = response.read(_ACK_LIMIT + 1)
             if not isinstance(body, bytes) or len(body) > _ACK_LIMIT:
-                return "sync_unknown"
-            ack = json.loads(body, object_pairs_hook=_unique_keys)
+                return _unknown(diagnostics, "external_flow_sync_reason", "invalid_ack")
+            try:
+                ack = json.loads(body, object_pairs_hook=_unique_keys)
+            except (ValueError, UnicodeError):
+                return _unknown(diagnostics, "external_flow_sync_reason", "invalid_ack")
             if (not isinstance(ack, dict) or set(ack) != {"ok", "stored", "unchanged", "account_key", "window_count", "record_count", "readback_verified"}
                     or ack.get("ok") is not True or ack.get("stored") is not True or ack.get("readback_verified") is not True
                     or type(ack.get("unchanged")) is not bool or ack.get("account_key") != expected_account_key
                     or type(ack.get("record_count")) is not int or ack["record_count"] != expected_count
                     or type(ack.get("window_count")) is not int or ack["window_count"] != len(payload["externalFlow"]["windows"])):
-                return "sync_unknown"
+                return _unknown(diagnostics, "external_flow_sync_reason", "invalid_ack")
             return "unchanged" if ack["unchanged"] else "published"
     except HTTPError as exc:
         return _rejection_status(exc.code, diagnostics, "external_flow_http_status")
     except Exception:
-        return "sync_unknown"
+        return _unknown(diagnostics, "external_flow_sync_reason", "transport_error")
 
 
 def _external_flow_result(ledger, config, diagnostics=None):
@@ -380,7 +398,9 @@ def _cashflow_only():
         if config.get("report_period") and {k: ledger["period"][k] for k in ("from", "to")} != config["report_period"]:
             result = {"external_flow_status": "historical_period_mismatch"}
         else:
-            result = _external_flow_result(ledger, config)
+            diagnostics = {}
+            result = _external_flow_result(ledger, config, diagnostics)
+            result.update(diagnostics)
     except FlexReportPending:
         result = {"external_flow_status": "flex_pending"}
     except Exception:
@@ -455,7 +475,7 @@ def _collect_return_ledgers(config, session):
         for slot, target in {"primary": config, **config["additional_returns"]}.items()}
 
 
-def _publish_additional_return(ledger, config, observed_at):
+def _publish_additional_return(ledger, config, observed_at, *, diagnostics=None):
     try:
         payload = build_ibkr_period_return(ledger, observed_at=observed_at,
             **{key: config[key] for key in ("target_id", "source_binding_id", "account_scope", "expected_account_ids")})
@@ -466,7 +486,7 @@ def _publish_additional_return(ledger, config, observed_at):
     if config.get("report_date") and payload["period"] != {"from": config["report_date"], "to": config["report_date"]}:
         return "historical_period_mismatch"
     return publish_period_return(payload, sync_token=config["sync_token"],
-        expected_account_key=config["account_key"], **({"historical": True} if config.get("report_date") else {}))
+        expected_account_key=config["account_key"], diagnostics=diagnostics, **({"historical": True} if config.get("report_date") else {}))
 
 
 def main(argv: Sequence[str] = ()) -> int:
@@ -517,11 +537,15 @@ def main(argv: Sequence[str] = ()) -> int:
                 observed_at = datetime.now(timezone.utc)
                 if additional_only:
                     results = {}
+                    details = {}
                     for slot, target in config["additional_returns"].items():
-                        results[slot] = _publish_additional_return(ledgers[slot], target, observed_at)
+                        detail = {}
+                        results[slot] = _publish_additional_return(ledgers[slot], target, observed_at, diagnostics=detail)
+                        if detail:
+                            details[slot] = detail
                         if results[slot] not in {"published", "unchanged"}:
                             break
-                    print(json.dumps({"additional_returns": results}, sort_keys=True))
+                    print(json.dumps({"additional_returns": results, **({"additional_return_sync_diagnostics": details} if details else {})}, sort_keys=True))
                     return 0 if len(results) == len(config["additional_returns"]) and all(
                         value in {"published", "unchanged"} for value in results.values()) else 1
                 diagnostics["cashflow_source_diagnostic"] = ledger["cashflow_source_diagnostic"]
@@ -551,7 +575,10 @@ def main(argv: Sequence[str] = ()) -> int:
                 elif config["additional_returns"]:
                     results = diagnostics["additional_returns"] = {}
                     for slot, target in config["additional_returns"].items():
-                        results[slot] = _publish_additional_return(ledgers[slot], target, observed_at)
+                        detail = {}
+                        results[slot] = _publish_additional_return(ledgers[slot], target, observed_at, diagnostics=detail)
+                        if detail:
+                            diagnostics.setdefault("additional_return_sync_diagnostics", {})[slot] = detail
                         if results[slot] not in {"published", "unchanged"}:
                             break
     print(json.dumps({"status": status, **diagnostics}, sort_keys=True))
