@@ -69,6 +69,41 @@ def test_missing_twr_field_and_invalid_date_never_become_return_or_invented_date
     assert 'PRIVATE_CANARY' not in text
 
 
+@pytest.mark.parametrize(('section', 'expected'), [
+    (b'', {'section_count': 0, 'record_count': None, 'unsupported_record_count': 0}),
+    (b'<CorporateActions/>', {'section_count': 1, 'record_count': 0, 'unsupported_record_count': 0}),
+    (b'''<CorporateActions accountId="DU0000002">
+      <CorporateAction accountId="DU0000002" symbol="PRIVATE_ASSET" amount="7654.9876"/>
+      <CorporateAction description="PRIVATE_CANARY"/>
+      <Unknown privateKey="PRIVATE_CANARY"/>
+    </CorporateActions>''', {'section_count': 1, 'record_count': 2, 'unsupported_record_count': 1}),
+])
+def test_corporate_actions_native_counts_keep_absent_empty_and_private_values_distinct(
+    monkeypatch, capsys, section, expected,
+):
+    report = REPORT.replace(b'<CashTransactions/>', section + b'<CashTransactions/>')
+    status, out, text, session = run(monkeypatch, capsys, report)
+    assert status == 0
+    assert out['accounts']['additional-2']['sections']['CorporateActions'] == expected
+    assert out['accounts']['primary']['sections']['CorporateActions']['record_count'] is None
+    assert out['accounts']['additional-1']['sections']['CorporateActions']['record_count'] is None
+    assert [name for name, _ in session.calls] == ['SendRequest', 'GetStatement']
+    for private in (TOKEN, REFERENCE, 'DU000000', 'PRIVATE_ASSET', '7654.9876', 'PRIVATE_CANARY', 'privateKey'):
+        assert private not in text
+
+
+@pytest.mark.parametrize('tag', ['CorporateActions', 'CorporateAction'])
+def test_corporate_actions_container_and_row_cannot_cross_account_scope(monkeypatch, capsys, tag):
+    container_account = ' accountId="DU0000003"' if tag == 'CorporateActions' else ''
+    row_account = ' accountId="DU0000003"' if tag == 'CorporateAction' else ''
+    section = f'<CorporateActions{container_account}><CorporateAction{row_account}/></CorporateActions>'.encode()
+    report = REPORT.replace(b'<CashTransactions/>', section + b'<CashTransactions/>')
+    status, out, text, session = run(monkeypatch, capsys, report)
+    assert status == 1 and out['missing'] == ['flex_import_failed']
+    assert [name for name, _ in session.calls] == ['SendRequest', 'GetStatement']
+    assert 'DU000000' not in text
+
+
 @pytest.mark.parametrize('change', ['unknown', 'duplicate', 'primary_absent', 'row_mismatch', 'wrong_type'])
 def test_report_scope_and_type_never_relaxed(monkeypatch, capsys, change):
     report = REPORT

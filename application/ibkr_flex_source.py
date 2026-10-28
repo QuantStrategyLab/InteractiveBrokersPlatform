@@ -355,6 +355,7 @@ CONFIGURED_COVERAGE_SECTIONS = {
     "EquitySummaryInBase": "EquitySummaryByReportDateInBase",
     "CashReport": "CashReportCurrency",
     "CashTransactions": "CashTransaction",
+    "CorporateActions": "CorporateAction",
     "StmtFunds": "StatementOfFundsLine",
     "Trades": "Trade",
     "OpenPositions": "OpenPosition",
