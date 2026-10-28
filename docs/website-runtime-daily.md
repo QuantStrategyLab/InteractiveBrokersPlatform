@@ -43,3 +43,10 @@ the same trusted source configuration, never prints these values, and validates
 the receiver's account, target, date and observation in the acknowledgement.
 An error or an unverifiable acknowledgement is `unconfirmed`; no retry is made.
 The script does not provision credentials, register a target or schedule itself.
+
+The primary account-facts workflow has an isolated configuration comparison
+mode. It computes a nonce-bound digest from the primary and existing
+period-return settings without reading a report or publishing. The matching
+console-side digest verifies only the compared configuration, not freshness,
+authority, or delivery. The nonce is public and the digest is not confidential;
+keep comparison output in the existing private workflow logs.
