@@ -81,6 +81,20 @@ def verify_template(actual, desired):
         for row in task["containers"]:
             if row.get("resources", {}).get("limits", {}).get("cpu") == "1000m":
                 row["resources"]["limits"]["cpu"] = "1"
+    # Cloud Run omits the protobuf default empty string in its dry-run JSON.
+    # Only the explicitly blank lifecycle bucket may use that representation;
+    # all other environment differences remain subject to exact comparison.
+    actual_containers = left["template"]["spec"]["containers"]
+    desired_containers = right["template"]["spec"]["containers"]
+    if len(actual_containers) == len(desired_containers) == 1:
+        actual_env = actual_containers[0].get("env", [])
+        desired_env = desired_containers[0].get("env", [])
+        def lifecycle(rows):
+            return [row for row in rows if isinstance(row, dict) and row.get("name") == "LIFECYCLE_PERFORMANCE_BUCKET"]
+        actual_lifecycle, desired_lifecycle = lifecycle(actual_env), lifecycle(desired_env)
+        if (actual_lifecycle == [{"name": "LIFECYCLE_PERFORMANCE_BUCKET"}]
+                and desired_lifecycle == [{"name": "LIFECYCLE_PERFORMANCE_BUCKET", "value": ""}]):
+            actual_lifecycle[0]["value"] = ""
     if left != right:
         raise pilot.ReleaseError("job_template_readback_unverified")
     annotations = actual.get("metadata", {}).get("annotations", {})
