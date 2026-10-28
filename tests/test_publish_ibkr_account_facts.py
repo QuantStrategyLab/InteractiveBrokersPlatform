@@ -996,7 +996,24 @@ def test_workflow_ingress_diagnostic_is_manual_and_isolated_from_heartbeat():
     assert "GCP_" not in diagnostic_job
     assert "RUNTIME_HEARTBEAT_" not in diagnostic_job
     assert "IBKR_ACCOUNT_FACTS_SYNC_TOKEN: ${{ secrets.IBKR_ACCOUNT_FACTS_SYNC_TOKEN }}" in diagnostic_job
-    assert "run: python3 scripts/publish_account_facts_from_report.py" in diagnostic_job
+    diagnostic_step = diagnostic_job.split(
+        "      - name: Send one fixed account-facts ingress diagnostic\n", 1
+    )[1]
+    command = diagnostic_step.split("        run: ", 1)[1].splitlines()[0]
+    process = subprocess.run(
+        [sys.executable, "-S", *command.split()[1:]],
+        cwd=workflow.parents[2],
+        env={
+            "IBKR_ACCOUNT_FACTS_TARGET": "ingress-diagnostic",
+            "QSL_CONSOLE_BASE_URL": "https://example.invalid",
+        },
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert process.returncode == 1
+    assert process.stdout.strip() == "skipped:publish_auth_unavailable"
+    assert process.stderr == ""
 
 
 def test_workflow_scheduled_publisher_is_independent_and_single_target():
