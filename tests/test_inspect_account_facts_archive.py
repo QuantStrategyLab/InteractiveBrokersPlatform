@@ -230,3 +230,96 @@ def test_unexpected_error_exports_no_exception_message(monkeypatch, capsys):
     result = json.loads(output)
     assert result["error_type"] == "KeyError"
     assert result["report_name"] == "20260930T010000Z.json"
+
+
+def test_profile_slot_is_unique_and_checked_before_archive_access(monkeypatch):
+    fields = {'service_name': 'private-service', 'account_scope': 'private-scope',
+              'account_selector': ('DU0000001',), 'deployment_selector': 'private-deployment'}
+    slot = {'project_id': 'private-project', **fields}
+    target = {**fields, 'account_selector': ['DU0000001']}
+    monkeypatch.setattr(archive.binding, 'configuration', lambda env: (
+        {'additional-2': slot}, {'global_etf_rotation': ('private-service', target)},
+        'private-project', 'us-central1'))
+    assert archive.resolve_profile_slot({}) == 'additional-2'
+    monkeypatch.setattr(archive.binding, 'configuration', lambda env: (
+        {'primary': slot}, {'global_etf_rotation': ('private-service', target)},
+        'private-project', 'us-central1'))
+    assert archive.resolve_profile_slot({}) == 'primary-live'
+    slot['account_scope'] = 'different'
+    with pytest.raises(archive.ArchiveError, match='archive_target_not_unique'):
+        archive.resolve_profile_slot({})
+
+
+def test_today_allowed_only_for_profile_archive():
+    assert archive.archive_day('2026-10-26', now=NOW, allow_today=True) == NOW.date()
+    with pytest.raises(archive.ArchiveError):
+        archive.archive_day('2026-10-26', now=NOW)
+
+
+def test_cash_metadata_has_only_allowed_tags_and_no_cash_values():
+    result = archive.inspect_report(_report(), uri=URI, expected=EXPECTED, day=DAY)
+    assert result['cash_record_count'] > 0
+    assert set(result['usd_cash_source_tags']) <= archive.publisher._ALLOWED_CASH_TAGS
+    assert result['observed_at']
+    assert '12345.6700' not in json.dumps(result)
+    assert '100.00' not in json.dumps(result)
+
+
+def test_profile_workflow_protects_inventory_and_keeps_original_read_identity():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1] / '.github/workflows'
+    caller = (root / 'inspect-account-facts-archive.yml').read_text()
+    protected = (root / 'inspect-account-facts-archive-protected.yml').read_text()
+    assert 'global_etf_rotation' in caller and 'russell_top50_leader_rotation' in caller
+    assert 'vars.CLOUD_RUN_SERVICE_TARGETS_JSON || secrets.CLOUD_RUN_SERVICE_TARGETS_JSON' in caller
+    assert '&& (vars.CLOUD_RUN_SERVICE_TARGETS_JSON' in caller
+    assert 'CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}' in protected
+    assert 'ACCOUNT_FACTS_RECOVERY_WIF_PROVIDER' in protected
+    assert 'scripts.inspect_account_facts_archive' in protected
+    assert 'scheduler ' not in protected and 'IBKR_FLEX_TOKEN' not in protected
+
+
+def test_profile_mode_reads_only_selected_slot_and_current_day(monkeypatch, capsys):
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz):
+            return NOW
+
+    monkeypatch.setattr(archive, 'datetime', FixedDatetime)
+    monkeypatch.setenv('GITHUB_EVENT_NAME', 'workflow_dispatch')
+    monkeypatch.setenv('GITHUB_REF', 'refs/heads/main')
+    monkeypatch.setenv('IBKR_ACCOUNT_FACTS_TARGET', 'global_etf_rotation')
+    monkeypatch.setenv('IBKR_ACCOUNT_FACTS_ARCHIVE_DATE', '2026-10-26')
+    monkeypatch.setenv('IBKR_ACCOUNT_FACTS_ARCHIVE_MODE', 'day')
+    monkeypatch.setattr(archive, 'resolve_profile_slot', lambda env: 'additional-2')
+    monkeypatch.setattr(archive.identity, 'resolve_expected', lambda: EXPECTED)
+    calls = []
+    def list_one(**kwargs):
+        calls.append(kwargs)
+        return []
+    monkeypatch.setattr(archive, 'report_uris', list_one)
+    monkeypatch.setattr(archive.publisher, '_load_gcs_report', lambda *a, **k: pytest.fail('no reports'))
+    assert archive.main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result['profile'] == 'global_etf_rotation' and result['report_count'] == 0
+    assert result['broker_requests'] == 0 and result['business_writes'] == 0
+    assert len(calls) == 1 and calls[0]['day'] == NOW.date() and calls[0]['whole_month'] is False
+    assert archive.os.environ['IBKR_ACCOUNT_FACTS_TARGET'] == 'additional-2'
+
+
+def test_profile_mode_rejects_month_read_before_archive_access(monkeypatch, capsys):
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz):
+            return NOW
+    monkeypatch.setattr(archive, 'datetime', FixedDatetime)
+    monkeypatch.setenv('GITHUB_EVENT_NAME', 'workflow_dispatch')
+    monkeypatch.setenv('GITHUB_REF', 'refs/heads/main')
+    monkeypatch.setenv('IBKR_ACCOUNT_FACTS_TARGET', 'global_etf_rotation')
+    monkeypatch.setenv('IBKR_ACCOUNT_FACTS_ARCHIVE_DATE', '2026-10-26')
+    monkeypatch.setenv('IBKR_ACCOUNT_FACTS_ARCHIVE_MODE', 'month-snapshots')
+    monkeypatch.setattr(archive, 'resolve_profile_slot', lambda env: 'additional-2')
+    monkeypatch.setattr(archive.identity, 'resolve_expected', lambda: EXPECTED)
+    monkeypatch.setattr(archive, 'report_uris', lambda **kw: pytest.fail('no listing'))
+    assert archive.main() == 1
+    assert json.loads(capsys.readouterr().out)['reason'] == 'archive_mode_invalid'
