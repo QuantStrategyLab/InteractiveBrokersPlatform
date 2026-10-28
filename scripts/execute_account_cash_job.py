@@ -70,6 +70,7 @@ def execute(env, receipt, *, run=pilot.command, snapshot=pilot.snapshot,
     job = document["metadata"]["name"]
     result = dict(status="STOPPED", reason="job_not_completed", runtime_adopted=False,
                   publisher_binding_changed=False, broker_write_requested=False, strategy_executed=False,
+                  image_evidence_mode=selected.get("CASH_IMAGE_EVIDENCE_MODE", "prebuild"),
                   job_create_attempted=False, job_execute_attempted=False, job_cleanup_verified=False,
                   baseline_unchanged=False)
 

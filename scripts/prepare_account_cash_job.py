@@ -27,6 +27,10 @@ FILES = (
 ENTRY = "from scripts.account_cash_readonly_entry import main; raise SystemExit(main())"
 IMAGE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*@sha256:[0-9a-f]{64}$")
 JOB = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
+POSTBUILD_BASES = {
+    "global_etf_rotation": "sha256:8ed44e325ff9033986249b6524453fdfd3cacb0636bf342012c6b6f76fcdfd31",
+    "russell_top50_leader_rotation": "sha256:391a8bc5c551cc9b9bdaf044d21723641aa5ffe9297ef24f019465462ac299e5",
+}
 
 
 def prepare(env, expected, *, reader=preflight.binding._read):
@@ -65,9 +69,17 @@ def prepare(env, expected, *, reader=preflight.binding._read):
     if candidate or job:
         if not IMAGE.fullmatch(candidate) or not JOB.fullmatch(job):
             raise ValueError("candidate_invalid")
-        prior = json.loads(Path(env["CASH_BUILD_INPUT"]).read_text(encoding="utf-8"))
-        if prior != manifest:
-            raise ValueError("build_input_changed")
+        mode = env.get("CASH_IMAGE_EVIDENCE_MODE", "prebuild")
+        if mode == "prebuild":
+            prior = json.loads(Path(env["CASH_BUILD_INPUT"]).read_text(encoding="utf-8"))
+            if prior != manifest:
+                raise ValueError("build_input_changed")
+        elif mode == "postbuild":
+            approved = POSTBUILD_BASES.get(env.get("REQUESTED_TARGET"))
+            if env.get("CASH_BUILD_INPUT") or not approved or base.rsplit("@", 1)[1] != approved:
+                raise ValueError("postbuild_source_mismatch")
+        else:
+            raise ValueError("image_evidence_mode_invalid")
         image_verifier.verify(base, candidate, sources, account=env.get("CASH_REGISTRY_ACCOUNT"))
         after = preflight.inspect(env, expected=expected, reader=reader)
         for key in ("serving_revision_sha256", "target_binding_sha256", "report_prefix_sha256",

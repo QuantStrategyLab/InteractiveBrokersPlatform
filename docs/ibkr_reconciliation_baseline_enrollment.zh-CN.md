@@ -316,9 +316,8 @@ Russell 两个 profile；由可信预检提供目标身份和现役报告前缀�
 清理，公开输出只包含固定状态；写入成功不等于独立回读
 通过或现金已对账。
 
-该入口目前只有本地合成测试，还没有绑定到可执行 workflow 或目标镜像。实际
-运行前仍需核实提供摘要的可信来源、目标执行身份、存储及网络权限、账户并发、
-镜像依赖和真实 SDK 行为；不得把这些未验证条件解释为通过。
+实际运行仍需核实目标执行身份、存储及网络权限、账户并发和真实 SDK 行为；
+不得把本地测试解释为真实采集通过。
 
 `scripts/prepare_account_cash_job.py` 复用现役目标只读预检和既有 Job 构造器，
 按唯一选择的目标生成本地私有构建目录；`CASH_CANDIDATE_DIR` 须是尚不存在的
@@ -328,8 +327,8 @@ Russell 两个 profile；由可信预检提供目标身份和现役报告前缀�
 前缀、基底和文件摘要，并提供原维护身份 `CASH_REGISTRY_ACCOUNT`。第二阶段在受保护
 Docker 主机核对实际镜像：基底层、完整文件树、允许修改文件及其内容和权限、配置，
 以及本地 OCI manifest/config 的原字节摘要与 registry manifest；核验后再次确认现役
-绑定未变化，才生成私有 Job 定义。输入摘要本身不是构建证明。该路径尚未对真实候选
-构建和上传做验证；生成文件不创建或运行 Job，也不构建或上传镜像。
+绑定未变化，才生成私有 Job 定义。输入摘要本身不是构建证明。生成文件不创建或运行
+Job，也不构建或上传镜像。
 
 构建输入对旧镜像的 main.py 加入一次连接和维护报告隔离；只接受已核对的旧
 函数形状，不匹配即构建失败。真实镜像的源码、依赖、写入权限和日志必须在
@@ -337,17 +336,22 @@ Docker 主机核对实际镜像：基底层、完整文件树、允许修改文�
 
 新入口在公开结果中只返回报告 URI 的 SHA256，受保护读回函数按唯一 Job、
 execution、隔离前缀及对象代际定位报告，复用原报告身份与时点检查；它不打印
-URI 或金额。当前尚无调用该读回函数的真实执行入口；列表和读取权限仍须实证。
+URI 或金额。列表和读取权限仍须实证。
 
 `scripts/execute_account_cash_job.py` connects the existing protected target
 preflight, image verification, temporary Job lifecycle and report readback. It
 accepts one selected profile from an explicitly dispatched protected runner,
 resolves the expected account from existing private target configuration, and
-requires the original pre-build `CASH_BUILD_INPUT` for that target. It reuses
+normally requires the original pre-build `CASH_BUILD_INPUT` for that target. It reuses
 the existing single-execution, ownership, cleanup and before/after baseline
 checks; the report lookup accepts structured Cloud Run `jsonPayload` as well as
 text payload, while still checking the exact execution and report generation.
-The script does not add a schedule or workflow. Its present checks are synthetic;
-actual use still requires the original protected build input, the existing target
-configuration and a reviewed caller, plus verification of runtime identity,
-network and storage conditions. A current balance is never an expected value.
+For the two already-built candidates only, `CASH_IMAGE_EVIDENCE_MODE=postbuild`
+accepts no pre-build input: it pins the target's original base digest and checks
+the actual base and candidate images, source bytes, expected account and serving
+revision again. The receipt labels this as post-build verification; it is not a
+reconstructed build-time record. A protected workflow caller has not yet been
+delivered and no real Job has run. In particular, exclusive use of the shared
+Gateway client ID has not been established; its separate workflow concurrency
+groups cannot prove exclusion. Runtime identity, network and storage conditions
+also remain unverified. A current balance is never an expected value.
