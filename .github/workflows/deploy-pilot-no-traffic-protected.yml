@@ -7,6 +7,10 @@ on:
         type: string
         required: false
         default: tcp
+      isolated_template_diagnostic:
+        type: boolean
+        required: false
+        default: false
       isolated_job_network_preflight:
         type: boolean
         required: false
@@ -77,9 +81,13 @@ jobs:
           PILOT_CLEANUP_RUN_ID: ${{ inputs.isolated_cleanup_run_id }}
           PILOT_JOB_NETWORK_PREFLIGHT: ${{ inputs.isolated_job_network_preflight }}
           PILOT_JOB_PHASE: ${{ inputs.isolated_job_phase }}
+          PILOT_TEMPLATE_DIAGNOSTIC: ${{ inputs.isolated_template_diagnostic }}
         run: |
           if { [ "$PILOT_JOB_PHASE" != tcp ] && [ "$PILOT_JOB_PHASE" != isolation ] && [ "$PILOT_JOB_PHASE" != cycle ]; } || { [ "$PILOT_JOB_PHASE" != tcp ] && [ "$PILOT_JOB_NETWORK_PREFLIGHT" != true ]; }; then
             echo 'job_phase_invalid=true'; exit 1
+          fi
+          if [ "$PILOT_TEMPLATE_DIAGNOSTIC" = true ] && { [ "$PILOT_JOB_NETWORK_PREFLIGHT" != true ] || [ "$PILOT_JOB_PHASE" != cycle ]; }; then
+            echo 'template_diagnostic_mode_invalid=true'; exit 1
           fi
           if [ "$PILOT_JOB_NETWORK_PREFLIGHT" = true ] && { [ "${{ inputs.isolated_network_preflight }}" = true ] || [ -n "$PILOT_CLEANUP_RUN_ID" ]; }; then
             echo 'job_mode_invalid=true'; exit 1

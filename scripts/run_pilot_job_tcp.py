@@ -105,6 +105,62 @@ def verify_job(actual, desired):
     verify_template(actual["spec"]["template"], desired["spec"]["template"])
 
 
+def template_difference_categories(actual, desired):
+    """Return fixed categories only; never expose template fields or values."""
+    try:
+        left = copy.deepcopy(actual["spec"]["template"]["spec"])
+        right = copy.deepcopy(desired["spec"]["template"]["spec"])
+        for spec in (left, right):
+            spec.setdefault("taskCount", 1)
+            spec.setdefault("parallelism", 1)
+            task = spec["template"]["spec"]
+            task.setdefault("maxRetries", 0)
+            task["timeoutSeconds"] = str(task.get("timeoutSeconds"))
+            for container in task["containers"]:
+                if container.get("resources", {}).get("limits", {}).get("cpu") == "1000m":
+                    container["resources"]["limits"]["cpu"] = "1"
+        categories = []
+        for key, label in (("taskCount", "task_count"), ("parallelism", "parallelism")):
+            if left.get(key) != right.get(key):
+                categories.append(label)
+        a, b = left["template"]["spec"], right["template"]["spec"]
+        for key, label in (("serviceAccountName", "service_account"), ("maxRetries", "retries"),
+                           ("timeoutSeconds", "timeout")):
+            if a.get(key) != b.get(key):
+                categories.append(label)
+        if len(a["containers"]) != 1 or len(b["containers"]) != 1:
+            categories.append("container_count")
+        else:
+            ca, cb = a["containers"][0], b["containers"][0]
+            for key in ("name", "image", "command", "args", "resources"):
+                if ca.get(key) != cb.get(key):
+                    categories.append("container_" + key)
+            if ca.get("env") != cb.get("env"):
+                categories.append("container_env")
+                def lifecycle(rows):
+                    matches = [x for x in rows if isinstance(x, dict) and x.get("name") == "LIFECYCLE_PERFORMANCE_BUCKET"]
+                    return matches[0] if len(matches) == 1 else None
+                x, y = lifecycle(ca.get("env", [])), lifecycle(cb.get("env", []))
+                if x != y:
+                    if x == {"name": "LIFECYCLE_PERFORMANCE_BUCKET"} and y == {"name": "LIFECYCLE_PERFORMANCE_BUCKET", "value": ""}:
+                        categories.append("lifecycle_empty_value_omitted")
+                    else:
+                        categories.append("lifecycle_env_missing" if x is None else "lifecycle_env_changed")
+            known = {"name", "image", "command", "args", "resources", "env"}
+            if {k: v for k, v in ca.items() if k not in known} != {k: v for k, v in cb.items() if k not in known}:
+                categories.append("other_container")
+        task_known = {"serviceAccountName", "maxRetries", "timeoutSeconds", "containers"}
+        if {k: v for k, v in a.items() if k not in task_known} != {k: v for k, v in b.items() if k not in task_known}:
+            categories.append("other_task")
+        top_known = {"taskCount", "parallelism", "template"}
+        if ({k: v for k, v in left.items() if k not in top_known} != {k: v for k, v in right.items() if k not in top_known}
+                or left["template"].get("metadata") != right["template"].get("metadata")):
+            categories.append("other_template")
+        return categories
+    except (KeyError, TypeError, AttributeError):
+        return ["unclassified"]
+
+
 def verify_execution(actual, desired):
     job = desired["metadata"]["name"]
     name = actual.get("metadata", {}).get("name", "")
@@ -136,7 +192,8 @@ def production_checks(before, after):
 
 
 def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=cloud.request,
-            pause=time.sleep, clock=time.monotonic, progress=None, application_source=None, application_phase="isolation"):
+            pause=time.sleep, clock=time.monotonic, progress=None, application_source=None, application_phase="isolation",
+            diagnostic_only=False):
     out = result() if progress is None else progress
     deadline = clock() + 600  # Leave cleanup time inside the 15-minute workflow.
     before = snapshot(ctx, run)
@@ -179,6 +236,17 @@ def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=clou
     out["job_execution_env_defaulted_gen2"] = (
         actual_annotations.get("run.googleapis.com/execution-environment") == "gen2"
         and "run.googleapis.com/execution-environment" not in expected_annotations)
+    if diagnostic_only:
+        try:
+            verify_job(verified, desired)
+            match, reason = True, "match"
+        except pilot.ReleaseError as error:
+            match = False
+            reason = str(error) if str(error) in {"job_template_readback_unverified", "job_network_readback_unverified",
+                                                   "job_ownership_unverified"} else "unclassified"
+        out.update(status="observed", stage="template_diagnostic", template_match=match, template_reason=reason,
+                   template_difference_categories=template_difference_categories(verified, desired))
+        return out
     verify_job(verified, desired)
     out["deployment_dry_run_verified"] = True
     if not all(production_checks(before, snapshot(ctx, run)).values()):
@@ -322,7 +390,11 @@ def main(argv=None):
         phase = os.environ.get("PILOT_JOB_PHASE", "tcp")
         if phase not in {"tcp", "isolation", "cycle"} or (phase != "tcp") != (args.application_source is not None):
             raise pilot.ReleaseError("job_phase_not_admitted")
-        execute(ctx, os.environ["GITHUB_RUN_ID"], progress=out, application_source=args.application_source, application_phase=phase)
+        diagnostic = os.environ.get("PILOT_TEMPLATE_DIAGNOSTIC", "false")
+        if diagnostic not in {"true", "false"} or (diagnostic == "true" and phase != "cycle"):
+            raise pilot.ReleaseError("template_diagnostic_mode_invalid")
+        execute(ctx, os.environ["GITHUB_RUN_ID"], progress=out, application_source=args.application_source,
+                application_phase=phase, diagnostic_only=diagnostic == "true")
     except cloud.CloudError as error:
         out.update(stage=str(error), cloud_http_status=error.http_status)
     except pilot.ReleaseError as error:
@@ -334,7 +406,8 @@ def main(argv=None):
     print(json.dumps(out, sort_keys=True))
     measured = (out["tcp_connected"] or out.get("application_isolation", {}).get("isolation_passed")
         or out.get("guarded_cycle", {}).get("cycle", {}).get("cycle_completed"))
-    return 0 if out["status"] == "observed" and out["measurement_read"] and measured and out["job_deleted"] and out["baseline_unchanged"] else 1
+    diagnostic_complete = out.get("stage") == "template_diagnostic" and out.get("status") == "observed"
+    return 0 if diagnostic_complete or (out["status"] == "observed" and out["measurement_read"] and measured and out["job_deleted"] and out["baseline_unchanged"]) else 1
 
 
 if __name__ == "__main__":

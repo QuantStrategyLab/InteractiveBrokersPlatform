@@ -9,6 +9,11 @@ on:
         required: false
         default: tcp
         options: [tcp, isolation, cycle]
+      isolated_template_diagnostic:
+        description: "Only compare the guarded cycle Job dry-run template; never create a Job."
+        type: boolean
+        required: false
+        default: false
       isolated_job_network_preflight:
         description: "Run one zero-retry Job on the original network/identity, then delete it. Requires Job, the selected phase and billing authorization."
         type: boolean
@@ -51,6 +56,7 @@ jobs:
       profile: ${{ inputs.profile }}
       source_commit: ${{ inputs.source_commit }}
       isolated_job_phase: ${{ inputs.isolated_job_phase }}
+      isolated_template_diagnostic: ${{ inputs.isolated_template_diagnostic }}
       isolated_job_network_preflight: ${{ inputs.isolated_job_network_preflight }}
       isolated_network_preflight: ${{ inputs.isolated_network_preflight }}
       isolated_cleanup_run_id: ${{ inputs.isolated_cleanup_run_id }}
