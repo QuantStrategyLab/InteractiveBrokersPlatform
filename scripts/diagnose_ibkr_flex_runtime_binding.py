@@ -145,19 +145,25 @@ WORKFLOW = ".github/workflows/collect-reconciliation-evidence.yml"
 
 
 def _gh(path):
-    result = subprocess.run(["gh", "api", f"repos/{REPOSITORY}/{path}"],
-                            capture_output=True, timeout=30, check=False)
+    try:
+        result = subprocess.run(["gh", "api", f"repos/{REPOSITORY}/{path}"],
+                                capture_output=True, timeout=30, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise BindingError("receipt_read_failed") from exc
     require(result.returncode == 0 and len(result.stdout) <= 2_000_000, "receipt_read_failed")
     return result.stdout
 
 
 def _artifact_json(raw):
     require(len(raw) <= 2_000_000, "receipt_invalid")
-    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
-        entries = archive.infolist()
-        require(len(entries) == 1 and not entries[0].is_dir() and entries[0].file_size <= 1_000_000,
-                "receipt_invalid")
-        return _json(archive.read(entries[0]))
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            entries = archive.infolist()
+            require(len(entries) == 1 and not entries[0].is_dir() and entries[0].file_size <= 1_000_000,
+                    "receipt_invalid")
+            return _json(archive.read(entries[0]))
+    except (zipfile.BadZipFile, UnicodeError, ValueError) as exc:
+        raise BindingError("receipt_invalid") from exc
 
 
 def _receipt_account_match(run_id, profile, service, revision, revision_labels, expected, reader=_gh):

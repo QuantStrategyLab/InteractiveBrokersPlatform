@@ -276,3 +276,13 @@ def test_existing_receipt_compares_loaded_account_without_assuming_current_secre
     row = diagnostic.diagnose(env, reader=reader, receipt_reader=receipt_reader)['targets'][profile]
     assert row['reason'] == 'receipt_provenance_unverified'
     assert 'observed_group_account_match' not in row
+
+
+def test_receipt_read_failure_and_invalid_archive_are_distinct(monkeypatch):
+    def timed_out(*args, **kwargs):
+        raise subprocess.TimeoutExpired('gh', 30)
+    monkeypatch.setattr(diagnostic.subprocess, 'run', timed_out)
+    with pytest.raises(diagnostic.BindingError, match='receipt_read_failed'):
+        diagnostic._gh('actions/runs/123')
+    with pytest.raises(diagnostic.BindingError, match='receipt_invalid'):
+        diagnostic._artifact_json(b'not a zip')
