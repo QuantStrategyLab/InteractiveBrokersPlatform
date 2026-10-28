@@ -132,7 +132,7 @@ Flex 报表与 Gateway 当前状态是两份不同的券商视图，但报表摘
 `RECONCILE_ONLY`。
 
 来源发布器还可在显式给出
-`gs://.../reconciliation-recovery/ibkr/source/...` 时，把完整候选与双审回执写入
+`gs://.../reconciliation-recovery/ibkr/source/...` 时，把完整候选与可选审查回执写入
 私有证据包（缺审查保存 null，不制造审核结果）。来源文件由调用方独立保留，不从
 待验证包中自造受信 expectations。该包不发送给 QRS；写入固定使用 GCS `if_generation_match=0`，所以已存在
 对象会失败而不会被覆盖、读取或删除。验证器只能在专用私有存储中读取它。
@@ -202,8 +202,9 @@ URI、部署 Cloud Run、连接券商或提交订单。实际启用仍需要单�
 
 `broker_reconciliation_completed` 的内部日志将预期摘要未配置标为
 `comparison_status=not_configured`，并仅记录账户身份核验结果及持仓、现金、
-挂单、近期成交的条数。此状态下旧的五项 `*_mismatch` 原因码只表示
-“无法比较”，不证明存在真实账务差异；条数也不能证明旧订单已结清。
+挂单、近期成交的条数。此状态下操作日志不再列出五项无法比较的 `*_mismatch` 原因；原回执及恢复阻断保持不变。
+基准存在时，日志用 `matched` 或 `mismatched` 表示五项比较结果；其他恢复阻断仍独立保留。
+条数不能证明旧订单已结清。
 五项摘要只用于这个恢复候选，不是正常 `/run` 每个周期的比较条件；
 `ACTIVE_LKG` 与交易开关是另行判定的状态。
 日志不包含账户明细、金额或订单身份。任何新起点接管仍需核实未决订单、
@@ -254,3 +255,18 @@ broker/account/order，也不读取或写入 expected digest、`ACTIVE_LKG` 或 
 受信调用方独立核验，不能从待验证 records/candidate 自我生成。合成测试只证明这些
 consumer 实际接线，不证明任何真实账户安全。历史无来源 v1 只读保留，publisher/verifier
 拒绝新申请；旧显式 v1→v2 helper 仍要求完整独立来源校验及成员关联，不用于新单份路径。
+
+## 利用既有对账回执核实账户绑定
+
+在批准的受保护环境中，可用已完成的对账工作流原回执核实其**当次**运行账户。
+`evidence.account_scope_sha256` 是运行进程读取的账户集合的摘要：按对账代码将
+`account_ids` 去重、排序，构成 `{"account_ids": [...]}`，再使用
+`calculate_broker_observation_sha256`。用同一函数计算对应 Flex 槽选择器的摘要，
+只输出是否相等；账号、摘要和原始回执不离开受保护环境。
+
+先独立核对 workflow 成功状态、准确源码版本、目标和调度 job 哈希，并用原工作流
+日志所绑定的 Cloud Run revision 及其来源核实回执归属。若 revision、回执来源或
+账户选择器不可核验，结果保持 unknown。相等仅证明该次运行的账户集合与该槽一致；
+不证明当前 worker 的 Secret 版本、当前账户状态或现金已经对账。不同 revision、
+后续进程重新加载配置、运行失败或来源不完整都不能沿用该次结果证明当前绑定。
+不要为核对绑定重新触发券商请求，也不要把观测摘要写成批准基准。
