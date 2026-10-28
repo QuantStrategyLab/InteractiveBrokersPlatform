@@ -40,8 +40,11 @@ def read_account_summary_cash(ib, account_ids, *, timeout_seconds=30,
     def collect(request_id, account, tag, value, currency):
         # The SDK event drops reqId. Its decoder resolves this wrapper method
         # per message, so preserve the original SDK callback and scope here.
-        if not ended and request_id == req_id and account == account_ids[0] and tag in tags:
-            rows.append(SimpleNamespace(account=account, tag=tag, value=value, currency=currency))
+        if request_id == req_id:
+            if ended or account != account_ids[0]:
+                return
+            if tag in tags:
+                rows.append(SimpleNamespace(account=account, tag=tag, value=value, currency=currency))
         original(request_id, account, tag, value, currency)
     def collect_end(request_id):
         nonlocal ended
