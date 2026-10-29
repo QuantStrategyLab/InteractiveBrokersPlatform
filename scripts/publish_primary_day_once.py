@@ -15,14 +15,15 @@ from scripts import publish_ibkr_runtime_daily as publisher
 
 
 def preflight(env, *, today=None):
-    if (env.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
+    if (env.get("GITHUB_EVENT_NAME") not in {"workflow_dispatch", "schedule"}
             or env.get("GITHUB_REPOSITORY") != "QuantStrategyLab/InteractiveBrokersPlatform"
             or env.get("GITHUB_REF") != "refs/heads/main" or env.get("GITHUB_RUN_ATTEMPT") != "1"
             or env.get("IBKR_ACCOUNT_FACTS_TARGET") not in {"primary-live", "additional-1", "additional-2", "additional-3"}):
         raise ValueError("dispatch_invalid")
     raw = env.get("IBKR_RUNTIME_DAILY_BUSINESS_DATE", "")
     day = date.fromisoformat(raw)
-    if day.isoformat() != raw or day > (today or datetime.now(ZoneInfo("America/New_York")).date()):
+    current_day = today or datetime.now(ZoneInfo("America/New_York")).date()
+    if day.isoformat() != raw or day > current_day or (env.get("GITHUB_EVENT_NAME") == "schedule" and day != current_day):
         raise ValueError("date_invalid")
     if calendars.get_calendar("NYSE").schedule(start_date=raw, end_date=raw).empty:
         raise ValueError("market_closed")
@@ -73,6 +74,11 @@ def main():
             ok = False
         print(json.dumps({"status": "verified" if ok else "blocked", "business_writes": 0}))
         return 0 if ok else 1
+    if os.environ.get("GITHUB_EVENT_NAME") == "schedule":
+        now = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+        if calendars.get_calendar("NYSE").schedule(start_date=now, end_date=now).empty:
+            print(json.dumps({"status": "market_closed", "business_writes": 0}))
+            return 0
     try:
         target_key, account_key = preflight(os.environ)
     except Exception:
