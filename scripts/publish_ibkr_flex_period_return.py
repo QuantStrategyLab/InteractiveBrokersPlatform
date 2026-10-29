@@ -515,7 +515,8 @@ def main(argv: Sequence[str] = ()) -> int:
         print(json.dumps(result, sort_keys=True))
         return 0 if result["status"] == "configuration_shape_valid" else 2
     additional_only = tuple(argv) == ("--additional-returns-only",)
-    if argv and not additional_only:
+    primary_only = tuple(argv) == ("--primary-return-only",)
+    if argv and not (additional_only or primary_only):
         print(json.dumps(_preflight_result(os.environ, status="invalid", fields={}), sort_keys=True))
         return 2
     if os.environ.get("IBKR_PERIOD_RETURN_PUBLISH_ENABLED") != "true":
@@ -523,6 +524,8 @@ def main(argv: Sequence[str] = ()) -> int:
     else:
         try:
             config = _config(os.environ)
+            if primary_only and not config.get("report_date"):
+                raise PeriodReturnError("historical_date_required")
             if additional_only and not config["additional_returns"]:
                 raise PeriodReturnError("additional_return_configuration_invalid")
         except Exception:
@@ -531,7 +534,7 @@ def main(argv: Sequence[str] = ()) -> int:
             try:
                 with requests.Session() as session:
                     session.trust_env = False
-                    if config["additional_returns"]:
+                    if config["additional_returns"] and not primary_only:
                         ledgers = _collect_return_ledgers(config, session)
                         ledger = ledgers["primary"]
                     else:
@@ -552,6 +555,10 @@ def main(argv: Sequence[str] = ()) -> int:
                 } else "other"}
             else:
                 observed_at = datetime.now(timezone.utc)
+                if primary_only:
+                    status = _publish_additional_return(ledger, config, observed_at, diagnostics=diagnostics)
+                    print(json.dumps({"status": status, **diagnostics}, sort_keys=True))
+                    return 0 if status in {"published", "unchanged"} else 1
                 if additional_only:
                     results = {}
                     details = {}

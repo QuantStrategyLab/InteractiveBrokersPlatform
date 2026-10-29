@@ -27,6 +27,11 @@ on:
         type: boolean
         required: false
         default: false
+      primary_return_only:
+        description: "Publish only the primary account native daily return for report_date."
+        type: boolean
+        required: false
+        default: false
       flow_period_from:
         description: "Optional flow-only historical start (YYYY-MM-DD), pair with end; at most 31 days."
         type: string
@@ -83,7 +88,13 @@ jobs:
       - name: Generate, collect and publish once
         run: |
           publisher_args=()
-          if [ "$EXTERNAL_FLOW_ONLY" = "true" ]; then
+          if [ "$PRIMARY_RETURN_ONLY" = "true" ]; then
+            if [ "$EXTERNAL_FLOW_ONLY" = "true" ] || [ "$ADDITIONAL_RETURNS_ONLY" = "true" ] || [ -n "$IBKR_FLOW_PERIOD_FROM$IBKR_FLOW_PERIOD_TO" ] || [ -z "$IBKR_NATIVE_RETURN_DATE" ]; then
+              echo "primary_return_mode_invalid" >&2
+              exit 2
+            fi
+            publisher_args=(--primary-return-only)
+          elif [ "$EXTERNAL_FLOW_ONLY" = "true" ]; then
             if [ "$ADDITIONAL_RETURNS_ONLY" = "true" ]; then
               echo "return_and_flow_modes_conflict" >&2
               exit 2
@@ -103,6 +114,7 @@ jobs:
           IBKR_PERIOD_RETURN_PUBLISH_ENABLED: "true"
           EXTERNAL_FLOW_ONLY: ${{ inputs.external_flow_only }}
           ADDITIONAL_RETURNS_ONLY: ${{ inputs.additional_returns_only }}
+          PRIMARY_RETURN_ONLY: ${{ inputs.primary_return_only }}
           IBKR_FLOW_PERIOD_FROM: ${{ inputs.flow_period_from }}
           IBKR_FLOW_PERIOD_TO: ${{ inputs.flow_period_to }}
           IBKR_NATIVE_RETURN_DATE: ${{ inputs.report_date }}

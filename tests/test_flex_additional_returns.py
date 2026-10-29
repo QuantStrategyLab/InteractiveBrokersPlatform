@@ -317,3 +317,54 @@ def test_additional_flow_unknown_is_visible_and_not_retried(monkeypatch, capsys)
     result = json.loads(capsys.readouterr().out)
     assert result['additional_external_flows']['additional-2'] == 'sync_unknown'
     assert seen.count('synthetic-key-2') == 1
+
+
+def test_primary_historical_only_publishes_no_other_facts(monkeypatch, capsys):
+    from datetime import datetime, timedelta, timezone
+    day = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+    session, published = setup(monkeypatch)
+    compact = day.replace("-", "").encode()
+    session.report = session.report.replace(b"20260101", compact).replace(b"20260131", compact)
+    monkeypatch.setenv("IBKR_NATIVE_RETURN_DATE", day)
+    assert cli.main(("--primary-return-only",)) == 0
+    assert json.loads(capsys.readouterr().out) == {"status": "published"}
+    assert len(published) == 1
+    assert published[0][0]["period"] == {"from": day, "to": day}
+    assert published[0][0]["account_ids"] == ["DU0000000"]
+    assert published[0][1]["historical"] is True
+    assert sum(url.endswith("/SendRequest") for url, _ in session.calls) == 1
+
+
+def test_primary_historical_only_requires_date_before_network(monkeypatch, capsys):
+    session, published = setup(monkeypatch)
+    monkeypatch.delenv("IBKR_NATIVE_RETURN_DATE", raising=False)
+    assert cli.main(("--primary-return-only",)) == 2
+    assert json.loads(capsys.readouterr().out)["status"] == "configuration_incomplete"
+    assert session.calls == [] and published == []
+
+
+def test_primary_historical_only_rejects_wrong_report_date(monkeypatch, capsys):
+    from datetime import datetime, timedelta, timezone
+    day = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+    session, published = setup(monkeypatch)
+    monkeypatch.setenv("IBKR_NATIVE_RETURN_DATE", day)
+    assert cli.main(("--primary-return-only",)) == 1
+    assert json.loads(capsys.readouterr().out)["status"] == "historical_period_mismatch"
+    assert published == [] and session.calls
+
+
+def test_primary_historical_unknown_is_not_retried(monkeypatch, capsys):
+    from datetime import datetime, timedelta, timezone
+    day = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+    session, published = setup(monkeypatch)
+    compact = day.replace("-", "").encode()
+    session.report = session.report.replace(b"20260101", compact).replace(b"20260131", compact)
+    monkeypatch.setenv("IBKR_NATIVE_RETURN_DATE", day)
+    calls = []
+    def unknown(payload, **kwargs):
+        calls.append((payload, kwargs))
+        return "sync_unknown"
+    monkeypatch.setattr(cli, "publish_period_return", unknown)
+    assert cli.main(("--primary-return-only",)) == 1
+    assert json.loads(capsys.readouterr().out)["status"] == "sync_unknown"
+    assert len(calls) == 1 and published == []
