@@ -241,6 +241,28 @@ class ReconcileCloudRuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             rcr.validate_switch_baseline(baseline, plan)
 
+    def test_stop_tolerates_only_precheck_schedule_drift(self) -> None:
+        baseline = _http_candidate("unit-service-old", "old-commit")
+        baseline["spec"]["containers"][0]["image"] = "synthetic-image@sha256:abc"
+        actual = {"service_name": "unit-service", "account_scope": "synthetic", "strategy_profile": "unit",
+                  "scheduler": {"main_time": "0 1 * * 1-5", "precheck_time": "0 2 * * *"}}
+        desired = json.loads(json.dumps(actual))
+        desired["scheduler"]["precheck_time"] = "0 2 * * 1-5"
+        baseline["spec"]["containers"][0]["env"][0]["value"] = json.dumps(actual)
+        baseline["spec"]["containers"][0]["env"].append({"name": "RUNTIME_TARGET_ENABLED", "value": "true"})
+        plan = {"env": {"RUNTIME_TARGET_JSON": json.dumps(desired), "RUNTIME_TARGET_ENABLED": "false"},
+                "standard_execution_enabled": False}
+        assert rcr.validate_switch_baseline(baseline, plan) == ("false", False)
+        assert rcr._switch_targets_match(actual, desired, disabling=True)
+        for section, field in ((None, "account_scope"), (None, "strategy_profile"), ("scheduler", "main_time")):
+            changed = json.loads(json.dumps(desired))
+            (changed[section] if section else changed)[field] = "different"
+            assert not rcr._switch_targets_match(actual, changed, disabling=True)
+        plan["env"]["RUNTIME_TARGET_ENABLED"] = "true"
+        plan["standard_execution_enabled"] = True
+        with self.assertRaisesRegex(rcr.ReconcileError, "does not match"):
+            rcr.validate_switch_baseline(baseline, plan)
+
     def test_switch_spec_comparison_normalizes_only_provider_fields_and_env_order(self) -> None:
         before = {"servingState": "active", "containers": [{"name": "generated-a", "image": "image", "env": [
             {"name": "SECRET", "valueFrom": {"secretKeyRef": {"name": "one"}}},
