@@ -261,6 +261,17 @@ def test_optional_additional1_conflict_is_rejected_before_network(monkeypatch, c
     assert session.calls == [] and published == []
 
 
+def test_optional_additional1_missing_return_does_not_block_other_accounts(monkeypatch, capsys):
+    session, published = setup(monkeypatch)
+    monkeypatch.setenv("IBKR_PERIOD_RETURN_ADDITIONAL1_ACCOUNT_KEY", "synthetic-key-1")
+    session.report = session.report.replace(b'twr="1"', b'other="1"')
+    assert cli.main(("--additional-returns-only",)) == 1
+    assert json.loads(capsys.readouterr().out)["additional_returns"] == {
+        "additional-1": "native_twr_unavailable", "additional-2": "published", "additional-3": "published"}
+    assert [kwargs["expected_account_key"] for _, kwargs in published] == ["synthetic-key-2", "synthetic-key-3"]
+    assert sum(url.endswith("/SendRequest") for url, _ in session.calls) == 1
+
+
 @pytest.mark.parametrize("additional_only", [False, True])
 @pytest.mark.parametrize("reason", ["invalid_ack", "transport_error"])
 def test_unknown_one_account_is_not_retried_and_other_account_continues(monkeypatch, capsys, additional_only, reason):
