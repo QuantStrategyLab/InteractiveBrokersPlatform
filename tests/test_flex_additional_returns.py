@@ -230,6 +230,48 @@ def test_additional_failure_reports_safe_http_status_in_both_modes(monkeypatch, 
     assert len(opener.calls) == 1 and "synthetic-secret" not in output and "synthetic-key" not in output
 
 
+def test_optional_additional1_key_merges_without_replacing_other_accounts(monkeypatch, capsys):
+    session, published = setup(monkeypatch)
+    monkeypatch.setenv("IBKR_PERIOD_RETURN_ADDITIONAL1_ACCOUNT_KEY", "private-extra-key-1")
+    assert cli.main(("--preflight",)) == 0
+    output = capsys.readouterr().out
+    result = json.loads(output)
+    assert set(result["additional_return_fingerprints"]) == {"additional-1", "additional-2", "additional-3"}
+    assert "private-extra-key-1" not in output
+    assert session.calls == [] and published == []
+
+
+def test_optional_additional1_key_alone_and_matching_duplicate_are_valid(monkeypatch):
+    setup(monkeypatch)
+    monkeypatch.delenv("IBKR_PERIOD_RETURN_ADDITIONAL_ACCOUNT_KEYS_JSON")
+    monkeypatch.setenv("IBKR_PERIOD_RETURN_ADDITIONAL1_ACCOUNT_KEY", "private-extra-key-1")
+    assert set(cli._config(cli.os.environ)["additional_returns"]) == {"additional-1"}
+    monkeypatch.setenv("IBKR_PERIOD_RETURN_ADDITIONAL_ACCOUNT_KEYS_JSON", json.dumps({"additional-1": "private-extra-key-1"}))
+    assert set(cli._config(cli.os.environ)["additional_returns"]) == {"additional-1"}
+
+
+def test_optional_additional1_conflict_is_rejected_before_network(monkeypatch, capsys):
+    session, published = setup(monkeypatch)
+    monkeypatch.setenv("IBKR_PERIOD_RETURN_ADDITIONAL1_ACCOUNT_KEY", "private-extra-key-1")
+    monkeypatch.setenv("IBKR_PERIOD_RETURN_ADDITIONAL_ACCOUNT_KEYS_JSON", json.dumps({"additional-1": "different-key"}))
+    assert cli.main(("--preflight",)) == 2
+    output = capsys.readouterr().out
+    assert json.loads(output)["status"] == "invalid"
+    assert "private-extra-key-1" not in output and "different-key" not in output
+    assert session.calls == [] and published == []
+
+
+def test_optional_additional1_missing_return_does_not_block_other_accounts(monkeypatch, capsys):
+    session, published = setup(monkeypatch)
+    monkeypatch.setenv("IBKR_PERIOD_RETURN_ADDITIONAL1_ACCOUNT_KEY", "synthetic-key-1")
+    session.report = session.report.replace(b'twr="1"', b'other="1"')
+    assert cli.main(("--additional-returns-only",)) == 1
+    assert json.loads(capsys.readouterr().out)["additional_returns"] == {
+        "additional-1": "native_twr_unavailable", "additional-2": "published", "additional-3": "published"}
+    assert [kwargs["expected_account_key"] for _, kwargs in published] == ["synthetic-key-2", "synthetic-key-3"]
+    assert sum(url.endswith("/SendRequest") for url, _ in session.calls) == 1
+
+
 @pytest.mark.parametrize("additional_only", [False, True])
 @pytest.mark.parametrize("reason", ["invalid_ack", "transport_error"])
 def test_unknown_one_account_is_not_retried_and_other_account_continues(monkeypatch, capsys, additional_only, reason):

@@ -105,10 +105,17 @@ def _config(env: Mapping[str, str]) -> dict[str, Any]:
 def _additional_returns(env, primary):
     """Opt in only named protected slots; never infer a receiver key from XML."""
     raw = env.get("IBKR_PERIOD_RETURN_ADDITIONAL_ACCOUNT_KEYS_JSON")
-    if not raw:
+    additional_one = env.get("IBKR_PERIOD_RETURN_ADDITIONAL1_ACCOUNT_KEY")
+    if not raw and not additional_one:
         return {}
     try:
-        keys = json.loads(raw, object_pairs_hook=_unique_keys)
+        keys = json.loads(raw, object_pairs_hook=_unique_keys) if raw else {}
+        if not isinstance(keys, dict):
+            raise ValueError
+        if additional_one:
+            if "additional-1" in keys and keys["additional-1"] != additional_one:
+                raise ValueError
+            keys["additional-1"] = additional_one
         configs = _additional_target_configs(env.get("IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON"))
         if not isinstance(keys, dict) or not keys or not set(keys) <= set(configs):
             raise ValueError
@@ -173,7 +180,7 @@ def _preflight_result(env: Mapping[str, str], *, status: str, fields: Mapping[st
         }
         if env.get("IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON"):
             result["approved_report_account_count"] = len(json.loads(env["IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON"])) + 1
-        if env.get("IBKR_PERIOD_RETURN_ADDITIONAL_ACCOUNT_KEYS_JSON"):
+        if env.get("IBKR_PERIOD_RETURN_ADDITIONAL_ACCOUNT_KEYS_JSON") or env.get("IBKR_PERIOD_RETURN_ADDITIONAL1_ACCOUNT_KEY"):
             result["additional_return_fingerprints"] = {slot: {
                 f"{name}_sha256": hashlib.sha256(target[name].encode()).hexdigest()
                 for name in ("account_key", "target_id", "source_binding_id")}
