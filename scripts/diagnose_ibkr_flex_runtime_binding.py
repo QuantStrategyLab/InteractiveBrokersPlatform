@@ -166,7 +166,7 @@ def _artifact_json(raw):
         raise BindingError("receipt_invalid") from exc
 
 
-def _receipt_account_match(run_id, profile, service, revision, revision_labels, expected, reader=_gh):
+def _receipt_account_match(run_id, profile, service, revision, revision_labels, expected, reader=_gh, *, private_receipt=None):
     """Compare only a verified past receipt; never infer the worker's current Secret."""
     require(isinstance(run_id, str) and re.fullmatch(r"[0-9]{1,20}", run_id), "receipt_run_invalid")
     run = _json(reader(f"actions/runs/{run_id}"))
@@ -210,10 +210,13 @@ def _receipt_account_match(run_id, profile, service, revision, revision_labels, 
     require(isinstance(actual, str) and re.fullmatch(r"[0-9a-f]{64}", actual), "receipt_invalid")
     encoded = json.dumps({"account_ids": sorted(set(expected))}, ensure_ascii=True,
                          sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
-    return actual == hashlib.sha256(encoded).hexdigest()
+    matched = actual == hashlib.sha256(encoded).hexdigest()
+    if matched and private_receipt is not None:
+        private_receipt.append((record, raw))
+    return matched
 
 
-def observe(profile, service_name, target, slots, project, region, reader=_read, run_id=None, receipt_reader=_gh):
+def observe(profile, service_name, target, slots, project, region, reader=_read, run_id=None, receipt_reader=_gh, *, private_output=None):
     candidate = [(slot, row) for slot, row in slots.items()
                  if row["project_id"] == project and all(
                      tuple(row[field]) == account_selector(target.get(field)) if field == "account_selector"
@@ -245,15 +248,18 @@ def observe(profile, service_name, target, slots, project, region, reader=_read,
         result["runtime_scope_match"] = equal
         require(equal, "runtime_scope_mismatch")
         result["actual_group_account_match"], group_reason = _actual_group_match(env, configured["account_selector"])
+        captured_receipt = []
         if run_id:
             result["observed_group_account_match"] = _receipt_account_match(
                 run_id, profile, service_name, revision_name, revision.get("metadata", {}).get("labels", {}),
-                configured["account_selector"], reader=receipt_reader)
+                configured["account_selector"], reader=receipt_reader, private_receipt=captured_receipt)
         after = reader("services", service_name, project, region)
         require(after.get("metadata", {}).get("resourceVersion") == resource_version
                 and _serving(after) == revision_name, "serving_changed_during_read")
         if run_id:
             matched = result["observed_group_account_match"]
+            if matched and private_output is not None:
+                private_output.update(record=captured_receipt[0][0], archive=captured_receipt[0][1], runtime_target=runtime)
             return {**result, "status": "matched_at_observation" if matched else "mismatched",
                     "reason": "receipt_account_binding_verified" if matched else "receipt_account_mismatch"}
         if result["actual_group_account_match"] is not True:

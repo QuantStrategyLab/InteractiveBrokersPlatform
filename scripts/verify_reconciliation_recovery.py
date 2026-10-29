@@ -14,8 +14,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from collections.abc import Callable, Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -219,7 +220,55 @@ def verify_reconciliation_recovery(
     }
 
 
+
+def read_trusted_current_receipt(env: Mapping[str, str]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Reuse the protected runtime binding and GitHub receipt provenance checks."""
+    from scripts.diagnose_ibkr_flex_runtime_binding import configuration, observe
+    from scripts.build_reconciliation_baseline_candidate import _archive_payload
+    from application.broker_reconciliation_candidate import (
+        SourceReceiptExpectation, canonical_source_receipt_records_json,
+    )
+    slots, targets, project, region = configuration(env)
+    run_id = env.get("RECONCILIATION_RUN_ID", "")
+    if len(targets) != 1 or not run_id:
+        raise ValueError("trusted current receipt requires one target and run")
+    profile, (service, target) = next(iter(targets.items()))
+    private: dict[str, Any] = {}
+    observation = observe(profile, service, target, slots, project, region,
+                          run_id=run_id, private_output=private)
+    if observation.get("status") != "matched_at_observation":
+        raise ValueError("trusted current receipt or runtime binding unavailable")
+    record = private["record"]
+    expectation = SourceReceiptExpectation(
+        strategy_profile=profile, workflow_ref="refs/heads/main", workflow_conclusion="success",
+        **{key: value for key, value in record.items() if key != "schema_version"},
+    )
+    canonical_source_receipt_records_json([record], strategy_profile=profile, expectations=(expectation,))
+    receipt = _archive_payload(private["archive"], expectation)
+    return receipt, private["runtime_target"]
+
 def main(argv: list[str] | None = None) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments == ["--trusted-current-preflight"]:
+        try:
+            receipt, target = read_trusted_current_receipt(os.environ)
+            evidence = extract_reconciliation_evidence(receipt)
+            from quant_platform_kit.common.reconciliation_recovery import DEFAULT_RECONCILIATION_RECOVERY_MAX_AGE
+            elapsed = datetime.now(timezone.utc) - evidence.observed_at
+            fresh = timedelta(0) <= elapsed <= DEFAULT_RECONCILIATION_RECOVERY_MAX_AGE
+            state = target.get("live_continuity", {}).get("state") if isinstance(target.get("live_continuity"), Mapping) else None
+            candidate = receipt.get("reconciliation")
+            configured = candidate.get("expected_digests_configured") if isinstance(candidate, Mapping) else None
+            if type(configured) is not bool:
+                configured = None
+            print(json.dumps({"status": "source_verified", "receipt_fresh": fresh,
+                              "expected_digests_configured": configured,
+                              "continuity_state": state if state in {"ACTIVE_LKG", "RECONCILE_ONLY", "ROLLBACK_LKG"} else "unknown",
+                              "recovery_verified": False, "state_write_attempted": False}))
+            return 0
+        except Exception:
+            print(json.dumps({"status": "source_unavailable", "recovery_verified": False, "state_write_attempted": False}))
+            return 1
     parser = argparse.ArgumentParser(
         description="Verify a confirmed IBKR legacy recovery without changing broker or runtime state."
     )
@@ -228,15 +277,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source-archive", action="append", type=Path, required=True)
     parser.add_argument("--source-records", type=Path, required=True)
     parser.add_argument("--source-expectations", type=Path, required=True)
-    parser.add_argument("--current-source-archive", type=Path, required=True)
-    parser.add_argument("--current-source-records", type=Path, required=True)
-    parser.add_argument("--current-source-expectations", type=Path, required=True)
+    parser.add_argument("--current-source-archive", type=Path)
+    parser.add_argument("--current-source-records", type=Path)
+    parser.add_argument("--current-source-expectations", type=Path)
+    parser.add_argument("--current-trusted-run-id", help="Read the current receipt through the existing protected runtime binding")
     parser.add_argument("--current-receipt", type=Path, help="Optional exact copy of authenticated fresh receipt")
-    parser.add_argument("--runtime-target", type=Path, required=True, help="Read-only deployed RUNTIME_TARGET_JSON snapshot")
+    parser.add_argument("--runtime-target", type=Path, help="Read-only deployed RUNTIME_TARGET_JSON snapshot; omitted for trusted current receipt")
     parser.add_argument("--confirmation-url", required=True, help="QRS private controller-read HTTPS endpoint")
     parser.add_argument("--recovery-id", required=True)
     parser.add_argument("--now", help="Optional ISO-8601 time used for deterministic validation")
-    args = parser.parse_args(argv)
+    args = parser.parse_args(arguments)
     try:
         records, expectations, payloads = load_authenticated_source_inputs(
             args.source_records, args.source_expectations, args.source_archive,
@@ -245,12 +295,24 @@ def main(argv: list[str] | None = None) -> int:
         candidate_payload = _load_payload(args.candidate)
         validate_authenticated_candidate(candidate_payload, payloads,
                                          source_receipt_records=records, expectations=expectations, now=reference_now)
-        _, _, current_payloads = load_authenticated_source_inputs(
-            args.current_source_records, args.current_source_expectations, [args.current_source_archive],
-        )
-        current_payload = current_payloads[0]
-        if args.current_receipt and _load_payload(args.current_receipt) != current_payload:
-            raise ValueError("source_current_parsed_copy_mismatch")
+        trusted = bool(args.current_trusted_run_id)
+        manual_fields = (args.current_source_records, args.current_source_expectations, args.current_source_archive)
+        if trusted:
+            if any(manual_fields) or args.current_receipt or args.runtime_target or args.now:
+                raise ValueError("trusted current receipt cannot be combined with manual current inputs or a fixed clock")
+            current_payload, runtime_target_payload = read_trusted_current_receipt(
+                {**os.environ, "RECONCILIATION_RUN_ID": args.current_trusted_run_id},
+            )
+        else:
+            if not all(manual_fields) or not args.runtime_target:
+                raise ValueError("manual current receipt and runtime target inputs are required")
+            _, _, current_payloads = load_authenticated_source_inputs(
+                args.current_source_records, args.current_source_expectations, [args.current_source_archive],
+            )
+            current_payload = current_payloads[0]
+            if args.current_receipt and _load_payload(args.current_receipt) != current_payload:
+                raise ValueError("source_current_parsed_copy_mismatch")
+            runtime_target_payload = _load_json(args.runtime_target, label="runtime target")
         confirmation = read_console_confirmation(
             confirmation_url=args.confirmation_url,
             recovery_id=args.recovery_id,
@@ -262,7 +324,7 @@ def main(argv: list[str] | None = None) -> int:
             source_receipt_records=records, expectations=expectations,
             confirmation_payload=confirmation,
             current_receipt_payload=current_payload,
-            runtime_target_payload=_load_json(args.runtime_target, label="runtime target"),
+            runtime_target_payload=runtime_target_payload,
             recovery_id=args.recovery_id,
             now=reference_now,
         )

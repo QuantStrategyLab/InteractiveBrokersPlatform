@@ -19,6 +19,11 @@ on:
         required: false
         type: boolean
         default: false
+      inspect_recovery_receipt_only:
+        description: "Read and classify an existing trusted recovery receipt; no broker or state changes."
+        required: false
+        type: boolean
+        default: false
       reconciliation_run_id:
         description: "Optional completed reconciliation run ID for one selected target; read existing artifacts only."
         required: false
@@ -50,13 +55,14 @@ jobs:
       reconciliation_run_id: ${{ inputs.reconciliation_run_id }}
       inspect_execution_ledger: ${{ inputs.inspect_execution_ledger }}
       inspect_flex_runtime_binding_only: ${{ inputs.inspect_flex_runtime_binding_only }}
+      inspect_recovery_receipt_only: ${{ inputs.inspect_recovery_receipt_only }}
     secrets:
       CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ vars.CLOUD_RUN_SERVICE_TARGETS_JSON || secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}
-      IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON: ${{ inputs.inspect_flex_runtime_binding_only && secrets.IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON || '' }}
-      IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ inputs.inspect_flex_runtime_binding_only && secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON || '' }}
-      IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ inputs.inspect_flex_runtime_binding_only && secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON || '' }}
-      IBKR_ACCOUNT_FACTS_PROJECT_ID: ${{ inputs.inspect_flex_runtime_binding_only && secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID || '' }}
-      IBKR_ACCOUNT_FACTS_SERVICE_NAME: ${{ inputs.inspect_flex_runtime_binding_only && secrets.IBKR_ACCOUNT_FACTS_SERVICE_NAME || '' }}
-      IBKR_ACCOUNT_FACTS_RUNTIME_REVISION: ${{ inputs.inspect_flex_runtime_binding_only && secrets.IBKR_ACCOUNT_FACTS_RUNTIME_REVISION || '' }}
-      IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE: ${{ inputs.inspect_flex_runtime_binding_only && secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE || '' }}
-      IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR: ${{ inputs.inspect_flex_runtime_binding_only && secrets.IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR || '' }}
+      IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only) && secrets.IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON || '' }}
+      IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only) && secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON || '' }}
+      IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only) && secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON || '' }}
+      IBKR_ACCOUNT_FACTS_PROJECT_ID: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only) && secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID || '' }}
+      IBKR_ACCOUNT_FACTS_SERVICE_NAME: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only) && secrets.IBKR_ACCOUNT_FACTS_SERVICE_NAME || '' }}
+      IBKR_ACCOUNT_FACTS_RUNTIME_REVISION: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only) && secrets.IBKR_ACCOUNT_FACTS_RUNTIME_REVISION || '' }}
+      IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only) && secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE || '' }}
+      IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only) && secrets.IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR || '' }}
