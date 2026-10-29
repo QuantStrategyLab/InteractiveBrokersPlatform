@@ -565,7 +565,8 @@ def ensure_latest_traffic(
                 if metadata.get("name") != target_revision or (metadata.get("labels") or {}).get("commit-sha") != candidate_commit:
                     raise ReconcileError("stop candidate revision identity does not match")
             else:
-                verify_traffic_revision(candidate, expected_revision=target_revision, expected_commit=candidate_commit)
+                verify_traffic_revision(candidate, expected_revision=target_revision, expected_commit=candidate_commit,
+                                        allow_cold_enabled=switch_only and env_sync_expected.get("RUNTIME_TARGET_ENABLED") == "true")
 
         if not _traffic_on_revision(service if isinstance(service, Mapping) else {}, target_revision):
             if initial_state_only:

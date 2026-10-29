@@ -126,6 +126,36 @@ def test_cold_retired_candidate_requires_explicitly_disabled_execution(case):
             verify_traffic_revision(revision, expected_revision="unit-service-00001", expected_commit="a" * 40)
 
 
+@pytest.mark.parametrize("case", ["valid", "unhealthy", "not_retired", "wrong_probe", "wrong_revision", "stale_target"])
+def test_switch_enabled_cold_candidate_keeps_actual_failure_and_identity_checks(case):
+    revision = candidate()
+    revision["status"]["conditions"] = [
+        {"type": "Ready", "status": "True", "reason": "Retired"},
+        {"type": "Active", "status": "False", "reason": "Retired"},
+        {"type": "ContainerReady", "status": "True"},
+    ]
+    container = revision["spec"]["containers"][0]
+    container["env"].append({"name": "RUNTIME_TARGET_ENABLED", "value": "true"})
+    if case == "unhealthy":
+        revision["status"]["conditions"].append({"type": "ContainerHealthy", "status": "False"})
+    elif case == "not_retired":
+        revision["status"]["conditions"][0].pop("reason")
+    elif case == "wrong_probe":
+        container["startupProbe"]["httpGet"]["path"] = "/run"
+    elif case == "wrong_revision":
+        revision["metadata"]["name"] = "different-revision"
+    elif case == "stale_target":
+        target = frozen_target()
+        target["strategy_release"]["strategy_revision"] = "b" * 40
+        container["env"][0]["value"] = json.dumps(target)
+    kwargs = dict(expected_revision="unit-service-00001", expected_commit="a" * 40, allow_cold_enabled=True)
+    if case == "valid":
+        verify_traffic_revision(revision, **kwargs)
+    else:
+        with pytest.raises(ValueError):
+            verify_traffic_revision(revision, **kwargs)
+
+
 @pytest.mark.parametrize("failure", ["tcp", "path", "port", "unhealthy", "not_ready", "commit", "name", "stale_target", "missing_target"])
 def test_traffic_gate_rejects_unbootable_or_unverified_revision(failure):
     revision = candidate()

@@ -24,11 +24,12 @@ def verify_target_continuity(target: Mapping[str, Any]) -> str:
 
 def verify_traffic_revision(
     revision: Mapping[str, Any], *, expected_revision: str, expected_commit: str | None,
+    allow_cold_enabled: bool = False,
 ) -> None:
-    """Admit healthy candidates, or cold retired ones with execution disabled.
+    """Validate revision health and narrowly admit eligible cold retired candidates.
 
-    A cold disabled candidate still needs a real health read after activation;
-    its platform readiness is not evidence that application startup ran.
+    A cold candidate has not demonstrated application startup; Cloud Run
+    performs its configured startup probe when an instance starts.
     """
     metadata = revision.get("metadata") or {}
     if metadata.get("name") != expected_revision or (metadata.get("labels") or {}).get("commit-sha") != expected_commit:
@@ -48,7 +49,9 @@ def verify_traffic_revision(
         if "value" in item
     }
     retired_disabled = (
-        str(env.get("RUNTIME_TARGET_ENABLED", "")).strip().lower() == "false"
+        str(env.get("RUNTIME_TARGET_ENABLED", "")).strip().lower() in (
+            {"false", "true"} if allow_cold_enabled else {"false"}
+        )
         and "ContainerHealthy" not in conditions
         and conditions.get("ContainerReady") == "True"
         and conditions.get("Active") == "False"
