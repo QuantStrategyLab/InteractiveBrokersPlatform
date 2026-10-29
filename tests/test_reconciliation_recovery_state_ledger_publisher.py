@@ -105,6 +105,7 @@ def test_archive_state_ledger_uses_create_only_private_state_prefix() -> None:
     assert received["kwargs"] == {
         "content_type": "application/json",
         "if_generation_match": 0,
+        "retry": None,
     }
 
     with pytest.raises(ValueError, match="state prefix"):

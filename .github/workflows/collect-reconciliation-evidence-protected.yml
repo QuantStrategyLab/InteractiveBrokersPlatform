@@ -152,9 +152,13 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Require infrastructure variables
+        env:
+          IBKR_GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          QSL_CONSOLE_BASE_URL: ${{ vars.QSL_CONSOLE_BASE_URL }}
         run: |
           set -euo pipefail
-          for name in GCP_PROJECT_ID GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT QSL_CONSOLE_BASE_URL; do
+          for name in IBKR_GCP_PROJECT_ID IBKR_DEPLOY_SERVICE_ACCOUNT QSL_CONSOLE_BASE_URL; do
             if [[ -z "${!name:-}" ]]; then echo "::error::$name is required" >&2; exit 2; fi
           done
       - uses: actions/checkout@v6
@@ -206,9 +210,13 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Require infrastructure variables
+        env:
+          IBKR_GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          QSL_CONSOLE_BASE_URL: ${{ vars.QSL_CONSOLE_BASE_URL }}
         run: |
           set -euo pipefail
-          for name in GCP_PROJECT_ID GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT QSL_CONSOLE_BASE_URL; do
+          for name in IBKR_GCP_PROJECT_ID IBKR_DEPLOY_SERVICE_ACCOUNT QSL_CONSOLE_BASE_URL; do
             if [[ -z "${!name:-}" ]]; then echo "::error::$name is required" >&2; exit 2; fi
           done
       - uses: actions/checkout@v6
