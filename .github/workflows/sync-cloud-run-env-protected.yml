@@ -1598,8 +1598,16 @@ jobs:
           if [ -n "${INPUT_INITIAL_STATE_SOURCE_RUN_ID:-}" ]; then
             if ! uv run --no-sync python scripts/reconcile_cloud_runtime.py --platform=ibkr \
               --project="${GCP_PROJECT_ID}" --region="${CLOUD_RUN_REGION}" \
-              --ensure-latest-traffic "${exact_revision_args[@]}" >/dev/null 2>&1; then
-              echo 'initial_state_adoption_failed_or_unknown' >&2
+              --ensure-latest-traffic "${exact_revision_args[@]}" >/dev/null 2>"${RUNNER_TEMP}/initial-adoption-error.log"; then
+              if grep -Fxq 'error: initial traffic still transitioning' "${RUNNER_TEMP}/initial-adoption-error.log"; then
+                echo 'initial_state_traffic_transitioning' >&2
+              elif grep -Fxq 'error: initial traffic revision conflict' "${RUNNER_TEMP}/initial-adoption-error.log" || grep -Fxq 'error: initial traffic candidate conflict' "${RUNNER_TEMP}/initial-adoption-error.log"; then
+                echo 'initial_state_traffic_conflict' >&2
+              elif grep -Fxq 'error: initial traffic readback unavailable' "${RUNNER_TEMP}/initial-adoption-error.log"; then
+                echo 'initial_state_traffic_read_unavailable' >&2
+              else
+                echo 'initial_state_adoption_failed_or_unknown' >&2
+              fi
               exit 1
             fi
             echo 'initial_state_candidate_adopted'

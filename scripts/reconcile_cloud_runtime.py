@@ -14,6 +14,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -376,6 +377,33 @@ def _traffic_on_revision(service: Mapping[str, Any], revision_name: str) -> bool
     return False
 
 
+def _wait_initial_traffic(*, project: str, region: str, service: str,
+                          baseline_revision: str, candidate_revision: str) -> None:
+    """Read back a single already-issued adoption; never repeat the write."""
+    for attempt in range(30):
+        try:
+            value = _run(["gcloud", "run", "services", "describe", service,
+                          f"--project={project}", f"--region={region}", "--format=json"],
+                         json_output=True, dry_run=False)
+            status = value.get("status", {})
+            traffic = status.get("traffic")
+            if not isinstance(traffic, list) or not traffic:
+                raise ValueError("missing traffic")
+            active = [(row.get("revisionName"), int(row.get("percent") or 0)) for row in traffic]
+        except Exception as exc:
+            raise ReconcileError("initial traffic readback unavailable") from exc
+        if status.get("latestCreatedRevisionName") != candidate_revision:
+            raise ReconcileError("initial traffic candidate conflict")
+        active = [(name, percent) for name, percent in active if percent > 0]
+        if active == [(candidate_revision, 100)]:
+            return
+        if not active or any(name not in {baseline_revision, candidate_revision} for name, _ in active):
+            raise ReconcileError("initial traffic revision conflict")
+        if attempt < 29:
+            time.sleep(2)
+    raise ReconcileError("initial traffic still transitioning")
+
+
 def _revision_is_ready(revision: Mapping[str, Any]) -> bool:
     conditions = revision.get("status", {}).get("conditions") or []
     if not isinstance(conditions, list):
@@ -535,6 +563,10 @@ def ensure_latest_traffic(
         if not _traffic_on_revision(service if isinstance(service, Mapping) else {}, target_revision):
             if initial_state_only:
                 _adopt_initial_candidate(service, project=project, region=target_region, candidate_revision=target_revision)
+                _wait_initial_traffic(project=project, region=target_region, service=target.service_name,
+                                      baseline_revision=baseline_name, candidate_revision=target_revision)
+                print("initial_state_traffic_verified")
+                continue
             else:
                 print(f"Updating {target.service_name} traffic to commit revision {target_revision}.")
                 _run(

@@ -437,3 +437,28 @@ def test_initial_adoption_put_is_version_conditional_and_preserves_tagged_revisi
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@pytest.mark.parametrize("case", ["eventual", "transitioning", "conflict", "read_failure"])
+def test_initial_adoption_waits_only_on_same_write_readback(monkeypatch, case):
+    calls = []
+    def read(*_args, **_kwargs):
+        calls.append(True)
+        if case == "read_failure": raise RuntimeError("unavailable")
+        revision = "unit-service-old"
+        if case == "eventual" and len(calls) > 1: revision = "unit-service-new"
+        if case == "conflict": revision = "unit-service-other"
+        return {"status": {"latestCreatedRevisionName": "unit-service-new",
+                           "traffic": [{"revisionName": revision, "percent": 100}]}}
+    monkeypatch.setattr(rcr, "_run", read)
+    monkeypatch.setattr(rcr.time, "sleep", lambda _seconds: None)
+    args = dict(project="synthetic", region="region", service="unit-service",
+                baseline_revision="unit-service-old", candidate_revision="unit-service-new")
+    if case == "eventual":
+        rcr._wait_initial_traffic(**args)
+        assert len(calls) == 2
+    else:
+        reason = {"transitioning": "still transitioning", "conflict": "revision conflict",
+                  "read_failure": "readback unavailable"}[case]
+        with pytest.raises(rcr.ReconcileError, match=reason): rcr._wait_initial_traffic(**args)
+        assert len(calls) == (30 if case == "transitioning" else 1)
