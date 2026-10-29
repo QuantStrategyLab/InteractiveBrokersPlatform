@@ -81,3 +81,17 @@ def test_selected_mapping_is_forwarded_once_to_existing_publisher(env, monkeypat
     monkeypatch.setattr(entry.publisher, "main", lambda **kwargs: called.append(kwargs) or 0)
     assert entry.main() == 0
     assert called == [{"target_key": key, "account_key": "fixture-c"}]
+
+
+def test_receiver_token_preflight_never_reads_report_or_publishes(env, monkeypatch, capsys):
+    env.update(IBKR_DAILY_TOKEN_PREFLIGHT="true", IBKR_RUNTIME_DAILY_SYNC_TOKEN="fixture-token")
+    monkeypatch.setattr(entry.os, "environ", env)
+    monkeypatch.setattr(entry.identity, "resolve_expected", lambda: pytest.fail("identity read"))
+    monkeypatch.setattr(entry.publisher, "main", lambda **kwargs: pytest.fail("publication"))
+    monkeypatch.setattr(entry.publisher, "console_base_url", lambda: "https://fixture.example")
+    calls = []
+    monkeypatch.setattr(entry.publisher, "verify_receiver_token", lambda **kw: calls.append(kw) or True)
+    assert entry.main() == 0 and len(calls) == 1
+    assert '"business_writes": 0' in capsys.readouterr().out
+    env["GITHUB_RUN_ATTEMPT"] = "2"
+    assert entry.main() == 1 and len(calls) == 1
