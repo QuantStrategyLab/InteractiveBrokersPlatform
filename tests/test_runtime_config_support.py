@@ -2180,3 +2180,17 @@ def test_persistent_pin_main_initialization_safety_flags(
     else:
         module = strategy_module_factory(**{key: value})
         assert getattr(module.RUNTIME_SETTINGS, attribute) is (value != "false")
+
+
+def test_initial_sync_plan_safe_error_excludes_exception_message(monkeypatch, capsys):
+    from scripts import build_cloud_run_env_sync_plan as plan
+
+    def fail():
+        raise ValueError("private target and ledger information")
+
+    monkeypatch.setattr(plan, "build_sync_plan", fail)
+    monkeypatch.setattr(sys, "argv", ["plan", "--json", "--safe-error"])
+    assert plan.main() == 1
+    error = capsys.readouterr().err
+    assert "initial_state_plan_error category=ValueError" in error
+    assert "private target" not in error

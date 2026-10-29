@@ -932,12 +932,26 @@ def _first_non_empty(*values: object | None) -> object | None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--json", action="store_true", help="Print compact JSON.")
+    parser.add_argument("--safe-error", action="store_true", help="Report a fixed diagnostic without exception text.")
     args = parser.parse_args()
 
     try:
         plan = build_sync_plan()
     except Exception as exc:
-        print(str(exc), file=sys.stderr)
+        if args.safe_error:
+            allowed = {"build_cloud_run_env_sync_plan.py", "runtime_target_continuity.py",
+                       "reconciliation_recovery_state_ledger.py"}
+            frame = exc.__traceback__
+            location = "unknown"
+            while frame:
+                name = Path(frame.tb_frame.f_code.co_filename).name
+                if name in allowed:
+                    location = f"{name}:{frame.tb_lineno}"
+                frame = frame.tb_next
+            kind = type(exc).__name__ if type(exc) in (ValueError, TypeError, KeyError, FileNotFoundError) else "OtherError"
+            print(f"initial_state_plan_error category={kind} location={location}", file=sys.stderr)
+        else:
+            print(str(exc), file=sys.stderr)
         return 1
 
     if args.json:

@@ -549,8 +549,15 @@ jobs:
           if [ -n "${INPUT_INITIAL_STATE_SOURCE_RUN_ID:-}" ]; then
             # The static inventory selects the service; the confirmed transition
             # is derived later from its actual serving target, not stale config.
-            if ! sync_plan_json="$(env -u IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PATH uv run --no-sync python scripts/build_cloud_run_env_sync_plan.py --json 2>"${RUNNER_TEMP}/initial-plan-error.log")"; then
+            if ! sync_plan_json="$(env -u IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PATH uv run --no-sync python scripts/build_cloud_run_env_sync_plan.py --json --safe-error 2>"${RUNNER_TEMP}/initial-plan-error.log")"; then
               echo 'initial_state_plan_unavailable' >&2
+              python - "${RUNNER_TEMP}/initial-plan-error.log" <<'PY'
+          import re, sys
+          from pathlib import Path
+          for line in Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").splitlines():
+              if re.fullmatch(r"initial_state_plan_error category=(?:ValueError|TypeError|KeyError|FileNotFoundError|OtherError) location=(?:unknown|(?:build_cloud_run_env_sync_plan|runtime_target_continuity|reconciliation_recovery_state_ledger)\.py:[0-9]+)", line):
+                  print(line, file=sys.stderr)
+          PY
               exit 1
             fi
           else
