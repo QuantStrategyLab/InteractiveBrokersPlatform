@@ -1137,10 +1137,15 @@ def _count_orders(*candidates) -> int:
 
 
 def _build_cycle_report_summary(cycle_result, execution_summary, reconciliation_record, *, dry_run: bool) -> dict:
+    from application.reconciliation_service import account_brake_submission_status
+
+    brake_status = account_brake_submission_status(getattr(cycle_result, "signal_metadata", None))
     orders_submitted_count = _count_orders(
         execution_summary.get("orders_submitted"),
         reconciliation_record.get("orders_submitted"),
     )
+    if brake_status is not None:
+        orders_submitted_count = None
     orders_skipped_count = _count_orders(
         execution_summary.get("orders_skipped"),
         reconciliation_record.get("orders_skipped"),
@@ -1153,7 +1158,9 @@ def _build_cycle_report_summary(cycle_result, execution_summary, reconciliation_
         "orders_submitted_count": orders_submitted_count,
         "orders_previewed_count": orders_previewed_count,
         "orders_skipped_count": orders_skipped_count,
-        "dry_run_order_preview_available": bool(dry_run and orders_previewed_count > 0),
+        "dry_run_order_preview_available": (
+            None if dry_run and orders_previewed_count is None else bool(dry_run and orders_previewed_count > 0)
+        ),
         "snapshot_price_fallback_used": bool(
             execution_summary.get("snapshot_price_fallback_used")
             or reconciliation_record.get("snapshot_price_fallback_used")
@@ -1164,6 +1171,9 @@ def _build_cycle_report_summary(cycle_result, execution_summary, reconciliation_
             or 0
         ),
     }
+    if brake_status is not None:
+        summary["account_brake_submission_status"] = brake_status
+        summary["orders_submitted_coverage"] = "strategy_only_account_brake_details_unavailable"
     if _account_facts_match_runtime_target(cycle_result.account_facts):
         summary["account_facts"] = cycle_result.account_facts
     quote_snapshot = execution_summary.get("quote_snapshot") or reconciliation_record.get("quote_snapshot")
@@ -1209,11 +1219,11 @@ def _build_notification_delivery_log_for_report(
     strategy_profile: str,
     run_id: str,
     dry_run: bool,
-    orders_previewed_count: int,
+    orders_previewed_count: int | None,
     delivery_events: list[dict],
 ) -> dict:
     events = [dict(event) for event in delivery_events if dict(event).get("delivery_status") == "sent"]
-    if not dry_run or orders_previewed_count <= 0 or not events:
+    if not dry_run or orders_previewed_count is None or orders_previewed_count <= 0 or not events:
         return {}
     return {
         "notification_schema_version": "hk_live_enablement_notification.v1",
@@ -1730,7 +1740,7 @@ def _handle_request(
             strategy_profile=STRATEGY_PROFILE,
             run_id=str(report.get("run_id") or ""),
             dry_run=bool(report.get("dry_run")),
-            orders_previewed_count=int(report_summary.get("orders_previewed_count") or 0),
+            orders_previewed_count=report_summary.get("orders_previewed_count"),
             delivery_events=notification_delivery_events,
         )
         if notification_delivery_log:

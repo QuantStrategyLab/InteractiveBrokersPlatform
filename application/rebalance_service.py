@@ -1087,8 +1087,29 @@ def run_strategy_core(
                 translator=config.translator,
                 fallback="",
             )
-            # No target weights do not establish that the portfolio needs no rebalance.
-            no_op_segments = [config.translator("signal_decision_unavailable")]
+            # A normal no-signal heartbeat retains its established wording, but
+            # a failed or closed decision must not be presented as a healthy no-op.
+            normalized_decision = str(decision or "").strip().lower()
+            normalized_reason = str(no_op_reason or "").strip().lower()
+            known_no_signal = (
+                normalized_reason in {"", "no_signal"}
+                or normalized_reason.split(" ", 1)[0] in {
+                    "outside_execution_window", "outside_monthly_execution_window",
+                }
+            )
+            brake_observation = signal_metadata.get("account_brake_observation") or {}
+            decision_unavailable = (
+                normalized_decision not in {"", "proceed", "no_op"}
+                or not known_no_signal
+                or bool(brake_observation.get("hard_brake_triggered"))
+                or _has_notification_attention(signal_metadata, blocked_summary)
+            )
+            status_code = str(status_context.get("code") or "").strip() if isinstance(status_context, Mapping) else ""
+            if decision_unavailable and status_code in {"no_trades", "no_order_no_rebalance", "no_order_no_signal"}:
+                rendered_status = ""
+            no_op_segments = [config.translator(
+                "signal_decision_unavailable" if decision_unavailable else "no_trades"
+            )]
             if rendered_status:
                 no_op_segments.append(rendered_status)
             else:
@@ -1139,7 +1160,7 @@ def run_strategy_core(
                 flush=True,
             )
             order_count = len(orders) if 'orders' in dir() and orders else 0
-            has_error = bool(fail_reason or execution_blocked_reason) or _has_notification_attention(
+            has_error = decision_unavailable or bool(fail_reason or execution_blocked_reason) or _has_notification_attention(
                 signal_metadata, blocked_summary,
                 reason_codes=getattr(config, "notification_attention_reason_codes", ()),
             )

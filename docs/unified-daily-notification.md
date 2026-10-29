@@ -1,9 +1,20 @@
 # Unified daily notification (code only)
 
-When no target weights are produced, the heartbeat reports that the strategy
-rebalance decision is unavailable. Snapshot failure details remain visible; an
-absent decision does not establish that no rebalance is needed, and independent
-account protection operations may still occur.
+For compatibility, a legacy heartbeat with no decision or error fields retains
+its no-rebalance wording; this absence is not evidence of verified health.
+When a snapshot fails closed, a decision is explicitly unknown, or the decision
+has an error, the heartbeat instead says the strategy rebalance decision is
+unavailable, preserves failure details and remains eligible for an alert even
+when routine no-trade notifications are disabled. Independent account protection
+operations may still occur.
+
+If an independent account brake has a submission status but its order details
+are absent from the strategy order list, the runtime report marks the submitted
+order count unknown and identifies that coverage gap. The reconciliation list
+remains the strategy-order list and carries the same coverage marker. A status
+alone does not establish a fill. This does not supply the missing order receipt;
+downstream readers must honor the coverage marker, and their complete coverage
+has not been verified.
 
 `QSL_ROUTINE_NOTIFICATION_MODE` defaults to `immediate`. Exact `daily_digest`
 opts into one central bilingual digest. `QSL_DIGEST_ROUTINE_ORDERS=false` retains
