@@ -8,11 +8,18 @@ from scripts import publish_account_facts_from_report as publisher
 from scripts.daily_binding_protocol import additional_digest, digest
 
 
+_PHASE = "configuration"
+
+
 def compare_additional(env):
+    global _PHASE
+    _PHASE = "slot"
     slot = env.get("IBKR_ACCOUNT_FACTS_TARGET", "")
     if slot not in publisher.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS:
         raise ValueError("slot_invalid")
+    _PHASE = "source_configuration"
     expected = identity.resolve_expected()
+    _PHASE = "account_key"
     def unique(pairs):
         result = {}
         for key, value in pairs:
@@ -31,6 +38,7 @@ def compare_additional(env):
     key = keys.get(slot)
     if not isinstance(key, str) or not key:
         raise ValueError("key_missing")
+    _PHASE = "inventory"
     inventory = json.loads(env.get("CLOUD_RUN_SERVICE_TARGETS_JSON", ""), object_pairs_hook=unique)
     entries = inventory.get("targets") if isinstance(inventory, dict) else inventory
     if not isinstance(entries, list):
@@ -50,14 +58,17 @@ def compare_additional(env):
                 and publisher._selector(target.get("account_selector")) == expected["expected_account_selector"]
                 and (row.get("service") or row.get("service_name")) == expected["expected_service_name"]):
             matches.append(target)
+    _PHASE = "runtime_match"
     if len(matches) != 1 or not isinstance(matches[0].get("strategy_profile"), str):
         raise ValueError("target_not_unique")
+    _PHASE = "source_binding"
     source = publisher._bound_source_id(**{k: expected["expected_" + k] for k in (
         "project_id", "service_name", "runtime_revision", "account_scope", "account_selector", "deployment_selector")})
     binding = dict(account_key=key, account_scope=expected["expected_account_scope"],
         account_selector=expected["expected_account_selector"][0], deployment_selector=expected["expected_deployment_selector"],
         platform="ibkr", service_name=expected["expected_service_name"], source_binding_id=source,
         strategy_profile=matches[0]["strategy_profile"], target_id=expected["target_id"])
+    _PHASE = "digest"
     return additional_digest(binding, env.get("DAILY_COMPARISON_NONCE", ""))
 
 
@@ -92,6 +103,15 @@ if __name__ == "__main__":
             print("status=ok comparison=" + value)
         else:
             print("status=ok slot=" + slot + " comparison=" + value)
-    except Exception:
-        print("status=blocked reason=comparison_unavailable")
+    except Exception as exc:
+        allowed = {"slot_invalid", "duplicate_key", "keys_invalid", "keys_conflict", "key_missing",
+                   "inventory_invalid", "target_not_unique", "invalid_input", "target_disabled",
+                   "target_config_unavailable", "target_config_invalid", "expected_target_invalid"}
+        reason = getattr(exc, "reason", "")
+        if not reason and exc.args and isinstance(exc.args[0], str):
+            reason = exc.args[0]
+        if reason not in allowed:
+            reason = "comparison_unavailable"
+        kind = type(exc).__name__ if type(exc).__name__ in {"ValueError", "TypeError", "KeyError", "JSONDecodeError", "_ProjectionError"} else "other"
+        print(f"status=blocked stage={_PHASE} reason={reason} kind={kind}")
         raise SystemExit(1) from None
