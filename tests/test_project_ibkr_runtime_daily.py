@@ -187,16 +187,37 @@ def test_missing_and_mismatched_receipt_stays_unknown():
     assert row['activity'] == 'unknown' and row['evidence']['receipt_outcome'] is None
 
 
-@pytest.mark.parametrize('mutation', ['selector', 'account_ids', 'revision', 'profile', 'platform'])
+@pytest.mark.parametrize('mutation', ['selector', 'account_ids', 'profile', 'platform', 'service', 'receipt_revision'])
 def test_other_identity_is_never_attributed(mutation):
     report = source()
     if mutation == 'selector': report['runtime_target']['account_selector'] = ['U00000002']
     if mutation == 'account_ids': report['summary']['account_facts']['account_ids'] = ['U00000002']
-    if mutation == 'revision': report['diagnostics']['runtime_revision'] = 'other'
+    if mutation == 'service': report['service_name'] = 'other'
+    if mutation == 'receipt_revision': report['runtime_release_receipt']['runtime_revision'] = 'other'
     if mutation == 'profile': report['strategy_profile'] = 'other'
     if mutation == 'platform': report['platform'] = 'other'
     result = project([report])
     assert result['records'][0]['runs'] == []
+    assert result['unmatched_reports'][0]['reason'] == 'identity_unverified'
+
+
+def test_same_account_daily_history_can_span_revisions():
+    old = source()
+    old['diagnostics']['runtime_revision'] = 'previous-revision'
+    newer = deepcopy(old)
+    newer['diagnostics']['runtime_revision'] = 'current-revision'
+    newer['run_id'] = 'another-synthetic-run'
+    result = project([old, newer])
+    assert len(result['records'][0]['runs']) == 2
+    assert result['records'][0]['completeness'] == 'incomplete'
+    assert result['unmatched_reports'] == []
+
+
+def test_invalid_revision_identifier_is_unmatched():
+    report = source()
+    report['diagnostics']['runtime_revision'] = 'not a revision'
+    result = project([report])
+    assert not result['records'][0]['runs']
     assert result['unmatched_reports'][0]['reason'] == 'identity_unverified'
 
 

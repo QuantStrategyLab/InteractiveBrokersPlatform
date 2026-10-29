@@ -48,14 +48,14 @@ def publish_once(*, expected, target_key, account_key, business_date, observed_a
     return {"status": "published", "observed_at": projection["observed_at"], "completeness": "incomplete"}
 
 
-def main():
+def main(*, target_key=None, account_key=None):
     try:
         if not os.environ.get("QSL_CONSOLE_BASE_URL"):
             raise ValueError("daily_config_invalid")
         expected = identity.resolve_expected()
         now = datetime.now(timezone.utc)
-        result = publish_once(expected=expected, target_key=os.environ.get("IBKR_RUNTIME_DAILY_TARGET_KEY", ""),
-                              account_key=os.environ.get("IBKR_RUNTIME_DAILY_ACCOUNT_KEY", ""),
+        result = publish_once(expected=expected, target_key=target_key if target_key is not None else os.environ.get("IBKR_RUNTIME_DAILY_TARGET_KEY", ""),
+                              account_key=account_key if account_key is not None else os.environ.get("IBKR_RUNTIME_DAILY_ACCOUNT_KEY", ""),
                               business_date=os.environ.get("IBKR_RUNTIME_DAILY_BUSINESS_DATE", ""), observed_at=now,
                               token=os.environ.get("IBKR_RUNTIME_DAILY_SYNC_TOKEN", ""), origin=console_base_url())
     except Exception:
