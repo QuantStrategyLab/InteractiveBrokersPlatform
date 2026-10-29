@@ -900,6 +900,57 @@ def test_run_strategy_core_writes_reconciliation_record_under_strategy_dir(tmp_p
     assert payload["no_op_reason"] == "outside_execution_window"
 
 
+def test_no_target_preserves_independent_account_brake(tmp_path):
+    class FakeIB:
+        def isConnected(self):
+            return True
+
+        def disconnect(self):
+            return None
+
+    output_root = tmp_path / "tech_communication_pullback_enhancement" / "reconciliation"
+
+    result = run_strategy_core(
+        connect_ib=lambda: FakeIB(),
+        get_current_portfolio=lambda _ib: ({}, {"equity": 800.0, "buying_power": 500.0}),
+        compute_signals=lambda _ib, _holdings: (
+            None,
+            "signal",
+            False,
+            "outside execution window",
+            {
+                "peak_equity_usd": 1000.0,
+                "realized_vol": float("nan"),
+                "strategy_profile": "tech_communication_pullback_enhancement",
+                "trade_date": "2026-04-01",
+                "snapshot_as_of": "2026-03-31",
+                "snapshot_guard_decision": "no_op",
+                "no_op_reason": "outside_execution_window",
+                "dry_run_only": True,
+            },
+        ),
+        execute_rebalance=lambda *_args, **_kwargs: [],
+        send_tg_message=lambda _message: None,
+        translator=_build_test_translator(),
+        separator="---",
+        strategy_display_name="Tech/Communication Pullback Enhancement",
+        reconciliation_output_path=output_root,
+    )
+
+    assert result.result == "Blocked - account_brake_source_or_submit_unavailable"
+    assert result.signal_metadata["account_brake_observation"]["hard_brake_triggered"] is True
+    assert "INVALID_REALIZED_VOL_FAIL_CLOSED" in result.signal_metadata["account_brake_observation"]["reason_codes"]
+    candidate_paths = [
+        output_root,
+        output_root / "2026-04-01" / "reconciliation.json",
+    ]
+    payload_path = next((path for path in candidate_paths if path.is_file()), None)
+    assert payload_path is not None
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    assert payload["no_op_reason"] == "account_brake_source_or_submit_unavailable"
+
+
+
 def test_run_strategy_core_prefers_structured_noop_status_in_zh():
     observed = {"messages": []}
 
@@ -1297,3 +1348,58 @@ def test_persistent_runner_no_order_zero_new_registration(persistent_runner):
     state.run()
     assert state.submitted == []
     assert not list(state.store.local_dir.rglob("*.json"))
+
+
+def test_account_brake_reduction_uses_journal_grant_and_guarded_wrapper():
+    from unittest.mock import MagicMock
+    from application.rebalance_service import execute_account_brake_reduction
+    from quant_platform_kit.common.execution_state import AccountSubmissionSession
+    from quant_platform_kit.common.models import OrderIntent
+    session = MagicMock(spec=AccountSubmissionSession)
+    session.account_id = "synthetic"
+    session.read_state.return_value = {"equity_observation": {"open_orders_complete": True, "open_orders_empty": True, "positions": {"VOO": 2}}}
+    session.reserve_reduction.return_value = object()
+    calls = []
+    def submit(ib, intent, **kwargs):
+        calls.append((intent, kwargs))
+        return "accepted"
+    result = execute_account_brake_reduction(object(), admission=object(), session=session, order_intent_cls=OrderIntent, submit_order_intent=submit)
+    assert result == "accepted"
+    assert calls[0][0].side == "sell" and calls[0][0].quantity == 2
+    assert calls[0][1]["execution_grant"] is session.reserve_reduction.return_value
+    assert calls[0][1]["reduction_position"] == 2
+
+
+def test_no_target_brake_through_real_session_and_guarded_wrapper(tmp_path, monkeypatch, strategy_module_factory):
+    import pytest
+    platform = strategy_module_factory()
+    from types import SimpleNamespace
+    from quant_platform_kit.common.account_domain import account_domain_key
+    from quant_platform_kit.common.account_identity import BrokerAccountIdentity
+    from quant_platform_kit.common.execution_state import AccountSubmissionError, AccountSubmissionSession, ExecutionMarkerStore, submission_release_digest
+    from application.runtime_dependencies import IBKRRebalanceConfig
+    from quant_platform_kit.common.models import OrderIntent
+    from application.ibkr_order_execution import submit_order_intent as guarded_submit
+
+    domain = {"identity": {"environment": "LIVE", "platform_id": "ibkr", "server": "test", "account_id_fingerprint": "sha256:" + "1" * 64, "lifecycle_id": "one"},
+              "policy": {"capital_kind": "OWN_REAL", "product": "BROKERAGE", "phase": "LIVE", "account_type": "CASH", "style": "INTRADAY", "preference": "CAPITAL_PRESERVATION", "currency": "USD", "source": "synthetic", "effective_at": "2026-10-01T00:00:00Z", "valid_until": "2026-11-01T00:00:00Z", "version": "one"}}
+    identity = BrokerAccountIdentity(platform_id="ibkr", account_types=("CASH",), account_modes=("LIVE",), account_id_fingerprint="sha256:" + "1" * 64)
+    receipt = {"attestation_state": "self_attested", "release_id": "synthetic", "strategy_release": {"revision": "synthetic"}}
+    config = IBKRRebalanceConfig(translator=_build_test_translator(), separator="---", reconciliation_output_path=tmp_path / "reconciliation", strategy_profile="synthetic", execution_mode="live", account_ids=("U00000001",), runtime_release_receipt=receipt)
+    session = AccountSubmissionSession(ExecutionMarkerStore(local_dir=tmp_path / "journal"), broker="ibkr", account_id="U00000001", owner_id="owner", profile="synthetic", intent_id="a" * 64, release_id=submission_release_digest(receipt), account_domain=domain, observed_account_id="U00000001", broker_identity=identity, observed_at="2026-10-30T02:00:00Z", decision_at="2026-10-30T02:00:00Z", clock=lambda: "2026-10-30T02:00:00Z", observed_environment="LIVE", observed_server="test", observed_currency="USD", observed_lifecycle_id="one")
+    dummy = OrderIntent(symbol="VOO", side="sell", quantity=2, account_id="U00000001")
+    with pytest.raises(AccountSubmissionError, match="risk reservation required"):
+        session.reserve(dummy)
+    snapshot = {"balance": 9500, "equity": 9500, "cash": 1000, "currency": "USD", "valuation_at": "2026-10-30T00:00:00Z", "source_digest": "sha256:" + "2" * 64, "complete": True, "position_risk": 0, "position_3x_exposure": 0, "account_domain_key": account_domain_key(domain), "account_id": "U00000001", "valid_until": "2026-10-30T04:00:00Z", "pending_3x_exposure": 0, "open_orders_complete": True, "positions": {"VOO": 2}, "open_orders_empty": True}
+    session.record_account_equity(snapshot=snapshot, cash_flow=0, baseline_confirmed=True)
+    session.record_account_equity(snapshot={**snapshot, "equity": 8000, "valuation_at": "2026-10-30T01:00:00Z"}, cash_flow=0)
+    submitted = []
+    monkeypatch.setattr("application.ibkr_order_execution._submit_order_intent", lambda _ib, intent, **kwargs: submitted.append(intent) or SimpleNamespace(status="Submitted", broker_order_id="synthetic", filled_quantity=0, average_fill_price=0))
+    monkeypatch.setattr(platform, "submit_order_intent", guarded_submit)
+    class FakeIB:
+        def isConnected(self): return True
+        def disconnect(self): return None
+    result = run_strategy_core(config=config, connect_ib=lambda: FakeIB(), get_current_portfolio=lambda _ib: ({"VOO": {"quantity": 2}}, {"equity": 8000, "buying_power": 0}), compute_signals=lambda _ib, _holdings: (None, "signal", False, "no target", {"strategy_profile": "synthetic", "peak_equity_usd": 9500, "realized_vol": float("nan")}), execute_rebalance=lambda *_a, **_kw: [], send_tg_message=lambda _message: None, translator=_build_test_translator(), separator="---", reconciliation_output_path=tmp_path / "reconciliation", account_brake_session=session, account_brake_submit=platform.submit_market_order_intent, account_brake_order_intent_cls=OrderIntent)
+    assert result.signal_metadata["account_brake_observation"]["hard_brake_triggered"]
+    assert len(submitted) == 1 and submitted[0].side == "sell" and submitted[0].quantity == 2
+    assert next(iter(session.read_state()["attempts"].values()))["certainty"] == "KNOWN_PENDING"

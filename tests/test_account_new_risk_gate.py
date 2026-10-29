@@ -368,6 +368,7 @@ def test_submit_order_intent_allows_sell_when_gate_prohibits():
         submit_order_intent(
             ib,
             OrderIntent(symbol="SPY", side="sell", quantity=1.0),
+            reduction_position=2.0, reduction_pending_quantity=0.0,
         )
     submit_mock.assert_called_once()
     assert submit_mock.call_args.args[1].quantity == 1.0
@@ -444,3 +445,36 @@ def test_attention_notify_on_new_risk_prohibit_dedupes(monkeypatch):
     assert counts2.get("skipped") == 1
     assert len(payloads) == 1
 
+
+
+def test_invalid_risk_projection_is_json_safe_and_preserves_independent_brake():
+    import json
+    from application.account_new_risk_gate_support import build_account_new_risk_snapshot, evaluate_portfolio_new_risk_admission
+    portfolio = {"total_equity": 40000, "peak_equity_usd": 50000, "drawdown_from_peak": float("nan"), "realized_vol": float("nan")}
+    projection = build_account_new_risk_snapshot(portfolio)
+    json.dumps(projection, allow_nan=False)
+    assert build_account_new_risk_snapshot({**portfolio, "account_new_risk_snapshot": projection}) == projection
+    result = evaluate_portfolio_new_risk_admission(portfolio)
+    assert result.risk_input_invalid and result.hard_brake_triggered
+    assert result.combined_scale == 0.0
+    assert "INVALID_DRAWDOWN_FAIL_CLOSED" in result.reason_codes
+    assert "INVALID_REALIZED_VOL_FAIL_CLOSED" in result.reason_codes
+    assert "DRAWDOWN_BRAKE_TRIPPED" in result.reason_codes
+
+
+def test_invalid_vol_prohibits_without_zero_scale():
+    from application.account_new_risk_gate_support import evaluate_portfolio_new_risk_admission
+    result = evaluate_portfolio_new_risk_admission({"total_equity": 40000, "realized_vol": "bad"})
+    assert result.risk_input_invalid and not result.hard_brake_triggered
+    assert result.combined_scale is None
+
+
+def test_submit_rejects_unproven_reduction_and_allows_short_cover():
+    set_cycle_snapshot(InjectedReconciliationSnapshot(observation_status="COMPLETE", reconciliation_status="VERIFIED", circuit_breaker_state="CLOSED", equity_usd=None))
+    with mock.patch("application.ibkr_order_execution._submit_order_intent", return_value=SimpleNamespace(status="Submitted")) as submit:
+        rejected = submit_order_intent(SimpleNamespace(), OrderIntent(symbol="SPY", side="sell", quantity=2), reduction_position=1, reduction_pending_quantity=0)
+        assert rejected.status == "rejected"
+        rejected = submit_order_intent(SimpleNamespace(), OrderIntent(symbol="SPY", side="buy", quantity=1), reduction_position=-2, reduction_pending_quantity=None)
+        assert rejected.status == "rejected"
+        submit_order_intent(SimpleNamespace(), OrderIntent(symbol="SPY", side="buy", quantity=1), reduction_position=-2, reduction_pending_quantity=0)
+        submit.assert_called_once()

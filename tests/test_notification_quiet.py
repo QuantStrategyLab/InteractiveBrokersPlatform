@@ -125,6 +125,19 @@ def test_drill_mixed_targets_only_sends_exception_and_records_every_target(monke
     assert 'mock-target' in capsys.readouterr().out
 
 
+def capture_alert_diagnostics(monkeypatch):
+    """Inspect classification before the shared renderer removes private detail."""
+    diagnostics = []
+    original = heartbeat.format_operational_alert
+
+    def render(**kwargs):
+        diagnostics.extend(kwargs.get("technical_details", ()))
+        return original(**kwargs)
+
+    monkeypatch.setattr(heartbeat, "format_operational_alert", render)
+    return diagnostics
+
+
 def mock_heartbeat(monkeypatch, payload):
     monkeypatch.setattr(heartbeat, '_runtime_target_enabled', lambda: True)
     monkeypatch.setattr(heartbeat, 'runtime_target_configuration_present', lambda env: False)
@@ -266,6 +279,7 @@ def test_drill_preview_retains_records_without_sending(monkeypatch, capsys):
 
 
 def test_unscoped_mixed_services_unknown_is_visible(monkeypatch):
+    diagnostics = capture_alert_diagnostics(monkeypatch)
     sent = mock_heartbeat(monkeypatch, report())
     monkeypatch.setattr(heartbeat, '_list_gcs_objects', lambda *args, **kw: [
         {'url': 'gs://mock/a.json', 'metadata': {'updated': NOW.isoformat()}},
@@ -279,10 +293,13 @@ def test_unscoped_mixed_services_unknown_is_visible(monkeypatch):
     monkeypatch.setattr(heartbeat, '_cat_gcs_json', read)
     assert heartbeat.main(NOW) == 0
     assert len(sent) == 1
-    assert 'unknown' in sent[0]
+    assert 'unknown' in '\n'.join(diagnostics)
+    assert heartbeat._notice('status_normal') not in sent[0]
+    assert 'gs://mock/' not in sent[0]
 
 
 def test_conflicting_latest_identity_cannot_be_hidden_by_old_healthy(monkeypatch):
+    diagnostics = capture_alert_diagnostics(monkeypatch)
     sent = mock_heartbeat(monkeypatch, report())
     monkeypatch.setenv('RUNTIME_HEARTBEAT_ACCOUNT_SCOPE', TARGET.scope)
     monkeypatch.setattr(heartbeat, '_resolve_required_services', lambda **kw: ([TARGET.service], None, False))
@@ -297,7 +314,8 @@ def test_conflicting_latest_identity_cannot_be_hidden_by_old_healthy(monkeypatch
     monkeypatch.setattr(heartbeat, '_cat_gcs_json', read)
     assert heartbeat.main(NOW) == 1
     assert len(sent) == 1
-    assert 'conflicting report identity' in sent[0]
+    assert 'conflicting report identity' in '\n'.join(diagnostics)
+    assert heartbeat._notice('status_normal') not in sent[0]
 
 
 @pytest.mark.parametrize('value', [True, 1, 'bad'])
@@ -507,6 +525,7 @@ def test_confirmed_manual_opt_in_uses_existing_normal_formatter(monkeypatch):
 
 @pytest.mark.parametrize('due_at', [None, NOW - dt.timedelta(hours=2), NOW - dt.timedelta(minutes=30)])
 def test_reuploaded_old_payload_is_visible_only_against_existing_precise_due(monkeypatch, due_at):
+    diagnostics = capture_alert_diagnostics(monkeypatch)
     sent = mock_heartbeat(monkeypatch, report())
     target = {'service': TARGET.service, 'strategy_profile': TARGET.profile, 'account_scope': TARGET.scope}
     if due_at is not None:
@@ -518,7 +537,8 @@ def test_reuploaded_old_payload_is_visible_only_against_existing_precise_due(mon
     assert bool(sent) is stale
     if stale:
         assert heartbeat._notice('status_normal') not in sent[0]
-        assert 'predates latest due' in sent[0]
+        assert 'predates latest due' in '\n'.join(diagnostics)
+        assert 'gs://mock/' not in sent[0]
 
 
 @pytest.mark.parametrize('count', ['missing', False, '0', 0])

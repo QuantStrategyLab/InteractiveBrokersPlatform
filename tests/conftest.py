@@ -32,7 +32,8 @@ def synthetic_account_submission(venue, *, local_dir, metadata, profile, account
         release_id=contract.submission_release_digest(receipt),
     )
 
-    def submit(ib, intent, *, account_execution_session, execution_grant):
+    def submit(ib, intent, *, account_execution_session, execution_grant,
+               reduction_position=None, reduction_pending_quantity=None):
         assert account_execution_session is session
         return session.dispatch(execution_grant, intent, lambda: venue(ib, intent))
 

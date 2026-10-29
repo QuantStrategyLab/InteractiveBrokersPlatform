@@ -991,3 +991,11 @@ def test_persistent_main_rejects_wrong_broker_grant_and_future_contract(persiste
     with pytest.raises(RuntimeError, match="session|contract"):
         state.run()
     assert state.submitted == []
+
+
+def test_persistent_main_reduces_long_through_real_wrapper_when_risk_input_invalid(persistent_real_caller):
+    state = persistent_real_caller
+    state.metadata["realized_vol"] = float("nan")
+    _logs, summary = state.run()
+    assert [(contract.symbol, order.action, order.totalQuantity) for contract, order in state.submitted] == [("VOO", "SELL", 10)]
+    assert summary["execution_status"] == "pending_reconciliation"

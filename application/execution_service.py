@@ -1236,7 +1236,7 @@ def execute_rebalance(
     if not dry_run_only:
         delegate_submit = submit_order_intent
 
-        def submit_claimed_order(ib, order_intent):
+        def submit_claimed_order(ib, order_intent, **kwargs):
             from quant_platform_kit.common import execution_state as contract
 
             session_type = getattr(contract, "AccountSubmissionSession", ())
@@ -1259,7 +1259,7 @@ def execute_rebalance(
             grant = account_execution_session.reserve(order_intent)
             return delegate_submit(
                 ib, order_intent, account_execution_session=account_execution_session,
-                execution_grant=grant,
+                execution_grant=grant, **kwargs,
             )
 
         submit_order_intent = submit_claimed_order
@@ -1985,6 +1985,11 @@ def execute_rebalance(
             or float(price) <= 0.0
         ):
             raise RuntimeError("IBKR live sell exceeds approved position or has invalid pricing")
+        if account_new_risk_buy_blocked:
+            from quant_platform_kit.risk.account_new_risk_gate import is_proven_risk_reducing_order
+            if not is_proven_risk_reducing_order(held_quantity, "sell", qty, pending_quantity=0.0):
+                execution_summary["orders_skipped"].append({"symbol": symbol, "side": "sell", "reason": "risk_reduction_unproven"})
+                continue
         if dry_run_only:
             execution_summary["orders_submitted"].append(
                 {"symbol": symbol, "side": "sell", "quantity": qty, "status": "dry_run"}
@@ -2000,6 +2005,8 @@ def execute_rebalance(
                 quantity=qty,
                 account_id=order_account_id,
             ),
+            **({"reduction_position": held_quantity, "reduction_pending_quantity": 0.0}
+               if account_new_risk_buy_blocked else {}),
         )
         status = str(getattr(report, "status", "") or "")
         order_payload = {

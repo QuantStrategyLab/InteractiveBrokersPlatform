@@ -107,25 +107,29 @@ def submit_order_intent(
     limit_order_factory: Callable[..., Any] | None = None,
     stock_exchange: str = "SMART",
     stock_currency: str = "USD",
+    reduction_position: float | None = None,
+    reduction_pending_quantity: float | None = None,
 ) -> ExecutionReport:
     """Submit an IBKR order with explicit TIF to avoid account-preset rejections."""
 
     intent = _intent_with_default_time_in_force(order_intent)
     side_normalized = str(intent.side or "").strip().lower()
-    if is_account_new_risk_gate_enabled() and side_normalized.startswith("buy"):
+    if is_account_new_risk_gate_enabled():
         admission = evaluate_cycle_new_risk_admission()
         if new_risk_buy_prohibited(admission):
-            return ExecutionReport(
-                symbol=str(intent.symbol or "").strip().upper(),
-                side=side_normalized,
-                quantity=float(intent.quantity or 0.0),
-                status="rejected",
-                raw_payload={
-                    "detail": "account_new_risk_gate",
-                    "reason_codes": list(admission.reason_codes),
-                    "live_authority_granted": admission.live_authority_granted,
-                },
-            )
+            from quant_platform_kit.risk.account_new_risk_gate import is_proven_risk_reducing_order
+            if not is_proven_risk_reducing_order(reduction_position, side_normalized, intent.quantity, pending_quantity=reduction_pending_quantity):
+                return ExecutionReport(
+                    symbol=str(intent.symbol or "").strip().upper(),
+                    side=side_normalized,
+                    quantity=float(intent.quantity or 0.0),
+                    status="rejected",
+                    raw_payload={
+                        "detail": "account_new_risk_gate",
+                        "reason_codes": list(admission.reason_codes),
+                        "live_authority_granted": admission.live_authority_granted,
+                    },
+                )
     return _submit_order_intent(
         ib,
         intent,

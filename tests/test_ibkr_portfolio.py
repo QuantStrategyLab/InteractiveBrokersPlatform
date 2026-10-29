@@ -649,3 +649,36 @@ def test_fetch_portfolio_snapshot_allows_explicit_zero_cash_balance():
 
     assert snapshot.total_equity == 0.0
     assert snapshot.metadata["market_currency_cash"] == 0.0
+
+
+def test_existing_account_cache_to_facts_preserves_distinct_native_cash_and_schedule():
+    from application.account_facts import build_ibkr_account_facts
+    rows = [
+        SimpleNamespace(account="U1", currency="USD", tag="$LEDGER-CashBalance", value="100.00", modelCode=""),
+        SimpleNamespace(account="U1", currency="USD", tag="SettledCash", value="75.25", modelCode=""),
+        SimpleNamespace(account="U1", currency="USD", tag="AvailableFunds", value="90.50", modelCode=""),
+        SimpleNamespace(account="U1", currency="USD", tag="SettledCashByDate", value="20991231:75.25", modelCode=""),
+        SimpleNamespace(account="U2", currency="USD", tag="SettledCash", value="999", modelCode=""),
+    ]
+    snapshot = fetch_portfolio_snapshot(SnapshotIB([], [], rows), account_ids=("U1",), wait_seconds=0)
+    facts = build_ibkr_account_facts(snapshot)
+    assert facts["cash"] == [{"currency": "USD", "cash_balance": "100.0", "source_tag": "$LEDGER-CashBalance"}]
+    values = facts["broker_cash_observations"]["values"]
+    assert {item["source_tag"]: item["value"] for item in values} == {
+        "$LEDGER-CashBalance": "100.00", "SettledCash": "75.25", "AvailableFunds": "90.50",
+    }
+    assert facts["broker_cash_schedule_observations"]["values"] == [
+        {"currency": "USD", "source_tag": "SettledCashByDate", "raw_value": "20991231:75.25"},
+    ]
+
+
+def test_existing_account_cache_marks_invalid_native_cash_without_inventing_zero():
+    from application.account_facts import build_ibkr_account_facts
+    rows = [
+        SimpleNamespace(account="U1", currency="USD", tag="CashBalance", value="100", modelCode=""),
+        SimpleNamespace(account="U1", currency="USD", tag="SettledCash", value="bad", modelCode=""),
+    ]
+    snapshot = fetch_portfolio_snapshot(SnapshotIB([], [], rows), account_ids=("U1",), wait_seconds=0)
+    observations = build_ibkr_account_facts(snapshot)["broker_cash_observations"]
+    assert observations["invalid_fields"] == [{"currency": "USD", "source_tag": "SettledCash"}]
+    assert all(item["source_tag"] != "SettledCash" for item in observations.get("values", []))

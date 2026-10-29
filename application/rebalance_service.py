@@ -950,6 +950,9 @@ def run_strategy_core(
     separator=None,
     strategy_display_name=None,
     reconciliation_output_path=None,
+    account_brake_session=None,
+    account_brake_submit=None,
+    account_brake_order_intent_cls=None,
 ):
     if runtime is None:
         if not all((connect_ib, get_current_portfolio, compute_signals, execute_rebalance, send_tg_message)):
@@ -989,6 +992,39 @@ def run_strategy_core(
         else:
             target_weights, signal_desc, _is_emergency, status_desc = signal_result
             signal_metadata = {}
+        if target_weights is None:
+            from application.account_new_risk_gate_support import evaluate_account_values_new_risk_admission
+            admission = evaluate_account_values_new_risk_admission(account_values, signal_metadata=signal_metadata)
+            signal_metadata = dict(signal_metadata or {})
+            signal_metadata["account_brake_observation"] = {
+                "hard_brake_triggered": bool(getattr(admission, "hard_brake_triggered", False)),
+                "reason_codes": list(admission.reason_codes),
+            }
+            if signal_metadata["account_brake_observation"]["hard_brake_triggered"]:
+                if (getattr(config, "dry_run_only", False) or signal_metadata.get("dry_run_only") is True or account_brake_session is None
+                        or account_brake_submit is None or account_brake_order_intent_cls is None):
+                    signal_metadata["execution_blocked_reason"] = "account_brake_source_or_submit_unavailable"
+                else:
+                    from quant_platform_kit.common.execution_state import submission_release_digest
+                    brake_profile = str(signal_metadata.get("strategy_profile") or getattr(config, "strategy_profile", ""))
+                    brake_account = _resolve_physical_account_id(config=config, snapshot=snapshot)
+                    brake_domain = account_brake_session.account_domain
+                    expected_mode = "paper" if isinstance(brake_domain, Mapping) and brake_domain.get("identity", {}).get("environment") == "DEMO" else "live"
+                    if (not brake_profile or getattr(config, "execution_mode", None) != expected_mode
+                            or (getattr(config, "strategy_profile", "") and config.strategy_profile != brake_profile)
+                            or account_brake_session.account_id != brake_account
+                            or account_brake_session.profile != brake_profile
+                            or account_brake_session.release_id != submission_release_digest(config.runtime_release_receipt)):
+                        raise RuntimeError("account brake runtime identity or release mismatch")
+                    report = execute_account_brake_reduction(
+                        ib, admission=admission, session=account_brake_session,
+                        order_intent_cls=account_brake_order_intent_cls,
+                        submit_order_intent=account_brake_submit,
+                    )
+                    brake_status = str(getattr(report, "status", "")) if report is not None else "no_position"
+                    signal_metadata["account_brake_observation"]["submission_status"] = brake_status
+                    if brake_status not in {"Submitted", "PreSubmitted", "PendingSubmit", "ApiPending", "ApiPendingSubmit", "Filled", "PartiallyFilled", "Partial", "no_position"}:
+                        signal_metadata["execution_blocked_reason"] = "account_brake_submission_not_confirmed"
         allocation = _resolve_weight_allocation(signal_metadata, required=target_weights is not None)
         resolved_target_weights = dict(allocation.get("targets") or {}) if target_weights is not None else None
         strategy_symbols = tuple(
@@ -1151,7 +1187,9 @@ def run_strategy_core(
                 )
             _record_platform_execution_telemetry(signal_metadata, blocked_summary or {})
             return StrategyCycleResult(
-                result=f"Blocked - {execution_blocked_reason}" if execution_blocked_reason else ("OK - no-op" if notification_suppressed else "OK - heartbeat"),
+                result=(f"Blocked - {execution_blocked_reason}" if execution_blocked_reason else
+                        "OK - account brake submitted" if signal_metadata.get("account_brake_observation", {}).get("submission_status") not in (None, "no_position") else
+                        "OK - no-op" if notification_suppressed else "OK - heartbeat"),
                 signal_metadata=dict(signal_metadata or {}),
                 target_weights=None,
                 execution_summary=dict(blocked_summary or {}),
@@ -1442,3 +1480,28 @@ def run_strategy_core(
     finally:
         if ib is not None and ib.isConnected():
             ib.disconnect()
+
+
+def execute_account_brake_reduction(ib, *, admission, session, order_intent_cls, submit_order_intent):
+    """Submit one independently proved account-brake reduction through the existing journal.
+
+    The caller supplies the runtime's already bound session and guarded submit wrapper.
+    A missing or incomplete account observation cannot create an order.
+    """
+    from quant_platform_kit.common.execution_state import AccountSubmissionError, AccountSubmissionSession
+
+    if not isinstance(session, AccountSubmissionSession):
+        raise AccountSubmissionError("account submission session required")
+    state = session.read_state()
+    observation = state.get("equity_observation")
+    if observation is None or not observation.get("open_orders_complete") or not observation.get("open_orders_empty"):
+        raise AccountSubmissionError("complete account observation required")
+    for symbol, signed_quantity in sorted(observation["positions"].items()):
+        if not signed_quantity:
+            continue
+        intent = order_intent_cls(symbol=symbol, side="sell" if signed_quantity > 0 else "buy",
+                                  quantity=abs(signed_quantity), account_id=session.account_id)
+        grant = session.reserve_reduction(intent, admission=admission)
+        return submit_order_intent(ib, intent, account_execution_session=session, execution_grant=grant,
+                                   reduction_position=signed_quantity, reduction_pending_quantity=0.0)
+    return None
