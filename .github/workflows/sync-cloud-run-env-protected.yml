@@ -29,6 +29,9 @@ on:
       initial_state_source_run_id:
         type: string
         required: false
+      initial_state_current_run_id:
+        type: string
+        required: false
       request_id:
         type: string
         required: false
@@ -142,6 +145,7 @@ jobs:
       INPUT_CONFIGURED_SERVICE: ${{ inputs.configured_service }}
       INPUT_RUNTIME_SWITCH_ONLY: ${{ inputs.runtime_switch_only }}
       INPUT_INITIAL_STATE_SOURCE_RUN_ID: ${{ inputs.initial_state_source_run_id }}
+      INPUT_INITIAL_STATE_CURRENT_RUN_ID: ${{ inputs.initial_state_current_run_id }}
       IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX: ${{ secrets.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX }}
       INPUT_REQUEST_ID: ${{ inputs.request_id }}
       INPUT_SOURCE_COMMIT: ${{ inputs.source_commit }}
@@ -494,7 +498,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "${INPUT_INITIAL_STATE_SOURCE_RUN_ID:-}" ]; then
-            if [[ ! "$INPUT_INITIAL_STATE_SOURCE_RUN_ID" =~ ^[0-9]{1,20}$ ]] || [[ ! "${IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX:-}" =~ ^gs://[a-z0-9][a-z0-9._-]*/reconciliation-recovery/ibkr/state/?$ ]] || [ -n "${INPUT_CONFIGURED_SERVICE:-}" ] || [ "${WORKFLOW_TARGET:-configured}" != configured ] || [ "${INPUT_RUNTIME_SWITCH_ONLY:-false}" = true ] || [ "${INPUT_DEPLOY_IMAGE:-true}" = true ] || [ "${INPUT_SYNC_ENV:-false}" != true ] || [ "${INPUT_APPROVE_SCHEDULER_SYNC:-false}" = true ]; then
+            if [[ ! "$INPUT_INITIAL_STATE_SOURCE_RUN_ID" =~ ^[0-9]{1,20}$ ]] || [[ ! "${INPUT_INITIAL_STATE_CURRENT_RUN_ID:-}" =~ ^[0-9]{1,20}$ ]] || [ "$INPUT_INITIAL_STATE_SOURCE_RUN_ID" = "$INPUT_INITIAL_STATE_CURRENT_RUN_ID" ] || [[ ! "${IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX:-}" =~ ^gs://[a-z0-9][a-z0-9._-]*/reconciliation-recovery/ibkr/state/?$ ]] || [ -n "${INPUT_CONFIGURED_SERVICE:-}" ] || [ "${WORKFLOW_TARGET:-configured}" != configured ] || [ "${INPUT_RUNTIME_SWITCH_ONLY:-false}" = true ] || [ "${INPUT_DEPLOY_IMAGE:-true}" = true ] || [ "${INPUT_SYNC_ENV:-false}" != true ] || [ "${INPUT_APPROVE_SCHEDULER_SYNC:-false}" = true ]; then
               echo 'initial_state_ledger_requires_one_disabled_env_only_target' >&2
               exit 1
             fi
@@ -967,6 +971,7 @@ jobs:
           SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
           EXACT_ENV_TRAFFIC: ${{ steps.config.outputs.deploy_enabled != 'true' && steps.config.outputs.traffic_shift_enabled == 'true' }}
           RUNTIME_SWITCH_ONLY: ${{ inputs.runtime_switch_only }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if [ -n "${IBKR_INITIAL_SYNC_PLAN_PATH:-}" ]; then export SYNC_PLAN_JSON="$(cat "$IBKR_INITIAL_SYNC_PLAN_PATH")"; fi
@@ -1025,6 +1030,7 @@ jobs:
           from urllib.parse import quote
           from urllib.request import HTTPRedirectHandler, Request, build_opener
           from scripts.reconcile_cloud_runtime import validate_initial_state_baseline, build_initial_state_stage
+          from scripts.publish_reconciliation_recovery_source import read_initial_private_run
           directory = Path(sys.argv[1])
           baseline = json.loads((directory / "baseline-service.json").read_text())
           current = json.loads((directory / "before-update.json").read_text())
@@ -1033,7 +1039,21 @@ jobs:
           full_plan = json.loads(os.environ["SYNC_PLAN_JSON"])
           plan = full_plan["targets"][0]
           ledger = json.loads(Path(os.environ["IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PATH"]).read_text())
-          updates = validate_initial_state_baseline(json.loads((directory / "baseline-revision.json").read_text()), plan, ledger)
+          revision = json.loads((directory / "baseline-revision.json").read_text())
+          values = {row["name"]: row.get("value") for row in revision["spec"]["containers"][0]["env"]}
+          target = json.loads(values["RUNTIME_TARGET_JSON"])
+          args = {"profile": target["strategy_profile"], "service": sys.argv[2], "project": os.environ["GCP_PROJECT_ID"]}
+          try:
+              original_record, original_report = read_initial_private_run(os.environ["INPUT_INITIAL_STATE_SOURCE_RUN_ID"], **args)
+              current_record, current_report = read_initial_private_run(os.environ["INPUT_INITIAL_STATE_CURRENT_RUN_ID"],
+                  expected_revision=revision["metadata"]["name"], **args)
+              updates = validate_initial_state_baseline(revision, plan, ledger, original_record=original_record,
+                  original_report=original_report, current_record=current_record, current_report=current_report)
+          except Exception as exc:
+              cause = exc.__cause__
+              changed = isinstance(cause, ValueError) and str(cause) in {
+                  "initial facts or scope changed", "initial identity changed", "initial account changed"}
+              raise SystemExit("initial_state_observation_changed" if changed else "initial_state_observation_unavailable") from None
           plan["env"].update(updates)
           Path(os.environ["IBKR_INITIAL_SYNC_PLAN_PATH"]).write_text(json.dumps(full_plan), encoding="utf-8")
           candidate_revision = (directory / "candidate-revision.txt").read_text().strip()

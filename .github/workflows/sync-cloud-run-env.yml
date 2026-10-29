@@ -52,6 +52,10 @@ on:
         description: "Use one confirmed initial private state ledger from the original evidence run."
         required: false
         type: string
+      initial_state_current_run_id:
+        description: "One fresh read-only observation for the confirmed initial state."
+        required: false
+        type: string
       request_id:
         description: "Unique lowercase UUID for correlating a runtime switch request."
         required: false
@@ -133,6 +137,7 @@ jobs:
       configured_service: ${{ inputs.configured_service }}
       runtime_switch_only: ${{ inputs.runtime_switch_only }}
       initial_state_source_run_id: ${{ inputs.initial_state_source_run_id }}
+      initial_state_current_run_id: ${{ inputs.initial_state_current_run_id }}
       request_id: ${{ inputs.request_id }}
       source_commit: ${{ inputs.source_commit }}
       expected_serving_revision_digest: ${{ inputs.expected_serving_revision_digest }}

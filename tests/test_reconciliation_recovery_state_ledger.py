@@ -91,7 +91,8 @@ def test_state_ledger_changes_only_continuity_state_and_returns_exact_digests() 
     assert expected_digests == _ledger(target)["transition_plan"]["expected_digests"]  # type: ignore[index]
 
 
-def test_initial_state_uses_serving_target_and_rejects_wrong_or_expired_ledger() -> None:
+def test_initial_state_uses_serving_target_and_rejects_wrong_target(monkeypatch) -> None:
+    monkeypatch.setattr("scripts.verify_reconciliation_recovery.verify_initial_ledger_reobservation", lambda **kwargs: None)
     target = _runtime_target()
     ledger = _ledger(target)
     service = str(target['service_name'])
@@ -104,23 +105,24 @@ def test_initial_state_uses_serving_target_and_rejects_wrong_or_expired_ledger()
     # Inventory is used only to select the service; it is not the authority for the baseline.
     plan = {'service_name': service, 'env': {'RUNTIME_TARGET_ENABLED': 'false', 'RUNTIME_TARGET_JSON': '{}'}}
     now = datetime(2026, 8, 31, 1, 6, tzinfo=timezone.utc)
-    updates = validate_initial_state_baseline(revision, plan, ledger, now=now)
+    reports = dict(original_record={}, original_report={}, current_record={}, current_report={})
+    updates = validate_initial_state_baseline(revision, plan, ledger, now=now, **reports)
     derived = json.loads(updates['RUNTIME_TARGET_JSON'])
     assert derived == {**target, 'live_continuity': {**target['live_continuity'], 'state': 'ACTIVE_LKG'}}
     assert json.loads(updates['IBKR_RECONCILIATION_EXPECTED_DIGESTS_JSON']) == ledger['transition_plan']['expected_digests']
-    for mutation in ('enabled', 'identity', 'drift', 'expired'):
+    for mutation in ('enabled', 'identity', 'drift'):
         changed, expectation, stamp = copy.deepcopy(revision), copy.deepcopy(plan), now
         if mutation == 'enabled': changed['spec']['containers'][0]['env'][0]['value'] = 'true'
         elif mutation == 'identity': expectation['service_name'] = 'different-service'
         elif mutation == 'drift':
             drifted = copy.deepcopy(target); drifted['strategy_profile'] = 'different-profile'
             changed['spec']['containers'][0]['env'][1]['value'] = json.dumps(drifted)
-        else: stamp = datetime(2026, 8, 31, 1, 36, tzinfo=timezone.utc)
         with pytest.raises(ReconcileError):
-            validate_initial_state_baseline(changed, expectation, ledger, now=stamp)
+            validate_initial_state_baseline(changed, expectation, ledger, now=stamp, **reports)
 
 
-def test_initial_stage_uses_resource_version_and_freezes_existing_traffic():
+def test_initial_stage_uses_resource_version_and_freezes_existing_traffic(monkeypatch):
+    monkeypatch.setattr("scripts.verify_reconciliation_recovery.verify_initial_ledger_reobservation", lambda **kwargs: None)
     target = _runtime_target(); service_name = str(target['service_name'])
     env = [{'name': 'RUNTIME_TARGET_ENABLED', 'value': 'false'},
            {'name': 'RUNTIME_TARGET_JSON', 'value': json.dumps(target)},
@@ -132,7 +134,8 @@ def test_initial_stage_uses_resource_version_and_freezes_existing_traffic():
                'status': {'traffic': [{'revisionName': service_name + '-old', 'percent': 100},
                                       {'revisionName': service_name + '-previous', 'percent': 0, 'tag': 'review'}]}}
     updates = validate_initial_state_baseline(rev, {'service_name': service_name, 'env': {'RUNTIME_TARGET_ENABLED': 'false'}},
-        _ledger(target), now=datetime(2026, 8, 31, 1, 6, tzinfo=timezone.utc))
+        _ledger(target), now=datetime(2026, 8, 31, 1, 6, tzinfo=timezone.utc),
+        original_record={}, original_report={}, current_record={}, current_report={})
     result = build_initial_state_stage(service, rev, updates, service_name + '-new')
     assert result['metadata']['resourceVersion'] == '7'
     assert result['spec']['traffic'] == service['status']['traffic']

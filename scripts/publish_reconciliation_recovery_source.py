@@ -51,6 +51,52 @@ RECONCILIATION_RECOVERY_PRIVATE_EVIDENCE_SCHEMA_VERSION = "ibkr_reconciliation_r
 _SHA256_LENGTH = 64
 
 
+def read_initial_private_run(run_id: str, *, profile: str, service: str, project: str,
+                             expected_revision: str | None = None) -> tuple[dict[str, object], dict[str, object]]:
+    """Read one exact original or current private report without publishing it."""
+    from scripts.diagnose_ibkr_flex_runtime_binding import _gh
+
+    if not re.fullmatch(r"[0-9]{1,20}", run_id):
+        raise ValueError("initial private run invalid")
+    run = _strict_json(_gh(f"actions/runs/{run_id}"))
+    if (not isinstance(run, dict) or run.get("id") != int(run_id) or run.get("status") != "completed"
+            or run.get("conclusion") != "success" or run.get("head_branch") != "main"
+            or run.get("run_attempt") != 1 or run.get("event") != "workflow_dispatch"
+            or run.get("path") != ".github/workflows/collect-reconciliation-evidence.yml"
+            or (run.get("repository") or {}).get("full_name") != "QuantStrategyLab/InteractiveBrokersPlatform"):
+        raise ValueError("initial private run invalid")
+    job_hash = hashlib.sha256(f"ibkr-reconcile-{profile}-{run_id}-1".encode()).hexdigest()
+    query = (f'resource.type="cloud_run_revision" AND resource.labels.service_name="{service}" '
+             f'AND textPayload:"reconciliation_receipt_ready scheduler_job_sha256={job_hash} "')
+    result = subprocess.run(["gcloud", "logging", "read", query, "--project", project,
+                             "--freshness=7d", "--limit=10", "--format=json"],
+                            capture_output=True, timeout=30, check=False)
+    if result.returncode:
+        raise ValueError("initial private report unavailable")
+    pattern = re.compile(r"^reconciliation_receipt_ready scheduler_job_sha256=" + re.escape(job_hash)
+                         + r" report_uri=(gs://\S+/initial-enrollment/([0-9a-f-]{36})\.json#([0-9]+))$")
+    entries = _strict_json(result.stdout)
+    matches = [(entry, match) for entry in entries if isinstance(entry, dict)
+               and (match := pattern.fullmatch(str(entry.get("textPayload", ""))))]
+    if len(matches) != 1:
+        raise ValueError("initial private report unavailable")
+    entry, match = matches[0]
+    revision = (entry.get("resource") or {}).get("labels", {}).get("revision_name")
+    if not isinstance(revision, str) or not revision or (expected_revision and revision != expected_revision):
+        raise ValueError("initial private revision mismatch")
+    response = subprocess.run(["gcloud", "storage", "cat", match.group(1)], capture_output=True, timeout=30, check=False)
+    if response.returncode or len(response.stdout) > 4 * 1024 * 1024:
+        raise ValueError("initial private report unavailable")
+    report = _strict_json(response.stdout)
+    record = {"schema_version": "ibkr_initial_private_source.v1", "repository": run["repository"]["full_name"],
+              "workflow_path": run["path"], "workflow_run_id": run_id, "workflow_run_attempt": "1",
+              "workflow_head_sha": run.get("head_sha"), "service_name": service, "service_revision": revision,
+              "scheduler_job_sha256": job_hash, "report_uri": match.group(1), "request_id": match.group(2),
+              "report_generation": match.group(3)}
+    initial_facts_from_private_report(report, scheduler_job_sha256=job_hash, request_id=match.group(2))
+    return record, report
+
+
 def build_trusted_initial_snapshot(env: Mapping[str, str], run_id: str, *, read_report=None, read_run=None,
                                    private_output: dict[str, object] | None = None) -> dict[str, object]:
     """Read the existing private report after verifying its exact protected source."""

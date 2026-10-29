@@ -375,3 +375,35 @@ def test_publisher_cli_authenticates_before_archive_or_publish(tmp_path, monkeyp
         ])
     assert rejected.value.code == 2
     assert calls == []
+
+
+def test_read_initial_private_run_binds_exact_run_revision_and_generation(monkeypatch):
+    import scripts.diagnose_ibkr_flex_runtime_binding as binding
+    from scripts.publish_reconciliation_recovery_source import read_initial_private_run
+    import subprocess
+
+    run = {"id": 1, "status": "completed", "conclusion": "success", "head_branch": "main", "run_attempt": 1,
+           "event": "workflow_dispatch", "path": ".github/workflows/collect-reconciliation-evidence.yml",
+           "repository": {"full_name": "QuantStrategyLab/InteractiveBrokersPlatform"}, "head_sha": "c" * 40}
+    monkeypatch.setattr(binding, "_gh", lambda _path: json.dumps(run).encode())
+    job = hashlib.sha256(b"ibkr-reconcile-synthetic-profile-1-1").hexdigest()
+    request_id = "853a2e08-9396-4fe8-89ee-59fb17e40a1d"
+    facts = {"synthetic": "private"}
+    digest = hashlib.sha256(json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    report = {"diagnostics": {"reconciliation_scheduler_job_sha256": job, "reconciliation_request_id": request_id,
+              "initial_enrollment_private": {"facts": facts, "facts_sha256": digest}}}
+    entry = {"resource": {"labels": {"revision_name": "synthetic-revision"}},
+             "textPayload": f"reconciliation_receipt_ready scheduler_job_sha256={job} report_uri=gs://synthetic/initial-enrollment/{request_id}.json#123"}
+    def fake_run(args, **_kwargs):
+        value = [entry] if args[1] == "logging" else report
+        return SimpleNamespace(returncode=0, stdout=json.dumps(value).encode())
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    record, actual = read_initial_private_run("1", profile="synthetic-profile", service="synthetic-service",
+                                               project="synthetic-project", expected_revision="synthetic-revision")
+    assert record["report_generation"] == "123" and actual == report
+    with pytest.raises(ValueError, match="revision mismatch"):
+        read_initial_private_run("1", profile="synthetic-profile", service="synthetic-service",
+                                 project="synthetic-project", expected_revision="other")
+    entry["textPayload"] = entry["textPayload"].split("#")[0]
+    with pytest.raises(ValueError, match="report unavailable"):
+        read_initial_private_run("1", profile="synthetic-profile", service="synthetic-service", project="synthetic-project")

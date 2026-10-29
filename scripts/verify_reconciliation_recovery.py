@@ -48,6 +48,63 @@ CONTROLLER_READ_SCHEMA_VERSION = "qsl_reconciliation_recovery_controller_read.v1
 VERIFY_ONLY_SCHEMA_VERSION = "ibkr_reconciliation_recovery_verification.v1"
 
 
+def verify_initial_ledger_reobservation(*, ledger: Mapping[str, Any], original_record: Mapping[str, Any],
+                                       original_report: Mapping[str, Any], current_record: Mapping[str, Any],
+                                       current_report: Mapping[str, Any], now: datetime | None = None) -> None:
+    """Match a fresh observation to the previously confirmed immutable facts."""
+    from scripts.build_reconciliation_baseline_candidate import evaluate_initial_receipt, initial_facts_from_private_report
+    from quant_platform_kit.common.reconciliation_recovery import DEFAULT_RECONCILIATION_RECOVERY_MAX_AGE
+
+    if original_record.get("workflow_run_id") == current_record.get("workflow_run_id"):
+        raise ValueError("initial observation must be new")
+    plan = ledger["transition_plan"]
+    verified_at = datetime.fromisoformat(str(plan["verified_at"]).replace("Z", "+00:00"))
+    if verified_at.utcoffset() is None:
+        raise ValueError("initial historical verification invalid")
+    def facts(record, report):
+        return initial_facts_from_private_report(report, scheduler_job_sha256=record["scheduler_job_sha256"],
+                                                 request_id=record["request_id"])
+    old_facts, new_facts = facts(original_record, original_report), facts(current_record, current_report)
+    # Reconstruct the historical candidate as it was verified, without changing
+    # its timestamp or treating the old observation as current.
+    historical = evaluate_initial_receipt(original_report, old_facts,
+        private_source_sha256=initial_private_source_sha256(original_record), now=verified_at)["candidate"]
+    if (historical["candidate_sha256"] != plan["candidate_sha256"]
+            or ledger["recovery_id"] != plan["recovery_id"]
+            or ledger["service_name"] != original_record["service_name"]
+            or ledger["service_name"] != current_record["service_name"]):
+        raise ValueError("initial historical binding mismatch")
+    evidence = extract_reconciliation_evidence(current_report)
+    reference = now or datetime.now(timezone.utc)
+    if (reference.utcoffset() is None or evidence.observed_at <= verified_at or evidence.observed_at > reference
+            or reference - evidence.observed_at > DEFAULT_RECONCILIATION_RECOVERY_MAX_AGE
+            or not evidence.broker_connected or not evidence.account_identity_match):
+        raise ValueError("initial current observation unavailable")
+    if (new_facts.get("account_scope_sha256") != historical["account_scope_sha256"]
+            or new_facts.get("observed_at") != evidence.observed_at.isoformat().replace("+00:00", "Z")):
+        raise ValueError("initial account changed")
+    for field in ("platform_id", "strategy_profile", "account_scope_sha256", "baseline_id",
+                  "baseline_target_sha256", "runtime_target_sha256"):
+        expected = historical["baseline_target_sha256"] if field == "runtime_target_sha256" else historical[field]
+        if getattr(evidence, field) != expected:
+            raise ValueError("initial identity changed")
+    names = ("positions", "cash", "open_orders", "recent_executions", "local_execution_ledger")
+    old_surfaces, new_surfaces = old_facts.get("surfaces"), new_facts.get("surfaces")
+    if not isinstance(old_surfaces, Mapping) or not isinstance(new_surfaces, Mapping) or set(old_surfaces) != set(names) or set(new_surfaces) != set(names):
+        raise ValueError("initial coverage unavailable")
+    for name in names:
+        old, new = old_surfaces[name], new_surfaces[name]
+        if not isinstance(old, Mapping) or not isinstance(new, Mapping) or old.get("status") != "complete" or new.get("status") != "complete":
+            raise ValueError("initial coverage unavailable")
+        before, after = old.get("scope"), new.get("scope")
+        if (not isinstance(before, Mapping) or not isinstance(after, Mapping)
+                or {k: v for k, v in before.items() if k != "window_end"} != {k: v for k, v in after.items() if k != "window_end"}
+                or old.get("items") != new.get("items")
+                or getattr(evidence, name + "_sha256") != historical[name + "_sha256"]
+                or plan["expected_digests"].get(name + "_sha256") != historical[name + "_sha256"]):
+            raise ValueError("initial facts or scope changed")
+
+
 class _NoRedirect(HTTPRedirectHandler):
     """Do not forward a controller token to an HTTP redirect destination."""
 
