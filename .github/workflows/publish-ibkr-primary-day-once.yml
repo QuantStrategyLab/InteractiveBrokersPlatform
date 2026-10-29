@@ -9,6 +9,11 @@ on:
         type: choice
         default: primary-live
         options: [primary-live, additional-1, additional-2, additional-3]
+      verify_receiver_token:
+        description: Verify only existing receiver authentication; no business write
+        required: false
+        type: boolean
+        default: false
       business_date:
         description: One NYSE trading day in YYYY-MM-DD, after binding and writer checks
         required: true
@@ -56,6 +61,7 @@ jobs:
       - name: Publish one selected date once
         run: uv run --no-sync python -m scripts.publish_primary_day_once
         env:
+          IBKR_DAILY_TOKEN_PREFLIGHT: ${{ inputs.verify_receiver_token }}
           IBKR_ACCOUNT_FACTS_TARGET: ${{ inputs.target || 'primary-live' }}
           IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}
           IBKR_ACCOUNT_FACTS_PROJECT_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID }}

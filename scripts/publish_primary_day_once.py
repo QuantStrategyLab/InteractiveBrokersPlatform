@@ -62,6 +62,17 @@ def preflight(env, *, today=None):
 
 
 def main():
+    if os.environ.get("IBKR_DAILY_TOKEN_PREFLIGHT") == "true":
+        try:
+            if (os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
+                    or os.environ.get("GITHUB_REF") != "refs/heads/main" or os.environ.get("GITHUB_RUN_ATTEMPT") != "1"):
+                raise ValueError("dispatch_invalid")
+            ok = publisher.verify_receiver_token(token=os.environ.get("IBKR_RUNTIME_DAILY_SYNC_TOKEN", ""),
+                                                 origin=publisher.console_base_url())
+        except Exception:
+            ok = False
+        print(json.dumps({"status": "verified" if ok else "blocked", "business_writes": 0}))
+        return 0 if ok else 1
     try:
         target_key, account_key = preflight(os.environ)
     except Exception:

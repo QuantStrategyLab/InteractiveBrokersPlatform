@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timezone
+from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import Request, build_opener
 
@@ -46,6 +47,32 @@ def publish_once(*, expected, target_key, account_key, business_date, observed_a
     except Exception:
         return {"status": "unconfirmed", "reason": "daily_publish_outcome_unknown"}
     return {"status": "published", "observed_at": projection["observed_at"], "completeness": "incomplete"}
+
+
+def verify_receiver_token(*, token, origin):
+    """Authenticate against the existing receiver without reaching storage."""
+    if not isinstance(token, str) or not token or any(c.isspace() for c in token):
+        return False
+    endpoint = urlsplit(origin)
+    if (endpoint.scheme != "https" or not endpoint.hostname or endpoint.username is not None
+            or endpoint.password is not None or endpoint.path or endpoint.query or endpoint.fragment):
+        return False
+    request = Request(origin + "/api/runtime-daily/sync", data=b"{", method="POST", headers={
+        "Authorization": "Bearer " + token, "Content-Type": "application/json",
+        "User-Agent": publisher.IBKR_ACCOUNT_FACTS_USER_AGENT,
+    })
+    try:
+        with build_opener(publisher._NoRedirect()).open(request, timeout=20):
+            return False
+    except HTTPError as response:
+        try:
+            body = response.read(1025)
+            return response.code == 400 and len(body) <= 1024 and json.loads(body) == {
+                "ok": False, "error": "request body must be valid JSON"}
+        except (ValueError, OSError):
+            return False
+    except Exception:
+        return False
 
 
 def main(*, target_key=None, account_key=None):
