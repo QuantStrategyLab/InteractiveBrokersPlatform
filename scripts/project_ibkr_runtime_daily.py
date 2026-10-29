@@ -112,7 +112,15 @@ def project_ibkr_runtime_daily(
         try:
             if not isinstance(report, Mapping):
                 raise account_facts_publisher._ProjectionError("runtime_report_invalid")
-            account_facts_publisher._validate_report_account_identity(report, **expected)
+            # Daily history can span deployment revisions. The protected archive,
+            # target and physical account remain fixed; validate the report's own
+            # revision and its receipt consistently without requiring today's revision.
+            diagnostics = report.get("diagnostics")
+            revision = diagnostics.get("runtime_revision") if isinstance(diagnostics, Mapping) else None
+            if not isinstance(revision, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,62}", revision):
+                raise account_facts_publisher._ProjectionError("runtime_target_mismatch")
+            historical_expected = {**expected, "expected_runtime_revision": revision}
+            account_facts_publisher._validate_report_account_identity(report, **historical_expected)
             if report.get("strategy_profile") != profile:
                 raise account_facts_publisher._ProjectionError("runtime_target_mismatch")
         except (KeyError, TypeError, account_facts_publisher._ProjectionError):

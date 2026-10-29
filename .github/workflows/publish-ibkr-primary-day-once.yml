@@ -3,6 +3,12 @@ name: Publish one primary IBKR daily projection
 on:
   workflow_dispatch:
     inputs:
+      target:
+        description: One configured account-facts target
+        required: false
+        type: choice
+        default: primary-live
+        options: [primary-live, additional-1, additional-2, additional-3]
       business_date:
         description: One NYSE trading day in YYYY-MM-DD, after binding and writer checks
         required: true
@@ -50,7 +56,8 @@ jobs:
       - name: Publish one selected date once
         run: uv run --no-sync python -m scripts.publish_primary_day_once
         env:
-          IBKR_ACCOUNT_FACTS_TARGET: primary-live
+          IBKR_ACCOUNT_FACTS_TARGET: ${{ inputs.target || 'primary-live' }}
+          IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}
           IBKR_ACCOUNT_FACTS_PROJECT_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID }}
           IBKR_ACCOUNT_FACTS_REPORT_PREFIX: ${{ secrets.IBKR_ACCOUNT_FACTS_REPORT_PREFIX }}
           IBKR_ACCOUNT_FACTS_TARGET_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_TARGET_ID }}
