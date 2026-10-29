@@ -52,10 +52,10 @@ uv run --no-sync python scripts/check_qpk_pin_consistency.py
 
 ## Useful docs
 
-- [`docs/hk_equity_runtime.md`](docs/hk_equity_runtime.md)
-- [`docs/ibkr_paper_top50_switch.md`](docs/ibkr_paper_top50_switch.md)
-- [`docs/ibkr_runtime_rollout.md`](docs/ibkr_runtime_rollout.md)
-- [`docs/runtime_target_manifest.md`](docs/runtime_target_manifest.md): public runtime-target manifest contract, add/remove steps, and next-phase workflow wiring boundary
+- [`docs/hk-equity-runtime.md`](docs/hk-equity-runtime.md)
+- [`docs/ibkr-paper-top50-switch.md`](docs/ibkr-paper-top50-switch.md)
+- [`docs/ibkr-runtime-rollout.md`](docs/ibkr-runtime-rollout.md)
+- [`docs/runtime-target-manifest.md`](docs/runtime-target-manifest.md): public runtime-target manifest contract, add/remove steps, and next-phase workflow wiring boundary
 
 ## Community and security
 
