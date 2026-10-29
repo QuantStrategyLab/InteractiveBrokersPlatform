@@ -39,7 +39,9 @@ RECONCILIATION_BINDING_SECRETS = frozenset({
 
 def _assert_reconciliation_binding_secret_contract(key: str, declared: str, passed: str) -> None:
     assert f"      {key}:\n        required: false" in declared
-    expression = f"(inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only) && secrets.{key} || ''"
+    expression = ("(inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only || "
+                  "inputs.publish_initial_run_id != '' || inputs.verify_initial_source_run_id != '' || "
+                  f"inputs.verify_initial_current_run_id != '') && secrets.{key} || ''")
     assert f"      {key}: ${{{{ {expression} }}}}" in passed
 
 
@@ -104,7 +106,16 @@ def test_json_crosses_secret_boundary_before_any_execution(name: str) -> None:
     referenced = set(re.findall(r"secrets\.([A-Z][A-Z0-9_]*)", _block(callee, "jobs", 0)))
     assert referenced
     for key in referenced:
-        if name == "notify-route-check" and key in NOTIFY_ROUTE_ADDITIONAL_SECRET_CONTRACTS:
+        if name == "collect-reconciliation-evidence" and key in {
+            "RECONCILIATION_RECOVERY_SYNC_TOKEN", "RECONCILIATION_RECOVERY_CONTROLLER_TOKEN",
+        }:
+            job_name, environment = (("publish-initial", "reconciliation-recovery-publisher")
+                                     if key.endswith("SYNC_TOKEN") else
+                                     ("verify-initial", "reconciliation-recovery-controller"))
+            assert f"environment: {environment}" in _jobs(callee)[job_name]
+            assert f"secrets.{key}" in _jobs(callee)[job_name]
+            assert f"{key}:" not in passed
+        elif name == "notify-route-check" and key in NOTIFY_ROUTE_ADDITIONAL_SECRET_CONTRACTS:
             _assert_notify_route_additional_secret_contract(key, declared, passed)
         elif name == "collect-reconciliation-evidence" and key in RECONCILIATION_BINDING_SECRETS:
             _assert_reconciliation_binding_secret_contract(key, declared, passed)
@@ -167,12 +178,14 @@ def test_detector_accepts_secret_boundary_and_ignores_literal_script_text() -> N
 def test_reconciliation_keeps_both_inventory_consumers_behind_one_boundary() -> None:
     callee = (ROOT / "collect-reconciliation-evidence-protected.yml").read_text()
     jobs = _jobs(callee)
-    assert set(jobs) == {"resolve-matrix", "flex-runtime-binding", "collect"}
+    assert set(jobs) == {"resolve-matrix", "flex-runtime-binding", "collect", "publish-initial", "verify-initial"}
     assert "needs: resolve-matrix" in jobs["collect"]
     assert "matrix: ${{ fromJSON(needs.resolve-matrix.outputs.matrix) }}" in jobs["collect"]
     for job in jobs.values():
         assert "CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}" in job
-    assert "if: ${{ !inputs.inspect_flex_runtime_binding_only && !inputs.inspect_recovery_receipt_only }}" in jobs["collect"]
+    assert "!inputs.inspect_flex_runtime_binding_only && !inputs.inspect_recovery_receipt_only" in jobs["collect"]
+    assert all(f"inputs.{name} == ''" in jobs["collect"] for name in (
+        "publish_initial_run_id", "verify_initial_source_run_id", "verify_initial_current_run_id"))
     metadata = jobs["flex-runtime-binding"]
     assert "inputs.inspect_flex_runtime_binding_only" in metadata
     assert "diagnose_ibkr_flex_runtime_binding" in metadata

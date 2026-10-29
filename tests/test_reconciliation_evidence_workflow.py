@@ -112,10 +112,19 @@ def test_reconciliation_evidence_preserves_sanitized_log_query_failure_class() -
     assert '--format=json 2>/dev/null' in workflow
 
 
+def test_initial_mode_never_uploads_account_bound_receipts():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    for name in ("Retain redacted candidate", "Generate reconciliation source record", "Upload reconciliation source record"):
+        step = workflow.split(f"      - name: {name}", 1)[1].split("      - name:", 1)[0]
+        assert "inputs.initial_enrollment != true" in step
+    assert "initial_facts_sha256" not in workflow
+
+
 def _run_revision_source_labels(tmp_path, raw_labels):
     workflow = WORKFLOW.read_text(encoding="utf-8")
     step = workflow.split("      - name: Read private no-order reconciliation candidate", 1)[1].split("      - name:", 1)[0]
-    fragment = textwrap.dedent(step.split("          if ! service_revision_commit_sha=", 1)[1].split('          gcloud storage cat', 1)[0])
+    fragment = step.split("          if ! service_revision_commit_sha=", 1)[1].split('          gcloud storage cat', 1)[0]
+    fragment = textwrap.dedent(fragment.rsplit("          fi\n", 1)[0])
     script = 'set -euo pipefail\nif ! service_revision_commit_sha=' + fragment + '\nprintf "report_read_reached\\n"\n'
     return subprocess.run(
         ["/bin/bash", "-c", script], cwd=tmp_path,
@@ -294,7 +303,8 @@ def _producer_materials(tmp_path, *, receipt_fault=None):
     receipt_step = workflow.split("      - name: Read private no-order reconciliation candidate", 1)[1].split("      - name:", 1)[0]
     # Execute the exact jq transformation, guards and digest extraction from
     # the real producer. Replace only its cloud input with synthetic stdin.
-    receipt_fragment = receipt_step.split('gcloud storage cat "$report_uri" | ', 1)[1].split("          jq -r '[.reconciliation.permits_active_lkg", 1)[0]
+    receipt_fragment = receipt_step.split('gcloud storage cat "$report_uri" | ', 1)[1].split(
+        "          if [ \"${INITIAL_ENROLLMENT:-false}\" = true ]; then\n            echo 'initial_private_report_recorded=true'", 1)[0]
     receipt_script = "set -euo pipefail\nmkdir -p reports\n" + textwrap.dedent(receipt_fragment)
     output = tmp_path / "receipt-output"
     clean_env = {

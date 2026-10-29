@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import hashlib
+import json
 
 import pytest
 
 from scripts.build_reconciliation_baseline_candidate import (
     evaluate_receipts,
+    evaluate_initial_receipt,
     extract_reconciliation_evidence,
+    initial_facts_from_private_report,
 )
 from quant_platform_kit.common.broker_reconciliation import build_broker_reconciliation_evidence
 
@@ -75,6 +78,31 @@ def _sources_for_evidences(evidences):
         record["scheduler_job_sha256"] = hashlib.sha256(scheduler_job_name.encode()).hexdigest()
         records.append({"schema_version": SOURCE_RECEIPT_RECORD_SCHEMA_VERSION, **record})
     return {"source_receipt_records": records, "expectations": tuple(expectations)}
+
+
+def test_initial_facts_must_match_authenticated_receipt_and_preserve_unknown() -> None:
+    start = datetime(2026, 8, 30, 8, 0, tzinfo=timezone.utc)
+    receipt = _payload(observed_at=start)
+    source = _sources_for_evidences([extract_reconciliation_evidence(receipt)])
+    request_id = "853a2e08-9396-4fe8-89ee-59fb17e40a1d"
+    scope = {"kind": "synthetic", "currency": None, "window_start": None, "window_end": None,
+             "limit_per_namespace": None, "gateway_availability": None, "truncated": None}
+    surfaces = {name: {"status": "unknown", "items": None, "scope": scope} for name in
+                ("positions", "cash", "open_orders", "recent_executions", "local_execution_ledger")}
+    facts = {"schema_version": "ibkr_initial_facts.v1", "account_scope_sha256": _digest("a"),
+             "observed_at": "2026-08-30T08:00:00Z", "surfaces": surfaces}
+    digest = hashlib.sha256(json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    report = {"diagnostics": {"broker_reconciliation": receipt,
+                              "reconciliation_scheduler_job_sha256": source["source_receipt_records"][0]["scheduler_job_sha256"],
+                              "reconciliation_request_id": request_id,
+                              "initial_enrollment_private": {"facts": facts, "facts_sha256": digest}}}
+    extracted = initial_facts_from_private_report(report, scheduler_job_sha256=source["source_receipt_records"][0]["scheduler_job_sha256"], request_id=request_id)
+    result = evaluate_initial_receipt(receipt, extracted, now=start, private_source_sha256=_digest("1"))
+    assert result["candidate"]["mode"] == "initial_enrollment"
+    assert result["candidate"]["cash_sha256"] is None
+    report["diagnostics"]["initial_enrollment_private"]["facts_sha256"] = _digest("f")
+    with pytest.raises(ValueError, match="facts digest mismatch"):
+        initial_facts_from_private_report(report, scheduler_job_sha256=source["source_receipt_records"][0]["scheduler_job_sha256"], request_id=request_id)
 
 
 def test_builds_redacted_review_candidate_from_two_matching_receipts() -> None:

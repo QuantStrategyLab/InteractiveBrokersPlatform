@@ -69,6 +69,7 @@ def archive_recovery_state_ledger(
             json.dumps(dict(ledger), ensure_ascii=False, sort_keys=True, separators=(",", ":")),
             content_type="application/json",
             if_generation_match=0,
+            retry=None,
         )
     except Exception as exc:
         raise RuntimeError("reconciliation recovery state ledger was not created") from exc

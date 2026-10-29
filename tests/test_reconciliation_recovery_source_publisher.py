@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import hashlib
+import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,6 +13,7 @@ from tests.test_reconciliation_baseline_candidate_script import _sources_for_evi
 from tests.test_reconciliation_recovery_verify_only import _candidate_source_inputs
 from scripts.publish_reconciliation_recovery_source import (
     archive_private_evidence_package,
+    build_trusted_initial_snapshot,
     build_private_evidence_package,
     build_recovery_source_snapshot,
     publish_recovery_source_snapshot,
@@ -18,6 +22,62 @@ from scripts.publish_reconciliation_recovery_source import (
 
 def _digest(character: str) -> str:
     return character * 64
+
+
+def test_trusted_initial_source_binds_private_facts_and_current_target(monkeypatch):
+    from tests.test_reconciliation_baseline_candidate_script import _payload
+    import scripts.diagnose_ibkr_flex_runtime_binding as binding
+    import quant_platform_kit.common.live_continuity as continuity
+
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    account_digest = hashlib.sha256(b'{"account_ids":["U123"]}').hexdigest()
+    receipt = _payload(observed_at=now, account_scope_sha256=account_digest)
+    job_hash = hashlib.sha256(b"ibkr-reconcile-soxl_soxx_trend_income-1-1").hexdigest()
+    request_id = "853a2e08-9396-4fe8-89ee-59fb17e40a1d"
+    uri = f"gs://synthetic-private/reports/initial-enrollment/{request_id}.json#123"
+    run = {"id": 1, "status": "completed", "conclusion": "success", "head_branch": "main", "run_attempt": 1,
+           "event": "workflow_dispatch", "path": ".github/workflows/collect-reconciliation-evidence.yml",
+           "repository": {"full_name": "QuantStrategyLab/InteractiveBrokersPlatform"}, "head_sha": "c" * 40}
+    scope = {"kind": "synthetic", "currency": None, "window_start": None, "window_end": None,
+             "limit_per_namespace": None, "gateway_availability": None, "truncated": None}
+    facts = {"schema_version": "ibkr_initial_facts.v1", "account_scope_sha256": account_digest,
+             "observed_at": now.isoformat().replace("+00:00", "Z"), "surfaces": {
+                 name: {"status": "unknown", "items": None, "scope": scope} for name in
+                 ("positions", "cash", "open_orders", "recent_executions", "local_execution_ledger")}}
+    facts_sha = hashlib.sha256(json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    report = {"diagnostics": {"broker_reconciliation": receipt,
+                              "reconciliation_scheduler_job_sha256": job_hash, "reconciliation_request_id": request_id,
+                              "initial_enrollment_private": {"facts": facts, "facts_sha256": facts_sha}}}
+    monkeypatch.setattr(binding, "configuration", lambda _env: ({}, {"soxl_soxx_trend_income": ("synthetic", {})}, "project", "region"))
+    def observe(*_args, private_output, **_kwargs):
+        private_output.update(target_id="synthetic-target", runtime_target={"live_continuity": {}},
+                              account_selector=("U123",), service_revision="synthetic-revision")
+        return {"status": "initial_metadata_verified"}
+    monkeypatch.setattr(binding, "observe", observe)
+    monkeypatch.setattr(continuity, "build_live_continuity", lambda _value: SimpleNamespace(
+        state="RECONCILE_ONLY", baseline_id="ibkr-soxl-lkg-20260830", assert_matches_target=lambda _target: None))
+    monkeypatch.setattr(continuity, "runtime_target_fingerprint", lambda _target: _digest("b"))
+    result = build_trusted_initial_snapshot({}, "1", read_report=lambda _hash: ([uri], report), read_run=lambda _id: json.dumps(run))
+    item = result["recoveries"][0]
+    assert item["candidate"]["mode"] == "initial_enrollment"
+    assert item["facts"] == facts
+    with pytest.raises(ValueError, match="generation unavailable"):
+        build_trusted_initial_snapshot({}, "1", read_report=lambda _hash: ([uri.split("#")[0]], report), read_run=lambda _id: json.dumps(run))
+    report["diagnostics"]["initial_enrollment_private"]["facts_sha256"] = _digest("f")
+    with pytest.raises(ValueError, match="facts digest mismatch"):
+        build_trusted_initial_snapshot({}, "1", read_report=lambda _hash: ([uri], report), read_run=lambda _id: json.dumps(run))
+
+
+def test_trusted_initial_cli_never_prints_private_facts(monkeypatch, capsys):
+    import scripts.publish_reconciliation_recovery_source as publisher
+    sentinel = "synthetic-private-fact"
+    monkeypatch.setattr(publisher, "build_trusted_initial_snapshot", lambda _env, _run: {"facts": sentinel})
+    seen = []
+    monkeypatch.setattr(publisher, "publish_recovery_source_snapshot", lambda snapshot, **_kwargs: seen.append(snapshot) or {"ok": True})
+    assert publisher.main(["--trusted-initial-run", "1", "--publish-url",
+                           "https://synthetic.example/api/internal/sync-reconciliation-recovery-source"]) == 0
+    assert seen == [{"facts": sentinel}]
+    assert sentinel not in capsys.readouterr().out
 
 
 def _candidate_payload(start: datetime) -> dict[str, object]:

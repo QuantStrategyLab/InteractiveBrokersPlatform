@@ -33,6 +33,28 @@ on:
         required: false
         type: boolean
         default: false
+      initial_enrollment:
+        description: "Include one target's initial facts only in the existing private report."
+        required: false
+        type: boolean
+        default: false
+      publish_initial_run_id:
+        description: "Publish the private initial facts from one completed initial evidence run."
+        required: false
+        type: string
+      verify_initial_source_run_id:
+        description: "Original initial evidence run for confirmation verification."
+        required: false
+        type: string
+      verify_initial_current_run_id:
+        description: "New read-only initial evidence run after confirmation."
+        required: false
+        type: string
+      archive_initial_state_ledger:
+        description: "After confirmation and successful verification, create the existing private state ledger."
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -56,13 +78,18 @@ jobs:
       inspect_execution_ledger: ${{ inputs.inspect_execution_ledger }}
       inspect_flex_runtime_binding_only: ${{ inputs.inspect_flex_runtime_binding_only }}
       inspect_recovery_receipt_only: ${{ inputs.inspect_recovery_receipt_only }}
+      initial_enrollment: ${{ inputs.initial_enrollment }}
+      publish_initial_run_id: ${{ inputs.publish_initial_run_id }}
+      verify_initial_source_run_id: ${{ inputs.verify_initial_source_run_id }}
+      verify_initial_current_run_id: ${{ inputs.verify_initial_current_run_id }}
+      archive_initial_state_ledger: ${{ inputs.archive_initial_state_ledger }}
     secrets:
       CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ vars.CLOUD_RUN_SERVICE_TARGETS_JSON || secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}
-      IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only) && secrets.IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON || '' }}
-      IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only) && secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON || '' }}
-      IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only) && secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON || '' }}
-      IBKR_ACCOUNT_FACTS_PROJECT_ID: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only) && secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID || '' }}
-      IBKR_ACCOUNT_FACTS_SERVICE_NAME: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only) && secrets.IBKR_ACCOUNT_FACTS_SERVICE_NAME || '' }}
-      IBKR_ACCOUNT_FACTS_RUNTIME_REVISION: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only) && secrets.IBKR_ACCOUNT_FACTS_RUNTIME_REVISION || '' }}
-      IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only) && secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE || '' }}
-      IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only) && secrets.IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR || '' }}
+      IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only || inputs.publish_initial_run_id != '' || inputs.verify_initial_source_run_id != '' || inputs.verify_initial_current_run_id != '') && secrets.IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON || '' }}
+      IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only || inputs.publish_initial_run_id != '' || inputs.verify_initial_source_run_id != '' || inputs.verify_initial_current_run_id != '') && secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON || '' }}
+      IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only || inputs.publish_initial_run_id != '' || inputs.verify_initial_source_run_id != '' || inputs.verify_initial_current_run_id != '') && secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON || '' }}
+      IBKR_ACCOUNT_FACTS_PROJECT_ID: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only || inputs.publish_initial_run_id != '' || inputs.verify_initial_source_run_id != '' || inputs.verify_initial_current_run_id != '') && secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID || '' }}
+      IBKR_ACCOUNT_FACTS_SERVICE_NAME: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only || inputs.publish_initial_run_id != '' || inputs.verify_initial_source_run_id != '' || inputs.verify_initial_current_run_id != '') && secrets.IBKR_ACCOUNT_FACTS_SERVICE_NAME || '' }}
+      IBKR_ACCOUNT_FACTS_RUNTIME_REVISION: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only || inputs.publish_initial_run_id != '' || inputs.verify_initial_source_run_id != '' || inputs.verify_initial_current_run_id != '') && secrets.IBKR_ACCOUNT_FACTS_RUNTIME_REVISION || '' }}
+      IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only || inputs.publish_initial_run_id != '' || inputs.verify_initial_source_run_id != '' || inputs.verify_initial_current_run_id != '') && secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE || '' }}
+      IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only || inputs.publish_initial_run_id != '' || inputs.verify_initial_source_run_id != '' || inputs.verify_initial_current_run_id != '') && secrets.IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR || '' }}
