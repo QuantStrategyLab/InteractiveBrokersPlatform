@@ -52,3 +52,34 @@ class DailyBindingComparisonTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_additional_comparison_validates_inventory_and_identity(monkeypatch):
+    import json
+    from scripts.daily_binding_protocol import additional_digest
+    expected = {"target_id": "fixture-target", "expected_project_id": "fixture-project",
+                "expected_service_name": "fixture-service", "expected_runtime_revision": "fixture-revision",
+                "expected_account_scope": "live", "expected_account_selector": ("U1234567",),
+                "expected_deployment_selector": "fixture-deployment"}
+    target = {"service_name": "fixture-service", "account_scope": "live", "account_selector": ["U1234567"],
+              "deployment_selector": "fixture-deployment", "strategy_profile": "fixture_strategy"}
+    env = {"IBKR_ACCOUNT_FACTS_TARGET": "additional-1", "DAILY_COMPARISON_NONCE": "a" * 64,
+           "IBKR_PERIOD_RETURN_ADDITIONAL1_ACCOUNT_KEY": "fixture-key",
+           "CLOUD_RUN_SERVICE_TARGETS_JSON": json.dumps([{"service": "fixture-service", "runtime_target": target}])}
+    monkeypatch.setattr(adapter.identity, "resolve_expected", lambda: expected)
+    monkeypatch.setattr(adapter.publisher, "_bound_source_id", lambda **_: "b" * 64)
+    binding = {"account_key": "fixture-key", "account_scope": "live", "account_selector": "U1234567",
+               "deployment_selector": "fixture-deployment", "platform": "ibkr", "service_name": "fixture-service",
+               "source_binding_id": "b" * 64, "strategy_profile": "fixture_strategy", "target_id": "fixture-target"}
+    assert adapter.compare_additional(env) == additional_digest(binding, "a" * 64)
+    env["CLOUD_RUN_SERVICE_TARGETS_JSON"] = json.dumps([{"service": "fixture-service", "runtime_target": target}] * 2)
+    with unittest.TestCase().assertRaises(ValueError):
+        adapter.compare_additional(env)
+
+
+def test_additional_digest_matches_website_fixture():
+    from scripts.daily_binding_protocol import additional_digest
+    binding = dict(account_key="synthetic-key", account_scope="live", account_selector="U1234567",
+                   deployment_selector="synthetic-deployment", platform="ibkr", service_name="synthetic-service",
+                   source_binding_id="b" * 64, strategy_profile="synthetic_strategy", target_id="synthetic-target")
+    assert additional_digest(binding, "a" * 64) == "21c50c1bcb601733050a0109ab79ad7b74525c10865dac00cd3ba98b5b842b40"
