@@ -885,8 +885,8 @@ jobs:
             done
           done
 
-      - name: Sync Cloud Run environment
-        if: steps.config.outputs.env_sync_enabled == 'true'
+      - name: Prepare env-only revision and runtime switch
+        if: steps.config.outputs.env_sync_enabled == 'true' && steps.config.outputs.deploy_enabled != 'true' && steps.config.outputs.traffic_shift_enabled == 'true'
         env:
           SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
           EXACT_ENV_TRAFFIC: ${{ steps.config.outputs.deploy_enabled != 'true' && steps.config.outputs.traffic_shift_enabled == 'true' }}
@@ -936,6 +936,7 @@ jobs:
             fi
             printf '%s' "${candidate_revision}" > "${evidence_dir}/candidate-revision.txt"
             echo "IBKR_ENV_SYNC_EVIDENCE_DIR=${evidence_dir}" >> "$GITHUB_ENV"
+            echo "IBKR_ENV_SYNC_REVISION_SUFFIX=${revision_suffix}" >> "$GITHUB_ENV"
           fi
 
           if [ "${RUNTIME_SWITCH_ONLY:-false}" = "true" ]; then
@@ -1020,6 +1021,24 @@ jobs:
               --region="${CLOUD_RUN_REGION}" --no-traffic --revision-suffix="${revision_suffix}" \
               --update-env-vars="RUNTIME_TARGET_ENABLED=${desired_switch}" --quiet
             exit 0
+          fi
+
+      - name: Sync Cloud Run environment
+        if: steps.config.outputs.env_sync_enabled == 'true' && inputs.runtime_switch_only != true
+        env:
+          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
+          EXACT_ENV_TRAFFIC: ${{ steps.config.outputs.deploy_enabled != 'true' && steps.config.outputs.traffic_shift_enabled == 'true' }}
+        run: |
+          set -euo pipefail
+          mapfile -t target_services < <(python - <<'PY2'
+          import json, os
+          for target in json.loads(os.environ["SYNC_PLAN_JSON"])["targets"]:
+              print(target["service_name"])
+          PY2
+          )
+          if [ "${#target_services[@]}" -eq 0 ]; then
+            echo "Cloud Run env sync did not resolve any targets." >&2
+            exit 1
           fi
 
           emit_target_env_pairs() {
@@ -1376,8 +1395,8 @@ jobs:
               --remove-env-vars "$(IFS=,; echo "${remove_env_vars[*]}")"
               --update-env-vars "^|^$(join_by_delimiter "|" "${env_pairs[@]}")"
             )
-            if [ "${EXACT_ENV_TRAFFIC}" = "true" ]; then
-              gcloud_args+=(--revision-suffix "${revision_suffix}")
+            if [ "${EXACT_ENV_TRAFFIC:-false}" = "true" ]; then
+              gcloud_args+=(--revision-suffix "${IBKR_ENV_SYNC_REVISION_SUFFIX}")
             fi
 
             if [ "${#remove_secret_vars[@]}" -gt 0 ]; then
