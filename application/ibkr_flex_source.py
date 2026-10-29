@@ -8,12 +8,12 @@ a private, account-scoped verifier; this module never publishes or logs them.
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 import time
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import date
-from decimal import Decimal, InvalidOperation
 from xml.etree import ElementTree
 
 import requests
@@ -379,10 +379,12 @@ RECOVERY_COMPARABILITY_REASONS = frozenset({
 
 
 def _finite_decimal(value: object) -> bool:
-    try:
-        return isinstance(value, str) and value == value.strip() and bool(value) and Decimal(value).is_finite()
-    except InvalidOperation:
+    from application.ibkr_flex_executions import _number_shape
+
+    shape = _number_shape(value)
+    if shape["kind"] not in {"decimal", "scientific"} or shape.get("has_whitespace", True):
         return False
+    return math.isfinite(float(value))
 
 
 def _recovery_comparability(statement, ledger, account: str, period: Mapping[str, object]) -> dict[str, object]:

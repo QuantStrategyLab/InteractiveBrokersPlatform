@@ -228,3 +228,8 @@ def test_recovery_output_rejects_unapproved_reason(monkeypatch, capsys):
     _, result, _, _ = run(monkeypatch, capsys)
     result['accounts']['primary']['recovery_comparability']['cash']['reasons'].append('PRIVATE_CANARY')
     assert cli._validated_coverage_report(result)['missing'] == ['flex_coverage_diagnostic_result_invalid']
+
+
+@pytest.mark.parametrize('number', ['1_0', 'NaN', '9' * 257, ' 1 ', '1e9999'])
+def test_recovery_numeric_shape_rejects_unsupported_input(number):
+    assert source._finite_decimal(number) is False
