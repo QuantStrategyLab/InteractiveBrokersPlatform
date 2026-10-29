@@ -42,6 +42,7 @@ def test_reconciliation_evidence_uses_internal_one_shot_scheduler_and_cleans_up(
     assert "--max-retry-attempts=0" in scheduler_command
     assert "--max-retry-duration=0s" in scheduler_command
     assert 'schedule="$(date -u -d "+${delay_minutes} minutes"' in workflow
+    assert 'if [ "${INITIAL_ENROLLMENT:-false}" = true ]; then delay_minutes=2; fi' in workflow
     assert "gcloud scheduler jobs delete" in workflow
     assert "gcloud storage cat \"$report_uri\"" in workflow
     assert "gcloud scheduler jobs run" not in workflow

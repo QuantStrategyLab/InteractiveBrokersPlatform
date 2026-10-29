@@ -437,6 +437,9 @@ jobs:
               exit 1
               ;;
           esac
+          # Initial enrollment is one target at a time. Cron truncates seconds,
+          # so two minutes leaves at least one full minute to create the job.
+          if [ "${INITIAL_ENROLLMENT:-false}" = true ]; then delay_minutes=2; fi
           schedule="$(date -u -d "+${delay_minutes} minutes" '+%M %H %d %m *')"
           if gcloud scheduler jobs describe "$job_name" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" >/dev/null 2>&1; then
             echo "Refusing to replace an existing reconciliation job: $job_name" >&2
