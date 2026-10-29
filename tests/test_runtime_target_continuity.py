@@ -374,3 +374,41 @@ def test_image_only_staging_retains_current_strategy_eligibility(monkeypatch):
     ])
     with pytest.raises(ValueError):
         planner.build_sync_plan(env)
+
+@pytest.mark.parametrize("case", ["settles", "normalized", "unhealthy", "changed_spec", "changed_enabled", "timeout"])
+def test_switch_candidate_wait_is_read_only_and_keeps_strict_validation(case, monkeypatch):
+    from scripts import reconcile_cloud_runtime as reconciler
+
+    pending = candidate()
+    pending["status"]["conditions"] = [{"type": "Ready", "status": "Unknown"}]
+    pending["spec"]["containers"][0]["env"].append({"name": "RUNTIME_TARGET_ENABLED", "value": "true"})
+    settled = copy.deepcopy(pending)
+    settled["status"]["conditions"] = [
+        {"type": "Ready", "status": "True", "reason": "Retired"},
+        {"type": "Active", "status": "False", "reason": "Retired"},
+        {"type": "ContainerReady", "status": "True"},
+    ]
+    if case == "normalized":
+        settled["spec"]["servingState"] = "active"
+        settled["metadata"]["labels"]["client.knative.dev/nonce"] = "synthetic"
+    elif case == "changed_enabled":
+        settled["spec"]["containers"][0]["env"][-1]["value"] = "false"
+    elif case == "unhealthy":
+        pending["status"]["conditions"].append({"type": "ContainerHealthy", "status": "False"})
+    elif case == "changed_spec":
+        settled["spec"]["containers"][0]["startupProbe"]["httpGet"]["path"] = "/other"
+    calls = []
+    def read(args, **kwargs):
+        calls.append(args)
+        return pending if case == "timeout" else settled
+    monkeypatch.setattr(reconciler, "_run", read)
+    monkeypatch.setattr(reconciler.time, "sleep", lambda _: None)
+    kwargs = dict(project="synthetic", region="us-central1", revision="unit-service-00001", commit="a" * 40)
+    if case in {"settles", "normalized"}:
+        reconciler._verify_switch_candidate_with_wait(pending, **kwargs)
+        assert len(calls) == 1
+    else:
+        with pytest.raises((ValueError, reconciler.ReconcileError)):
+            reconciler._verify_switch_candidate_with_wait(pending, **kwargs)
+        assert len(calls) == {"unhealthy": 0, "changed_spec": 1, "changed_enabled": 1, "timeout": 29}[case]
+    assert all(row[:4] == ["gcloud", "run", "revisions", "describe"] for row in calls)

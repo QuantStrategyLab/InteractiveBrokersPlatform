@@ -461,6 +461,45 @@ def _resolve_revision_for_commit(
     )
 
 
+def _verify_switch_candidate_with_wait(candidate: Mapping[str, Any], *, project: str, region: str,
+                                       revision: str, commit: str | None) -> None:
+    """Wait read-only for the exact switch candidate to settle before routing."""
+    from scripts.runtime_target_continuity import verify_traffic_revision
+
+    from scripts.deploy_notification_only import metadata as normalized_metadata
+
+    def identity(value: Mapping[str, Any]) -> tuple[Any, ...]:
+        meta = value.get("metadata") or {}
+        normalized = normalized_metadata(meta, template=True)
+        normalized["labels"].pop("client.knative.dev/nonce", None)
+        spec = value.get("spec") or {}
+        enabled = [[row for row in container.get("env", []) if row.get("name") == "RUNTIME_TARGET_ENABLED"]
+                   for container in spec.get("containers") or []]
+        return meta.get("name"), normalized, _without_runtime_switch(spec), enabled
+
+    original_identity = identity(candidate)
+    for attempt in range(30):
+        if identity(candidate) != original_identity:
+            raise ReconcileError("switch candidate changed while waiting")
+        try:
+            verify_traffic_revision(candidate, expected_revision=revision, expected_commit=commit,
+                                    allow_cold_enabled=True)
+            return
+        except ValueError as exc:
+            if str(exc) != "traffic candidate has not passed its application startup probe":
+                raise
+            conditions = candidate.get("status", {}).get("conditions", [])
+            if any(row.get("type") in {"Ready", "ContainerReady", "ContainerHealthy"}
+                   and row.get("status") == "False" for row in conditions):
+                raise
+            if attempt == 29:
+                raise
+            time.sleep(2)
+            candidate = _run(["gcloud", "run", "revisions", "describe", revision,
+                              f"--project={project}", f"--region={region}", "--format=json"],
+                             json_output=True, dry_run=False)
+
+
 def ensure_latest_traffic(
     *,
     project: str,
@@ -565,8 +604,11 @@ def ensure_latest_traffic(
                 if metadata.get("name") != target_revision or (metadata.get("labels") or {}).get("commit-sha") != candidate_commit:
                     raise ReconcileError("stop candidate revision identity does not match")
             else:
-                verify_traffic_revision(candidate, expected_revision=target_revision, expected_commit=candidate_commit,
-                                        allow_cold_enabled=switch_only and env_sync_expected.get("RUNTIME_TARGET_ENABLED") == "true")
+                if switch_only and env_sync_expected.get("RUNTIME_TARGET_ENABLED") == "true":
+                    _verify_switch_candidate_with_wait(candidate, project=project, region=target_region,
+                                                       revision=target_revision, commit=candidate_commit)
+                else:
+                    verify_traffic_revision(candidate, expected_revision=target_revision, expected_commit=candidate_commit)
 
         if not _traffic_on_revision(service if isinstance(service, Mapping) else {}, target_revision):
             if initial_state_only:
