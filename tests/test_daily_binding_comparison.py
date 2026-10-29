@@ -83,3 +83,11 @@ def test_additional_digest_matches_website_fixture():
                    deployment_selector="synthetic-deployment", platform="ibkr", service_name="synthetic-service",
                    source_binding_id="b" * 64, strategy_profile="synthetic_strategy", target_id="synthetic-target")
     assert additional_digest(binding, "a" * 64) == "21c50c1bcb601733050a0109ab79ad7b74525c10865dac00cd3ba98b5b842b40"
+
+
+def test_additional_comparison_reuses_primary_identity_for_duplicate_guard():
+    from pathlib import Path
+    workflow = Path('.github/workflows/primary-account-facts-readonly.yml').read_text()
+    section = workflow.split('  compare-additional-website-binding:', 1)[1].split('  inspect:', 1)[0]
+    for name in ('IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON', 'IBKR_ACCOUNT_FACTS_TARGET_ID', 'IBKR_ACCOUNT_FACTS_REPORT_PREFIX'):
+        assert f'{name}: ${{{{ secrets.{name} }}}}' in section
