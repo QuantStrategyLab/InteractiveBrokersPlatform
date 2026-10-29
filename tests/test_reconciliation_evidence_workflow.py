@@ -112,6 +112,46 @@ def test_reconciliation_evidence_preserves_sanitized_log_query_failure_class() -
     assert '--format=json 2>/dev/null' in workflow
 
 
+def _run_revision_source_labels(tmp_path, raw_labels):
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    step = workflow.split("      - name: Read private no-order reconciliation candidate", 1)[1].split("      - name:", 1)[0]
+    fragment = textwrap.dedent(step.split("          if ! service_revision_commit_sha=", 1)[1].split('          gcloud storage cat', 1)[0])
+    script = 'set -euo pipefail\nif ! service_revision_commit_sha=' + fragment + '\nprintf "report_read_reached\\n"\n'
+    return subprocess.run(
+        ["/bin/bash", "-c", script], cwd=tmp_path,
+        env={"PATH": "/usr/bin:/bin:/sbin", "LC_ALL": "C", "revision_labels": raw_labels},
+        capture_output=True, text=True, timeout=10, check=False,
+    )
+
+
+@pytest.mark.parametrize(("labels", "expected"), [
+    ({"github-run-id": "123"}, "field=commit_sha"),
+    ({"commit-sha": "private-invalid-commit", "github-run-id": "123"}, "field=commit_sha"),
+    ({"commit-sha": "a" * 40}, "field=github_run_id"),
+    ({"commit-sha": "a" * 40, "github-run-id": "private-invalid-run"}, "field=github_run_id"),
+    ({"commit-sha": "a" * 40, "github-run-id": 123}, "field=github_run_id"),
+])
+def test_revision_source_labels_fail_closed_with_fixed_diagnostics(tmp_path, labels, expected):
+    result = _run_revision_source_labels(tmp_path, json.dumps({"metadata": {"labels": labels}}))
+    assert result.returncode != 0
+    assert result.stderr == f"reconciliation_source_unqualified {expected} class=missing_or_invalid\n"
+    assert "private-invalid" not in result.stdout + result.stderr
+    assert "report_read_reached" not in result.stdout
+
+
+def test_revision_source_labels_valid_values_allow_existing_report_read(tmp_path):
+    result = _run_revision_source_labels(tmp_path, json.dumps({"metadata": {"labels": {"commit-sha": "a" * 40, "github-run-id": "123"}}}))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "report_read_reached\n"
+
+
+def test_revision_source_labels_invalid_json_does_not_expose_body(tmp_path):
+    result = _run_revision_source_labels(tmp_path, "private-invalid-json")
+    assert result.returncode != 0
+    assert result.stderr == "reconciliation_source_unqualified field=commit_sha class=missing_or_invalid\n"
+    assert "private-invalid" not in result.stdout + result.stderr
+
+
 def test_reconciliation_evidence_binds_scheduler_job_to_exact_receipt() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
