@@ -347,8 +347,21 @@ def _validated_coverage_report(value: object) -> dict[str, Any]:
                         (not present or type(total) is not int or not 0 <= total <= 8 * 1024 * 1024))):
                 return invalid
             sections[name] = counts
+        from application.ibkr_flex_source import RECOVERY_COMPARABILITY_REASONS
+        recovery = row.get("recovery_comparability")
+        if not isinstance(recovery, dict) or set(recovery) != {"positions", "cash"}:
+            return invalid
+        safe_recovery = {}
+        for surface in ("positions", "cash"):
+            item = recovery[surface]
+            if (not isinstance(item, dict) or set(item) != {"source_fields_valid", "reasons"}
+                    or type(item["source_fields_valid"]) is not bool or not isinstance(item["reasons"], list)
+                    or any(not isinstance(reason, str) or reason not in RECOVERY_COMPARABILITY_REASONS for reason in item["reasons"])
+                    or item["reasons"] != sorted(set(item["reasons"]))):
+                return invalid
+            safe_recovery[surface] = {"source_fields_valid": item["source_fields_valid"], "reasons": item["reasons"]}
         accounts[slot] = {"statement_present": present, "period": dict(period),
-                          "native_twr_field_present": twr, "sections": sections}
+                          "native_twr_field_present": twr, "sections": sections, "recovery_comparability": safe_recovery}
     if value.get("period") != accounts["primary"]["period"] or not accounts["primary"]["statement_present"]:
         return invalid
     return {"schema_version": "ibkr_flex_configured_coverage.v1", "status": "observed_source_shape",

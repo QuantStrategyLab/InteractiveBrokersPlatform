@@ -211,7 +211,9 @@ def test_workflow_mode_is_default_off_and_excludes_broker_job():
     caller = (root / '.github/workflows/collect-reconciliation-evidence.yml').read_text()
     protected = (root / '.github/workflows/collect-reconciliation-evidence-protected.yml').read_text()
     assert 'default: false' in caller.split('inspect_flex_runtime_binding_only:', 1)[1].split('inspect_execution_ledger:', 1)[0]
-    assert '  collect:\n    if: ${{ !inputs.inspect_flex_runtime_binding_only }}' in protected
+    assert '  collect:\n    if: ${{ !inputs.inspect_flex_runtime_binding_only && !inputs.inspect_recovery_receipt_only }}' in protected
+    assert 'inspect_recovery_receipt_only:' in caller
+    assert '--trusted-current-preflight' in protected
     job = protected.split('  flex-runtime-binding:', 1)[1].split('  collect:', 1)[0]
     assert 'inputs.inspect_flex_runtime_binding_only' in job and 'github.run_attempt == 1' in job
     assert 'GCP_WORKLOAD_IDENTITY_PROVIDER' in job and 'GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT' in job

@@ -11,6 +11,9 @@ on:
       inspect_flex_runtime_binding_only:
         type: boolean
         required: false
+      inspect_recovery_receipt_only:
+        type: boolean
+        required: false
       reconciliation_run_id:
         type: string
         required: false
@@ -89,7 +92,7 @@ jobs:
       actions: read
       id-token: write
     needs: resolve-matrix
-    if: ${{ inputs.inspect_flex_runtime_binding_only && github.ref == 'refs/heads/main' && github.run_attempt == 1 }}
+    if: ${{ (inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only) && github.ref == 'refs/heads/main' && github.run_attempt == 1 }}
     name: Compare protected Flex and serving runtime identity
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -133,12 +136,24 @@ jobs:
       - name: Set up metadata commands
         uses: google-github-actions/setup-gcloud@v3
       - name: Compare configuration with the exact serving revisions
+        if: ${{ !inputs.inspect_recovery_receipt_only }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 -m scripts.diagnose_ibkr_flex_runtime_binding
 
+      - name: Install dependencies for trusted recovery receipt preflight
+        if: ${{ inputs.inspect_recovery_receipt_only }}
+        run: |
+          python3 -m pip install uv
+          uv sync --frozen --no-dev
+      - name: Check trusted recovery receipt without state changes
+        if: ${{ inputs.inspect_recovery_receipt_only }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --no-sync python -m scripts.verify_reconciliation_recovery --trusted-current-preflight
+
   collect:
-    if: ${{ !inputs.inspect_flex_runtime_binding_only }}
+    if: ${{ !inputs.inspect_flex_runtime_binding_only && !inputs.inspect_recovery_receipt_only }}
     needs: resolve-matrix
     name: Read ${{ matrix.profile }} baseline evidence
     runs-on: ubuntu-latest

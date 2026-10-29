@@ -194,3 +194,42 @@ def test_workflow_mode_is_opt_in_exclusive_and_reuses_existing_read_lane():
     assert 'group: ibkr-flex-period-return' in workflow
     for unsafe in ('upload-artifact', 'SYNC_TOKEN', 'schedule:', 'id-token:', 'gcloud'):
         assert unsafe not in workflow
+
+
+def test_recovery_source_fields_are_classified_without_claiming_comparison(monkeypatch, capsys):
+    position = b'''<OpenPositions><OpenPosition accountId="DU0000002" model="" symbol="PRIVATE_ASSET" currency="USD" conid="42" assetCategory="STK" reportDate="20260131" levelOfDetail="SUMMARY" position="7654.9876" costBasisPrice="7654.9876"/></OpenPositions>'''
+    cash = b'''<CashReport><CashReportCurrency accountId="DU0000002" model="" currency="USD" fromDate="20260101" toDate="20260131" reportDate="20260131" endingCash="7654.9876" endingSettledCash="7654.9876"/></CashReport>'''
+    report = REPORT.replace(b'<OpenPositions><Unexpected privateKey="PRIVATE_CANARY"/></OpenPositions>', position + cash)
+    status, result, text, session = run(monkeypatch, capsys, report)
+    assert status == 0
+    comparison = result['accounts']['additional-2']['recovery_comparability']
+    assert comparison['positions']['source_fields_valid'] is True
+    assert comparison['cash']['source_fields_valid'] is True
+    assert 'position_time_alignment_unverified' in comparison['positions']['reasons']
+    assert 'position_scope_unverified' in comparison['positions']['reasons']
+    assert 'cash_balance_semantics_unverified' in comparison['cash']['reasons']
+    assert 'cash_time_alignment_unverified' in comparison['cash']['reasons']
+    assert [name for name, _ in session.calls] == ['SendRequest', 'GetStatement']
+    for private in ('DU0000002', 'PRIVATE_ASSET', '7654.9876'):
+        assert private not in text
+
+
+def test_recovery_rejects_lot_and_wrong_date_and_ignores_unknown_details(monkeypatch, capsys):
+    position = b'''<OpenPositions><OpenPosition accountId="DU0000002" model="" symbol="PRIVATE_ASSET" currency="USD" conid="42" assetCategory="STK" reportDate="20260130" levelOfDetail="LOT" position="1" costBasisPrice="1"/><Unknown/></OpenPositions>'''
+    report = REPORT.replace(b'<OpenPositions><Unexpected privateKey="PRIVATE_CANARY"/></OpenPositions>', position)
+    _, result, text, _ = run(monkeypatch, capsys, report)
+    item = result['accounts']['additional-2']['recovery_comparability']['positions']
+    assert item['source_fields_valid'] is False
+    assert {'position_detail_not_summary', 'position_report_date_mismatch', 'positions_unsupported_rows'} <= set(item['reasons'])
+    assert 'PRIVATE_ASSET' not in text
+
+
+def test_recovery_output_rejects_unapproved_reason(monkeypatch, capsys):
+    _, result, _, _ = run(monkeypatch, capsys)
+    result['accounts']['primary']['recovery_comparability']['cash']['reasons'].append('PRIVATE_CANARY')
+    assert cli._validated_coverage_report(result)['missing'] == ['flex_coverage_diagnostic_result_invalid']
+
+
+@pytest.mark.parametrize('number', ['1_0', 'NaN', '9' * 257, ' 1 ', '1e9999'])
+def test_recovery_numeric_shape_rejects_unsupported_input(number):
+    assert source._finite_decimal(number) is False
