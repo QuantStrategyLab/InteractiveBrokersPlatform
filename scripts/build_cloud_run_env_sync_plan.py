@@ -346,6 +346,24 @@ def build_sync_plan(env: Mapping[str, str] = os.environ) -> dict[str, object]:
         if len(matches) != 1:
             raise ValueError("configured_service must match exactly one inventory target")
         target_entries = matches
+    if str(env.get("INPUT_INITIAL_STATE_SOURCE_RUN_ID") or "").strip():
+        # Initial enrollment uses inventory only to select one disabled service.
+        # The actual serving target and confirmed ledger are validated later.
+        if (env.get("WORKFLOW_TARGET", "configured") != "configured"
+                or str(env.get("INPUT_RUNTIME_SWITCH_ONLY") or "").lower() == "true"
+                or not selected or not per_service_mode or len(target_entries) != 1):
+            raise ValueError("initial state requires one configured inventory service")
+        enabled = _target_env_value(
+            target_entries[0], defaults, env, "RUNTIME_TARGET_ENABLED",
+            per_service_mode=True, allow_shared_fallback=False,
+        )
+        if enabled is None or _runtime_target_enabled({"RUNTIME_TARGET_ENABLED": enabled}):
+            raise ValueError("initial state inventory target must remain disabled")
+        return {"mode": "per_service", "targets": [{
+            "service_name": selected,
+            "env": {"RUNTIME_TARGET_ENABLED": "false"},
+            "remove_env_vars": [],
+        }]}
     status_rows = {
         str(row["canonical_profile"]): {
             **row,

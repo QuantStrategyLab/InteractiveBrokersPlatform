@@ -231,3 +231,27 @@ def test_sync_plan_uses_opt_in_ledger_for_state_and_digest_env(tmp_path) -> None
     assert json.loads(env_values["IBKR_RECONCILIATION_EXPECTED_DIGESTS_JSON"]) == (
         _ledger(target)["transition_plan"]["expected_digests"]
     )
+
+
+def test_initial_inventory_selects_only_disabled_service_without_static_baseline(monkeypatch):
+    from scripts import build_cloud_run_env_sync_plan as sync
+
+    monkeypatch.setattr(sync, "_load_platform_config", lambda env: {})
+    target = _runtime_target()
+    target["scheduler"] = {"precheck_time": "1 1 * * *"}
+    service = str(target["service_name"])
+    entry = {"service_name": service, "runtime_target": target, "RUNTIME_TARGET_ENABLED": False}
+    env = {"CLOUD_RUN_SERVICE_TARGETS_JSON": json.dumps({"targets": [entry]}),
+           "WORKFLOW_TARGET": "configured", "INPUT_CONFIGURED_SERVICE": service,
+           "INPUT_INITIAL_STATE_SOURCE_RUN_ID": "123"}
+    plan = sync.build_sync_plan(env)
+    assert plan == {"mode": "per_service", "targets": [{"service_name": service,
+             "env": {"RUNTIME_TARGET_ENABLED": "false"}, "remove_env_vars": []}]}
+    normal = {key: value for key, value in env.items() if key != "INPUT_INITIAL_STATE_SOURCE_RUN_ID"}
+    with pytest.raises(ValueError, match="runtime target continuity validation failed"):
+        sync.build_sync_plan(normal)
+    for entries in ([], [entry, entry], [{**entry, "RUNTIME_TARGET_ENABLED": True}],
+                    [{key: value for key, value in entry.items() if key != "RUNTIME_TARGET_ENABLED"}]):
+        invalid = {**env, "CLOUD_RUN_SERVICE_TARGETS_JSON": json.dumps({"targets": entries})}
+        with pytest.raises(ValueError):
+            sync.build_sync_plan(invalid)
