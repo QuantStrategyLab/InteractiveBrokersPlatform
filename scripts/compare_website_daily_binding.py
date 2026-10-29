@@ -86,7 +86,12 @@ def main():
 
 if __name__ == "__main__":
     try:
-        print("status=ok comparison=" + main())
+        value = main()
+        slot = os.environ.get("IBKR_ACCOUNT_FACTS_TARGET", "primary-live")
+        if slot == "primary-live":
+            print("status=ok comparison=" + value)
+        else:
+            print("status=ok slot=" + slot + " comparison=" + value)
     except Exception:
         print("status=blocked reason=comparison_unavailable")
         raise SystemExit(1) from None
