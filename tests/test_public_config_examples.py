@@ -20,7 +20,7 @@ def test_env_example_uses_portable_execution_report_gcs_uri():
 
 
 def test_runtime_rollout_uses_portable_repository_path():
-    rollout = (REPOSITORY_ROOT / "docs" / "ibkr_runtime_rollout.md").read_text(
+    rollout = (REPOSITORY_ROOT / "docs" / "ibkr-runtime-rollout.md").read_text(
         encoding="utf-8"
     )
 
