@@ -290,3 +290,30 @@ def test_unknown_one_account_is_not_retried_and_other_account_continues(monkeypa
     assert result["additional_returns"] == {"additional-2": "sync_unknown", "additional-3": "published"}
     assert called == (["synthetic-key-2", "synthetic-key-3"] if additional_only else
                       ["synthetic-account-key", "synthetic-key-2", "synthetic-key-3"])
+
+
+def test_scheduled_publishes_each_additional_flow_with_its_own_binding(monkeypatch, capsys):
+    setup(monkeypatch)
+    seen = []
+    def flow(ledger, config, diagnostics=None):
+        seen.append((tuple(ledger['account_ids']), config['account_key']))
+        return {'external_flow_status': 'published'}
+    monkeypatch.setattr(cli, '_external_flow_result', flow)
+    assert cli.main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert seen == [(('DU0000000',), 'synthetic-account-key'),
+                    (('DU0000002',), 'synthetic-key-2'), (('DU0000003',), 'synthetic-key-3')]
+    assert result['additional_external_flows'] == {'additional-2': 'published', 'additional-3': 'published'}
+
+
+def test_additional_flow_unknown_is_visible_and_not_retried(monkeypatch, capsys):
+    setup(monkeypatch)
+    seen = []
+    def flow(_ledger, config, diagnostics=None):
+        seen.append(config['account_key'])
+        return {'external_flow_status': 'sync_unknown' if config['account_key'] == 'synthetic-key-2' else 'published'}
+    monkeypatch.setattr(cli, '_external_flow_result', flow)
+    assert cli.main() == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result['additional_external_flows']['additional-2'] == 'sync_unknown'
+    assert seen.count('synthetic-key-2') == 1
