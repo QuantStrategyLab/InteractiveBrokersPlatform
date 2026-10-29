@@ -532,3 +532,56 @@ def test_trusted_source_preflight_emits_no_receipt_or_target(monkeypatch, capsys
     result = json.loads(output)
     assert result["receipt_fresh"] is False
     assert result["state_write_attempted"] is False and result["recovery_verified"] is False
+
+
+def test_initial_ledger_accepts_only_matching_fresh_reobservation():
+    from copy import deepcopy
+    from application.broker_reconciliation_candidate import initial_private_source_sha256
+    from scripts.build_reconciliation_baseline_candidate import evaluate_initial_receipt
+    from scripts.verify_reconciliation_recovery import verify_initial_ledger_reobservation
+
+    start = datetime(2026, 8, 31, 1, 0, tzinfo=timezone.utc)
+    request_id = "853a2e08-9396-4fe8-89ee-59fb17e40a1d"
+    record = {"schema_version": "ibkr_initial_private_source.v1", "repository": "QuantStrategyLab/InteractiveBrokersPlatform",
+              "workflow_path": ".github/workflows/collect-reconciliation-evidence.yml", "workflow_run_id": "1",
+              "workflow_run_attempt": "1", "workflow_head_sha": "c" * 40, "service_name": "synthetic",
+              "service_revision": "synthetic-revision", "scheduler_job_sha256": "a" * 64,
+              "report_uri": f"gs://synthetic/reports/initial-enrollment/{request_id}.json#1", "report_generation": "1",
+              "request_id": request_id}
+    scope = {"kind": "synthetic", "currency": "USD", "window_start": "fixed", "window_end": "one",
+             "limit_per_namespace": None, "gateway_availability": None, "truncated": None}
+    names = ("positions", "cash", "open_orders", "recent_executions", "local_execution_ledger")
+    facts = {"schema_version": "ibkr_initial_facts.v1", "account_scope_sha256": _digest("a"),
+             "observed_at": "2026-08-31T01:00:00Z", "surfaces": {
+                 name: {"status": "complete", "items": [], "scope": scope} for name in names}}
+    def report(evidence, value):
+        digest = hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        return {"diagnostics": {"broker_reconciliation": {"evidence": evidence.to_dict()},
+                "reconciliation_scheduler_job_sha256": record["scheduler_job_sha256"],
+                "reconciliation_request_id": request_id, "initial_enrollment_private": {"facts": value, "facts_sha256": digest}}}
+    old = report(_evidence(observed_at=start), facts)
+    candidate = evaluate_initial_receipt(old, facts, private_source_sha256=initial_private_source_sha256(record), now=start)["candidate"]
+    plan = {"verified_at": "2026-08-31T01:03:00Z", "recovery_id": "synthetic-recovery",
+            "candidate_sha256": candidate["candidate_sha256"], "expected_digests": {n + "_sha256": candidate[n + "_sha256"] for n in names}}
+    ledger = {"service_name": "synthetic", "recovery_id": "synthetic-recovery", "transition_plan": plan}
+    current_time = start + timedelta(hours=2)
+    current_facts = deepcopy(facts); current_facts["observed_at"] = current_time.isoformat().replace("+00:00", "Z")
+    for item in current_facts["surfaces"].values(): item["scope"]["window_end"] = "two"
+    new_record = {**record, "workflow_run_id": "2"}
+    current = report(_evidence(observed_at=current_time), current_facts)
+    args = dict(ledger=ledger, original_record=record, original_report=old, current_record=new_record,
+                current_report=current, now=current_time + timedelta(minutes=1))
+    verify_initial_ledger_reobservation(**args)
+    for mutation in ("items", "scope", "identity", "stale", "same_run", "coverage"):
+        altered = deepcopy(args)
+        if mutation == "same_run": altered["current_record"]["workflow_run_id"] = "1"
+        elif mutation == "stale": altered["now"] = current_time + timedelta(minutes=31)
+        else:
+            new = deepcopy(current_facts)
+            evidence = _evidence(observed_at=current_time)
+            if mutation == "items": new["surfaces"]["cash"]["items"] = [{"synthetic": "changed"}]
+            elif mutation == "scope": new["surfaces"]["cash"]["scope"]["currency"] = "EUR"
+            elif mutation == "coverage": new["surfaces"]["cash"]["status"] = "partial"
+            else: new["account_scope_sha256"] = _digest("9")
+            altered["current_report"] = report(evidence, new)
+        with pytest.raises(ValueError): verify_initial_ledger_reobservation(**altered)

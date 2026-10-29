@@ -93,11 +93,11 @@ def _without_runtime_switch(spec: Mapping[str, Any], *, unnamed_template: bool =
 
 
 def validate_initial_state_baseline(revision: Mapping[str, Any], expected: Mapping[str, Any],
-                                    ledger: Mapping[str, Any], *, now=None) -> dict[str, str]:
+                                    ledger: Mapping[str, Any], *, original_record, original_report,
+                                    current_record, current_report, now=None) -> dict[str, str]:
     """Derive the confirmed transition from the actual disabled serving target."""
     from scripts.reconciliation_recovery_state_ledger import apply_recovery_state_ledger
-    from datetime import datetime, timezone
-    from quant_platform_kit.common.reconciliation_recovery import DEFAULT_RECONCILIATION_RECOVERY_MAX_AGE
+    from scripts.verify_reconciliation_recovery import verify_initial_ledger_reobservation
 
     if not str((revision.get("metadata") or {}).get("name") or "").startswith(str(expected.get("service_name") or "") + "-"):
         raise ReconcileError("initial baseline service does not match")
@@ -115,13 +115,9 @@ def validate_initial_state_baseline(revision: Mapping[str, Any], expected: Mappi
     try:
         actual = json.loads(values.get("RUNTIME_TARGET_JSON") or "null")
         derived, digests = apply_recovery_state_ledger(runtime_target=actual, ledger=ledger)
-        verified_at = datetime.fromisoformat(str(ledger["transition_plan"]["verified_at"]).replace("Z", "+00:00"))
-        if verified_at.utcoffset() is None:
-            raise ValueError("missing timezone")
-        current = now or datetime.now(timezone.utc)
-        if current < verified_at or current - verified_at > DEFAULT_RECONCILIATION_RECOVERY_MAX_AGE:
-            raise ValueError("verification expired")
-    except (TypeError, ValueError) as exc:
+        verify_initial_ledger_reobservation(ledger=ledger, original_record=original_record,
+            original_report=original_report, current_record=current_record, current_report=current_report, now=now)
+    except (KeyError, TypeError, ValueError) as exc:
         raise ReconcileError("initial baseline or ledger is invalid") from exc
     if expected.get("service_name") != ledger.get("service_name"):
         raise ReconcileError("initial confirmed transition does not match serving target")
