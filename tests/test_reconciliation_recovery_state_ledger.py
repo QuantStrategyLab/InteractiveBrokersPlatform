@@ -19,6 +19,7 @@ from scripts.reconciliation_recovery_state_ledger import (
     apply_recovery_state_ledger,
     apply_recovery_state_ledger_from_env,
 )
+from scripts.reconcile_cloud_runtime import ReconcileError, validate_initial_state_baseline, build_initial_state_stage
 
 
 SYNC_PLAN_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "build_cloud_run_env_sync_plan.py"
@@ -88,6 +89,58 @@ def test_state_ledger_changes_only_continuity_state_and_returns_exact_digests() 
     }
     assert runtime_target_fingerprint(updated) == runtime_target_fingerprint(target)
     assert expected_digests == _ledger(target)["transition_plan"]["expected_digests"]  # type: ignore[index]
+
+
+def test_initial_state_uses_serving_target_and_rejects_wrong_or_expired_ledger() -> None:
+    target = _runtime_target()
+    ledger = _ledger(target)
+    service = str(target['service_name'])
+    revision = {'metadata': {'name': service + '-old'}, 'spec': {'containers': [{
+        'image': 'synthetic-image', 'env': [
+            {'name': 'RUNTIME_TARGET_ENABLED', 'value': 'false'},
+            {'name': 'RUNTIME_TARGET_JSON', 'value': json.dumps(target)},
+        ],
+    }]}}
+    # Inventory is used only to select the service; it is not the authority for the baseline.
+    plan = {'service_name': service, 'env': {'RUNTIME_TARGET_ENABLED': 'false', 'RUNTIME_TARGET_JSON': '{}'}}
+    now = datetime(2026, 8, 31, 1, 6, tzinfo=timezone.utc)
+    updates = validate_initial_state_baseline(revision, plan, ledger, now=now)
+    derived = json.loads(updates['RUNTIME_TARGET_JSON'])
+    assert derived == {**target, 'live_continuity': {**target['live_continuity'], 'state': 'ACTIVE_LKG'}}
+    assert json.loads(updates['IBKR_RECONCILIATION_EXPECTED_DIGESTS_JSON']) == ledger['transition_plan']['expected_digests']
+    for mutation in ('enabled', 'identity', 'drift', 'expired'):
+        changed, expectation, stamp = copy.deepcopy(revision), copy.deepcopy(plan), now
+        if mutation == 'enabled': changed['spec']['containers'][0]['env'][0]['value'] = 'true'
+        elif mutation == 'identity': expectation['service_name'] = 'different-service'
+        elif mutation == 'drift':
+            drifted = copy.deepcopy(target); drifted['strategy_profile'] = 'different-profile'
+            changed['spec']['containers'][0]['env'][1]['value'] = json.dumps(drifted)
+        else: stamp = datetime(2026, 8, 31, 1, 36, tzinfo=timezone.utc)
+        with pytest.raises(ReconcileError):
+            validate_initial_state_baseline(changed, expectation, ledger, now=stamp)
+
+
+def test_initial_stage_uses_resource_version_and_freezes_existing_traffic():
+    target = _runtime_target(); service_name = str(target['service_name'])
+    env = [{'name': 'RUNTIME_TARGET_ENABLED', 'value': 'false'},
+           {'name': 'RUNTIME_TARGET_JSON', 'value': json.dumps(target)},
+           {'name': 'KEEP_SECRET', 'valueFrom': {'secretKeyRef': {'name': 'synthetic', 'key': '1'}}}]
+    spec = {'containers': [{'image': 'synthetic-image', 'env': env}]}
+    rev = {'metadata': {'name': service_name + '-old'}, 'spec': copy.deepcopy(spec)}
+    service = {'metadata': {'name': service_name, 'namespace': 'synthetic', 'resourceVersion': '7'},
+               'spec': {'template': {'metadata': {}, 'spec': copy.deepcopy(spec)}},
+               'status': {'traffic': [{'revisionName': service_name + '-old', 'percent': 100},
+                                      {'revisionName': service_name + '-previous', 'percent': 0, 'tag': 'review'}]}}
+    updates = validate_initial_state_baseline(rev, {'service_name': service_name, 'env': {'RUNTIME_TARGET_ENABLED': 'false'}},
+        _ledger(target), now=datetime(2026, 8, 31, 1, 6, tzinfo=timezone.utc))
+    result = build_initial_state_stage(service, rev, updates, service_name + '-new')
+    assert result['metadata']['resourceVersion'] == '7'
+    assert result['spec']['traffic'] == service['status']['traffic']
+    assert result['spec']['template']['spec']['containers'][0]['env'][2] == env[2]
+    assert service['spec']['template']['spec'] == spec
+    service['spec']['template']['spec']['containers'][0]['env'][2]['valueFrom']['secretKeyRef']['key'] = '2'
+    with pytest.raises(ReconcileError):
+        build_initial_state_stage(service, rev, updates, service_name + '-new')
 
 
 def test_state_ledger_rejects_drifted_or_replayed_target() -> None:

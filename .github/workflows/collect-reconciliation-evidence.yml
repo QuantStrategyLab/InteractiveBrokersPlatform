@@ -84,6 +84,7 @@ jobs:
       verify_initial_current_run_id: ${{ inputs.verify_initial_current_run_id }}
       archive_initial_state_ledger: ${{ inputs.archive_initial_state_ledger }}
     secrets:
+      IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX: ${{ inputs.archive_initial_state_ledger && (vars.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX || secrets.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX) || '' }}
       RECONCILIATION_RECOVERY_SYNC_TOKEN: ${{ inputs.publish_initial_run_id != '' && secrets.RECONCILIATION_RECOVERY_SYNC_TOKEN || '' }}
       RECONCILIATION_RECOVERY_CONTROLLER_TOKEN: ${{ inputs.verify_initial_source_run_id != '' && secrets.RECONCILIATION_RECOVERY_CONTROLLER_TOKEN || '' }}
       CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ vars.CLOUD_RUN_SERVICE_TARGETS_JSON || secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}

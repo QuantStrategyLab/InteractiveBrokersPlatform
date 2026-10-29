@@ -35,6 +35,7 @@ from scripts.build_reconciliation_baseline_candidate import (
     load_authenticated_source_inputs, validate_authenticated_candidate,
 )
 from scripts.publish_reconciliation_recovery_source import (
+    RECONCILIATION_RECOVERY_USER_AGENT,
     _load_json,
     _parse_time,
     extract_baseline_candidate,
@@ -79,7 +80,7 @@ def read_console_confirmation(
         raise ValueError(f"{RECONCILIATION_RECOVERY_CONTROLLER_TOKEN_ENV} is required")
     request = Request(
         f"{normalized_url}?{urlencode({'recovery_id': recovery_id})}",
-        headers={"Authorization": f"Bearer {normalized_token}"},
+        headers={"Authorization": f"Bearer {normalized_token}", "User-Agent": RECONCILIATION_RECOVERY_USER_AGENT},
         method="GET",
     )
     request_opener = opener or build_opener(_NoRedirect).open
@@ -362,11 +363,10 @@ def main(argv: list[str] | None = None) -> int:
             ledger_archived = False
             if args.archive_initial_state_ledger and result["ready_for_atomic_state_transition"]:
                 from scripts.reconciliation_recovery_state_ledger import build_recovery_state_ledger
-                from scripts.publish_reconciliation_recovery_state_ledger import archive_recovery_state_ledger
+                from scripts.publish_reconciliation_recovery_state_ledger import archive_recovery_state_ledger, initial_state_ledger_uri
                 ledger = build_recovery_state_ledger(verification=result, service_name=original["record"]["service_name"])
-                uri = os.environ.get("IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_URI", "")
-                if not uri.startswith("gs://") or not uri.endswith(f"/reconciliation-recovery/ibkr/state/initial-run-{args.trusted_initial_source_run}.json"):
-                    raise ValueError("initial private state ledger destination is invalid")
+                uri = initial_state_ledger_uri(os.environ.get("IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX", ""),
+                                               args.trusted_initial_source_run)
                 archive_recovery_state_ledger(ledger, state_ledger_uri=uri)
                 ledger_archived = True
             # The plan and account-bound hashes stay in private memory until a protected consumer is invoked.

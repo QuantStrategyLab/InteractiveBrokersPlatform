@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import copy
 import json
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
+import pytest
 from scripts import reconcile_cloud_runtime as rcr
 
 
@@ -369,6 +372,68 @@ class ReconcileCloudRuntimeTests(unittest.TestCase):
 
         self.assertEqual({call[4] for call in describe_calls}, expected_jobs)
         self.assertEqual({call[4] for call in delete_calls}, expected_jobs)
+
+@pytest.mark.parametrize('case', ['valid', 'digest_changed', 'secret_changed', 'enabled', 'wrong_revision'])
+def test_initial_state_adopts_only_exact_candidate(case):
+    target = rcr.RuntimeTarget(service_name='unit-service')
+    old = _http_candidate('unit-service-old', 'old-commit')
+    old['spec']['containers'][0].update(image='synthetic-image', env=[
+        {'name': 'RUNTIME_TARGET_ENABLED', 'value': 'false'},
+        {'name': 'RUNTIME_TARGET_JSON', 'value': '{"state":"before"}'},
+        {'name': 'PRIVATE_SECRET', 'valueFrom': {'secretKeyRef': {'name': 'secret', 'key': '1'}}},
+    ])
+    current = copy.deepcopy(old)
+    current['metadata']['name'] = 'unit-service-new'
+    rows = current['spec']['containers'][0]['env']
+    rows[1]['value'] = '{"state":"after"}'
+    rows.append({'name': 'IBKR_RECONCILIATION_EXPECTED_DIGESTS_JSON', 'value': '{"sample":"digest"}'})
+    expected = {'RUNTIME_TARGET_ENABLED': 'false', 'RUNTIME_TARGET_JSON': '{"state":"after"}',
+                'IBKR_RECONCILIATION_EXPECTED_DIGESTS_JSON': '{"sample":"digest"}'}
+    if case == 'digest_changed': rows[-1]['value'] = '{}'
+    if case == 'secret_changed': rows[2]['valueFrom']['secretKeyRef']['key'] = '2'
+    if case == 'enabled': rows[0]['value'] = 'true'
+    calls, writes = [], []
+    def fake_run(args, *, json_output=False, dry_run=False):
+        calls.append(list(args))
+        if args[:4] == ['gcloud', 'run', 'services', 'describe']:
+            adopted = bool(writes)
+            return {'status': {'traffic': [{'percent': 100, 'revisionName': 'unit-service-new' if adopted else 'unit-service-old'}],
+                               'latestCreatedRevisionName': 'unit-service-other' if case == 'wrong_revision' else 'unit-service-new'}}
+        if args[:4] == ['gcloud', 'run', 'revisions', 'describe']: return current
+        if args[:4] == ['gcloud', 'run', 'services', 'update-traffic']: return ''
+        raise AssertionError('unexpected command')
+    with mock.patch.object(rcr, '_run', side_effect=fake_run), mock.patch('scripts.runtime_target_continuity.verify_traffic_revision'), mock.patch.object(rcr, '_adopt_initial_candidate', side_effect=lambda *_args, **_kwargs: writes.append(True)):
+        kwargs = dict(project='synthetic', region='us-central1', targets=[target], expected_commit='unused', dry_run=False,
+                      env_sync_baseline=old, env_sync_revision='unit-service-new', env_sync_expected=expected,
+                      initial_state_only=True, env_sync_service={'spec': {'template': {'spec': {'containers': [{}]}}}})
+        if case == 'valid': rcr.ensure_latest_traffic(**kwargs)
+        else:
+            with pytest.raises(rcr.ReconcileError): rcr.ensure_latest_traffic(**kwargs)
+    assert len(writes) == (1 if case == 'valid' else 0)
+
+
+def test_initial_adoption_put_is_version_conditional_and_preserves_tagged_revisions(monkeypatch):
+    import urllib.request
+    service = {'metadata': {'name': 'unit-service', 'namespace': 'synthetic', 'resourceVersion': '9'},
+               'spec': {'template': {'spec': {'containers': [{'image': 'fixed'}]}}},
+               'status': {'traffic': [{'revisionName': 'unit-service-old', 'percent': 100},
+                                      {'revisionName': 'unit-service-older', 'percent': 0, 'tag': 'review'}]}}
+    seen = []
+    class Response:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+    def send(request, timeout):
+        seen.append(json.loads(request.data))
+        return Response()
+    monkeypatch.setattr(rcr.subprocess, 'run', lambda *_a, **_kw: SimpleNamespace(returncode=0, stdout='synthetic-token'))
+    monkeypatch.setattr(urllib.request, 'build_opener', lambda *_a: SimpleNamespace(open=send))
+    rcr._adopt_initial_candidate(service, project='synthetic', region='us-central1', candidate_revision='unit-service-new')
+    assert len(seen) == 1 and seen[0]['metadata']['resourceVersion'] == '9'
+    assert seen[0]['spec']['traffic'] == [{'revisionName': 'unit-service-new', 'percent': 100},
+                                          {'revisionName': 'unit-service-older', 'percent': 0, 'tag': 'review'}]
+    assert service['status']['traffic'][0]['percent'] == 100
+
 
 if __name__ == "__main__":
     unittest.main()

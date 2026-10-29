@@ -92,6 +92,147 @@ def _without_runtime_switch(spec: Mapping[str, Any], *, unnamed_template: bool =
     return result
 
 
+def validate_initial_state_baseline(revision: Mapping[str, Any], expected: Mapping[str, Any],
+                                    ledger: Mapping[str, Any], *, now=None) -> dict[str, str]:
+    """Derive the confirmed transition from the actual disabled serving target."""
+    from scripts.reconciliation_recovery_state_ledger import apply_recovery_state_ledger
+    from datetime import datetime, timezone
+    from quant_platform_kit.common.reconciliation_recovery import DEFAULT_RECONCILIATION_RECOVERY_MAX_AGE
+
+    if not str((revision.get("metadata") or {}).get("name") or "").startswith(str(expected.get("service_name") or "") + "-"):
+        raise ReconcileError("initial baseline service does not match")
+    containers = revision.get("spec", {}).get("containers") or []
+    if len(containers) != 1 or not containers[0].get("image"):
+        raise ReconcileError("initial baseline container is invalid")
+    rows = containers[0].get("env") or []
+    names = [row.get("name") for row in rows]
+    if len(names) != len(set(names)):
+        raise ReconcileError("initial baseline environment is ambiguous")
+    values = {row.get("name"): row.get("value") for row in rows}
+    desired = expected.get("env") or {}
+    if values.get("RUNTIME_TARGET_ENABLED") != "false" or desired.get("RUNTIME_TARGET_ENABLED") != "false":
+        raise ReconcileError("initial baseline must remain disabled")
+    try:
+        actual = json.loads(values.get("RUNTIME_TARGET_JSON") or "null")
+        derived, digests = apply_recovery_state_ledger(runtime_target=actual, ledger=ledger)
+        verified_at = datetime.fromisoformat(str(ledger["transition_plan"]["verified_at"]).replace("Z", "+00:00"))
+        if verified_at.utcoffset() is None:
+            raise ValueError("missing timezone")
+        current = now or datetime.now(timezone.utc)
+        if current < verified_at or current - verified_at > DEFAULT_RECONCILIATION_RECOVERY_MAX_AGE:
+            raise ValueError("verification expired")
+    except (TypeError, ValueError) as exc:
+        raise ReconcileError("initial baseline or ledger is invalid") from exc
+    if expected.get("service_name") != ledger.get("service_name"):
+        raise ReconcileError("initial confirmed transition does not match serving target")
+    return {"RUNTIME_TARGET_JSON": json.dumps(derived, sort_keys=True, separators=(",", ":")),
+            "IBKR_RECONCILIATION_EXPECTED_DIGESTS_JSON": json.dumps(digests, sort_keys=True, separators=(",", ":"))}
+
+
+def _without_initial_state(spec: Mapping[str, Any], *, unnamed_template: bool = False) -> dict[str, Any]:
+    import copy
+    result = copy.deepcopy(dict(spec))
+    result.pop("servingState", None)
+    for container in result.get("containers") or []:
+        if unnamed_template:
+            container.pop("name", None)
+        container["env"] = sorted((row for row in container.get("env") or [] if row.get("name") not in {
+            "RUNTIME_TARGET_JSON", "IBKR_RECONCILIATION_EXPECTED_DIGESTS_JSON"}), key=lambda row: row.get("name", ""))
+    return result
+
+
+def build_initial_state_stage(service: Mapping[str, Any], revision: Mapping[str, Any],
+                              updates: Mapping[str, str], candidate_revision: str) -> dict[str, Any]:
+    """Build one version-conditional service replacement without changing traffic."""
+    import copy
+    metadata = service.get("metadata") or {}
+    if set(updates) != {"RUNTIME_TARGET_JSON", "IBKR_RECONCILIATION_EXPECTED_DIGESTS_JSON"}:
+        raise ReconcileError("initial state fields are invalid")
+    if not metadata.get("resourceVersion") or not candidate_revision.startswith(str(metadata.get("name") or "") + "-"):
+        raise ReconcileError("initial service identity is invalid")
+    template = service.get("spec", {}).get("template", {})
+    template_containers = template.get("spec", {}).get("containers") or []
+    if len(template_containers) != 1:
+        raise ReconcileError("initial service template is invalid")
+    unnamed = not template_containers[0].get("name")
+    if _without_initial_state(template.get("spec", {}), unnamed_template=unnamed) != _without_initial_state(revision.get("spec", {}), unnamed_template=unnamed):
+        raise ReconcileError("initial serving template changed")
+    def selected(container):
+        rows = container.get("env") or []
+        if len(rows) != len({row.get("name") for row in rows}):
+            raise ReconcileError("initial service environment is ambiguous")
+        return {row["name"]: row for row in rows if row.get("name") in {
+            "RUNTIME_TARGET_JSON", "IBKR_RECONCILIATION_EXPECTED_DIGESTS_JSON"}}
+    revision_containers = revision.get("spec", {}).get("containers") or []
+    if len(revision_containers) != 1 or selected(template_containers[0]) != selected(revision_containers[0]):
+        raise ReconcileError("initial serving environment changed")
+    traffic = service.get("status", {}).get("traffic") or []
+    if not _traffic_on_revision(service, (revision.get("metadata") or {}).get("name")):
+        raise ReconcileError("initial serving traffic changed")
+    frozen = []
+    for row in traffic:
+        if not isinstance(row.get("revisionName"), str) or type(row.get("percent", 0)) is not int:
+            raise ReconcileError("initial service traffic is invalid")
+        item = {"revisionName": row["revisionName"], "percent": row.get("percent", 0)}
+        if row.get("tag"):
+            item["tag"] = row["tag"]
+        frozen.append(item)
+    body = {"apiVersion": "serving.knative.dev/v1", "kind": "Service",
+            "metadata": {key: copy.deepcopy(value) for key, value in metadata.items()
+                         if key in {"name", "namespace", "resourceVersion", "labels", "annotations"}},
+            "spec": copy.deepcopy(service["spec"])}
+    body["spec"]["traffic"] = frozen
+    body["spec"]["template"].setdefault("metadata", {})["name"] = candidate_revision
+    env = body["spec"]["template"]["spec"]["containers"][0].setdefault("env", [])
+    for key, value in updates.items():
+        found = [row for row in env if row.get("name") == key]
+        if found and (len(found) != 1 or "valueFrom" in found[0]):
+            raise ReconcileError("initial state field is not a plain value")
+        if found:
+            found[0]["value"] = value
+        else:
+            env.append({"name": key, "value": value})
+    return body
+
+
+def _adopt_initial_candidate(service: Mapping[str, Any], *, project: str, region: str,
+                             candidate_revision: str) -> None:
+    """Adopt the verified candidate with the current Cloud Run resourceVersion."""
+    import copy
+    from urllib.parse import quote
+    from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+    metadata = service.get("metadata") or {}
+    if not metadata.get("resourceVersion") or not metadata.get("name"):
+        raise ReconcileError("initial adoption service version is unavailable")
+    tags = []
+    for row in service.get("status", {}).get("traffic") or []:
+        if row.get("tag"):
+            if not isinstance(row.get("revisionName"), str):
+                raise ReconcileError("initial adoption tagged traffic is invalid")
+            tags.append({"tag": row["tag"], "revisionName": row["revisionName"], "percent": 0})
+    body = {"apiVersion": "serving.knative.dev/v1", "kind": "Service",
+            "metadata": {key: copy.deepcopy(value) for key, value in metadata.items()
+                         if key in {"name", "namespace", "resourceVersion", "labels", "annotations"}},
+            "spec": copy.deepcopy(service["spec"])}
+    body["spec"]["traffic"] = [{"revisionName": candidate_revision, "percent": 100}, *tags]
+    token = subprocess.run(["gcloud", "auth", "print-access-token"], capture_output=True, text=True, timeout=30, check=False)
+    if token.returncode or not token.stdout.strip():
+        raise ReconcileError("initial adoption identity unavailable")
+    url = (f"https://{region}-run.googleapis.com/apis/serving.knative.dev/v1/"
+           f"namespaces/{quote(project, safe='')}/services/{quote(str(metadata['name']), safe='')}")
+    class NoRedirect(HTTPRedirectHandler):
+        def redirect_request(self, *_args, **_kwargs): return None
+    request = Request(url, method="PUT", data=json.dumps(body).encode(), headers={
+        "Authorization": "Bearer " + token.stdout.strip(), "Content-Type": "application/json"})
+    try:
+        with build_opener(NoRedirect).open(request, timeout=180) as response:
+            if response.status < 200 or response.status >= 300:
+                raise ValueError("unconfirmed")
+    except Exception:
+        raise ReconcileError("initial adoption failed or unknown") from None
+
+
 def _load_json_object(raw: str, *, field_name: str) -> Mapping[str, Any] | list[Any]:
     try:
         value = json.loads(raw)
@@ -307,6 +448,7 @@ def ensure_latest_traffic(
     env_sync_revision: str | None = None,
     env_sync_expected: Mapping[str, str] | None = None,
     switch_only: bool = False,
+    initial_state_only: bool = False,
     env_sync_service: Mapping[str, Any] | None = None,
 ) -> None:
     if env_sync_baseline is not None and (len(targets) != 1 or not env_sync_revision
@@ -357,15 +499,16 @@ def ensure_latest_traffic(
                     raise ReconcileError("env-only container shape is invalid")
                 if not baseline_containers[0].get("image") or baseline_containers[0].get("image") != candidate_containers[0].get("image"):
                     raise ReconcileError("env-only candidate image changed")
-                if switch_only:
+                if switch_only or initial_state_only:
                     from scripts.deploy_notification_only import metadata as normalized_metadata
 
                     template = (env_sync_service or {}).get("spec", {}).get("template", {}).get("spec", {}).get("containers") or []
                     if len(template) != 1:
                         raise ReconcileError("switch original template is invalid")
                     unnamed = not template[0].get("name")
-                    if _without_runtime_switch(env_sync_baseline.get("spec", {}), unnamed_template=unnamed) != _without_runtime_switch(candidate.get("spec", {}), unnamed_template=unnamed):
-                        raise ReconcileError("switch candidate changed other service configuration")
+                    normalize = _without_initial_state if initial_state_only else _without_runtime_switch
+                    if normalize(env_sync_baseline.get("spec", {}), unnamed_template=unnamed) != normalize(candidate.get("spec", {}), unnamed_template=unnamed):
+                        raise ReconcileError("candidate changed other service configuration")
                     if normalized_metadata(env_sync_baseline.get("metadata", {}), template=True) != normalized_metadata(candidate.get("metadata", {}), template=True):
                         raise ReconcileError("switch candidate changed service annotations or labels")
                 rows = candidate_containers[0].get("env") or []
@@ -373,7 +516,8 @@ def ensure_latest_traffic(
                 if len(names) != len(set(names)):
                     raise ReconcileError("env-only candidate environment is ambiguous")
                 values = {row.get("name"): row.get("value") for row in rows}
-                for key in ("RUNTIME_TARGET_ENABLED", "RUNTIME_TARGET_JSON"):
+                keys = ("RUNTIME_TARGET_ENABLED", "RUNTIME_TARGET_JSON", "IBKR_RECONCILIATION_EXPECTED_DIGESTS_JSON") if initial_state_only else ("RUNTIME_TARGET_ENABLED", "RUNTIME_TARGET_JSON")
+                for key in keys:
                     actual_value, expected_value = values.get(key), env_sync_expected.get(key)
                     if key == "RUNTIME_TARGET_JSON" and switch_only:
                         try:
@@ -393,11 +537,11 @@ def ensure_latest_traffic(
                 verify_traffic_revision(candidate, expected_revision=target_revision, expected_commit=candidate_commit)
 
         if not _traffic_on_revision(service if isinstance(service, Mapping) else {}, target_revision):
-            print(
-                f"Updating {target.service_name} traffic to commit revision "
-                f"{target_revision}."
-            )
-            _run(
+            if initial_state_only:
+                _adopt_initial_candidate(service, project=project, region=target_region, candidate_revision=target_revision)
+            else:
+                print(f"Updating {target.service_name} traffic to commit revision {target_revision}.")
+                _run(
                 [
                     "gcloud",
                     "run",
@@ -409,8 +553,8 @@ def ensure_latest_traffic(
                     f"--to-revisions={target_revision}=100",
                     "--quiet",
                 ],
-                dry_run=dry_run,
-            )
+                    dry_run=dry_run,
+                )
         verified = _run(
             [
                 "gcloud",
@@ -429,7 +573,7 @@ def ensure_latest_traffic(
             raise ReconcileError(
                 f"{target.service_name} traffic is not 100% on commit revision {target_revision}"
             )
-        print(f"Cloud Run traffic OK for {target.service_name}: {target_revision}")
+        print("initial_state_traffic_verified" if initial_state_only else f"Cloud Run traffic OK for {target.service_name}: {target_revision}")
 
 
 def _legacy_jobs_for_target(platform: str, target: RuntimeTarget) -> list[str]:
@@ -534,6 +678,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--ensure-latest-traffic", action="store_true")
     parser.add_argument("--env-sync-evidence-dir", default="")
     parser.add_argument("--runtime-switch-only", action="store_true")
+    parser.add_argument("--initial-state-only", action="store_true")
     parser.add_argument("--delete-legacy-schedulers", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args(argv)
@@ -541,6 +686,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
+    if args.initial_state_only and (args.runtime_switch_only or not args.env_sync_evidence_dir):
+        raise ReconcileError("initial state requires exclusive exact revision evidence")
     if not args.project:
         raise ReconcileError("--project or GCP_PROJECT_ID is required")
     targets = load_targets(env=os.environ)
@@ -560,8 +707,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise ReconcileError("env-only sync requires a single target plan")
             extra = {"env_sync_baseline": baseline, "env_sync_revision": revision,
                      "env_sync_expected": entries[0].get("env"), "switch_only": args.runtime_switch_only,
+                     "initial_state_only": args.initial_state_only,
                      "env_sync_service": service}
-        elif args.runtime_switch_only:
+        elif args.runtime_switch_only or args.initial_state_only:
             raise ReconcileError("runtime switch requires exact revision evidence")
         ensure_latest_traffic(
             project=args.project,

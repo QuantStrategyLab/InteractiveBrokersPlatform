@@ -36,6 +36,8 @@ on:
         type: boolean
         required: false
     secrets:
+      IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX:
+        required: false
       RECONCILIATION_RECOVERY_SYNC_TOKEN:
         required: false
       RECONCILIATION_RECOVERY_CONTROLLER_TOKEN:
@@ -199,6 +201,7 @@ jobs:
       SOURCE_RUN_ID: ${{ inputs.verify_initial_source_run_id }}
       CURRENT_RUN_ID: ${{ inputs.verify_initial_current_run_id }}
       ARCHIVE_INITIAL_STATE_LEDGER: ${{ inputs.archive_initial_state_ledger }}
+      IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX: ${{ secrets.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX }}
       CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}
       IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON: ${{ secrets.IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON }}
       IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON }}

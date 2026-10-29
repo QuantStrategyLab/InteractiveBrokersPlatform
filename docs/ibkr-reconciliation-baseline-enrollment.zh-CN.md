@@ -179,6 +179,14 @@ QPK 计划中的五项摘要、`no_order=true`、`execution_authority_granted=fa
 既有实盘目标也不受影响。本阶段不写入该变量，也不创建账本对象；因此它只是经过测试的
 兼容入口，而不是一次自动或隐式的实盘恢复。
 
+首次登记使用单独的默认关闭入口。仓库受保护配置
+`IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX` 指向同一现有私有 state 目录；
+系统按已验证的来源 run ID 生成唯一对象名，不要求为每户反复修改完整 URI。确认后先
+重新读取当前事实并核对已确认版本，才允许以 create-only 写入账本。原单目标同步从实际
+serving target 推导 continuity 状态及预期摘要，保留 disabled 和其余配置，并以 Cloud Run
+resourceVersion 条件写入、核对候选和采用结果。未知写入不重试。此步骤不启用交易；
+旧恢复模式仍使用原完整 URI。
+
 `scripts/publish_reconciliation_recovery_state_ledger.py` 则是与消费端分离的发布适配器。
 它只接受刚生成的 `ibkr_reconciliation_recovery_verification.v1`：验证结果必须无阻断、
 完整携带 QPK 计划，并且仍声明 `verify_only`、无订单、无执行授权和未尝试状态写入。默认
