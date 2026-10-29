@@ -94,22 +94,25 @@ def test_invalid_report_cannot_publish_any_selected_account(monkeypatch, capsys,
     assert json.loads(capsys.readouterr().out)["status"] == "flex_import_failed"
 
 
-def test_wrong_ack_stops_before_next_account_without_retry(monkeypatch, capsys):
+def test_wrong_ack_never_retries_same_account_and_continues_other_account(monkeypatch, capsys):
     session, _published = setup(monkeypatch)
     opener = Opener()  # Its primary account key must fail an additional account's ACK.
     monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
     monkeypatch.setattr(cli, "publish_period_return", REAL_PUBLISH)
     assert cli.main(("--additional-returns-only",)) == 1
-    assert json.loads(capsys.readouterr().out) == {"additional_returns": {"additional-2": "sync_unknown"},
-        "additional_return_sync_diagnostics": {"additional-2": {"period_return_sync_reason": "invalid_ack"}}}
-    assert len(opener.calls) == 1 and len(session.calls) == 2
+    assert json.loads(capsys.readouterr().out) == {"additional_returns": {"additional-2": "sync_unknown", "additional-3": "sync_unknown"},
+        "additional_return_sync_diagnostics": {"additional-2": {"period_return_sync_reason": "invalid_ack"},
+                                               "additional-3": {"period_return_sync_reason": "invalid_ack"}}}
+    assert len(opener.calls) == 2 and len(session.calls) == 2
+    assert [json.loads(request.data)["target_id"] for request, _ in opener.calls] == [
+        "artificial-target-2", "artificial-target-3"]
 
 
 def test_historical_mode_preserves_date_and_never_writes_mismatched_period(monkeypatch, capsys):
     session, published = setup(monkeypatch)
     monkeypatch.setenv("IBKR_NATIVE_RETURN_DATE", "2026-01-31")
     assert cli.main(("--additional-returns-only",)) == 1
-    assert json.loads(capsys.readouterr().out) == {"additional_returns": {"additional-2": "historical_period_mismatch"}}
+    assert json.loads(capsys.readouterr().out) == {"additional_returns": {"additional-2": "historical_period_mismatch", "additional-3": "historical_period_mismatch"}}
     assert published == []
     assert session.calls[0][1]["params"]["fd"] == session.calls[0][1]["params"]["td"] == "20260131"
 
@@ -156,8 +159,8 @@ def test_missing_native_return_is_not_zero_or_partial_success(monkeypatch, capsy
     session, published = setup(monkeypatch)
     session.report = session.report.replace(b'twr="2"', b'other="2"')
     assert cli.main(("--additional-returns-only",)) == 1
-    assert json.loads(capsys.readouterr().out) == {"additional_returns": {"additional-2": "native_twr_unavailable"}}
-    assert published == []
+    assert json.loads(capsys.readouterr().out) == {"additional_returns": {"additional-2": "native_twr_unavailable", "additional-3": "published"}}
+    assert len(published) == 1 and published[0][1]["expected_account_key"] == "synthetic-key-3"
 
 
 def test_selected_binding_cannot_collide_with_primary(monkeypatch, capsys):
@@ -207,9 +210,10 @@ def test_default_primary_failure_prevents_all_additional_posts(monkeypatch, caps
 
 
 @pytest.mark.parametrize("additional_only", [False, True])
-def test_additional_failure_reports_safe_http_status_in_both_modes(monkeypatch, capsys, additional_only):
+@pytest.mark.parametrize("http_status", [302, 401, 403, 429, 500])
+def test_additional_failure_reports_safe_http_status_in_both_modes(monkeypatch, capsys, additional_only, http_status):
     setup(monkeypatch)
-    opener = Opener(error=HTTPError(cli.SYNC_URL, 403, "synthetic-secret", {}, None))
+    opener = Opener(error=HTTPError(cli.SYNC_URL, http_status, "synthetic-secret", {}, None))
     monkeypatch.setattr(cli, "build_opener", lambda *_args: opener)
     def publish(payload, **kwargs):
         if kwargs["expected_account_key"] == "synthetic-account-key":
@@ -219,6 +223,28 @@ def test_additional_failure_reports_safe_http_status_in_both_modes(monkeypatch, 
     assert cli.main(("--additional-returns-only",) if additional_only else ()) == 1
     output = capsys.readouterr().out
     result = json.loads(output)
-    assert result["additional_returns"] == {"additional-2": "sync_rejected"}
-    assert result["additional_return_sync_diagnostics"] == {"additional-2": {"period_return_http_status": 403}}
+    expected_status = "sync_unknown" if http_status == 500 else "sync_rejected"
+    assert result["additional_returns"] == {"additional-2": expected_status}
+    detail = result["additional_return_sync_diagnostics"]["additional-2"]
+    assert detail["period_return_http_status"] == http_status
     assert len(opener.calls) == 1 and "synthetic-secret" not in output and "synthetic-key" not in output
+
+
+@pytest.mark.parametrize("additional_only", [False, True])
+@pytest.mark.parametrize("reason", ["invalid_ack", "transport_error"])
+def test_unknown_one_account_is_not_retried_and_other_account_continues(monkeypatch, capsys, additional_only, reason):
+    setup(monkeypatch)
+    called = []
+    def publish(_payload, **kwargs):
+        key = kwargs["expected_account_key"]
+        called.append(key)
+        if key == "synthetic-key-2":
+            kwargs["diagnostics"]["period_return_sync_reason"] = reason
+            return "sync_unknown"
+        return "published"
+    monkeypatch.setattr(cli, "publish_period_return", publish)
+    assert cli.main(("--additional-returns-only",) if additional_only else ()) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["additional_returns"] == {"additional-2": "sync_unknown", "additional-3": "published"}
+    assert called == (["synthetic-key-2", "synthetic-key-3"] if additional_only else
+                      ["synthetic-account-key", "synthetic-key-2", "synthetic-key-3"])

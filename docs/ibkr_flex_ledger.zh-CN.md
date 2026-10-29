@@ -219,7 +219,9 @@ target、scope、selector 与来源绑定复用原 `IBKR_ACCOUNT_FACTS_ADDITIONA
 启用后，一次生成并领取的 XML 在内存中按各槽分别校验和投影；原 1019 有限等待仍只领取
 同一句柄。原入口保留 primary 的收益、成交和流水逻辑，附加槽只发布原生 TWR 及合格的
 `nav_change`，不额外发布附加账户成交、流水或余额快照。未列出的槽不会因为出现在报表中
-就获得发布资格。按账户核对 ACK，失败或结果不明时停止后续附加槽，不自动重试。
+就获得发布资格。按账户核对 ACK；单户来源字段不可用或 ACK 结果不明时保留该户结果、不重试该户，
+可继续其他独立配置的账户。明确 HTTP 失败及未知类别停止后续附加槽；共享认证、
+来源读取和主账户既有处理不变。
 
 一次历史补录可在同一工作流选择 `additional_returns_only=true`，对应 CLI
 `--additional-returns-only`；此模式不写 primary、成交或流水，与 `external_flow_only`

@@ -489,6 +489,16 @@ def _publish_additional_return(ledger, config, observed_at, *, diagnostics=None)
         expected_account_key=config["account_key"], diagnostics=diagnostics, **({"historical": True} if config.get("report_date") else {}))
 
 
+
+def _stop_additional_publication(status: str, detail: Mapping[str, Any]) -> bool:
+    """Continue independent accounts only for local or uncertain single-account outcomes."""
+    if status in {"published", "unchanged", "native_twr_unavailable", "projection_rejected", "historical_period_mismatch"}:
+        return False
+    if status == "sync_unknown" and detail.get("period_return_sync_reason") in {"invalid_ack", "transport_error"}:
+        return False
+    # Definite HTTP failures may be shared authentication, rate or service failures.
+    return True
+
 def main(argv: Sequence[str] = ()) -> int:
     if tuple(argv) == ("--cashflow-only",):
         return _cashflow_only()
@@ -543,7 +553,7 @@ def main(argv: Sequence[str] = ()) -> int:
                         results[slot] = _publish_additional_return(ledgers[slot], target, observed_at, diagnostics=detail)
                         if detail:
                             details[slot] = detail
-                        if results[slot] not in {"published", "unchanged"}:
+                        if _stop_additional_publication(results[slot], detail):
                             break
                     print(json.dumps({"additional_returns": results, **({"additional_return_sync_diagnostics": details} if details else {})}, sort_keys=True))
                     return 0 if len(results) == len(config["additional_returns"]) and all(
@@ -579,7 +589,7 @@ def main(argv: Sequence[str] = ()) -> int:
                         results[slot] = _publish_additional_return(ledgers[slot], target, observed_at, diagnostics=detail)
                         if detail:
                             diagnostics.setdefault("additional_return_sync_diagnostics", {})[slot] = detail
-                        if results[slot] not in {"published", "unchanged"}:
+                        if _stop_additional_publication(results[slot], detail):
                             break
     print(json.dumps({"status": status, **diagnostics}, sort_keys=True))
     if any(value not in {"published", "unchanged"} for value in diagnostics.get("additional_returns", {}).values()):
