@@ -401,3 +401,68 @@ def test_verifier_authenticated_current_receipt_still_needs_existing_activation_
     assert result["ready_for_atomic_state_transition"] is False
     assert result["transition_plan"] is None
     assert result["policy"]["state_write_attempted"] is False
+
+
+def test_trusted_current_source_uses_protected_binding_and_exact_archive(tmp_path, monkeypatch):
+    import pytest
+    from scripts import diagnose_ibkr_flex_runtime_binding as binding
+    from scripts import verify_reconciliation_recovery as verifier
+    _, _, current, _, _, _ = _raw_verifier_case(tmp_path)
+    monkeypatch.setattr(binding, "configuration", lambda _env: ({}, {"soxl_soxx_trend_income": ("synthetic-service", {})}, "project", "region"))
+    def observe(*_args, private_output, **_kwargs):
+        private_output.update(record=current["records"][0], archive=current["archives"][0].read_bytes(), runtime_target=_runtime_target())
+        return {"status": "matched_at_observation"}
+    monkeypatch.setattr(binding, "observe", observe)
+    receipt, target = verifier.read_trusted_current_receipt({"RECONCILIATION_RUN_ID": "123"})
+    assert receipt == current["payloads"][0] and target == _runtime_target()
+    current["archives"][0].write_bytes(b"invalid")
+    with pytest.raises(Exception):
+        verifier.read_trusted_current_receipt({"RECONCILIATION_RUN_ID": "123"})
+
+
+def test_trusted_current_cli_is_consumed_by_existing_recovery_verifier(tmp_path, monkeypatch, capsys):
+    from scripts import verify_reconciliation_recovery as verifier
+    start, _, current, candidate, _, args = _raw_verifier_case(tmp_path)
+    for flag in ("--current-source-archive", "--current-source-records", "--current-source-expectations", "--runtime-target"):
+        index = args.index(flag)
+        del args[index:index + 2]
+    index = args.index("--now")
+    del args[index:index + 2]
+    args += ["--current-trusted-run-id", "123"]
+    monkeypatch.setattr(verifier, "_parse_time", lambda _: start + timedelta(minutes=3))
+    monkeypatch.setattr(verifier, "read_trusted_current_receipt", lambda _env: (current["payloads"][0], _runtime_target()))
+    response = _console_response(candidate["candidate"]["candidate_sha256"], confirmed_at=start + timedelta(minutes=1))
+    response["recovery"]["evidence_sample_count"] = 1
+    monkeypatch.setattr(verifier, "read_console_confirmation", lambda **_kwargs: response)
+    assert verifier.main(args) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["ready_for_atomic_state_transition"] is True
+    assert result["policy"]["state_write_attempted"] is False
+
+
+def test_trusted_current_mode_rejects_fixed_clock(tmp_path, monkeypatch):
+    import pytest
+    from scripts import verify_reconciliation_recovery as verifier
+    _, _, _, _, _, args = _raw_verifier_case(tmp_path)
+    for flag in ("--current-source-archive", "--current-source-records", "--current-source-expectations", "--runtime-target"):
+        index = args.index(flag)
+        del args[index:index + 2]
+    args += ["--current-trusted-run-id", "123"]
+    calls = []
+    monkeypatch.setattr(verifier, "read_trusted_current_receipt", lambda _env: calls.append(True))
+    with pytest.raises(SystemExit):
+        verifier.main(args)
+    assert not calls
+
+
+def test_trusted_source_preflight_emits_no_receipt_or_target(monkeypatch, capsys):
+    from scripts import verify_reconciliation_recovery as verifier
+    private_receipt = {"evidence": _evidence(observed_at=datetime(2026, 8, 31, 1, 2, tzinfo=timezone.utc)).to_dict(), "private_marker": "must_not_appear"}
+    target = {**_runtime_target(), "private_marker": "must_not_appear"}
+    monkeypatch.setattr(verifier, "read_trusted_current_receipt", lambda _env: (private_receipt, target))
+    assert verifier.main(["--trusted-current-preflight"]) == 0
+    output = capsys.readouterr().out
+    assert "must_not_appear" not in output
+    result = json.loads(output)
+    assert result["receipt_fresh"] is False
+    assert result["state_write_attempted"] is False and result["recovery_verified"] is False

@@ -39,7 +39,7 @@ RECONCILIATION_BINDING_SECRETS = frozenset({
 
 def _assert_reconciliation_binding_secret_contract(key: str, declared: str, passed: str) -> None:
     assert f"      {key}:\n        required: false" in declared
-    expression = f"inputs.inspect_flex_runtime_binding_only && secrets.{key} || ''"
+    expression = f"(inputs.inspect_flex_runtime_binding_only || inputs.inspect_recovery_receipt_only) && secrets.{key} || ''"
     assert f"      {key}: ${{{{ {expression} }}}}" in passed
 
 
@@ -172,7 +172,7 @@ def test_reconciliation_keeps_both_inventory_consumers_behind_one_boundary() -> 
     assert "matrix: ${{ fromJSON(needs.resolve-matrix.outputs.matrix) }}" in jobs["collect"]
     for job in jobs.values():
         assert "CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}" in job
-    assert "if: ${{ !inputs.inspect_flex_runtime_binding_only }}" in jobs["collect"]
+    assert "if: ${{ !inputs.inspect_flex_runtime_binding_only && !inputs.inspect_recovery_receipt_only }}" in jobs["collect"]
     metadata = jobs["flex-runtime-binding"]
     assert "inputs.inspect_flex_runtime_binding_only" in metadata
     assert "diagnose_ibkr_flex_runtime_binding" in metadata
