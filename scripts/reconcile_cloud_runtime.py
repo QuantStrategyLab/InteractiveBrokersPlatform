@@ -533,7 +533,14 @@ def ensure_latest_traffic(
                     normalize = _without_initial_state if initial_state_only else _without_runtime_switch
                     if normalize(env_sync_baseline.get("spec", {}), unnamed_template=unnamed) != normalize(candidate.get("spec", {}), unnamed_template=unnamed):
                         raise ReconcileError("candidate changed other service configuration")
-                    if normalized_metadata(env_sync_baseline.get("metadata", {}), template=True) != normalized_metadata(candidate.get("metadata", {}), template=True):
+                    baseline_metadata = normalized_metadata(env_sync_baseline.get("metadata", {}), template=True)
+                    candidate_metadata = normalized_metadata(candidate.get("metadata", {}), template=True)
+                    if switch_only:
+                        # Knative clients use this nonce to correlate a revision;
+                        # it is not a runtime or strategy setting.
+                        baseline_metadata["labels"].pop("client.knative.dev/nonce", None)
+                        candidate_metadata["labels"].pop("client.knative.dev/nonce", None)
+                    if baseline_metadata != candidate_metadata:
                         raise ReconcileError("switch candidate changed service annotations or labels")
                 rows = candidate_containers[0].get("env") or []
                 names = [row.get("name") for row in rows]
