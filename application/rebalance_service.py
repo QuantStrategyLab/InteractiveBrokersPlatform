@@ -1087,7 +1087,8 @@ def run_strategy_core(
                 translator=config.translator,
                 fallback="",
             )
-            no_op_segments = [config.translator("no_trades")]
+            # No target weights do not establish that the portfolio needs no rebalance.
+            no_op_segments = [config.translator("signal_decision_unavailable")]
             if rendered_status:
                 no_op_segments.append(rendered_status)
             else:
@@ -1103,10 +1104,10 @@ def run_strategy_core(
                     no_op_segments.append(
                         _localize_notification_text(f"reason={notification_reason}", translator=config.translator)
                     )
-                if fail_reason:
-                    no_op_segments.append(
-                        _localize_notification_text(f"fail_reason={fail_reason}", translator=config.translator)
-                    )
+            if fail_reason:
+                no_op_segments.append(
+                    _localize_notification_text(f"fail_reason={fail_reason}", translator=config.translator)
+                )
             if execution_blocked_reason:
                 blocked_reason_text = _localize_notification_text(
                     f"reason={execution_blocked_reason}", translator=config.translator

@@ -1,5 +1,10 @@
 # Unified daily notification (code only)
 
+When no target weights are produced, the heartbeat reports that the strategy
+rebalance decision is unavailable. Snapshot failure details remain visible; an
+absent decision does not establish that no rebalance is needed, and independent
+account protection operations may still occur.
+
 `QSL_ROUTINE_NOTIFICATION_MODE` defaults to `immediate`. Exact `daily_digest`
 opts into one central bilingual digest. `QSL_DIGEST_ROUTINE_ORDERS=false` retains
 immediate confirmed order notices. Failed, pending, uncertain, risk, persistence

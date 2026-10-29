@@ -58,6 +58,40 @@ def test_no_trade_heartbeat_respects_window_and_notification_policy():
     )
 
 
+def test_failed_snapshot_heartbeat_does_not_claim_no_rebalance(tmp_path):
+    messages = []
+
+    class FakeIB:
+        def isConnected(self):
+            return True
+
+        def disconnect(self):
+            pass
+
+    run_strategy_core(
+        connect_ib=FakeIB,
+        get_current_portfolio=lambda _ib: ({}, {"equity": 1000.0, "buying_power": 500.0}),
+        compute_signals=lambda _ib, _holdings: (
+            None, "", False, "", {
+                "strategy_profile": "synthetic",
+                "snapshot_guard_decision": "fail_closed",
+                "fail_reason": "feature snapshot computation failed: TypeError",
+            },
+        ),
+        execute_rebalance=lambda *_args, **_kwargs: pytest.fail("unexpected execution"),
+        send_tg_message=messages.append,
+        translator=build_translator("zh"),
+        separator="---",
+        strategy_display_name="Synthetic",
+        reconciliation_output_path=tmp_path / "record.json",
+    )
+    assert messages
+    assert "未生成策略调仓决策" in messages[0]
+    assert "无需调仓" not in messages[0]
+    assert "本轮未执行" not in messages[0]
+    assert "TypeError" in messages[0]
+
+
 def _weight_allocation(targets, *, risk_symbols=(), income_symbols=(), safe_haven_symbols=()):
     return {
         "target_mode": "weight",
@@ -74,6 +108,7 @@ def _build_test_translator():
         "heartbeat_title": "heartbeat",
         "rebalance_title": "rebalance",
         "no_trades": "no trades",
+        "signal_decision_unavailable": "strategy rebalance decision unavailable",
         "existing_status": "pre-existing status",
         "equity": "equity",
         "buying_power": "buying_power",

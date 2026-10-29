@@ -55,6 +55,14 @@ from strategy_loader import (
 )
 
 
+def _snapshot_signal_runtime_config(profile: str, runtime_config: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep the platform execution reserve out of the global ETF signal call."""
+    signal_config = dict(runtime_config)
+    if profile == "global_etf_rotation":
+        signal_config.pop("cash_reserve_ratio", None)
+    return signal_config
+
+
 def _tqqq_execution_timing_metadata(signal_date: pd.Timestamp, market_calendar: str) -> dict[str, Any]:
     sessions = market_calendars.get_calendar(market_calendar).valid_days(
         start_date=pd.Timestamp(signal_date).date() + timedelta(days=1),
@@ -1648,7 +1656,7 @@ class LoadedStrategyRuntime:
                 runtime_adapter=runtime_adapter,
                 as_of=request.as_of,
                 available_inputs=available_inputs,
-                runtime_config=request.runtime_config,
+                runtime_config=_snapshot_signal_runtime_config(self.profile, request.runtime_config),
                 state={"current_holdings": tuple(current_holdings)},
                 capabilities=capabilities,
             )
