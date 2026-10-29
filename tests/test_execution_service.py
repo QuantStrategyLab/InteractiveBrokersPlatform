@@ -2577,3 +2577,32 @@ def test_persistent_executor_missing_session_never_calls_submit(tmp_path, no_ord
     assert submitted == []
     assert claims == []
     assert not list((tmp_path / "account-journal" / "account_submissions").rglob("*.json"))
+
+
+def test_invalid_vol_does_not_create_liquidation(monkeypatch, tmp_path):
+    class FakeIB:
+        def openTrades(self): return []
+        def fills(self): return []
+        def accountValues(self): return [SimpleNamespace(tag="CashBalance", currency="USD", value="1000")]
+
+    submitted = []
+    from application.account_new_risk_gate_support import evaluate_account_values_new_risk_admission
+    admissions = []
+    def capture(*args, **kwargs):
+        result = evaluate_account_values_new_risk_admission(*args, **kwargs)
+        admissions.append(result)
+        return result
+    monkeypatch.setattr("application.execution_service.evaluate_account_values_new_risk_admission", capture)
+    metadata = _signal_metadata({"VOO": 0.4}, risk_symbols=("VOO",), trade_date="2026-09-05")
+    metadata["realized_vol"] = float("nan")
+    _logs, summary = execute_rebalance(
+        FakeIB(), {}, {"VOO": {"quantity": 4}}, {"equity": 1000.0, "buying_power": 1000.0},
+        fetch_quote_snapshots=lambda _ib, symbols: {item: SimpleNamespace(last_price=100.0) for item in symbols},
+        submit_order_intent=lambda _ib, intent: submitted.append(intent), order_intent_cls=OrderIntent,
+        acquire_execution_claim=lambda: True, translator=translate, strategy_profile="synthetic-switchable-profile",
+        signal_metadata=metadata, dry_run_only=False, cash_reserve_ratio=0.0, rebalance_threshold_ratio=0.0,
+        limit_buy_premium=1.0, quantity_step=1.0, sell_settle_delay_sec=0,
+        execution_lock_dir=tmp_path, return_summary=True,
+    )
+    assert submitted == []
+    assert "INVALID_REALIZED_VOL_FAIL_CLOSED" in admissions[0].reason_codes
