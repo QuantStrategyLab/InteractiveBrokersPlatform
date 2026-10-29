@@ -38,6 +38,9 @@ def test_drift_workflow_env_mirrors_sync_workflow():
     sync_env = {k: _blank_inputs(v) for k, v in _job_env(SYNC).items()}
     drift_env = _job_env(DRIFT)
     drift_env.pop("DRIFT_PER_TARGET")
+    # Initial enrollment's one-shot inputs are not part of ordinary drift checks.
+    assert sync_env.pop("INPUT_INITIAL_STATE_SOURCE_RUN_ID") == "''"
+    assert sync_env.pop("IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX") == "${{ secrets.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX }}"
     assert drift_env == sync_env
 
 
