@@ -29,6 +29,20 @@ class ReconcileError(RuntimeError):
     pass
 
 
+def _switch_targets_match(actual: object, desired: object, *, disabling: bool) -> bool:
+    if not isinstance(actual, Mapping) or not isinstance(desired, Mapping):
+        return False
+    if not disabling:
+        return actual == desired
+    actual_scheduler, desired_scheduler = actual.get("scheduler"), desired.get("scheduler")
+    if not isinstance(actual_scheduler, Mapping) or not isinstance(desired_scheduler, Mapping):
+        return actual == desired
+    a, b = dict(actual), dict(desired)
+    a["scheduler"] = {key: value for key, value in actual_scheduler.items() if key != "precheck_time"}
+    b["scheduler"] = {key: value for key, value in desired_scheduler.items() if key != "precheck_time"}
+    return a == b
+
+
 def validate_switch_baseline(revision: Mapping[str, Any], expected: Mapping[str, Any]) -> tuple[str, bool]:
     """Validate an existing serving revision and return the desired switch and no-op status."""
     from scripts.runtime_target_continuity import verify_traffic_revision
@@ -54,7 +68,7 @@ def validate_switch_baseline(revision: Mapping[str, Any], expected: Mapping[str,
         desired_target = json.loads(desired.get("RUNTIME_TARGET_JSON") or "null")
     except (TypeError, ValueError) as exc:
         raise ReconcileError("switch target is invalid") from exc
-    if not isinstance(actual_target, Mapping) or actual_target != desired_target:
+    if not _switch_targets_match(actual_target, desired_target, disabling=value == "false"):
         raise ReconcileError("switch target does not match serving target")
     if value == "true" and expected.get("standard_execution_enabled") is not True:
         raise ReconcileError("switch target does not permit normal execution")
@@ -366,7 +380,10 @@ def ensure_latest_traffic(
                             actual_value, expected_value = json.loads(actual_value), json.loads(expected_value)
                         except (TypeError, ValueError) as exc:
                             raise ReconcileError("switch target is invalid") from exc
-                    if key not in env_sync_expected or actual_value != expected_value:
+                    matched = (_switch_targets_match(actual_value, expected_value,
+                                disabling=env_sync_expected.get("RUNTIME_TARGET_ENABLED") == "false")
+                               if key == "RUNTIME_TARGET_JSON" and switch_only else actual_value == expected_value)
+                    if key not in env_sync_expected or not matched:
                         raise ReconcileError("env-only candidate target or switch changed")
             if switch_only and env_sync_expected.get("RUNTIME_TARGET_ENABLED") == "false":
                 metadata = candidate.get("metadata") or {}
