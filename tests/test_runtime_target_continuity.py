@@ -165,6 +165,26 @@ def test_sync_plan_rejects_stale_baseline_before_serializing_target():
     assert target == before
 
 
+def test_switch_stop_allows_stale_baseline_without_unrelated_deploy_inputs():
+    from scripts import build_cloud_run_env_sync_plan as planner
+
+    target = frozen_target()
+    target["strategy_release"]["strategy_revision"] = "b" * 40
+    entry = {"service_name": "unit-service", "runtime_target": target,
+             "env": {"RUNTIME_TARGET_ENABLED": "false"}}
+    args = {"target": entry, "defaults": {}, "per_service_mode": True,
+            "platform_config": {}, "status_rows": {}}
+    result = planner._build_target_plan(**args, env={"INPUT_RUNTIME_SWITCH_ONLY": "true"})
+    assert result["env"]["RUNTIME_TARGET_ENABLED"] == "false"
+    assert json.loads(result["env"]["RUNTIME_TARGET_JSON"]) == target
+    assert result["standard_execution_enabled"] is False
+    with pytest.raises(ValueError, match="continuity"):
+        planner._build_target_plan(**args, env={})
+    entry["env"]["RUNTIME_TARGET_ENABLED"] = "true"
+    with pytest.raises(ValueError, match="continuity"):
+        planner._build_target_plan(**args, env={"INPUT_RUNTIME_SWITCH_ONLY": "true"})
+
+
 def selection_plan(monkeypatch, *, selected="unit-service", stale_selected=False):
     from scripts import build_cloud_run_env_sync_plan as planner
 

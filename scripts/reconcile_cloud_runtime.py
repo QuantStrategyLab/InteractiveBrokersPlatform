@@ -29,6 +29,55 @@ class ReconcileError(RuntimeError):
     pass
 
 
+def validate_switch_baseline(revision: Mapping[str, Any], expected: Mapping[str, Any]) -> tuple[str, bool]:
+    """Validate an existing serving revision and return the desired switch and no-op status."""
+    from scripts.runtime_target_continuity import verify_traffic_revision
+
+    meta = revision.get("metadata") or {}
+    name = meta.get("name")
+    if not isinstance(name, str) or not name:
+        raise ReconcileError("switch baseline revision is missing")
+    containers = revision.get("spec", {}).get("containers") or []
+    if len(containers) != 1 or not containers[0].get("image"):
+        raise ReconcileError("switch baseline container is invalid")
+    rows = containers[0].get("env") or []
+    names = [row.get("name") for row in rows]
+    if len(names) != len(set(names)):
+        raise ReconcileError("switch baseline environment is ambiguous")
+    actual = {row.get("name"): row.get("value") for row in rows}
+    desired = expected.get("env") or {}
+    value = desired.get("RUNTIME_TARGET_ENABLED")
+    if value not in ("true", "false") or actual.get("RUNTIME_TARGET_ENABLED") not in ("true", "false"):
+        raise ReconcileError("switch must have an explicit boolean value")
+    try:
+        actual_target = json.loads(actual.get("RUNTIME_TARGET_JSON") or "null")
+        desired_target = json.loads(desired.get("RUNTIME_TARGET_JSON") or "null")
+    except (TypeError, ValueError) as exc:
+        raise ReconcileError("switch target is invalid") from exc
+    if not isinstance(actual_target, Mapping) or actual_target != desired_target:
+        raise ReconcileError("switch target does not match serving target")
+    if value == "true" and expected.get("standard_execution_enabled") is not True:
+        raise ReconcileError("switch target does not permit normal execution")
+    if value == "true":
+        verify_traffic_revision(revision, expected_revision=name, expected_commit=(meta.get("labels") or {}).get("commit-sha"))
+    return value, actual["RUNTIME_TARGET_ENABLED"] == value
+
+
+def _without_runtime_switch(spec: Mapping[str, Any], *, unnamed_template: bool = False) -> dict[str, Any]:
+    import copy
+
+    result = copy.deepcopy(dict(spec))
+    result.pop("servingState", None)  # Cloud Run lifecycle output, not configuration.
+    for container in result.get("containers") or []:
+        if unnamed_template:
+            container.pop("name", None)
+        container["env"] = sorted(
+            (row for row in container.get("env") or [] if row.get("name") != "RUNTIME_TARGET_ENABLED"),
+            key=lambda row: row.get("name", ""),
+        )
+    return result
+
+
 def _load_json_object(raw: str, *, field_name: str) -> Mapping[str, Any] | list[Any]:
     try:
         value = json.loads(raw)
@@ -240,7 +289,15 @@ def ensure_latest_traffic(
     targets: Sequence[RuntimeTarget],
     expected_commit: str,
     dry_run: bool,
+    env_sync_baseline: Mapping[str, Any] | None = None,
+    env_sync_revision: str | None = None,
+    env_sync_expected: Mapping[str, str] | None = None,
+    switch_only: bool = False,
+    env_sync_service: Mapping[str, Any] | None = None,
 ) -> None:
+    if env_sync_baseline is not None and (len(targets) != 1 or not env_sync_revision
+                                          or not isinstance(env_sync_expected, Mapping) or dry_run):
+        raise ReconcileError("env-only traffic requires one target and exact revision evidence")
     for target in targets:
         target_region = target.region or region
         if not target_region:
@@ -259,13 +316,17 @@ def ensure_latest_traffic(
             json_output=True,
             dry_run=dry_run,
         )
-        target_revision = _resolve_revision_for_commit(
-            project=project,
-            region=target_region,
-            service_name=target.service_name,
-            expected_commit=expected_commit,
-            dry_run=dry_run,
+        target_revision = env_sync_revision if env_sync_baseline is not None else _resolve_revision_for_commit(
+            project=project, region=target_region, service_name=target.service_name,
+            expected_commit=expected_commit, dry_run=dry_run,
         )
+        if env_sync_baseline is not None:
+            baseline_name = (env_sync_baseline.get("metadata") or {}).get("name")
+            if (not isinstance(target_revision, str) or not target_revision.startswith(target.service_name + "-")
+                    or not isinstance(baseline_name, str) or not baseline_name.startswith(target.service_name + "-")
+                    or not _traffic_on_revision(service, baseline_name)
+                    or service.get("status", {}).get("latestCreatedRevisionName") != target_revision):
+                raise ReconcileError("env-only service changed or candidate is not current")
         if not dry_run:
             from scripts.runtime_target_continuity import verify_traffic_revision
 
@@ -273,12 +334,51 @@ def ensure_latest_traffic(
                 "gcloud", "run", "revisions", "describe", target_revision,
                 f"--project={project}", f"--region={target_region}", "--format=json",
             ], json_output=True, dry_run=False)
-            verify_traffic_revision(candidate, expected_revision=target_revision, expected_commit=expected_commit)
+            candidate_commit = expected_commit
+            if env_sync_baseline is not None:
+                candidate_commit = (env_sync_baseline.get("metadata") or {}).get("labels", {}).get("commit-sha")
+                baseline_containers = env_sync_baseline.get("spec", {}).get("containers") or []
+                candidate_containers = candidate.get("spec", {}).get("containers") or []
+                if len(baseline_containers) != 1 or len(candidate_containers) != 1:
+                    raise ReconcileError("env-only container shape is invalid")
+                if not baseline_containers[0].get("image") or baseline_containers[0].get("image") != candidate_containers[0].get("image"):
+                    raise ReconcileError("env-only candidate image changed")
+                if switch_only:
+                    from scripts.deploy_notification_only import metadata as normalized_metadata
+
+                    template = (env_sync_service or {}).get("spec", {}).get("template", {}).get("spec", {}).get("containers") or []
+                    if len(template) != 1:
+                        raise ReconcileError("switch original template is invalid")
+                    unnamed = not template[0].get("name")
+                    if _without_runtime_switch(env_sync_baseline.get("spec", {}), unnamed_template=unnamed) != _without_runtime_switch(candidate.get("spec", {}), unnamed_template=unnamed):
+                        raise ReconcileError("switch candidate changed other service configuration")
+                    if normalized_metadata(env_sync_baseline.get("metadata", {}), template=True) != normalized_metadata(candidate.get("metadata", {}), template=True):
+                        raise ReconcileError("switch candidate changed service annotations or labels")
+                rows = candidate_containers[0].get("env") or []
+                names = [row.get("name") for row in rows]
+                if len(names) != len(set(names)):
+                    raise ReconcileError("env-only candidate environment is ambiguous")
+                values = {row.get("name"): row.get("value") for row in rows}
+                for key in ("RUNTIME_TARGET_ENABLED", "RUNTIME_TARGET_JSON"):
+                    actual_value, expected_value = values.get(key), env_sync_expected.get(key)
+                    if key == "RUNTIME_TARGET_JSON" and switch_only:
+                        try:
+                            actual_value, expected_value = json.loads(actual_value), json.loads(expected_value)
+                        except (TypeError, ValueError) as exc:
+                            raise ReconcileError("switch target is invalid") from exc
+                    if key not in env_sync_expected or actual_value != expected_value:
+                        raise ReconcileError("env-only candidate target or switch changed")
+            if switch_only and env_sync_expected.get("RUNTIME_TARGET_ENABLED") == "false":
+                metadata = candidate.get("metadata") or {}
+                if metadata.get("name") != target_revision or (metadata.get("labels") or {}).get("commit-sha") != candidate_commit:
+                    raise ReconcileError("stop candidate revision identity does not match")
+            else:
+                verify_traffic_revision(candidate, expected_revision=target_revision, expected_commit=candidate_commit)
 
         if not _traffic_on_revision(service if isinstance(service, Mapping) else {}, target_revision):
             print(
                 f"Updating {target.service_name} traffic to commit revision "
-                f"{target_revision} ({expected_commit})."
+                f"{target_revision}."
             )
             _run(
                 [
@@ -415,6 +515,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--scheduler-location", default=os.environ.get("CLOUD_SCHEDULER_LOCATION", ""))
     parser.add_argument("--expected-commit", default=os.environ.get("GITHUB_SHA", ""))
     parser.add_argument("--ensure-latest-traffic", action="store_true")
+    parser.add_argument("--env-sync-evidence-dir", default="")
+    parser.add_argument("--runtime-switch-only", action="store_true")
     parser.add_argument("--delete-legacy-schedulers", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args(argv)
@@ -428,12 +530,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not targets:
         raise ReconcileError("No Cloud Run targets resolved from SYNC_PLAN_JSON, CLOUD_RUN_SERVICE_TARGETS_JSON, or CLOUD_RUN_SERVICE")
     if args.ensure_latest_traffic:
+        extra = {}
+        if args.env_sync_evidence_dir:
+            from pathlib import Path
+            directory = Path(args.env_sync_evidence_dir)
+            baseline = json.loads((directory / "baseline-revision.json").read_text(encoding="utf-8"))
+            service = json.loads((directory / "baseline-service.json").read_text(encoding="utf-8"))
+            revision = (directory / "candidate-revision.txt").read_text(encoding="utf-8").strip()
+            plan = _load_json_object(os.environ.get("SYNC_PLAN_JSON", ""), field_name="SYNC_PLAN_JSON")
+            entries = plan.get("targets") if isinstance(plan, Mapping) else None
+            if not isinstance(entries, list) or len(entries) != 1 or not isinstance(entries[0], Mapping):
+                raise ReconcileError("env-only sync requires a single target plan")
+            extra = {"env_sync_baseline": baseline, "env_sync_revision": revision,
+                     "env_sync_expected": entries[0].get("env"), "switch_only": args.runtime_switch_only,
+                     "env_sync_service": service}
+        elif args.runtime_switch_only:
+            raise ReconcileError("runtime switch requires exact revision evidence")
         ensure_latest_traffic(
             project=args.project,
             region=args.region,
             targets=targets,
             expected_commit=args.expected_commit,
             dry_run=args.dry_run,
+            **extra,
         )
     if args.delete_legacy_schedulers:
         delete_legacy_schedulers(

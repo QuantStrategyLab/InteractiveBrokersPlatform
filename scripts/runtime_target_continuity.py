@@ -23,7 +23,7 @@ def verify_target_continuity(target: Mapping[str, Any]) -> str:
 
 
 def verify_traffic_revision(
-    revision: Mapping[str, Any], *, expected_revision: str, expected_commit: str,
+    revision: Mapping[str, Any], *, expected_revision: str, expected_commit: str | None,
 ) -> None:
     """Admit healthy candidates, or cold retired ones with execution disabled.
 

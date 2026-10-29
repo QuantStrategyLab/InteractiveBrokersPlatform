@@ -882,19 +882,21 @@ def test_isolated_or_unknown_mode_never_starts_lifecycle(mode):
     wrapper = (ROOT / '.github/workflows/sync-cloud-run-env.yml').read_text()
     expression = wrapper.split('run-name: ${{ ', 1)[1].split(' }}', 1)[0]
     title = eval(expression.replace('inputs.notification_marker_mode', repr(mode))
-                 .replace('&&', 'and').replace('||', 'or'), {'__builtins__': {}})
+                 .replace('inputs.runtime_switch_only', 'False').replace('inputs.request_id', "''")
+                 .replace('&&', 'and').replace('||', 'or'), {'__builtins__': {}, 'format': lambda fmt, value: fmt.format(value)})
     lifecycle = (ROOT / '.github/workflows/runtime-target-lifecycle.yml').read_text()
     condition = lifecycle.split('    if: ', 1)[1].splitlines()[0]
     def admitted(event, display_title):
         return eval(condition.replace('github.event_name', repr(event))
                     .replace('github.event.workflow_run.display_title', repr(display_title))
-                    .replace('||', 'or'), {'__builtins__': {}})
+                    .replace('||', 'or'), {'__builtins__': {}, 'startsWith': lambda value, prefix: value.startswith(prefix)})
     # Both probe approval values use the same title: it is independent of
     # approval and no skipped/failed check can enable the downstream jobs.
     assert title == 'Notification check (isolated)'
     assert not admitted('workflow_run', title)
     assert not admitted('workflow_run', '')
     assert admitted('workflow_run', 'Deploy Cloud Run')
+    assert admitted('workflow_run', 'Runtime switch 12345678-1234-1234-1234-123456789abc')
     assert admitted('schedule', '') and admitted('workflow_dispatch', '')
 
 

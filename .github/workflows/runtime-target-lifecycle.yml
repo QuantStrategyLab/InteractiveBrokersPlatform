@@ -22,7 +22,7 @@ jobs:
     name: Publish ${{ matrix.target.label }} lifecycle
     # Isolated notification checks share the entrypoint, but must not start
     # these inventory queries or lifecycle publications. Unknown titles stop.
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.display_title == 'Deploy Cloud Run'
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.display_title == 'Deploy Cloud Run' || startsWith(github.event.workflow_run.display_title, 'Runtime switch ')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:

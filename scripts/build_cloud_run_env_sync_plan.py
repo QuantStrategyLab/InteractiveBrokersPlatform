@@ -381,7 +381,9 @@ def build_sync_plan(env: Mapping[str, str] = os.environ) -> dict[str, object]:
         if planned_target.pop("_recovery_state_ledger_applied", False):
             recovery_ledger_applied_count += 1
         planned_targets.append(planned_target)
-    if str(env.get("IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PATH") or "").strip() and recovery_ledger_applied_count != 1:
+    if (str(env.get("INPUT_RUNTIME_SWITCH_ONLY") or "").lower() != "true"
+            and str(env.get("IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PATH") or "").strip()
+            and recovery_ledger_applied_count != 1):
         raise ValueError("reconciliation recovery state ledger must match exactly one Cloud Run target")
     if not planned_targets:
         raise ValueError(
@@ -480,10 +482,12 @@ def _build_target_plan(
         _target_field(target, defaults, "cloud_run_service"),
     )
     runtime_target = _resolve_runtime_target(target, defaults, env, per_service_mode)
-    runtime_target, recovery_expected_digests = apply_recovery_state_ledger_from_env(
-        runtime_target=runtime_target,
-        env=env,
-    )
+    recovery_expected_digests = None
+    if str(env.get("INPUT_RUNTIME_SWITCH_ONLY") or "").lower() != "true":
+        runtime_target, recovery_expected_digests = apply_recovery_state_ledger_from_env(
+            runtime_target=runtime_target,
+            env=env,
+        )
     if not service_name:
         service_name = str(runtime_target.get("service_name") or "").strip()
     if not service_name:
@@ -507,6 +511,23 @@ def _build_target_plan(
         per_service_mode=per_service_mode,
         allow_shared_fallback=False,
     )
+    if str(env.get("INPUT_RUNTIME_SWITCH_ONLY") or "").lower() == "true":
+        if configured_runtime_enabled is None:
+            raise ValueError("runtime switch requires an explicit target enabled value")
+        enabled = _runtime_target_enabled({"RUNTIME_TARGET_ENABLED": configured_runtime_enabled})
+        if enabled:
+            from scripts.runtime_target_continuity import verify_target_continuity
+
+            verify_target_continuity(runtime_target)
+        permitted = enabled and runtime_target_permits_standard_execution(runtime_target)
+        return {
+            "service_name": service_name,
+            "strategy_profile": raw_profile,
+            "env": {"RUNTIME_TARGET_ENABLED": "true" if enabled else "false",
+                    "RUNTIME_TARGET_JSON": json.dumps(runtime_target, separators=(",", ":"), sort_keys=True)},
+            "standard_execution_enabled": permitted,
+            "remove_env_vars": [],
+        }
     runtime_is_enabled = (
         _runtime_target_enabled({"RUNTIME_TARGET_ENABLED": configured_runtime_enabled})
         if configured_runtime_enabled is not None

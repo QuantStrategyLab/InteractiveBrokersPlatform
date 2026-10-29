@@ -160,6 +160,100 @@ class ReconcileCloudRuntimeTests(unittest.TestCase):
                     dry_run=False,
                 )
 
+    def test_env_only_uses_exact_created_revision_and_preserves_source(self) -> None:
+        target = rcr.RuntimeTarget(service_name="unit-service", region="us-central1")
+        old = _http_candidate("unit-service-old", "old-commit")
+        old["spec"]["containers"][0]["image"] = "synthetic-image@sha256:abc"
+        old["spec"]["containers"][0]["env"].append({"name": "RUNTIME_TARGET_ENABLED", "value": "false"})
+        old["spec"]["containers"][0]["env"].append({"name": "SECRET", "valueFrom": {"secretKeyRef": {"name": "retained", "key": "1"}}})
+        candidate = _http_candidate("unit-service-eabc-1", "old-commit")
+        candidate["spec"]["containers"][0]["image"] = "synthetic-image@sha256:abc"
+        candidate["spec"]["containers"][0]["env"].append({"name": "RUNTIME_TARGET_ENABLED", "value": "true"})
+        candidate["spec"]["containers"][0]["env"].append({"name": "SECRET", "valueFrom": {"secretKeyRef": {"name": "retained", "key": "1"}}})
+        expected = {"RUNTIME_TARGET_JSON": "{}", "RUNTIME_TARGET_ENABLED": "true"}
+        cases = ["pass", "wrong_image", "wrong_commit", "wrong_switch", "wrong_target", "wrong_latest",
+                 "traffic_changed", "wrong_name", "unhealthy", "changed_secret", "changed_network"]
+        for case in cases:
+            with self.subTest(case=case):
+                current = json.loads(json.dumps(candidate))
+                if case == "wrong_image": current["spec"]["containers"][0]["image"] = "other"
+                if case == "wrong_commit": current["metadata"]["labels"]["commit-sha"] = "other"
+                if case == "wrong_switch": current["spec"]["containers"][0]["env"][1]["value"] = "false"
+                if case == "wrong_target": current["spec"]["containers"][0]["env"][0]["value"] = '{"other":true}'
+                if case == "wrong_name": current["metadata"]["name"] = "unit-service-other"
+                if case == "unhealthy": current["status"]["conditions"][1]["status"] = "False"
+                if case == "changed_secret": current["spec"]["containers"][0]["env"][2]["valueFrom"]["secretKeyRef"]["key"] = "2"
+                if case == "changed_network": current["metadata"]["annotations"] = {"run.googleapis.com/network-interfaces": "different"}
+                calls = []
+                def fake_run(args, *, json_output=False, dry_run=False):
+                    calls.append(list(args))
+                    if args[:4] == ["gcloud", "run", "services", "describe"]:
+                        adopted = any(row[:4] == ["gcloud", "run", "services", "update-traffic"] for row in calls)
+                        revision = "unit-service-eabc-1" if adopted else ("unit-service-other" if case == "traffic_changed" else "unit-service-old")
+                        return {"status": {"traffic": [{"percent": 100, "revisionName": revision}],
+                                           "latestCreatedRevisionName": "unit-service-other" if case == "wrong_latest" else "unit-service-eabc-1"}}
+                    if args[:4] == ["gcloud", "run", "revisions", "describe"]: return current
+                    if args[:4] == ["gcloud", "run", "services", "update-traffic"]: return ""
+                    self.fail(f"unexpected command: {args}")
+                with mock.patch.object(rcr, "_run", side_effect=fake_run):
+                    kwargs = dict(project="synthetic", region="us-central1", targets=[target],
+                                  expected_commit="current-workflow-commit", dry_run=False,
+                                  env_sync_baseline=old, env_sync_revision="unit-service-eabc-1", env_sync_expected=expected,
+                                  switch_only=True, env_sync_service={"spec": {"template": {"spec": {"containers": [{}]}}}})
+                    if case == "pass": rcr.ensure_latest_traffic(**kwargs)
+                    else:
+                        with self.assertRaises((rcr.ReconcileError, ValueError)): rcr.ensure_latest_traffic(**kwargs)
+                updates = [row for row in calls if row[:4] == ["gcloud", "run", "services", "update-traffic"]]
+                self.assertEqual(len(updates), 1 if case == "pass" else 0)
+                if updates: self.assertIn("--to-revisions=unit-service-eabc-1=100", updates[0])
+                self.assertFalse(any(row[:4] == ["gcloud", "run", "revisions", "list"] for row in calls))
+
+    def test_switch_baseline_reuses_existing_target_and_rejects_reconcile_only_enable(self) -> None:
+        baseline = _http_candidate("unit-service-old", "old-commit")
+        baseline["spec"]["containers"][0]["image"] = "synthetic-image@sha256:abc"
+        baseline["spec"]["containers"][0]["env"].append({"name": "RUNTIME_TARGET_ENABLED", "value": "true"})
+        plan = {"env": {"RUNTIME_TARGET_JSON": "{ }", "RUNTIME_TARGET_ENABLED": "true"},
+                "standard_execution_enabled": True}
+        self.assertEqual(rcr.validate_switch_baseline(baseline, plan), ("true", True))
+        plan["env"]["RUNTIME_TARGET_ENABLED"] = "false"
+        self.assertEqual(rcr.validate_switch_baseline(baseline, plan), ("false", False))
+        plan["env"]["RUNTIME_TARGET_ENABLED"] = "true"
+        plan["standard_execution_enabled"] = False
+        with self.assertRaisesRegex(rcr.ReconcileError, "does not permit"):
+            rcr.validate_switch_baseline(baseline, plan)
+        plan["standard_execution_enabled"] = True
+        plan["env"]["RUNTIME_TARGET_JSON"] = '{"other": true}'
+        with self.assertRaisesRegex(rcr.ReconcileError, "does not match"):
+            rcr.validate_switch_baseline(baseline, plan)
+
+    def test_stop_accepts_unhealthy_or_stale_baseline_but_enable_does_not(self) -> None:
+        baseline = _http_candidate("unit-service-old", "old-commit")
+        baseline["spec"]["containers"][0]["image"] = "synthetic-image@sha256:abc"
+        target = {"live_continuity": {"state": "ACTIVE_LKG", "baseline_target_sha256": "stale"}}
+        baseline["spec"]["containers"][0]["env"][0]["value"] = json.dumps(target)
+        baseline["spec"]["containers"][0]["env"].append({"name": "RUNTIME_TARGET_ENABLED", "value": "true"})
+        baseline["status"]["conditions"][1]["status"] = "False"
+        plan = {"env": {"RUNTIME_TARGET_JSON": json.dumps(target), "RUNTIME_TARGET_ENABLED": "false"},
+                "standard_execution_enabled": False}
+        self.assertEqual(rcr.validate_switch_baseline(baseline, plan), ("false", False))
+        plan["env"]["RUNTIME_TARGET_ENABLED"] = "true"
+        plan["standard_execution_enabled"] = True
+        with self.assertRaises(ValueError):
+            rcr.validate_switch_baseline(baseline, plan)
+
+    def test_switch_spec_comparison_normalizes_only_provider_fields_and_env_order(self) -> None:
+        before = {"servingState": "active", "containers": [{"name": "generated-a", "image": "image", "env": [
+            {"name": "SECRET", "valueFrom": {"secretKeyRef": {"name": "one"}}},
+            {"name": "RUNTIME_TARGET_ENABLED", "value": "true"}, {"name": "A", "value": "a"}]}]}
+        after = json.loads(json.dumps(before))
+        after["servingState"] = "retired"
+        after["containers"][0]["name"] = "generated-b"
+        after["containers"][0]["env"].reverse()
+        assert rcr._without_runtime_switch(before, unnamed_template=True) == rcr._without_runtime_switch(after, unnamed_template=True)
+        assert rcr._without_runtime_switch(before) != rcr._without_runtime_switch(after)
+        after["containers"][0]["env"][-1]["valueFrom"]["secretKeyRef"]["name"] = "other"
+        assert rcr._without_runtime_switch(before, unnamed_template=True) != rcr._without_runtime_switch(after, unnamed_template=True)
+
     def test_ensure_latest_traffic_routes_when_latest_ready_is_stale(self) -> None:
         target = rcr.RuntimeTarget(service_name="interactive-brokers-quant-live-u1234-service", region="us-central1")
         stale = "interactive-brokers-quant-live-u1234-service-00001"
