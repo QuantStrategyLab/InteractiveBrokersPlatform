@@ -3,8 +3,8 @@
 本流程仅适用于已明确进入 `RECONCILE_ONLY` 的冻结基线恢复。
 对于仍是 `ACTIVE_LKG`、但 `RUNTIME_TARGET_ENABLED=false` 的目标，
 缺少 `IBKR_RECONCILIATION_EXPECTED_DIGESTS_JSON` 本身不是正常 `/run` 的阻断条件，
-也不能据此要求 Flex 令牌或人工导出账单。该目标应先核实当前账户、
-未决订单与旧执行标记，再按现有禁止提交完整周期和启用条件判断；
+也不能据此要求 Flex 令牌、人工导出账单或研究禁止提交周期。普通恢复沿用有效基线、
+原单目标配置和实际适用的账户、订单及风险保护；仅针对已知相关异常核查历史记录。
 不能为了套用本流程而先改写既有基线状态。
 
 对这类停用中的既有实盘目标，可先手动运行 `Inspect Historical IBKR Execution`，
@@ -97,16 +97,18 @@ SendRequest/GetStatement 不能完成模板编辑，参见
 [IBKR 门户配置说明](https://www.interactivebrokers.com/docs/web-api/flex-web-service/client-portal-configuration)
 和[创建查询说明](https://www.interactivebrokers.com/docs/web-api/flex-web-service/client-portal-configuration/create-a-flex-query)。
 
-Flex 报表与 Gateway 当前状态是两份不同的券商视图，但报表摘要本身仍不是内部订单/现金
-账本，也不包含可靠的全部当前挂单。首次需要核对报表覆盖期、账户、期初/期末持仓与
-现金、成交、公司行动及内部订单结果，形成不可覆盖的人工确认基线；之后再用增量账本
-计算预期。缺任一材料时保持 `RECONCILE_ONLY`/停用，不把 observed 自动复制为 expected。
+Flex 报表与 Gateway 当前状态是两份不同的券商视图；报表摘要不是内部订单/现金账本，
+也不保证包含当前挂单。使用它们比较时，应核对实际账户、时间和字段口径及相关订单、
+流水；缺失信息保持未知，不能把 observed 自动复制为已批准 expected。所需历史材料
+取决于具体未决事项，不把所有历史记录完整作为普通恢复的通用条件。
 
 `scripts/build_reconciliation_baseline_candidate.py` 处理一份或更多私有、已脱敏的
 `/reconcile` 回应。调用方同时显式提供已保存的 source records 和独立核验的
 `SourceReceiptExpectation`。现有 record/expectation 字段逐项一致、evidence 成员精确对应
 后，才调用 QPK 生成既有 source-bound `broker_reconciliation_baseline_candidate.v2`。
 收据必须新鲜、账户/runtime 匹配且各账务面已对账；不再要求第二份或固定最小间隔。
+现有构造器要求五项观察与已提供的预期摘要相符。尚未配置预期的首次基线如何取得
+独立预期并接入该构造器，属于待解决的具体接线问题；比较结果为 false 不表示已证实错账。
 
 该工具不连接 IB Gateway、不访问原始账户资料、不写 Cloud Run 环境变量、不改
 `RUNTIME_TARGET_JSON`，更不会下单。它的非零退出码表示候选尚不能进入审计；这不是
