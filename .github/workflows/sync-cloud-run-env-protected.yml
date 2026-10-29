@@ -329,7 +329,7 @@ jobs:
 
           if [ -n "${INPUT_INITIAL_STATE_SOURCE_RUN_ID:-}" ] && \
              { [[ ! "$INPUT_INITIAL_STATE_SOURCE_RUN_ID" =~ ^[0-9]+$ ]] || [ "${WORKFLOW_TARGET:-configured}" != configured ] || \
-               [ -z "${INPUT_CONFIGURED_SERVICE:-}" ] || [ "${INPUT_RUNTIME_SWITCH_ONLY:-false}" = true ] || \
+               [ -n "${INPUT_CONFIGURED_SERVICE:-}" ] || [ "${INPUT_RUNTIME_SWITCH_ONLY:-false}" = true ] || \
                [ "${deploy_enabled}" = true ] || [ "${env_sync_enabled}" != true ] || \
                [ "${traffic_shift_enabled}" != true ] || [ "${scheduler_sync_enabled}" = true ]; }; then
             echo 'initial_state_ledger_requires_one_disabled_env_only_target' >&2
@@ -349,7 +349,7 @@ jobs:
             exit 1
           fi
 
-          if [ "${WORKFLOW_TARGET:-configured}" = "configured" ] && [ -z "${INPUT_CONFIGURED_SERVICE:-}" ]; then
+          if [ "${WORKFLOW_TARGET:-configured}" = "configured" ] && [ -z "${INPUT_CONFIGURED_SERVICE:-}" ] && [ -z "${INPUT_INITIAL_STATE_SOURCE_RUN_ID:-}" ]; then
             if [ "${deploy_enabled}" = "true" ] || [ "${env_sync_enabled}" = "true" ] || [ "${traffic_shift_enabled}" = "true" ] || [ "${scheduler_sync_enabled}" = "true" ]; then
               echo "configured target requires exact configured_service; refusing multi-service default mutations." >&2
               exit 1
@@ -494,7 +494,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "${INPUT_INITIAL_STATE_SOURCE_RUN_ID:-}" ]; then
-            if [[ ! "$INPUT_INITIAL_STATE_SOURCE_RUN_ID" =~ ^[0-9]{1,20}$ ]] || [[ ! "${IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX:-}" =~ ^gs://[a-z0-9][a-z0-9._-]*/reconciliation-recovery/ibkr/state/?$ ]] || [ -z "${INPUT_CONFIGURED_SERVICE:-}" ] || [ "${WORKFLOW_TARGET:-configured}" != configured ] || [ "${INPUT_RUNTIME_SWITCH_ONLY:-false}" = true ] || [ "${INPUT_DEPLOY_IMAGE:-true}" = true ] || [ "${INPUT_SYNC_ENV:-false}" != true ] || [ "${INPUT_APPROVE_SCHEDULER_SYNC:-false}" = true ]; then
+            if [[ ! "$INPUT_INITIAL_STATE_SOURCE_RUN_ID" =~ ^[0-9]{1,20}$ ]] || [[ ! "${IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX:-}" =~ ^gs://[a-z0-9][a-z0-9._-]*/reconciliation-recovery/ibkr/state/?$ ]] || [ -n "${INPUT_CONFIGURED_SERVICE:-}" ] || [ "${WORKFLOW_TARGET:-configured}" != configured ] || [ "${INPUT_RUNTIME_SWITCH_ONLY:-false}" = true ] || [ "${INPUT_DEPLOY_IMAGE:-true}" = true ] || [ "${INPUT_SYNC_ENV:-false}" != true ] || [ "${INPUT_APPROVE_SCHEDULER_SYNC:-false}" = true ]; then
               echo 'initial_state_ledger_requires_one_disabled_env_only_target' >&2
               exit 1
             fi
@@ -518,6 +518,19 @@ jobs:
           fi
           chmod 600 "${recovery_state_ledger_path}"
           echo "IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PATH=${recovery_state_ledger_path}" >> "$GITHUB_ENV"
+          if [ -n "${INPUT_INITIAL_STATE_SOURCE_RUN_ID:-}" ]; then
+            python - "${recovery_state_ledger_path}" <<'PY'
+          import json, os, re, sys
+          from pathlib import Path
+          value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          service = value.get("service_name") if isinstance(value, dict) else None
+          if not isinstance(service, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,62}", service):
+              raise SystemExit("initial_state_service_invalid")
+          print("::add-mask::" + service)
+          with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as output:
+              output.write("INPUT_CONFIGURED_SERVICE=" + service + "\n")
+          PY
+          fi
 
       - name: Install strategy status dependencies
         if: steps.config.outputs.enabled == 'true'

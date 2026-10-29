@@ -10,6 +10,8 @@ def test_initial_state_sync_is_opt_in_private_and_narrow():
     assert "initial_state_ledger_requires_one_disabled_env_only_target" in protected
     assert 'env -u IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PATH' in protected
     assert 'IBKR_INITIAL_SYNC_PLAN_PATH' in protected
+    assert '::add-mask::' in protected and 'INPUT_CONFIGURED_SERVICE=" + service' in protected
+    assert '[ -n "${INPUT_CONFIGURED_SERVICE:-}" ]' in protected
     assert 'validate_initial_state_baseline' in protected
     assert 'initial_state_service_changed' in protected
     assert 'initial_state_update_failed_or_unknown' in protected
