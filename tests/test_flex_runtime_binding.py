@@ -98,6 +98,44 @@ def test_stale_configured_revision_is_unknown(materials):
     assert row['runtime_scope_match'] is None
 
 
+def test_initial_uses_current_serving_revision_without_rebinding_daily_source(materials):
+    env, slots, services, revisions, reader, _ = materials
+    profile = diagnostic.PROFILES[0]
+    service = services['private-service-1']
+    revision = copy.deepcopy(revisions['private-revision-1'])
+    revision['metadata']['name'] = 'new-private-revision'
+    revisions['new-private-revision'] = revision
+    service['status']['traffic'][0]['revisionName'] = 'new-private-revision'
+    _, targets, project, region = diagnostic.configuration(env)
+    service_name, target = targets[profile]
+    private = {}
+    result = diagnostic.observe(profile, service_name, target, slots, project, region,
+                                reader=reader, private_output=private, initial_private=True)
+    assert result['status'] == 'initial_metadata_verified'
+    assert result['serving_revision_match'] is False
+    assert private['service_revision'] == 'new-private-revision'
+    assert slots['additional-1']['runtime_revision'] == 'private-revision-1'
+
+    revision['status']['conditions'][0]['status'] = 'False'
+    result = diagnostic.observe(profile, service_name, target, slots, project, region,
+                                reader=reader, private_output={}, initial_private=True)
+    assert result['status'] == 'unknown'
+
+    revision['status']['conditions'][0]['status'] = 'True'
+    calls = 0
+    def changing_reader(kind, name, project_id, region_name):
+        nonlocal calls
+        result = reader(kind, name, project_id, region_name)
+        if kind == 'services':
+            calls += 1
+            if calls == 2:
+                result['metadata']['resourceVersion'] = '2'
+        return result
+    result = diagnostic.observe(profile, service_name, target, slots, project, region,
+                                reader=changing_reader, private_output={}, initial_private=True)
+    assert result['status'] == 'unknown' and result['reason'] == 'serving_changed_during_read'
+
+
 @pytest.mark.parametrize('change', ['split', 'invalid_traffic', 'missing_revision', 'wrong_account', 'not_ready', 'secret_env'])
 def test_serving_metadata_failures_stay_unknown(materials, change):
     env, _, services, revisions, reader, _ = materials

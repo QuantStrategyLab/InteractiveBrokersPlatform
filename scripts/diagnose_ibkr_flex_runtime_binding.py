@@ -233,7 +233,10 @@ def observe(profile, service_name, target, slots, project, region, reader=_read,
         require(single_line_text(resource_version), "runtime_identity_unavailable")
         revision_name = _serving(service)
         result["serving_revision_match"] = revision_name == configured["runtime_revision"]
-        require(result["serving_revision_match"], "configured_revision_mismatch")
+        # The configured revision is the independent daily-facts binding.
+        # Initial enrollment binds its own report to this actual serving revision.
+        if not initial_private:
+            require(result["serving_revision_match"], "configured_revision_mismatch")
         revision = reader("revisions", revision_name, project, region)
         require(revision.get("metadata", {}).get("name") == revision_name and
                 any(row.get("type") == "Ready" and row.get("status") == "True"
