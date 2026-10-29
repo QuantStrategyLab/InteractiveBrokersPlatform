@@ -20,3 +20,15 @@ def digest(binding, nonce):
     body = {"binding": binding, "domain": "qsl.ibkr-daily-binding-comparison.v1", "nonce": nonce}
     canonical = json.dumps(body, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("ascii")).hexdigest()
+
+
+def additional_digest(binding, nonce):
+    """Same bound fields for a configured additional target; legacy v1 is unchanged."""
+    if not isinstance(binding, dict) or set(binding) != set(FIELDS) or not HEX.fullmatch(nonce or ""):
+        raise ValueError("invalid_input")
+    if any(not isinstance(binding[k], str) or not TOKEN.fullmatch(binding[k]) for k in FIELDS):
+        raise ValueError("invalid_input")
+    if binding["platform"] != "ibkr" or not HEX.fullmatch(binding["source_binding_id"]):
+        raise ValueError("invalid_input")
+    body = {"binding": binding, "domain": "qsl.ibkr-daily-additional-binding.v1", "nonce": nonce}
+    return hashlib.sha256(json.dumps(body, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii")).hexdigest()

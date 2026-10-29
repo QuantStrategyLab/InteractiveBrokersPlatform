@@ -11,7 +11,15 @@ on:
       scope:
         type: string
         required: true
+      comparison_nonce:
+        type: string
+        required: false
+        default: ''
     secrets:
+      IBKR_PERIOD_RETURN_ADDITIONAL_ACCOUNT_KEYS_JSON:
+        required: false
+      IBKR_PERIOD_RETURN_ADDITIONAL1_ACCOUNT_KEY:
+        required: false
       CLOUD_RUN_SERVICE_TARGETS_JSON:
         required: false
       ACCOUNT_FACTS_RECOVERY_WIF_PROVIDER:
@@ -46,6 +54,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
+      DAILY_COMPARISON_NONCE: ${{ inputs.comparison_nonce }}
+      IBKR_PERIOD_RETURN_ADDITIONAL_ACCOUNT_KEYS_JSON: ${{ secrets.IBKR_PERIOD_RETURN_ADDITIONAL_ACCOUNT_KEYS_JSON }}
+      IBKR_PERIOD_RETURN_ADDITIONAL1_ACCOUNT_KEY: ${{ secrets.IBKR_PERIOD_RETURN_ADDITIONAL1_ACCOUNT_KEY }}
       IBKR_ACCOUNT_FACTS_TARGET: ${{ inputs.target }}
       REQUESTED_TARGET: ${{ inputs.target }}
       IBKR_ACCOUNT_FACTS_ARCHIVE_DATE: ${{ inputs.archive_date }}
@@ -65,6 +76,7 @@ jobs:
       IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR: ${{ secrets.IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR }}
     steps:
       - name: Require infrastructure variables
+        if: inputs.scope != 'daily-comparison'
         env:
           IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
         shell: bash
@@ -76,10 +88,16 @@ jobs:
           fi
       - uses: actions/checkout@v6
       - name: Authenticate with the existing archive read identity
+        if: inputs.scope != 'daily-comparison'
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.ACCOUNT_FACTS_RECOVERY_WIF_PROVIDER }}
           service_account: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v3
+        if: inputs.scope != 'daily-comparison'
+      - name: Compare one configured source without reading reports
+        if: inputs.scope == 'daily-comparison'
+        run: python3 -m scripts.compare_website_daily_binding
       - name: Inspect one original report day without publishing
+        if: inputs.scope != 'daily-comparison'
         run: python3 -m scripts.inspect_account_facts_archive
