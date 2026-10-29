@@ -46,6 +46,7 @@ from quant_platform_kit.common.reconciliation_recovery import (
 
 
 RECONCILIATION_RECOVERY_SYNC_TOKEN_ENV = "RECONCILIATION_RECOVERY_SYNC_TOKEN"
+RECONCILIATION_RECOVERY_USER_AGENT = "QSL-IBKR-Reconciliation/1.0"
 RECONCILIATION_RECOVERY_PRIVATE_EVIDENCE_SCHEMA_VERSION = "ibkr_reconciliation_recovery_private_evidence.v1"
 _SHA256_LENGTH = 64
 
@@ -375,7 +376,8 @@ def publish_recovery_source_snapshot(
         request = Request(
             normalized_url,
             data=body,
-            headers={"Authorization": f"Bearer {normalized_token}", "Content-Type": "application/json"},
+            headers={"Authorization": f"Bearer {normalized_token}", "Content-Type": "application/json",
+                     "User-Agent": RECONCILIATION_RECOVERY_USER_AGENT},
             method="POST",
         )
         try:
@@ -399,7 +401,7 @@ def publish_recovery_source_snapshot(
         response = post(
             normalized_url,
             json=dict(snapshot),
-            headers={"Authorization": f"Bearer {normalized_token}"},
+            headers={"Authorization": f"Bearer {normalized_token}", "User-Agent": RECONCILIATION_RECOVERY_USER_AGENT},
             timeout=15,
         )
     except Exception as exc:

@@ -200,7 +200,8 @@ def test_publish_uses_only_recovery_ingress_and_bearer_token() -> None:
     assert result["ok"] is True
     kwargs = received["kwargs"]
     assert isinstance(kwargs, dict)
-    assert kwargs["headers"] == {"Authorization": "Bearer dedicated-token"}
+    assert kwargs["headers"] == {"Authorization": "Bearer dedicated-token",
+                                 "User-Agent": "QSL-IBKR-Reconciliation/1.0"}
 
 
 def test_publish_rejects_non_recovery_endpoint() -> None:
@@ -210,6 +211,26 @@ def test_publish_rejects_non_recovery_endpoint() -> None:
             publish_url="https://console.example/api/manual-strategy-switch",
             token="dedicated-token",
         )
+
+
+def test_urllib_publish_sends_service_identity_without_redirects(monkeypatch):
+    from scripts import publish_reconciliation_recovery_source as publisher
+    seen = {}
+    class Response:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def read(self): return b'{"ok":true}'
+    def open_request(request, timeout):
+        seen['request'] = request
+        assert timeout == 15
+        return Response()
+    def opener(handler):
+        assert handler is publisher._NoRedirect
+        return SimpleNamespace(open=open_request)
+    monkeypatch.setattr(publisher, 'build_opener', opener)
+    assert publish_recovery_source_snapshot({}, publish_url='https://console.example/api/internal/sync-reconciliation-recovery-source', token='dedicated')['ok']
+    assert seen['request'].get_header('User-agent') == 'QSL-IBKR-Reconciliation/1.0'
 
 
 def test_private_evidence_archive_is_create_only_and_never_uses_console_shape() -> None:
