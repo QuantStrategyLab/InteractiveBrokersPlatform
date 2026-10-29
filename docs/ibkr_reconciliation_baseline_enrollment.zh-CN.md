@@ -60,6 +60,9 @@ XML Activity 报表获取和账户范围校验。它固定访问 IBKR 的 SendRe
 `Diagnose IBKR Flex Without Publishing` 的 `configured_account_coverage_only`
 只报告固定账户槽、日期和 section 计数。配置存在不代表报表已覆盖恢复需要的资料，
 也不代表独立报表已接入 `/reconcile` 或可以启用交易。
+该检查同时对原报表中的股票持仓和期末美元现金做字段与范围分类，仅输出固定原因；
+它不比较Gateway的当前观察、不生成预期摘要。来源字段有效仍不代表覆盖完整、时间或
+现金口径一致；期权、明细层级、无报表日等情况保留未核实原因。
 `ACTIVE_LKG` 目标的正常运行不依赖这条冻结基线来源链路。
 
 若 `RECONCILE_ONLY` 目标仍缺少必要 section，先在原 Query 所属用户名的

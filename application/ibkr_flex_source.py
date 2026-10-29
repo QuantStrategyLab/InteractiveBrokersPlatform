@@ -8,6 +8,7 @@ a private, account-scoped verifier; this module never publishes or logs them.
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 import time
 from collections.abc import Collection, Mapping
@@ -364,6 +365,77 @@ CONFIGURED_COVERAGE_SECTIONS = {
 CONFIGURED_COVERAGE_SLOTS = ("primary", "additional-1", "additional-2", "additional-3")
 
 
+RECOVERY_COMPARABILITY_REASONS = frozenset({
+    "statement_missing", "positions_section_missing_or_ambiguous", "positions_unsupported_rows",
+    "position_account_or_model_unverified", "position_instrument_missing", "position_quantity_invalid",
+    "position_cost_invalid", "position_report_date_mismatch", "position_detail_not_summary",
+    "position_asset_unsupported", "position_duplicates_ambiguous", "position_scope_unverified",
+    "position_time_alignment_unverified", "position_cost_basis_equivalence_unverified",
+    "cash_report_structure_ambiguous", "usd_cash_row_missing", "usd_cash_row_ambiguous",
+    "cash_row_account_unverified", "cash_row_model_scope_unverified", "cash_period_mismatch",
+    "cash_report_date_mismatch", "endingCash_missing_or_invalid", "endingSettledCash_missing_or_invalid",
+    "cash_time_alignment_unverified", "cash_balance_semantics_unverified",
+})
+
+
+def _finite_decimal(value: object) -> bool:
+    from application.ibkr_flex_executions import _number_shape
+
+    shape = _number_shape(value)
+    if shape["kind"] not in {"decimal", "scientific"} or shape.get("has_whitespace", True):
+        return False
+    return math.isfinite(float(value))
+
+
+def _recovery_comparability(statement, ledger, account: str, period: Mapping[str, object]) -> dict[str, object]:
+    """Classify only fields and known scope; never emit or compare financial values."""
+    if statement is None or ledger is None:
+        return {"positions": {"source_fields_valid": False, "reasons": ["statement_missing"]},
+                "cash": {"source_fields_valid": False, "reasons": ["statement_missing"]}}
+    from application.ibkr_flex_executions import _day
+
+    reasons = set()
+    containers = statement.findall("OpenPositions")
+    if len(containers) != 1:
+        reasons.add("positions_section_missing_or_ambiguous")
+    rows = [row for container in containers for row in container.findall("OpenPosition")]
+    if not period.get("to"):
+        reasons.add("position_report_date_mismatch")
+    if any(child.tag != "OpenPosition" or len(child) for container in containers for child in container):
+        reasons.add("positions_unsupported_rows")
+    seen = set()
+    for row in rows:
+        if row.get("accountId") != account or row.get("model") != "":
+            reasons.add("position_account_or_model_unverified")
+        symbol, currency = row.get("symbol", "").strip(), row.get("currency", "").strip()
+        if not symbol or not currency:
+            reasons.add("position_instrument_missing")
+        if not _finite_decimal(row.get("position")):
+            reasons.add("position_quantity_invalid")
+        if not _finite_decimal(row.get("costBasisPrice")):
+            reasons.add("position_cost_invalid")
+        if not period.get("to") or _day(row.get("reportDate")) != period.get("to"):
+            reasons.add("position_report_date_mismatch")
+        if row.get("levelOfDetail", "").upper() != "SUMMARY":
+            reasons.add("position_detail_not_summary")
+        if row.get("assetCategory", "").upper() != "STK":
+            reasons.add("position_asset_unsupported")
+        key = (symbol.upper(), currency.upper())
+        if key in seen:
+            reasons.add("position_duplicates_ambiguous")
+        seen.add(key)
+    positions_valid = not reasons
+    reasons.update({"position_scope_unverified", "position_time_alignment_unverified"})
+    if rows:
+        reasons.add("position_cost_basis_equivalence_unverified")
+    cash = ledger["period_cash_facts"]
+    cash_reasons = set(cash["missing"])
+    cash_valid = cash["status"] == "available_period_end"
+    cash_reasons.update({"cash_time_alignment_unverified", "cash_balance_semantics_unverified"})
+    return {"positions": {"source_fields_valid": positions_valid, "reasons": sorted(reasons)},
+            "cash": {"source_fields_valid": cash_valid, "reasons": sorted(cash_reasons)}}
+
+
 def diagnose_configured_flex_coverage(
     *, token: str, query_id: str, expected_account_ids: Collection[str],
     configured_account_ids: Mapping[str, str], session: requests.Session | None = None,
@@ -405,6 +477,7 @@ def diagnose_configured_flex_coverage(
         account = configured_account_ids[slot]
         statement = statements.get(account)
         period = {"from": None, "to": None}
+        ledger = None
         if statement is not None:
             # Reuse Activity-report, unique-account and cross-account row checks.
             ledger = build_flex_ledger(report, expected_account_ids=(account,),
@@ -433,6 +506,7 @@ def diagnose_configured_flex_coverage(
             "native_twr_field_present": (None if statement is None else
                 any("twr" in row.attrib for row in statement.findall("ChangeInNAV"))),
             "sections": sections,
+            "recovery_comparability": _recovery_comparability(statement, ledger, account, period),
         }
     return {"schema_version": "ibkr_flex_configured_coverage.v1", "status": "observed_source_shape",
             "source_ref": report.content_sha256, "period": accounts["primary"]["period"],
