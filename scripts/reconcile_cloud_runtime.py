@@ -466,12 +466,20 @@ def _verify_switch_candidate_with_wait(candidate: Mapping[str, Any], *, project:
     """Wait read-only for the exact switch candidate to settle before routing."""
     from scripts.runtime_target_continuity import verify_traffic_revision
 
-    original_spec = candidate.get("spec")
-    original_meta = candidate.get("metadata") or {}
-    identity = {key: original_meta.get(key) for key in ("name", "labels", "annotations")}
+    from scripts.deploy_notification_only import metadata as normalized_metadata
+
+    def identity(value: Mapping[str, Any]) -> tuple[Any, ...]:
+        meta = value.get("metadata") or {}
+        normalized = normalized_metadata(meta, template=True)
+        normalized["labels"].pop("client.knative.dev/nonce", None)
+        spec = value.get("spec") or {}
+        enabled = [[row for row in container.get("env", []) if row.get("name") == "RUNTIME_TARGET_ENABLED"]
+                   for container in spec.get("containers") or []]
+        return meta.get("name"), normalized, _without_runtime_switch(spec), enabled
+
+    original_identity = identity(candidate)
     for attempt in range(30):
-        meta = candidate.get("metadata") or {}
-        if candidate.get("spec") != original_spec or any(meta.get(key) != value for key, value in identity.items()):
+        if identity(candidate) != original_identity:
             raise ReconcileError("switch candidate changed while waiting")
         try:
             verify_traffic_revision(candidate, expected_revision=revision, expected_commit=commit,
