@@ -114,7 +114,9 @@ def test_json_crosses_secret_boundary_before_any_execution(name: str) -> None:
                                      ("verify-initial", "reconciliation-recovery-controller"))
             assert f"environment: {environment}" in _jobs(callee)[job_name]
             assert f"secrets.{key}" in _jobs(callee)[job_name]
-            assert f"{key}:" not in passed
+            assert f"      {key}:\n        required: false" in declared
+            gate = "publish_initial_run_id" if key.endswith("SYNC_TOKEN") else "verify_initial_source_run_id"
+            assert f"      {key}: ${{{{ inputs.{gate} != '' && secrets.{key} || '' }}}}" in passed
         elif name == "notify-route-check" and key in NOTIFY_ROUTE_ADDITIONAL_SECRET_CONTRACTS:
             _assert_notify_route_additional_secret_contract(key, declared, passed)
         elif name == "collect-reconciliation-evidence" and key in RECONCILIATION_BINDING_SECRETS:

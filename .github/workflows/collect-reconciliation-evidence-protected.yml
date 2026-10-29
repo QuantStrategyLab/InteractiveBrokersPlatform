@@ -36,6 +36,10 @@ on:
         type: boolean
         required: false
     secrets:
+      RECONCILIATION_RECOVERY_SYNC_TOKEN:
+        required: false
+      RECONCILIATION_RECOVERY_CONTROLLER_TOKEN:
+        required: false
       CLOUD_RUN_SERVICE_TARGETS_JSON:
         required: false
 
