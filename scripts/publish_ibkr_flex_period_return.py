@@ -598,7 +598,15 @@ def main(argv: Sequence[str] = ()) -> int:
                             diagnostics.setdefault("additional_return_sync_diagnostics", {})[slot] = detail
                         if _stop_additional_publication(results[slot], detail):
                             break
+                        # The same validated report contains each selected account's
+                        # date-only flow facts. Keep historical return-only runs scoped.
+                        if not config.get("report_date") and results[slot] in {"published", "unchanged", "native_twr_unavailable"}:
+                            flow = _external_flow_result(ledgers[slot], target)
+                            diagnostics.setdefault("additional_external_flows", {})[slot] = flow["external_flow_status"]
     print(json.dumps({"status": status, **diagnostics}, sort_keys=True))
+    if any(value in {"sync_unknown", "sync_rejected", "projection_rejected"}
+           for value in diagnostics.get("additional_external_flows", {}).values()):
+        return 1
     if any(value not in {"published", "unchanged"} for value in diagnostics.get("additional_returns", {}).values()):
         return 1
     if diagnostics.get("external_flow_status") in {"sync_unknown", "sync_rejected", "projection_rejected"}:
