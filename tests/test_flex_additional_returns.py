@@ -127,6 +127,32 @@ def test_historical_success_uses_each_account_ack_and_historical_flag(monkeypatc
     assert set(json.loads(capsys.readouterr().out)["additional_returns"]) == {"additional-2", "additional-3"}
 
 
+def test_one_historical_slot_never_publishes_other_accounts(monkeypatch, capsys):
+    session, published = setup(monkeypatch)
+    monkeypatch.setenv("IBKR_NATIVE_RETURN_DATE", "2026-01-31")
+    monkeypatch.setenv("ADDITIONAL_RETURN_SLOT", "additional-2")
+    session.report = session.report.replace(b"20260101", b"20260131")
+    assert cli.main(("--additional-returns-only",)) == 0
+    assert json.loads(capsys.readouterr().out) == {"additional_returns": {"additional-2": "published"}}
+    assert len(published) == 1 and published[0][1]["historical"] is True
+    assert published[0][0]["target_id"] == "artificial-target-2"
+
+
+@pytest.mark.parametrize("slot,mode,date", [
+    ("additional-2", (), "2026-01-31"),
+    ("additional-2", ("--cashflow-only",), "2026-01-31"),
+    ("additional-2", ("--additional-returns-only",), ""),
+    ("additional-1", ("--additional-returns-only",), "2026-01-31"),
+])
+def test_invalid_single_slot_stops_before_network(monkeypatch, capsys, slot, mode, date):
+    session, published = setup(monkeypatch)
+    monkeypatch.setenv("IBKR_NATIVE_RETURN_DATE", date)
+    monkeypatch.setenv("ADDITIONAL_RETURN_SLOT", slot)
+    assert cli.main(mode) == 2
+    assert json.loads(capsys.readouterr().out)["status"] == "configuration_incomplete"
+    assert session.calls == [] and published == []
+
+
 def test_primary_selector_mismatch_rejects_before_network(monkeypatch, capsys):
     session, published = setup(monkeypatch)
     monkeypatch.setenv("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", '["DU0000001"]')
