@@ -26,6 +26,9 @@ on:
       runtime_switch_only:
         type: boolean
         required: false
+      initial_state_source_run_id:
+        type: string
+        required: false
       request_id:
         type: string
         required: false
@@ -66,6 +69,8 @@ on:
         type: boolean
         required: false
     secrets:
+      IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX:
+        required: false
       DIGEST_TARGET_BINDINGS_JSON:
         required: false
       IBKR_NOTIFICATION_MARKER_GCS_URI:
@@ -136,6 +141,8 @@ jobs:
       WORKFLOW_TARGET: ${{ inputs.target || 'configured' }}
       INPUT_CONFIGURED_SERVICE: ${{ inputs.configured_service }}
       INPUT_RUNTIME_SWITCH_ONLY: ${{ inputs.runtime_switch_only }}
+      INPUT_INITIAL_STATE_SOURCE_RUN_ID: ${{ inputs.initial_state_source_run_id }}
+      IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX: ${{ secrets.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX }}
       INPUT_REQUEST_ID: ${{ inputs.request_id }}
       INPUT_SOURCE_COMMIT: ${{ inputs.source_commit }}
       SOURCE_COMMIT: ${{ inputs.source_commit || github.sha }}
@@ -320,6 +327,15 @@ jobs:
             scheduler_sync_enabled=true
           fi
 
+          if [ -n "${INPUT_INITIAL_STATE_SOURCE_RUN_ID:-}" ] && \
+             { [[ ! "$INPUT_INITIAL_STATE_SOURCE_RUN_ID" =~ ^[0-9]+$ ]] || [ "${WORKFLOW_TARGET:-configured}" != configured ] || \
+               [ -z "${INPUT_CONFIGURED_SERVICE:-}" ] || [ "${INPUT_RUNTIME_SWITCH_ONLY:-false}" = true ] || \
+               [ "${deploy_enabled}" = true ] || [ "${env_sync_enabled}" != true ] || \
+               [ "${traffic_shift_enabled}" != true ] || [ "${scheduler_sync_enabled}" = true ]; }; then
+            echo 'initial_state_ledger_requires_one_disabled_env_only_target' >&2
+            exit 1
+          fi
+
           if [ "${INPUT_RUNTIME_SWITCH_ONLY:-false}" = "true" ] && \
              { [ "${WORKFLOW_TARGET:-configured}" != "configured" ] || [ "${deploy_enabled}" = "true" ] || \
                [ "${env_sync_enabled}" != "true" ] || [ "${traffic_shift_enabled}" != "true" ] || \
@@ -472,11 +488,18 @@ jobs:
           version: ">= 416.0.0"
 
       - name: Fetch opt-in immutable recovery state ledger
-        if: steps.config.outputs.enabled == 'true' && inputs.runtime_switch_only != true && env.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_URI != ''
+        if: steps.config.outputs.enabled == 'true' && inputs.runtime_switch_only != true && (env.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_URI != '' || inputs.initial_state_source_run_id != '')
         env:
           RECOVERY_STATE_LEDGER_URI: ${{ env.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_URI }}
         run: |
           set -euo pipefail
+          if [ -n "${INPUT_INITIAL_STATE_SOURCE_RUN_ID:-}" ]; then
+            if [[ ! "$INPUT_INITIAL_STATE_SOURCE_RUN_ID" =~ ^[0-9]{1,20}$ ]] || [[ ! "${IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX:-}" =~ ^gs://[a-z0-9][a-z0-9._-]*/reconciliation-recovery/ibkr/state/?$ ]] || [ -z "${INPUT_CONFIGURED_SERVICE:-}" ] || [ "${WORKFLOW_TARGET:-configured}" != configured ] || [ "${INPUT_RUNTIME_SWITCH_ONLY:-false}" = true ] || [ "${INPUT_DEPLOY_IMAGE:-true}" = true ] || [ "${INPUT_SYNC_ENV:-false}" != true ] || [ "${INPUT_APPROVE_SCHEDULER_SYNC:-false}" = true ]; then
+              echo 'initial_state_ledger_requires_one_disabled_env_only_target' >&2
+              exit 1
+            fi
+            RECOVERY_STATE_LEDGER_URI="${IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX%/}/initial-run-${INPUT_INITIAL_STATE_SOURCE_RUN_ID}.json"
+          fi
           case "${RECOVERY_STATE_LEDGER_URI}" in
             gs://qsl-reconciliation-recovery-private-ibkr/reconciliation-recovery/ibkr/state/*.json) ;;
             *)
@@ -485,7 +508,14 @@ jobs:
               ;;
           esac
           recovery_state_ledger_path="${RUNNER_TEMP}/ibkr-reconciliation-recovery-state-ledger.json"
-          gcloud storage cp --quiet "${RECOVERY_STATE_LEDGER_URI}" "${recovery_state_ledger_path}" >/dev/null
+          if [ -n "${INPUT_INITIAL_STATE_SOURCE_RUN_ID:-}" ]; then
+            if ! gcloud storage cp --quiet "${RECOVERY_STATE_LEDGER_URI}" "${recovery_state_ledger_path}" >/dev/null 2>"${RUNNER_TEMP}/initial-ledger-error.log"; then
+              echo 'initial_state_ledger_read_failed' >&2
+              exit 1
+            fi
+          else
+            gcloud storage cp --quiet "${RECOVERY_STATE_LEDGER_URI}" "${recovery_state_ledger_path}" >/dev/null
+          fi
           chmod 600 "${recovery_state_ledger_path}"
           echo "IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PATH=${recovery_state_ledger_path}" >> "$GITHUB_ENV"
 
@@ -503,7 +533,16 @@ jobs:
           QSL_DIGEST_ROUTINE_ORDERS: ${{ vars.QSL_DIGEST_ROUTINE_ORDERS }}
         run: |
           set -euo pipefail
-          sync_plan_json="$(uv run --no-sync python scripts/build_cloud_run_env_sync_plan.py --json)"
+          if [ -n "${INPUT_INITIAL_STATE_SOURCE_RUN_ID:-}" ]; then
+            # The static inventory selects the service; the confirmed transition
+            # is derived later from its actual serving target, not stale config.
+            if ! sync_plan_json="$(env -u IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PATH uv run --no-sync python scripts/build_cloud_run_env_sync_plan.py --json 2>"${RUNNER_TEMP}/initial-plan-error.log")"; then
+              echo 'initial_state_plan_unavailable' >&2
+              exit 1
+            fi
+          else
+            sync_plan_json="$(uv run --no-sync python scripts/build_cloud_run_env_sync_plan.py --json)"
+          fi
           export SYNC_PLAN_JSON="${sync_plan_json}"
           python - <<'PY'
           import json
@@ -522,6 +561,10 @@ jobs:
               if len(matches) != 1:
                   raise SystemExit("configured_service must match exactly one admitted inventory target")
               plan["targets"] = matches
+              if os.environ.get("INPUT_INITIAL_STATE_SOURCE_RUN_ID"):
+                  enabled = str(matches[0].get("env", {}).get("RUNTIME_TARGET_ENABLED", "")).strip().lower()
+                  if enabled not in {"false", "0", "no", "off"}:
+                      raise SystemExit("initial_state_target_must_remain_disabled")
               # Reconciliation also reads inventory and legacy env; scope every source.
               inventory = json.dumps({"targets": [{"service_name": selected}]})
               with Path(os.environ["GITHUB_ENV"]).open("a") as handle:
@@ -542,9 +585,16 @@ jobs:
               for target in plan["targets"]:
                   target["env"]["QSL_ROUTINE_NOTIFICATION_MODE"] = mode
                   target["remove_env_vars"] = [key for key in target.get("remove_env_vars", []) if key != "QSL_ROUTINE_NOTIFICATION_MODE"]
-          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as handle:
-              handle.write("sync_plan_json<<__SYNC_PLAN_JSON__\n")
-              handle.write(json.dumps(plan) + "\n__SYNC_PLAN_JSON__\n")
+          if os.environ.get("INPUT_INITIAL_STATE_SOURCE_RUN_ID"):
+              path = Path(os.environ["RUNNER_TEMP"]) / "ibkr-initial-sync-plan.json"
+              path.write_text(json.dumps(plan), encoding="utf-8")
+              path.chmod(0o600)
+              with Path(os.environ["GITHUB_ENV"]).open("a") as handle:
+                  handle.write(f"IBKR_INITIAL_SYNC_PLAN_PATH={path}\n")
+          else:
+              with Path(os.environ["GITHUB_OUTPUT"]).open("a") as handle:
+                  handle.write("sync_plan_json<<__SYNC_PLAN_JSON__\n")
+                  handle.write(json.dumps(plan) + "\n__SYNC_PLAN_JSON__\n")
           PY
 
       - name: Validate env sync inputs
@@ -553,6 +603,7 @@ jobs:
           SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
         run: |
           set -euo pipefail
+          if [ -n "${IBKR_INITIAL_SYNC_PLAN_PATH:-}" ]; then export SYNC_PLAN_JSON="$(cat "$IBKR_INITIAL_SYNC_PLAN_PATH")"; fi
 
           required_vars=(
             CLOUD_RUN_REGION
@@ -565,7 +616,7 @@ jobs:
             fi
           done
 
-          if [ -z "${TELEGRAM_TOKEN_SECRET_NAME:-}" ] && [ -z "${TELEGRAM_TOKEN:-}" ]; then
+          if [ -z "${INPUT_INITIAL_STATE_SOURCE_RUN_ID:-}" ] && [ -z "${TELEGRAM_TOKEN_SECRET_NAME:-}" ] && [ -z "${TELEGRAM_TOKEN:-}" ]; then
             missing_vars+=("TELEGRAM_TOKEN_SECRET_NAME or TELEGRAM_TOKEN")
           fi
 
@@ -660,6 +711,7 @@ jobs:
           DEPLOY_READBACK_DIR: ${{ runner.temp }}/cloud-run-no-traffic-baseline
         run: |
           set -euo pipefail
+          if [ -n "${IBKR_INITIAL_SYNC_PLAN_PATH:-}" ]; then export SYNC_PLAN_JSON="$(cat "$IBKR_INITIAL_SYNC_PLAN_PATH")"; fi
           mkdir -p "${DEPLOY_READBACK_DIR}"
           mapfile -t target_services < <(python - <<'PY'
           import json
@@ -688,6 +740,7 @@ jobs:
           SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
         run: |
           set -euo pipefail
+          if [ -n "${IBKR_INITIAL_SYNC_PLAN_PATH:-}" ]; then export SYNC_PLAN_JSON="$(cat "$IBKR_INITIAL_SYNC_PLAN_PATH")"; fi
           uv run --no-sync python scripts/verify_deployed_runtime_target_admission.py \
             --project="${GCP_PROJECT_ID}" \
             --region="${CLOUD_RUN_REGION}"
@@ -699,6 +752,7 @@ jobs:
           SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
         run: |
           set -euo pipefail
+          if [ -n "${IBKR_INITIAL_SYNC_PLAN_PATH:-}" ]; then export SYNC_PLAN_JSON="$(cat "$IBKR_INITIAL_SYNC_PLAN_PATH")"; fi
 
           mapfile -t target_services < <(python - <<'PY'
           import json
@@ -817,6 +871,7 @@ jobs:
           EXPECTED_IMAGE_DIGEST: ${{ steps.deploy.outputs.image_digest }}
         run: |
           set -euo pipefail
+          if [ -n "${IBKR_INITIAL_SYNC_PLAN_PATH:-}" ]; then export SYNC_PLAN_JSON="$(cat "$IBKR_INITIAL_SYNC_PLAN_PATH")"; fi
           mapfile -t target_services < <(python - <<'PY'
           import json
           import os
@@ -842,6 +897,7 @@ jobs:
           SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
         run: |
           set -euo pipefail
+          if [ -n "${IBKR_INITIAL_SYNC_PLAN_PATH:-}" ]; then export SYNC_PLAN_JSON="$(cat "$IBKR_INITIAL_SYNC_PLAN_PATH")"; fi
 
           mapfile -t target_services < <(python - <<'PY'
           import json
@@ -893,6 +949,7 @@ jobs:
           RUNTIME_SWITCH_ONLY: ${{ inputs.runtime_switch_only }}
         run: |
           set -euo pipefail
+          if [ -n "${IBKR_INITIAL_SYNC_PLAN_PATH:-}" ]; then export SYNC_PLAN_JSON="$(cat "$IBKR_INITIAL_SYNC_PLAN_PATH")"; fi
 
           mapfile -t target_services < <(python - <<'PY'
           import json
@@ -937,6 +994,68 @@ jobs:
             printf '%s' "${candidate_revision}" > "${evidence_dir}/candidate-revision.txt"
             echo "IBKR_ENV_SYNC_EVIDENCE_DIR=${evidence_dir}" >> "$GITHUB_ENV"
             echo "IBKR_ENV_SYNC_REVISION_SUFFIX=${revision_suffix}" >> "$GITHUB_ENV"
+          fi
+
+          if [ -n "${INPUT_INITIAL_STATE_SOURCE_RUN_ID:-}" ]; then
+            gcloud run services describe "${cloud_run_service}" --project="${GCP_PROJECT_ID}" \
+              --region="${CLOUD_RUN_REGION}" --format=json > "${evidence_dir}/before-update.json"
+            uv run --no-sync python - "${evidence_dir}" "${cloud_run_service}" "${revision_suffix}" <<'PY'
+          import json, os, subprocess, sys, time
+          from pathlib import Path
+          from urllib.parse import quote
+          from urllib.request import HTTPRedirectHandler, Request, build_opener
+          from scripts.reconcile_cloud_runtime import validate_initial_state_baseline, build_initial_state_stage
+          directory = Path(sys.argv[1])
+          baseline = json.loads((directory / "baseline-service.json").read_text())
+          current = json.loads((directory / "before-update.json").read_text())
+          if not baseline.get("metadata", {}).get("resourceVersion") or baseline["metadata"]["resourceVersion"] != current.get("metadata", {}).get("resourceVersion"):
+              raise SystemExit("initial_state_service_changed")
+          full_plan = json.loads(os.environ["SYNC_PLAN_JSON"])
+          plan = full_plan["targets"][0]
+          ledger = json.loads(Path(os.environ["IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PATH"]).read_text())
+          updates = validate_initial_state_baseline(json.loads((directory / "baseline-revision.json").read_text()), plan, ledger)
+          plan["env"].update(updates)
+          Path(os.environ["IBKR_INITIAL_SYNC_PLAN_PATH"]).write_text(json.dumps(full_plan), encoding="utf-8")
+          candidate_revision = (directory / "candidate-revision.txt").read_text().strip()
+          body = build_initial_state_stage(current, json.loads((directory / "baseline-revision.json").read_text()),
+                                           updates, candidate_revision)
+          token = subprocess.run(["gcloud", "auth", "print-access-token"], capture_output=True, text=True, timeout=30, check=False)
+          if token.returncode or not token.stdout.strip():
+              raise SystemExit("initial_state_identity_unavailable")
+          url = (f"https://{os.environ['CLOUD_RUN_REGION']}-run.googleapis.com/apis/serving.knative.dev/v1/"
+                 f"namespaces/{quote(os.environ['GCP_PROJECT_ID'], safe='')}/services/{quote(sys.argv[2], safe='')}")
+          class NoRedirect(HTTPRedirectHandler):
+              def redirect_request(self, *_args, **_kwargs): return None
+          request = Request(url, method="PUT", data=json.dumps(body).encode(), headers={
+              "Authorization": "Bearer " + token.stdout.strip(), "Content-Type": "application/json"})
+          try:
+              with build_opener(NoRedirect).open(request, timeout=180) as response:
+                  if response.status < 200 or response.status >= 300: raise ValueError("unconfirmed")
+          except Exception:
+              raise SystemExit("initial_state_update_failed_or_unknown") from None
+          deadline = time.monotonic() + 180
+          while time.monotonic() < deadline:
+              try:
+                  read = subprocess.run(["gcloud", "run", "revisions", "describe", candidate_revision,
+                      f"--project={os.environ['GCP_PROJECT_ID']}", f"--region={os.environ['CLOUD_RUN_REGION']}", "--format=json"],
+                      capture_output=True, timeout=30, check=False)
+              except subprocess.TimeoutExpired:
+                  read = None
+              if read is not None and read.returncode == 0:
+                  try:
+                      revision = json.loads(read.stdout)
+                      if (revision.get("metadata", {}).get("name") == candidate_revision and any(
+                          row.get("type") == "Ready" and row.get("status") == "True"
+                          for row in revision.get("status", {}).get("conditions", []))):
+                          break
+                  except (TypeError, ValueError):
+                      pass
+              time.sleep(5)
+          else:
+              raise SystemExit("initial_state_candidate_not_ready")
+          print("initial_state_revision_staged")
+          PY
+            exit 0
           fi
 
           if [ "${RUNTIME_SWITCH_ONLY:-false}" = "true" ]; then
@@ -1024,12 +1143,13 @@ jobs:
           fi
 
       - name: Sync Cloud Run environment
-        if: steps.config.outputs.env_sync_enabled == 'true' && inputs.runtime_switch_only != true
+        if: steps.config.outputs.env_sync_enabled == 'true' && inputs.runtime_switch_only != true && inputs.initial_state_source_run_id == ''
         env:
           SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
           EXACT_ENV_TRAFFIC: ${{ steps.config.outputs.deploy_enabled != 'true' && steps.config.outputs.traffic_shift_enabled == 'true' }}
         run: |
           set -euo pipefail
+          if [ -n "${IBKR_INITIAL_SYNC_PLAN_PATH:-}" ]; then export SYNC_PLAN_JSON="$(cat "$IBKR_INITIAL_SYNC_PLAN_PATH")"; fi
           mapfile -t target_services < <(python - <<'PY2'
           import json, os
           for target in json.loads(os.environ["SYNC_PLAN_JSON"])["targets"]:
@@ -1420,6 +1540,7 @@ jobs:
           SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
         run: |
           set -euo pipefail
+          if [ -n "${IBKR_INITIAL_SYNC_PLAN_PATH:-}" ]; then export SYNC_PLAN_JSON="$(cat "$IBKR_INITIAL_SYNC_PLAN_PATH")"; fi
           if [ -n "${IBKR_ENV_SYNC_EVIDENCE_DIR:-}" ] && [ -f "${IBKR_ENV_SYNC_EVIDENCE_DIR}/no-op" ]; then
             echo "No configuration revision was needed."
             exit 0
@@ -1431,19 +1552,31 @@ jobs:
           if [ "${INPUT_RUNTIME_SWITCH_ONLY:-false}" = "true" ]; then
             exact_revision_args+=(--runtime-switch-only)
           fi
-          uv run --no-sync python scripts/reconcile_cloud_runtime.py \
-            --platform=ibkr \
-            --project="${GCP_PROJECT_ID}" \
-            --region="${CLOUD_RUN_REGION}" \
-            --ensure-latest-traffic "${exact_revision_args[@]}"
+          if [ -n "${INPUT_INITIAL_STATE_SOURCE_RUN_ID:-}" ]; then
+            exact_revision_args+=(--initial-state-only)
+          fi
+          if [ -n "${INPUT_INITIAL_STATE_SOURCE_RUN_ID:-}" ]; then
+            if ! uv run --no-sync python scripts/reconcile_cloud_runtime.py --platform=ibkr \
+              --project="${GCP_PROJECT_ID}" --region="${CLOUD_RUN_REGION}" \
+              --ensure-latest-traffic "${exact_revision_args[@]}" >/dev/null 2>&1; then
+              echo 'initial_state_adoption_failed_or_unknown' >&2
+              exit 1
+            fi
+            echo 'initial_state_candidate_adopted'
+          else
+            uv run --no-sync python scripts/reconcile_cloud_runtime.py \
+              --platform=ibkr --project="${GCP_PROJECT_ID}" --region="${CLOUD_RUN_REGION}" \
+              --ensure-latest-traffic "${exact_revision_args[@]}"
+          fi
 
       - name: Verify strategy plugin mounts
-        if: steps.config.outputs.env_sync_enabled == 'true' && inputs.runtime_switch_only != true
+        if: steps.config.outputs.env_sync_enabled == 'true' && inputs.runtime_switch_only != true && inputs.initial_state_source_run_id == ''
         env:
           SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
           STRATEGY_PLUGIN_MOUNT_ENV_NAMES: IBKR_STRATEGY_PLUGIN_MOUNTS_JSON
         run: |
           set -euo pipefail
+          if [ -n "${IBKR_INITIAL_SYNC_PLAN_PATH:-}" ]; then export SYNC_PLAN_JSON="$(cat "$IBKR_INITIAL_SYNC_PLAN_PATH")"; fi
           python3 scripts/verify_cloud_run_strategy_plugin_mounts.py
 
       - name: Reconcile existing runtime switch scheduler
@@ -1452,6 +1585,7 @@ jobs:
           SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
         run: |
           set -euo pipefail
+          if [ -n "${IBKR_INITIAL_SYNC_PLAN_PATH:-}" ]; then export SYNC_PLAN_JSON="$(cat "$IBKR_INITIAL_SYNC_PLAN_PATH")"; fi
           uv run --no-sync python - <<'PY'
           import hashlib, json, os, subprocess
           from pathlib import Path
@@ -1530,6 +1664,7 @@ jobs:
           SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
         run: |
           set -euo pipefail
+          if [ -n "${IBKR_INITIAL_SYNC_PLAN_PATH:-}" ]; then export SYNC_PLAN_JSON="$(cat "$IBKR_INITIAL_SYNC_PLAN_PATH")"; fi
 
           scheduler_location="${CLOUD_SCHEDULER_LOCATION:-${CLOUD_RUN_REGION}}"
           if [ -z "${scheduler_location}" ]; then

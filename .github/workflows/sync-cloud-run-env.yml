@@ -48,6 +48,10 @@ on:
         required: true
         type: boolean
         default: false
+      initial_state_source_run_id:
+        description: "Use one confirmed initial private state ledger from the original evidence run."
+        required: false
+        type: string
       request_id:
         description: "Unique lowercase UUID for correlating a runtime switch request."
         required: false
@@ -128,6 +132,7 @@ jobs:
       target: ${{ inputs.target }}
       configured_service: ${{ inputs.configured_service }}
       runtime_switch_only: ${{ inputs.runtime_switch_only }}
+      initial_state_source_run_id: ${{ inputs.initial_state_source_run_id }}
       request_id: ${{ inputs.request_id }}
       source_commit: ${{ inputs.source_commit }}
       expected_serving_revision_digest: ${{ inputs.expected_serving_revision_digest }}
@@ -142,6 +147,7 @@ jobs:
       approve_traffic_shift: ${{ inputs.approve_traffic_shift }}
       approve_scheduler_sync: ${{ inputs.approve_scheduler_sync }}
     secrets:
+      IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX: ${{ inputs.initial_state_source_run_id != '' && (vars.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX || secrets.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX) || '' }}
       CLOUD_RUN_SERVICE: ${{ secrets.CLOUD_RUN_SERVICE }}
       CLOUD_RUN_SERVICES: ${{ secrets.CLOUD_RUN_SERVICES }}
       CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ vars.CLOUD_RUN_SERVICE_TARGETS_JSON || secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}

@@ -45,6 +45,19 @@ def _parse_state_ledger_uri(value: str) -> tuple[str, str]:
     return bucket_name, object_name
 
 
+def initial_state_ledger_uri(prefix: str, source_run_id: str) -> str:
+    """Derive one immutable initial object under the existing private state prefix."""
+    import re
+    value = str(prefix or "").strip().rstrip("/")
+    if not re.fullmatch(r"gs://[a-z0-9][a-z0-9._-]*/reconciliation-recovery/ibkr/state", value):
+        raise ValueError("initial state ledger prefix is invalid")
+    if not re.fullmatch(r"[0-9]{1,20}", str(source_run_id or "")):
+        raise ValueError("initial state ledger source run is invalid")
+    uri = f"{value}/initial-run-{source_run_id}.json"
+    _parse_state_ledger_uri(uri)
+    return uri
+
+
 def archive_recovery_state_ledger(
     ledger: Mapping[str, object],
     *,

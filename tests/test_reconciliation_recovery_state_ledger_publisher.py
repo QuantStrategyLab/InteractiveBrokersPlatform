@@ -114,3 +114,12 @@ def test_archive_state_ledger_uses_create_only_private_state_prefix() -> None:
             state_ledger_uri="gs://private-bucket/reconciliation-recovery/ibkr/source/recovery-1.json",
             storage_client_factory=Client,
         )
+
+
+def test_initial_ledger_uri_uses_one_configured_private_prefix():
+    from scripts.publish_reconciliation_recovery_state_ledger import initial_state_ledger_uri
+    prefix = 'gs://synthetic-bucket/reconciliation-recovery/ibkr/state'
+    assert initial_state_ledger_uri(prefix, '123') == prefix + '/initial-run-123.json'
+    for bad, run_id in ((prefix + '/other', '123'), (prefix, '../123'), ('https://synthetic/state', '123')):
+        with pytest.raises(ValueError):
+            initial_state_ledger_uri(bad, run_id)
