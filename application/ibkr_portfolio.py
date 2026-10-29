@@ -247,7 +247,9 @@ def fetch_portfolio_snapshot(
 
     positions = []
     option_positions = []
-    for raw_position in ib.positions():
+    cached_positions = tuple(ib.positions())
+    inferred_option_currency = False
+    for raw_position in cached_positions:
         account_id = str(getattr(raw_position, "account", "") or "").strip() or None
         if not _matches_account(account_id, selected_account_ids):
             continue
@@ -268,6 +270,7 @@ def fetch_portfolio_snapshot(
             )
         if sec_type == "OPT":
             if not contract_currency:
+                inferred_option_currency = True
                 contract_currency = market_currency
             option_positions.append(
                 {
@@ -397,6 +400,28 @@ def fetch_portfolio_snapshot(
         account_values,
         selected_account_ids=selected_account_ids,
     )
+    def initial_position_rows(rows):
+        result = []
+        for row in rows:
+            account = getattr(row, "account", None)
+            if not isinstance(account, str) or not account.strip():
+                return None
+            if not _matches_account(account, selected_account_ids):
+                continue
+            contract = getattr(row, "contract", None)
+            con_id = str(getattr(contract, "conId", "") or "").strip()
+            sec_type = str(getattr(contract, "secType", "") or "").strip().upper()
+            row_currency = str(getattr(contract, "currency", "") or "").strip().upper()
+            quantity = _as_float(getattr(row, "position", None))
+            cost = _as_float(getattr(row, "avgCost", None))
+            if (not con_id or con_id == "0" or not sec_type or not row_currency or quantity is None or cost is None
+                    or not math.isfinite(quantity) or not math.isfinite(cost)):
+                return None
+            result.append((account, con_id, sec_type, row_currency, quantity, cost))
+        return sorted(result)
+
+    initial_native = initial_position_rows(native_positions) if isinstance(native_positions, list) else None
+    initial_cached = initial_position_rows(cached_positions)
     metadata: dict[str, Any] = {
         "account_ids": selected_account_ids,
         # The completed query covers all accounts. Only the selected account
@@ -413,6 +438,11 @@ def fetch_portfolio_snapshot(
             and not option_positions
         ),
         "option_positions": tuple(option_positions),
+        # Evidence for initial display scope; never replaces the legacy digest.
+        "initial_positions_source_complete": (
+            initial_native is not None and initial_cached is not None and initial_native == initial_cached
+            and not inferred_option_currency
+        ),
         "currency": market_currency,
         "market_currency_cash": market_currency_cash,
         "available_funds": available_funds,

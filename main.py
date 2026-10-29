@@ -990,10 +990,31 @@ def persist_execution_report(report, *, dry_run_only_override: bool | None = Non
 
 
 def persist_reconciliation_report(report):
-    return persist_execution_report(
-        build_persistable_reconciliation_report(report),
-        dry_run_only_override=True,
-    )
+    safe_report = build_persistable_reconciliation_report(report)
+    diagnostics = report.get("diagnostics")
+    initial = diagnostics.get("initial_enrollment_private") if isinstance(diagnostics, Mapping) else None
+    if initial is not None:
+        adapters = build_composer(dry_run_only_override=True).build_reporting_adapters()
+        if not adapters.report_gcs_prefix_uri:
+            raise RuntimeError("initial enrollment requires the existing private report destination")
+        if not isinstance(initial, Mapping) or set(initial) != {"facts", "facts_sha256"}:
+            raise RuntimeError("initial enrollment private facts are invalid")
+        from urllib.parse import urlsplit
+        from google.cloud import storage
+        prefix = urlsplit(adapters.report_gcs_prefix_uri)
+        request_id = safe_report["diagnostics"].get("reconciliation_request_id")
+        if prefix.scheme != "gs" or not prefix.netloc or not prefix.path.strip("/") or prefix.query or prefix.fragment or not request_id:
+            raise RuntimeError("initial enrollment private destination or request is invalid")
+        safe_report["diagnostics"]["initial_enrollment_private"] = dict(initial)
+        name = prefix.path.strip("/") + "/initial-enrollment/" + request_id + ".json"
+        blob = storage.Client().bucket(prefix.netloc).blob(name)
+        blob.upload_from_string(json.dumps(safe_report, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False),
+                                content_type="application/json", if_generation_match=0, retry=None)
+        generation = str(blob.generation or "")
+        if not generation.isascii() or not generation.isdigit() or int(generation) <= 0:
+            raise RuntimeError("initial enrollment private generation is unknown")
+        return f"gs://{prefix.netloc}/{name}#{generation}"
+    return persist_execution_report(safe_report, dry_run_only_override=True)
 
 
 def build_request_log_context():

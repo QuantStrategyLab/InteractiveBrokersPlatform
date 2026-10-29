@@ -29,6 +29,7 @@ from application.broker_reconciliation_candidate import (
 
 from quant_platform_kit.common.broker_reconciliation import BrokerReconciliationEvidence
 from quant_platform_kit.common.broker_reconciliation_enrollment import (
+    build_initial_enrollment_candidate,
     evaluate_broker_reconciliation_baseline_enrollment,
 )
 
@@ -84,6 +85,60 @@ def evaluate_receipts(
             evaluation.candidate, source_receipt_records=source_receipt_records, expectations=expectations,
         ).to_dict()
     return result
+
+
+def evaluate_initial_receipt(
+    payload: Mapping[str, Any], facts: Mapping[str, Any], *,
+    private_source_sha256: str, now: datetime | None = None,
+) -> dict[str, object]:
+    """Bind private displayed facts to the authenticated original receipt."""
+    evidence = extract_reconciliation_evidence(payload)
+    if not isinstance(facts, Mapping) or set(facts) != {"schema_version", "account_scope_sha256", "observed_at", "surfaces"}:
+        raise ValueError("initial facts are invalid")
+    surfaces = facts.get("surfaces")
+    names = {"positions", "cash", "open_orders", "recent_executions", "local_execution_ledger"}
+    if (facts.get("schema_version") != "ibkr_initial_facts.v1" or facts.get("account_scope_sha256") != evidence.account_scope_sha256
+            or facts.get("observed_at") != evidence.observed_at.isoformat().replace("+00:00", "Z")
+            or not isinstance(surfaces, Mapping) or set(surfaces) != names):
+        raise ValueError("initial facts do not match the receipt")
+    coverage = {}
+    for name, item in surfaces.items():
+        if not isinstance(item, Mapping) or set(item) != {"status", "items", "scope"} or item.get("status") not in {"complete", "partial", "unknown"}:
+            raise ValueError("initial facts coverage is invalid")
+        scope = item.get("scope")
+        if (not isinstance(scope, Mapping) or set(scope) != {"kind", "currency", "window_start", "window_end", "limit_per_namespace", "gateway_availability", "truncated"}
+                or not isinstance(scope.get("kind"), str) or not scope["kind"]
+                or any(value is not None and not isinstance(value, str) for value in scope.values())):
+            raise ValueError("initial facts scope is invalid")
+        values = item.get("items")
+        if ((item["status"] == "unknown" and values is not None)
+                or (item["status"] == "complete" and not isinstance(values, list))
+                or (values is not None and not isinstance(values, list))
+                or (values == [] and item["status"] != "complete")):
+            raise ValueError("initial facts coverage is invalid")
+        coverage[name] = item["status"]
+    facts_sha256 = hashlib.sha256(json.dumps(facts, ensure_ascii=False, sort_keys=True,
+                                             separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+    candidate = build_initial_enrollment_candidate(evidence, source_receipts_sha256=private_source_sha256, facts_sha256=facts_sha256,
+                                                   coverage=coverage, now=now)
+    return {"schema_version": "ibkr_reconciliation_baseline_enrollment.v1", "ready_for_independent_review": True,
+            "findings": [], "candidate": candidate.to_dict()}
+
+
+def initial_facts_from_private_report(report: Mapping[str, Any], *, scheduler_job_sha256: str,
+                                      request_id: str) -> Mapping[str, Any]:
+    diagnostics = report.get("diagnostics")
+    if (not isinstance(diagnostics, Mapping) or diagnostics.get("reconciliation_scheduler_job_sha256") != scheduler_job_sha256
+            or diagnostics.get("reconciliation_request_id") != request_id):
+        raise ValueError("initial private report source mismatch")
+    private = diagnostics.get("initial_enrollment_private")
+    if not isinstance(private, Mapping) or set(private) != {"facts", "facts_sha256"} or not isinstance(private.get("facts"), Mapping):
+        raise ValueError("initial private facts unavailable")
+    facts = private["facts"]
+    digest = hashlib.sha256(json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+    if digest != private["facts_sha256"]:
+        raise ValueError("initial private facts digest mismatch")
+    return facts
 
 
 def _strict_json(data: str | bytes) -> Any:

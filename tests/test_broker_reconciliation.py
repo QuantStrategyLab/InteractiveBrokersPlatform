@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime, timezone
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +11,7 @@ from application.broker_reconciliation import (
     IBKRReconciliationObservations,
     IBKRReconciliationReadError,
     build_reconciliation_candidate,
+    build_initial_enrollment_facts,
     collect_read_only_reconciliation_observations,
     load_read_only_open_trades,
 )
@@ -123,6 +126,67 @@ def test_collects_scoped_read_only_broker_observations() -> None:
     assert len(observations.open_orders) == 1
     assert len(observations.recent_executions) == 1
     assert observations.open_orders[0]["account"] == "U123"
+
+
+def test_initial_facts_do_not_turn_missing_order_fields_into_zero(monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "ib_insync", SimpleNamespace(ExecutionFilter=lambda **kw: SimpleNamespace(**kw)))
+    ib = _IB()
+    trade = _trade()
+    del trade.order.lmtPrice
+    del trade.orderStatus.remaining
+    ib.reqAllOpenOrders = lambda: [trade]
+    ib.openTrades = lambda: []
+    ib.reqExecutions = lambda _filter: []
+    observations = collect_read_only_reconciliation_observations(
+        ib, account_ids=("U123",), fetch_portfolio_snapshot=lambda *_a, **_k: _snapshot(),
+        market_currency="USD", cash_only_execution=True, initial_enrollment=True,
+    )
+    assert observations.open_orders[0]["limit_price"] == 0
+    facts, digest = build_initial_enrollment_facts(
+        observations, observed_at=datetime(2026, 10, 28, tzinfo=timezone.utc), ledger_records_count=0, ledger_truncated=False,
+    )
+    order = facts["surfaces"]["open_orders"]
+    assert order["status"] == "partial"
+    assert order["items"][0]["limit_price"] is None
+    assert order["items"][0]["remaining"] is None
+    assert len(digest) == 64
+    assert facts["surfaces"]["local_execution_ledger"]["status"] == "complete"
+    assert facts["surfaces"]["local_execution_ledger"]["scope"]["limit_per_namespace"] == "256"
+
+
+def test_initial_recent_executions_use_one_explicit_account_filter_and_reject_missing(monkeypatch):
+    monkeypatch.setitem(sys.modules, "ib_insync", SimpleNamespace(ExecutionFilter=lambda **kw: SimpleNamespace(**kw)))
+    ib = _IB()
+    seen = []
+    ib.RaiseRequestErrors = False
+    def read_executions(execution_filter):
+        assert ib.RaiseRequestErrors is True
+        seen.append(execution_filter)
+        return []
+    ib.reqExecutions = read_executions
+    observation = collect_read_only_reconciliation_observations(
+        ib, account_ids=("U123",), fetch_portfolio_snapshot=lambda *_a, **_k: _snapshot(),
+        market_currency="USD", cash_only_execution=True, initial_enrollment=True,
+    )
+    assert len(seen) == 1 and seen[0].acctCode == "U123" and seen[0].time.endswith("00:00:00 UTC")
+    assert ib.RaiseRequestErrors is False
+    assert observation.initial_execution_scope["gateway_availability"] == "current_broker_day"
+    ib.reqExecutions = lambda _filter: None
+    with pytest.raises(IBKRReconciliationReadError):
+        collect_read_only_reconciliation_observations(
+            ib, account_ids=("U123",), fetch_portfolio_snapshot=lambda *_a, **_k: _snapshot(),
+            market_currency="USD", cash_only_execution=True, initial_enrollment=True,
+        )
+    def rejected(_filter):
+        assert ib.RaiseRequestErrors is True
+        raise RuntimeError("request rejected")
+    ib.reqExecutions = rejected
+    with pytest.raises(IBKRReconciliationReadError):
+        collect_read_only_reconciliation_observations(
+            ib, account_ids=("U123",), fetch_portfolio_snapshot=lambda *_a, **_k: _snapshot(),
+            market_currency="USD", cash_only_execution=True, initial_enrollment=True,
+        )
+    assert ib.RaiseRequestErrors is False
 
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import pytest
 from datetime import datetime, timedelta, timezone
 
@@ -127,6 +128,70 @@ def _runtime_target(*, state: str = "RECONCILE_ONLY") -> dict[str, object]:
             "baseline_target_sha256": _digest("b"),
         },
     }
+
+
+def test_initial_confirmation_consumes_bound_facts_and_same_scope_without_state_write():
+    from scripts.build_reconciliation_baseline_candidate import evaluate_initial_receipt
+    from application.broker_reconciliation_candidate import initial_private_source_sha256
+    start = datetime(2026, 8, 31, 1, 0, tzinfo=timezone.utc)
+    original = _evidence(observed_at=start)
+    request_id = "853a2e08-9396-4fe8-89ee-59fb17e40a1d"
+    record = {"schema_version": "ibkr_initial_private_source.v1", "repository": "QuantStrategyLab/InteractiveBrokersPlatform",
+              "workflow_path": ".github/workflows/collect-reconciliation-evidence.yml", "workflow_run_id": "1",
+              "workflow_run_attempt": "1", "workflow_head_sha": "c" * 40, "service_name": "synthetic",
+              "service_revision": "synthetic-revision", "scheduler_job_sha256": "a" * 64,
+              "report_uri": f"gs://synthetic/reports/initial-enrollment/{request_id}.json#1", "report_generation": "1",
+              "request_id": request_id}
+    source = {"source_receipt_records": [record], "expectations": []}
+    scope = {"kind": "synthetic", "currency": "USD", "window_start": None, "window_end": "one",
+             "limit_per_namespace": None, "gateway_availability": None, "truncated": None}
+    surfaces = {name: {"status": "complete", "items": [], "scope": scope} for name in
+                ("positions", "cash", "open_orders", "recent_executions", "local_execution_ledger")}
+    facts = {"schema_version": "ibkr_initial_facts.v1", "account_scope_sha256": _digest("a"),
+             "observed_at": "2026-08-31T01:00:00Z", "surfaces": surfaces}
+    candidate = evaluate_initial_receipt({"evidence": original.to_dict()}, facts, now=start,
+                                         private_source_sha256=initial_private_source_sha256(record))
+    candidate_value = candidate["candidate"]
+    confirmation = {"schema_version": "qsl_initial_enrollment_confirmation.v1", "mode": "initial_enrollment",
+                    "recovery_id": "synthetic-recovery", "candidate_sha256": candidate_value["candidate_sha256"],
+                    "facts_sha256": candidate_value["facts_sha256"], "confirmed_at": "2026-08-31T01:01:00Z",
+                    "confirmed_by": "synthetic-user", "no_order": True, "execution_authority_granted": False}
+    confirmation["confirmation_sha256"] = hashlib.sha256(json.dumps(confirmation, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    response = {"ok": True, "schema_version": "qsl_initial_enrollment_controller_read.v1",
+                "recovery": {"mode": "initial_enrollment", "recovery_id": "synthetic-recovery",
+                             "candidate_sha256": candidate_value["candidate_sha256"], "facts_sha256": candidate_value["facts_sha256"]},
+                "confirmation": confirmation, "policy": {"no_order": True, "execution_authority_granted": False,
+                                                           "controller_must_reverify": True}}
+    current = _evidence(observed_at=start + timedelta(minutes=2))
+    current_facts = {**facts, "observed_at": "2026-08-31T01:02:00Z",
+                     "surfaces": {name: {**item, "scope": {**item["scope"], "window_end": "two"}}
+                                  for name, item in surfaces.items()}}
+    current_digest = hashlib.sha256(json.dumps(current_facts, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    kwargs = dict(candidate_payload=candidate, **source, confirmation_payload=response,
+                  current_receipt_payload={"diagnostics": {"broker_reconciliation": {"evidence": current.to_dict()},
+                                                           "initial_enrollment_private": {"facts_sha256": current_digest}}},
+                  runtime_target_payload=_runtime_target(), initial_facts=facts, current_initial_facts=current_facts,
+                  recovery_id="synthetic-recovery", now=start + timedelta(minutes=3))
+    result = verify_reconciliation_recovery(**kwargs)
+    assert result["ready_for_atomic_state_transition"] is True
+    assert result["policy"]["state_write_attempted"] is False
+    changed = {**current_facts, "account_scope_sha256": _digest("9")}
+    with pytest.raises(ValueError, match="facts binding mismatch"):
+        verify_reconciliation_recovery(**{**kwargs, "current_initial_facts": changed})
+    changed_scope = {**current_facts, "surfaces": {**current_facts["surfaces"], "cash": {
+        **current_facts["surfaces"]["cash"], "scope": {**scope, "currency": "EUR"}}}}
+    changed_digest = hashlib.sha256(json.dumps(changed_scope, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    with pytest.raises(ValueError, match="scope mismatch"):
+        verify_reconciliation_recovery(**{**kwargs, "current_initial_facts": changed_scope,
+            "current_receipt_payload": {"diagnostics": {"broker_reconciliation": {"evidence": current.to_dict()},
+                                                        "initial_enrollment_private": {"facts_sha256": changed_digest}}}})
+    altered_values = {k: v for k, v in current.to_dict().items() if k not in {"schema_version", "evidence_sha256"}}
+    for field in ("cash_sha256", "positions_sha256", "open_orders_sha256"):
+        altered = build_broker_reconciliation_evidence(**{**altered_values, field: _digest("9")})
+        result = verify_reconciliation_recovery(**{**kwargs,
+            "current_receipt_payload": {"diagnostics": {"broker_reconciliation": {"evidence": altered.to_dict()},
+                                                        "initial_enrollment_private": {"facts_sha256": current_digest}}}})
+        assert result["ready_for_atomic_state_transition"] is False
 
 
 def test_verify_only_returns_a_plan_without_attempting_state_write() -> None:

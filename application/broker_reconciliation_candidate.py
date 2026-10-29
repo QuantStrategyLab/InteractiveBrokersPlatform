@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -373,6 +374,33 @@ def validate_reconciliation_candidate_sources(
     if root != candidate.source_receipts_sha256:
         raise ValueError("candidate source receipts binding mismatch")
     return candidate
+
+
+def initial_private_source_sha256(record: Mapping[str, object]) -> str:
+    """Bind one verified workflow, scheduler, serving revision and immutable private object."""
+    fields = {"schema_version", "repository", "workflow_path", "workflow_run_id", "workflow_run_attempt",
+              "workflow_head_sha", "service_name", "service_revision", "scheduler_job_sha256",
+              "report_uri", "report_generation", "request_id"}
+    if not isinstance(record, Mapping) or set(record) != fields or record.get("schema_version") != "ibkr_initial_private_source.v1":
+        raise ValueError("initial private source is invalid")
+    if (record.get("repository") != "QuantStrategyLab/InteractiveBrokersPlatform"
+            or record.get("workflow_path") != ".github/workflows/collect-reconciliation-evidence.yml"
+            or record.get("workflow_run_attempt") != "1"):
+        raise ValueError("initial private source is invalid")
+    _canonical_git_sha(record.get("workflow_head_sha"), field_name="workflow_head_sha")
+    _canonical_sha256(record.get("scheduler_job_sha256"), field_name="scheduler_job_sha256")
+    for field in ("workflow_run_id", "report_generation"):
+        if not isinstance(record.get(field), str) or not record[field].isascii() or not record[field].isdigit() or int(record[field]) <= 0:
+            raise ValueError("initial private source is invalid")
+    for field in ("service_name", "service_revision", "report_uri", "request_id"):
+        _canonical_text(record.get(field), field_name=field)
+    request_id = record["request_id"]
+    if (not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", request_id)
+            or not str(record["report_uri"]).startswith("gs://")
+            or not str(record["report_uri"]).endswith(f"/initial-enrollment/{request_id}.json#{record['report_generation']}")):
+        raise ValueError("initial private source is invalid")
+    return hashlib.sha256(json.dumps(dict(record), ensure_ascii=True, sort_keys=True,
+                                     separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
 
 __all__ = [

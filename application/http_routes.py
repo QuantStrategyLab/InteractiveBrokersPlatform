@@ -36,6 +36,7 @@ from google.api_core.exceptions import PreconditionFailed
 from google.cloud import storage
 
 from application.account_facts import build_ibkr_account_facts
+from application.broker_reconciliation import build_initial_enrollment_facts
 from application.reconciliation_reporting import reconciliation_log_comparison
 
 
@@ -356,12 +357,15 @@ def _handle_reconciliation():
             read_only=True,
             validate_trading_permissions=False,
         )
+        initial_enrollment = request.headers.get("X-QSL-Initial-Enrollment") == "v1"
+        initial_args = {"initial_enrollment": True} if initial_enrollment else {}
         observations = main.collect_read_only_reconciliation_observations(
             ib,
             account_ids=main.ACCOUNT_IDS,
             fetch_portfolio_snapshot=main.fetch_portfolio_snapshot,
             market_currency=main.MARKET_CURRENCY,
             cash_only_execution=main.CASH_ONLY_EXECUTION,
+            **initial_args,
         )
         candidate = main.build_reconciliation_candidate(
             observations=observations,
@@ -370,6 +374,7 @@ def _handle_reconciliation():
             strategy_profile=main.STRATEGY_PROFILE,
             account_group=main.ACCOUNT_GROUP,
             project_id=main.PROJECT_ID,
+            **initial_args,
         )
         payload = candidate.to_safe_dict()
         main.finalize_runtime_report(
@@ -382,7 +387,22 @@ def _handle_reconciliation():
             },
             diagnostics={"broker_reconciliation": payload},
         )
+        if initial_enrollment:
+            facts, facts_sha256 = build_initial_enrollment_facts(
+                observations, observed_at=candidate.evidence.observed_at,
+                ledger_records_count=candidate.execution_ledger_records_count,
+                ledger_truncated=candidate.initial_ledger_truncated,
+            )
+            # Only the existing private report receives facts; HTTP and logs stay redacted.
+            report.setdefault("diagnostics", {})["initial_enrollment_private"] = {
+                "facts": facts, "facts_sha256": facts_sha256,
+            }
         comparison_status, log_blockers, comparison_fields = reconciliation_log_comparison(candidate)
+        if initial_enrollment:
+            main.log_runtime_event(log_context, "broker_reconciliation_completed",
+                                   message="Initial enrollment read completed", execution_window="reconciliation",
+                                   account_identity_match=observations.account_identity_match)
+            return json.dumps({"status": "observed", "no_order": True}), 200, {"Content-Type": "application/json"}
         main.log_runtime_event(
             log_context,
             "broker_reconciliation_completed",

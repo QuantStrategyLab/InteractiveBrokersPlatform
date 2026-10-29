@@ -216,7 +216,7 @@ def _receipt_account_match(run_id, profile, service, revision, revision_labels, 
     return matched
 
 
-def observe(profile, service_name, target, slots, project, region, reader=_read, run_id=None, receipt_reader=_gh, *, private_output=None):
+def observe(profile, service_name, target, slots, project, region, reader=_read, run_id=None, receipt_reader=_gh, *, private_output=None, initial_private=False):
     candidate = [(slot, row) for slot, row in slots.items()
                  if row["project_id"] == project and all(
                      tuple(row[field]) == account_selector(target.get(field)) if field == "account_selector"
@@ -256,10 +256,15 @@ def observe(profile, service_name, target, slots, project, region, reader=_read,
         after = reader("services", service_name, project, region)
         require(after.get("metadata", {}).get("resourceVersion") == resource_version
                 and _serving(after) == revision_name, "serving_changed_during_read")
+        if initial_private and private_output is not None:
+            private_output.update(runtime_target=runtime, target_id=configured.get("target_id"),
+                                  account_selector=configured["account_selector"], service_revision=revision_name)
+            return {**result, "status": "initial_metadata_verified", "reason": "binding_verified"}
         if run_id:
             matched = result["observed_group_account_match"]
             if matched and private_output is not None:
-                private_output.update(record=captured_receipt[0][0], archive=captured_receipt[0][1], runtime_target=runtime)
+                private_output.update(record=captured_receipt[0][0], archive=captured_receipt[0][1],
+                                      runtime_target=runtime, target_id=configured.get("target_id"))
             return {**result, "status": "matched_at_observation" if matched else "mismatched",
                     "reason": "receipt_account_binding_verified" if matched else "receipt_account_mismatch"}
         if result["actual_group_account_match"] is not True:

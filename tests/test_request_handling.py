@@ -1758,6 +1758,58 @@ def test_handle_reconciliation_persists_and_logs_only_redacted_failure_fields(
     )
 
 
+def test_initial_facts_use_only_configured_private_report_destination(strategy_module, monkeypatch):
+    from google.cloud import storage
+    saved = []
+    blob = types.SimpleNamespace(generation="123", upload_from_string=lambda body, **kwargs: saved.append((body, kwargs)))
+    monkeypatch.setattr(storage, "Client", lambda: types.SimpleNamespace(bucket=lambda _name: types.SimpleNamespace(blob=lambda _name: blob)), raising=False)
+    adapters = types.SimpleNamespace(
+        report_gcs_prefix_uri="gs://synthetic-private",
+        persist_execution_report=lambda report: saved.append(report) or "gs://synthetic-private/report",
+    )
+    monkeypatch.setattr(strategy_module, "build_composer", lambda **_kw: types.SimpleNamespace(
+        build_reporting_adapters=lambda: adapters,
+    ))
+    private = {"facts": {"synthetic": "display-only"}, "facts_sha256": "a" * 64}
+    adapters.report_gcs_prefix_uri = "gs://synthetic-private/reports"
+    report = {"diagnostics": {"initial_enrollment_private": private,
+                              "reconciliation_request_id": "853a2e08-9396-4fe8-89ee-59fb17e40a1d"}, "errors": []}
+    assert strategy_module.persist_reconciliation_report(report).endswith("#123")
+    assert json.loads(saved[0][0])["diagnostics"]["initial_enrollment_private"] == private
+    assert saved[0][1]["if_generation_match"] == 0 and saved[0][1]["retry"] is None
+    adapters.report_gcs_prefix_uri = None
+    with pytest.raises(RuntimeError, match="private report destination"):
+        strategy_module.persist_reconciliation_report(report)
+    assert len(saved) == 1
+
+
+def test_initial_reconciliation_returns_no_private_facts_or_digests(strategy_module, monkeypatch, capsys):
+    sentinel = "synthetic-private-facts-or-digest"
+    logs, saved = [], []
+    observations = types.SimpleNamespace(account_identity_match=True)
+    candidate = types.SimpleNamespace(evidence=types.SimpleNamespace(observed_at=datetime.now(timezone.utc)),
+        execution_ledger_records_count=0, initial_ledger_truncated=False, permits_active_lkg=False,
+        recovery_blockers=(), expected_digests_configured=False,
+        to_safe_dict=lambda: {"synthetic_digest": sentinel})
+    monkeypatch.setattr(strategy_module, "RUNTIME_SETTINGS", types.SimpleNamespace(runtime_target=types.SimpleNamespace(platform_id="ibkr")))
+    monkeypatch.setattr(strategy_module, "build_request_log_context", lambda: types.SimpleNamespace())
+    monkeypatch.setattr(strategy_module, "build_execution_report", lambda *_a, **_kw: {"diagnostics": {}, "summary": {}, "errors": []})
+    monkeypatch.setattr(strategy_module, "connect_ib", lambda **_kw: types.SimpleNamespace(disconnect=lambda: None))
+    monkeypatch.setattr(strategy_module, "collect_read_only_reconciliation_observations", lambda *_a, **_kw: observations)
+    monkeypatch.setattr(strategy_module, "build_reconciliation_candidate", lambda **_kw: candidate)
+    monkeypatch.setattr(strategy_module, "finalize_runtime_report", lambda report, **kw: report["diagnostics"].update(kw["diagnostics"]))
+    monkeypatch.setattr(strategy_module, "log_runtime_event", lambda *_a, **kw: logs.append(kw))
+    monkeypatch.setattr(strategy_module, "persist_reconciliation_report", lambda report: saved.append(report) or "gs://synthetic-private/report#1")
+    monkeypatch.setattr(http_routes, "build_initial_enrollment_facts", lambda *_a, **_kw: ({"value": sentinel}, "a" * 64))
+    monkeypatch.setattr(http_routes, "reconciliation_log_comparison", lambda _candidate: ("not_compared", [], {}))
+    with strategy_module.app.test_request_context("/reconcile", method="POST", headers={
+            "X-CloudScheduler-JobName": "ibkr-reconcile-synthetic-1-1", "X-QSL-Initial-Enrollment": "v1"}):
+        body, status, _headers = strategy_module.handle_reconciliation()
+    assert status == 200 and json.loads(body) == {"status": "observed", "no_order": True}
+    assert sentinel not in body and sentinel not in json.dumps(logs) and sentinel not in capsys.readouterr().out
+    assert saved[0]["diagnostics"]["initial_enrollment_private"]["facts"]["value"] == sentinel
+
+
 def test_handle_reconciliation_hides_disconnect_and_persistence_error_details(
     strategy_module,
     monkeypatch,

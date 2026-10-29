@@ -15,8 +15,11 @@ intent; it is not a broker or execution endpoint.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import re
+import subprocess
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,10 +28,11 @@ from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from application.broker_reconciliation_candidate import (
-    SourceReceiptExpectation, validate_reconciliation_candidate_sources,
+    SourceReceiptExpectation, initial_private_source_sha256, validate_reconciliation_candidate_sources,
 )
 from scripts.build_reconciliation_baseline_candidate import (
-    _load_payload, load_authenticated_source_inputs, validate_authenticated_candidate,
+    _load_payload, _strict_json, evaluate_initial_receipt, extract_reconciliation_evidence, initial_facts_from_private_report,
+    load_authenticated_source_inputs, validate_authenticated_candidate,
 )
 
 from quant_platform_kit.common.broker_reconciliation_enrollment import (
@@ -44,6 +48,93 @@ from quant_platform_kit.common.reconciliation_recovery import (
 RECONCILIATION_RECOVERY_SYNC_TOKEN_ENV = "RECONCILIATION_RECOVERY_SYNC_TOKEN"
 RECONCILIATION_RECOVERY_PRIVATE_EVIDENCE_SCHEMA_VERSION = "ibkr_reconciliation_recovery_private_evidence.v1"
 _SHA256_LENGTH = 64
+
+
+def build_trusted_initial_snapshot(env: Mapping[str, str], run_id: str, *, read_report=None, read_run=None,
+                                   private_output: dict[str, object] | None = None) -> dict[str, object]:
+    """Read the existing private report after verifying its exact protected source."""
+    from scripts.diagnose_ibkr_flex_runtime_binding import configuration, observe, _gh
+    from quant_platform_kit.common.live_continuity import build_live_continuity, runtime_target_fingerprint
+
+    slots, targets, project, region = configuration(env)
+    if len(targets) != 1:
+        raise ValueError("initial enrollment requires one current target")
+    profile, (service, target) = next(iter(targets.items()))
+    private = {}
+    if not isinstance(run_id, str) or not re.fullmatch(r"[0-9]{1,20}", run_id):
+        raise ValueError("initial enrollment source run is invalid")
+    try:
+        run = _strict_json(_gh(f"actions/runs/{run_id}") if read_run is None else read_run(run_id))
+    except (ValueError, RuntimeError, TypeError):
+        raise ValueError("initial enrollment source run unavailable") from None
+    if (not isinstance(run, dict) or run.get("id") != int(run_id) or run.get("status") != "completed"
+            or run.get("conclusion") != "success" or run.get("head_branch") != "main" or run.get("run_attempt") != 1
+            or run.get("event") != "workflow_dispatch" or run.get("path") != ".github/workflows/collect-reconciliation-evidence.yml"
+            or (run.get("repository") or {}).get("full_name") != "QuantStrategyLab/InteractiveBrokersPlatform"):
+        raise ValueError("initial enrollment source run is invalid")
+    observed = observe(profile, service, target, slots, project, region, private_output=private, initial_private=True)
+    if observed.get("status") != "initial_metadata_verified" or not private.get("target_id"):
+        raise ValueError("initial enrollment protected source mismatch")
+    job_hash = hashlib.sha256(f"ibkr-reconcile-{profile}-{run_id}-1".encode()).hexdigest()
+    if read_report is None:
+        query = (f'resource.type="cloud_run_revision" AND resource.labels.service_name="{service}" '
+                 f'AND resource.labels.revision_name="{private["service_revision"]}" '
+                 f'AND textPayload:"reconciliation_receipt_ready scheduler_job_sha256={job_hash} "')
+        try:
+            result = subprocess.run(["gcloud", "logging", "read", query, "--project", project,
+                                     "--freshness=1h", "--limit=10", "--format=json"],
+                                    capture_output=True, timeout=30, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            raise ValueError("initial private report lookup failed") from None
+        if result.returncode:
+            raise ValueError("initial private report lookup failed")
+        try:
+            entries = json.loads(result.stdout)
+            pattern = re.compile(r"^reconciliation_receipt_ready scheduler_job_sha256=" + re.escape(job_hash) + r" report_uri=(gs://\S+)$")
+            uris = [match.group(1) for entry in entries if isinstance(entry, dict)
+                    and (match := pattern.fullmatch(str(entry.get("textPayload", ""))))]
+            if len(uris) != 1:
+                raise ValueError()
+            response = subprocess.run(["gcloud", "storage", "cat", uris[0]], capture_output=True, timeout=30, check=False)
+            if response.returncode or len(response.stdout) > 4 * 1024 * 1024:
+                raise ValueError()
+            report = _strict_json(response.stdout)
+        except (TypeError, ValueError, KeyError, OSError, subprocess.TimeoutExpired):
+            raise ValueError("initial private report unavailable") from None
+    else:
+        uris, report = read_report(job_hash)
+    match = re.fullmatch(r"(gs://\S+/initial-enrollment/([0-9a-f-]{36})\.json#([0-9]+))", uris[0]) if len(uris) == 1 else None
+    if not match:
+        raise ValueError("initial private report generation unavailable")
+    record = {"schema_version": "ibkr_initial_private_source.v1", "repository": run["repository"]["full_name"],
+              "workflow_path": run["path"], "workflow_run_id": run_id, "workflow_run_attempt": "1",
+              "workflow_head_sha": run.get("head_sha"), "service_name": service,
+              "service_revision": private["service_revision"], "scheduler_job_sha256": job_hash,
+              "report_uri": match.group(1), "request_id": match.group(2), "report_generation": match.group(3)}
+    source_sha256 = initial_private_source_sha256(record)
+    facts = initial_facts_from_private_report(report, scheduler_job_sha256=job_hash, request_id=record["request_id"])
+    evidence = extract_reconciliation_evidence(report)
+    account_digest = hashlib.sha256(json.dumps({"account_ids": sorted(private["account_selector"])}, ensure_ascii=True,
+                                              sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    if evidence.account_scope_sha256 != account_digest or evidence.strategy_profile != profile or evidence.platform_id != "ibkr":
+        raise ValueError("initial enrollment account binding mismatch")
+    rebuilt = evaluate_initial_receipt(report, facts, private_source_sha256=source_sha256)
+    candidate = rebuilt["candidate"]
+    runtime_target = private["runtime_target"]
+    continuity = build_live_continuity(runtime_target.get("live_continuity"))
+    continuity.assert_matches_target(runtime_target)
+    if (continuity.state != "RECONCILE_ONLY" or continuity.baseline_id != candidate["baseline_id"]
+            or runtime_target_fingerprint(runtime_target) != candidate["baseline_target_sha256"]):
+        raise ValueError("initial enrollment current target mismatch")
+    if private_output is not None:
+        private_output.update(record=record, receipt=report,
+                              runtime_target=runtime_target, facts=facts, candidate_payload=rebuilt)
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return {"schema_version": "qsl_reconciliation_recovery_source_snapshot.v1",
+            "source_id": f"ibkr.initial.{profile}", "generated_at": timestamp, "computed_at": timestamp,
+            "data_status": "ready", "recoveries": [{"mode": "initial_enrollment",
+            "recovery_id": f"initial-{candidate['candidate_sha256']}", "target_id": private["target_id"],
+            "candidate": candidate, "facts": facts}], "errors": []}
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -340,12 +431,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Build or explicitly publish a redacted, non-authorising IBKR recovery source snapshot."
     )
-    parser.add_argument("--candidate", type=Path, required=True, help="Private output from build_reconciliation_baseline_candidate.py")
+    parser.add_argument("--candidate", type=Path, help="Private output from build_reconciliation_baseline_candidate.py")
     parser.add_argument("--dual-review", type=Path, help="Optional private advisory review result")
-    parser.add_argument("--source-archive", action="append", type=Path, required=True)
-    parser.add_argument("--source-records", type=Path, required=True)
-    parser.add_argument("--source-expectations", type=Path, required=True)
-    parser.add_argument("--recovery-id", required=True, help="Opaque legacy runtime recovery identifier")
+    parser.add_argument("--source-archive", action="append", type=Path)
+    parser.add_argument("--source-records", type=Path)
+    parser.add_argument("--source-expectations", type=Path)
+    parser.add_argument("--recovery-id", help="Opaque legacy runtime recovery identifier")
+    parser.add_argument("--trusted-initial-run", help="One completed existing initial evidence workflow run")
     parser.add_argument("--source-id", default="ibkr.reconciliation_recovery")
     parser.add_argument("--now", help="Optional ISO-8601 time used for deterministic validation")
     parser.add_argument(
@@ -358,6 +450,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     try:
+        if args.trusted_initial_run:
+            if (args.candidate or args.source_archive or args.source_records or args.source_expectations or args.recovery_id
+                    or args.dual_review or args.archive_gcs_uri or args.now):
+                raise ValueError("trusted initial source arguments are invalid")
+            snapshot = build_trusted_initial_snapshot(os.environ, args.trusted_initial_run)
+            if args.publish_url:
+                publish_recovery_source_snapshot(snapshot, publish_url=args.publish_url,
+                                                 token=os.environ.get(RECONCILIATION_RECOVERY_SYNC_TOKEN_ENV, ""))
+            print(json.dumps({"status": "published" if args.publish_url else "prepared"}))
+            return 0
+        if not all((args.candidate, args.source_archive, args.source_records, args.source_expectations, args.recovery_id)):
+            raise ValueError("source candidate and authenticated source inputs are required")
         records, expectations, payloads = load_authenticated_source_inputs(
             args.source_records, args.source_expectations, args.source_archive,
         )

@@ -12,6 +12,7 @@ broker setting, an execution marker, or an order.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -28,9 +29,10 @@ from quant_platform_kit.common.reconciliation_recovery import (
     evaluate_reconciliation_recovery_activation,
 )
 
-from application.broker_reconciliation_candidate import SourceReceiptExpectation
+from application.broker_reconciliation_candidate import SourceReceiptExpectation, initial_private_source_sha256
 from scripts.build_reconciliation_baseline_candidate import (
-    _load_payload, extract_reconciliation_evidence, load_authenticated_source_inputs, validate_authenticated_candidate,
+    _load_payload, extract_reconciliation_evidence,
+    load_authenticated_source_inputs, validate_authenticated_candidate,
 )
 from scripts.publish_reconciliation_recovery_source import (
     _load_json,
@@ -128,7 +130,20 @@ def _verify_console_response(
     *,
     recovery_id: str,
     candidate: Any,
-) -> ReconciliationRecoveryConfirmation:
+) -> ReconciliationRecoveryConfirmation | Mapping[str, Any]:
+    if candidate.schema_version == "broker_reconciliation_baseline_candidate.v3":
+        if payload.get("schema_version") != "qsl_initial_enrollment_controller_read.v1" or payload.get("ok") is not True:
+            raise ValueError("initial enrollment confirmation response is invalid")
+        if payload.get("policy") != {"no_order": True, "execution_authority_granted": False, "controller_must_reverify": True}:
+            raise ValueError("initial enrollment confirmation policy is invalid")
+        recovery = payload.get("recovery")
+        if recovery != {"mode": "initial_enrollment", "recovery_id": recovery_id,
+                        "candidate_sha256": candidate.candidate_sha256, "facts_sha256": candidate.facts_sha256}:
+            raise ValueError("initial enrollment confirmation binding mismatch")
+        confirmation = payload.get("confirmation")
+        if not isinstance(confirmation, Mapping):
+            raise ValueError("initial enrollment confirmation is missing")
+        return confirmation
     if payload.get("schema_version") != CONTROLLER_READ_SCHEMA_VERSION:
         raise ValueError("controller confirmation response has an unsupported schema_version")
     policy = payload.get("policy")
@@ -173,6 +188,8 @@ def verify_reconciliation_recovery(
     confirmation_payload: Mapping[str, Any],
     current_receipt_payload: Mapping[str, Any],
     runtime_target_payload: Mapping[str, Any],
+    initial_facts: Mapping[str, Any] | None = None,
+    current_initial_facts: Mapping[str, Any] | None = None,
     recovery_id: str,
     now: datetime | None = None,
 ) -> dict[str, object]:
@@ -182,10 +199,42 @@ def verify_reconciliation_recovery(
     this function intentionally has no broker, Cloud Run, or state-write port.
     """
 
-    candidate = extract_baseline_candidate(candidate_payload, source_receipt_records=source_receipt_records, expectations=expectations)
+    candidate_data = candidate_payload.get("candidate")
+    if isinstance(candidate_data, Mapping) and candidate_data.get("mode") == "initial_enrollment":
+        from quant_platform_kit.common.broker_reconciliation_enrollment import BrokerReconciliationBaselineCandidate
+        candidate = BrokerReconciliationBaselineCandidate.from_dict(candidate_data)
+        if len(source_receipt_records) != 1 or initial_private_source_sha256(source_receipt_records[0]) != candidate.source_receipts_sha256:
+            raise ValueError("initial enrollment private source mismatch")
+    else:
+        candidate = extract_baseline_candidate(candidate_payload, source_receipt_records=source_receipt_records, expectations=expectations)
     # Validate any supplied advisory receipt without treating model votes as
     # source verification or authority. Missing review never fabricates approval.
-    extract_bound_dual_review(dual_review_payload, candidate=candidate)
+    if candidate.schema_version == "broker_reconciliation_baseline_candidate.v3":
+        if dual_review_payload is not None:
+            raise ValueError("initial enrollment does not use dual review")
+        if not isinstance(initial_facts, Mapping) or not isinstance(current_initial_facts, Mapping):
+            raise ValueError("initial enrollment private facts are required")
+        def facts_digest(facts):
+            return hashlib.sha256(json.dumps(facts, ensure_ascii=False, sort_keys=True,
+                                             separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+        current_private = (current_receipt_payload.get("diagnostics") or {}).get("initial_enrollment_private")
+        if (facts_digest(initial_facts) != candidate.facts_sha256 or not isinstance(current_private, Mapping)
+                or facts_digest(current_initial_facts) != current_private.get("facts_sha256")):
+            raise ValueError("initial enrollment facts binding mismatch")
+        initial_surfaces, current_surfaces = initial_facts.get("surfaces"), current_initial_facts.get("surfaces")
+        if not isinstance(initial_surfaces, Mapping) or not isinstance(current_surfaces, Mapping) or set(initial_surfaces) != set(current_surfaces):
+            raise ValueError("initial enrollment source scope mismatch")
+        for name, first in initial_surfaces.items():
+            current = current_surfaces[name]
+            if not isinstance(first, Mapping) or not isinstance(current, Mapping) or current.get("status") != "complete":
+                raise ValueError("initial enrollment current coverage is incomplete")
+            first_scope, current_scope = first.get("scope"), current.get("scope")
+            if not isinstance(first_scope, Mapping) or not isinstance(current_scope, Mapping):
+                raise ValueError("initial enrollment source scope mismatch")
+            if {k: v for k, v in first_scope.items() if k != "window_end"} != {k: v for k, v in current_scope.items() if k != "window_end"}:
+                raise ValueError("initial enrollment source scope mismatch")
+    else:
+        extract_bound_dual_review(dual_review_payload, candidate=candidate)
     confirmation = _verify_console_response(
         confirmation_payload,
         recovery_id=recovery_id,
@@ -207,7 +256,7 @@ def verify_reconciliation_recovery(
         "schema_version": VERIFY_ONLY_SCHEMA_VERSION,
         "recovery_id": recovery_id,
         "candidate_sha256": candidate.candidate_sha256,
-        "confirmation_sha256": confirmation.confirmation_sha256,
+        "confirmation_sha256": confirmation.get("confirmation_sha256") if isinstance(confirmation, Mapping) else confirmation.confirmation_sha256,
         "ready_for_atomic_state_transition": not findings and plan is not None,
         "findings": list(findings),
         "transition_plan": plan.to_dict() if plan is not None else None,
@@ -272,11 +321,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Verify a confirmed IBKR legacy recovery without changing broker or runtime state."
     )
-    parser.add_argument("--candidate", type=Path, required=True, help="Private QPK baseline-candidate output")
+    parser.add_argument("--candidate", type=Path, help="Private QPK baseline-candidate output")
     parser.add_argument("--dual-review", type=Path, help="Optional private advisory review result")
-    parser.add_argument("--source-archive", action="append", type=Path, required=True)
-    parser.add_argument("--source-records", type=Path, required=True)
-    parser.add_argument("--source-expectations", type=Path, required=True)
+    parser.add_argument("--source-archive", action="append", type=Path)
+    parser.add_argument("--source-records", type=Path)
+    parser.add_argument("--source-expectations", type=Path)
+    parser.add_argument("--trusted-initial-source-run", help="The original completed initial evidence run")
+    parser.add_argument("--archive-initial-state-ledger", action="store_true", help="Create the existing private state ledger after successful confirmation verification")
     parser.add_argument("--current-source-archive", type=Path)
     parser.add_argument("--current-source-records", type=Path)
     parser.add_argument("--current-source-expectations", type=Path)
@@ -284,10 +335,49 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--current-receipt", type=Path, help="Optional exact copy of authenticated fresh receipt")
     parser.add_argument("--runtime-target", type=Path, help="Read-only deployed RUNTIME_TARGET_JSON snapshot; omitted for trusted current receipt")
     parser.add_argument("--confirmation-url", required=True, help="QRS private controller-read HTTPS endpoint")
-    parser.add_argument("--recovery-id", required=True)
+    parser.add_argument("--recovery-id")
     parser.add_argument("--now", help="Optional ISO-8601 time used for deterministic validation")
     args = parser.parse_args(arguments)
     try:
+        if args.trusted_initial_source_run:
+            if (not args.current_trusted_run_id or args.candidate or args.source_archive or args.source_records
+                    or args.source_expectations or args.recovery_id or args.dual_review or args.current_source_records
+                    or args.current_source_expectations or args.current_source_archive or args.current_receipt
+                    or args.runtime_target or args.now):
+                raise ValueError("trusted initial verification arguments are invalid")
+            from scripts.publish_reconciliation_recovery_source import build_trusted_initial_snapshot
+            original, current = {}, {}
+            snapshot = build_trusted_initial_snapshot(os.environ, args.trusted_initial_source_run, private_output=original)
+            current_snapshot = build_trusted_initial_snapshot(os.environ, args.current_trusted_run_id, private_output=current)
+            item, current_item = snapshot["recoveries"][0], current_snapshot["recoveries"][0]
+            if item["target_id"] != current_item["target_id"]:
+                raise ValueError("initial enrollment current target mismatch")
+            confirmation = read_console_confirmation(confirmation_url=args.confirmation_url, recovery_id=item["recovery_id"],
+                token=os.environ.get(RECONCILIATION_RECOVERY_CONTROLLER_TOKEN_ENV, ""))
+            result = verify_reconciliation_recovery(candidate_payload=original["candidate_payload"],
+                source_receipt_records=[original["record"]], expectations=[],
+                confirmation_payload=confirmation, current_receipt_payload=current["receipt"],
+                runtime_target_payload=current["runtime_target"], initial_facts=original["facts"],
+                current_initial_facts=current["facts"], recovery_id=item["recovery_id"])
+            ledger_archived = False
+            if args.archive_initial_state_ledger and result["ready_for_atomic_state_transition"]:
+                from scripts.reconciliation_recovery_state_ledger import build_recovery_state_ledger
+                from scripts.publish_reconciliation_recovery_state_ledger import archive_recovery_state_ledger
+                ledger = build_recovery_state_ledger(verification=result, service_name=original["record"]["service_name"])
+                uri = os.environ.get("IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_URI", "")
+                if not uri.startswith("gs://") or not uri.endswith(f"/reconciliation-recovery/ibkr/state/initial-run-{args.trusted_initial_source_run}.json"):
+                    raise ValueError("initial private state ledger destination is invalid")
+                archive_recovery_state_ledger(ledger, state_ledger_uri=uri)
+                ledger_archived = True
+            # The plan and account-bound hashes stay in private memory until a protected consumer is invoked.
+            print(json.dumps({"status": "verified" if result["ready_for_atomic_state_transition"] else "blocked",
+                              "baseline_state_write": False, "private_ledger_write": "created" if ledger_archived else "not_attempted",
+                              "findings": result["findings"]}))
+            return 0 if result["ready_for_atomic_state_transition"] else 2
+        if args.archive_initial_state_ledger:
+            raise ValueError("initial state ledger requires trusted initial verification")
+        if not all((args.candidate, args.source_archive, args.source_records, args.source_expectations, args.recovery_id)):
+            raise ValueError("source candidate and authenticated source inputs are required")
         records, expectations, payloads = load_authenticated_source_inputs(
             args.source_records, args.source_expectations, args.source_archive,
         )
