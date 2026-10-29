@@ -55,3 +55,23 @@ def test_missing_identity_and_bad_origin_stop_before_archive(monkeypatch):
     with pytest.raises(ValueError): publisher.publish_once(**kwargs)
     kwargs.update(token="fixture-token", origin="http://fixture.example")
     with pytest.raises(ValueError): publisher.publish_once(**kwargs)
+
+
+def test_token_preflight_only_accepts_fixed_parse_error_and_never_retries(monkeypatch):
+    from io import BytesIO
+    from urllib.error import HTTPError
+
+    responses = [(400, {"ok": False, "error": "request body must be valid JSON"}, True),
+                 (400, {"ok": False, "error": "other"}, False),
+                 (401, {"ok": False, "error": "request body must be valid JSON"}, False)]
+    calls = []
+    class Opener:
+        def open(self, request, timeout):
+            calls.append(request)
+            status, body, _ = responses[len(calls) - 1]
+            raise HTTPError(request.full_url, status, "", {}, BytesIO(json.dumps(body).encode()))
+    monkeypatch.setattr(publisher, "build_opener", lambda *_: Opener())
+    for _, _, expected in responses:
+        assert publisher.verify_receiver_token(token="synthetic-token", origin="https://fixture.example") is expected
+    assert len(calls) == len(responses)
+    assert all(request.data == b"{" and request.get_method() == "POST" for request in calls)
