@@ -145,16 +145,21 @@ def check(
     installed: Mapping[str, str], targets: Iterable[tuple[str, Mapping[str, Any]]],
     *, report: dict[str, Any] | None = None,
 ) -> list[str]:
-    """Keep validation decisions unchanged; optionally collect sanitized coverage."""
+    """Validate installed revisions and optionally collect sanitized coverage."""
     report = report if report is not None else new_report()
     failures: list[str] = []
     values = set(installed.values())
+    targets = list(targets)
     for label in ("lockfile", "image", "explicit"):
         if label in installed:
             revision = safe_revision(installed[label])
             report["installed_revisions"][label] = revision
             print(f"installed_ues_revision[{label}]={revision or 'unavailable'}")
-    targets = list(targets)
+    if not installed or any(not safe_revision(value) for value in installed.values()):
+        report["status"] = "error"
+        report["target_counts"]["uncomputable"] = len(targets)
+        failures.append("installed UES revision is invalid or unavailable")
+        return failures
     if len(values) != 1:
         report["status"] = "mismatch"
         report["target_counts"]["uncomputable"] = len(targets)
@@ -170,7 +175,9 @@ def check(
             report["target_counts"]["not_covered"] += 1
             print(f"{alias}: not_covered (no revision binding; not blocked)")
             continue
-        state = "verified"
+        # A matching partial declaration does not establish both bindings.
+        # Keep the existing mismatch decisions; this only changes coverage.
+        state = "verified" if len(expected) == 2 else "not_covered"
         for field, value in sorted(expected.items()):
             ok = value == revision
             print(f"{alias} {field}={safe_revision(value) or 'unavailable'} match={ok}")

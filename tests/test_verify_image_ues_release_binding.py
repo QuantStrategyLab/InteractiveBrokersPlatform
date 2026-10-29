@@ -129,9 +129,9 @@ def test_image_failures_keep_exit_code_and_redact(monkeypatch, tmp_path, capsys,
 
 
 @pytest.mark.parametrize("targets,status,code,counts", [
-    ([_target("secret-service", release=OLD)], "verified", 0, (1, 0, 0)),
+    ([_target("secret-service", release=OLD)], "not_covered", 0, (0, 0, 1)),
     ([_target("secret-service")], "not_covered", 0, (0, 0, 1)),
-    ([_target("secret-service", release=OLD), _target("secret-unbound")], "not_covered", 0, (1, 0, 1)),
+    ([_target("secret-service", release=OLD), _target("secret-unbound")], "not_covered", 0, (0, 0, 2)),
     ([_target("secret-service", release=NEW)], "mismatch", 1, (0, 1, 0)),
 ])
 def test_structured_coverage_is_sanitized(monkeypatch, tmp_path, capsys, targets, status, code, counts):
