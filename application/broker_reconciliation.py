@@ -12,6 +12,8 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
+import math
 import json
 import os
 from typing import Any
@@ -232,18 +234,71 @@ def _load_all_open_trades(ib: Any) -> tuple[Any, ...]:
         ) from exc
 
 
-def _load_recent_executions(ib: Any) -> tuple[Any, ...]:
+def load_read_only_open_trades(ib: Any) -> tuple[Any, ...]:
+    """Read one completed all-client snapshot, retaining unresolved cache rows.
+
+    This is the blocking ib_insync API, not the native fire-and-forget method.
+    An empty local cache or a missing response cannot establish an empty book.
+    Cached active trades remain conservative evidence until terminal updates or
+    reconciliation resolve them; this reader never cancels or binds orders.
+    """
+    request_all_open_orders = getattr(ib, "reqAllOpenOrders", None)
+    open_trades = getattr(ib, "openTrades", None)
+    if not callable(request_all_open_orders) or not callable(open_trades):
+        raise IBKRReconciliationReadError(
+            "IBKR reconciliation requires read-only all-open-orders support."
+        )
+    original_timeout = getattr(ib, "RequestTimeout", 0)
+    original_raise_errors = getattr(ib, "RaiseRequestErrors", False)
+    try:
+        timeout = float(original_timeout)
+    except (TypeError, ValueError):
+        timeout = 0.0
+    # An operational read deadline, not a financial risk threshold. Preserve a
+    # shorter existing deadline and restore both SDK settings on every exit.
+    timeout = min(timeout, 10.0) if math.isfinite(timeout) and timeout > 0 else 10.0
+    try:
+        ib.RequestTimeout = timeout
+        ib.RaiseRequestErrors = True
+        snapshot = request_all_open_orders()
+        cached = open_trades()
+        if not isinstance(snapshot, (list, tuple)) or not isinstance(cached, (list, tuple)):
+            raise IBKRReconciliationReadError("IBKR open-order snapshot is incomplete.")
+        # ib_insync returns the same Trade objects through both surfaces. Do
+        # not count those objects twice, or discard a locally pending submit
+        # merely because it was absent from this point-in-time response.
+        return tuple({id(trade): trade for trade in (*snapshot, *cached)}.values())
+    except Exception:
+        raise IBKRReconciliationReadError(
+            "IBKR reconciliation could not load all active orders."
+        ) from None
+    finally:
+        ib.RequestTimeout = original_timeout
+        ib.RaiseRequestErrors = original_raise_errors
+
+
+
+def _load_recent_executions(ib: Any, *, execution_filter: Any = None, require_response: bool = False) -> tuple[Any, ...]:
     request_executions = getattr(ib, "reqExecutions", None)
     if not callable(request_executions):
         raise IBKRReconciliationReadError(
             "IBKR reconciliation requires read-only recent-executions support."
         )
+    original_raise_errors = getattr(ib, "RaiseRequestErrors", False)
     try:
-        return tuple(request_executions() or ())
+        if require_response:
+            ib.RaiseRequestErrors = True
+        result = request_executions(execution_filter) if execution_filter is not None else request_executions()
+        if require_response and not isinstance(result, (list, tuple)):
+            raise IBKRReconciliationReadError("IBKR recent-executions response is incomplete.")
+        return tuple(result or ())
     except Exception as exc:
         raise IBKRReconciliationReadError(
             "IBKR reconciliation could not load recent executions."
         ) from exc
+    finally:
+        if require_response:
+            ib.RaiseRequestErrors = original_raise_errors
 
 
 @dataclass(frozen=True)
@@ -256,6 +311,88 @@ class IBKRReconciliationObservations:
     cash: tuple[Mapping[str, object], ...]
     open_orders: tuple[Mapping[str, object], ...]
     recent_executions: tuple[Mapping[str, object], ...]
+    # The v1 receipt has no per-surface coverage information.
+    comparison_covered: frozenset[str] = frozenset()
+    # Optional display-only copy; unlike the legacy digest it preserves missing fields.
+    initial_open_orders: tuple[Mapping[str, object], ...] | None = None
+    initial_execution_scope: Mapping[str, str] | None = None
+    initial_market_currency: str | None = None
+    initial_snapshot_at: datetime | None = None
+    initial_positions_complete: bool = False
+    initial_cash_complete: bool = False
+
+
+def build_initial_enrollment_facts(
+    observations: IBKRReconciliationObservations, *, observed_at: datetime,
+    ledger_records_count: int | None, ledger_truncated: bool | None = None,
+) -> tuple[dict[str, object], str]:
+    """Build private display facts and their version; never return or log the facts publicly."""
+    if not observations.account_identity_match or observed_at.tzinfo is None or observed_at.utcoffset() is None:
+        raise IBKRReconciliationReadError("Initial enrollment requires a scoped account and timestamp.")
+    if ledger_records_count is not None and (type(ledger_records_count) is not int or ledger_records_count < 0):
+        raise IBKRReconciliationReadError("Initial enrollment ledger count is invalid.")
+
+    def display(value: object) -> object:
+        if value is None or isinstance(value, str):
+            return value
+        if type(value) in (int, float):
+            if not math.isfinite(value):
+                raise IBKRReconciliationReadError("Initial enrollment numeric value is invalid.")
+            return str(value)
+        if isinstance(value, Mapping):
+            return {str(k): display(v) for k, v in value.items() if k != "account"}
+        raise IBKRReconciliationReadError("Initial enrollment field is invalid.")
+
+    def rows(values: tuple[Mapping[str, object], ...]) -> list[object]:
+        items = [display(item) for item in values]
+        return sorted(items, key=lambda item: json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+
+    order_rows = observations.initial_open_orders
+    order_status = "unknown" if order_rows is None else (
+        "partial" if any(any(row.get(k) is None for k in ("limit_price", "aux_price", "filled", "remaining")) for row in order_rows)
+        else "complete"
+    )
+    def scoped(kind: str, *, currency: str | None = None, start: str | None = None,
+               end: str | None = None, limit: str | None = None, gateway: str | None = None,
+               truncated: str | None = None) -> dict[str, str | None]:
+        return {"kind": kind, "currency": currency, "window_start": start, "window_end": end,
+                "limit_per_namespace": limit, "gateway_availability": gateway, "truncated": truncated}
+
+    def surface(values: tuple[Mapping[str, object], ...], *, complete: bool, scope: dict[str, str | None]) -> dict[str, object]:
+        return {"status": "complete" if complete else "partial", "items": rows(values) if complete or values else None, "scope": scope}
+
+    snapshot_at = observations.initial_snapshot_at
+    snapshot_time = (snapshot_at.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+                     if snapshot_at is not None and snapshot_at.tzinfo is not None and snapshot_at.utcoffset() is not None else None)
+    observed_time = observed_at.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    execution_scope = observations.initial_execution_scope
+    ledger_complete = ledger_records_count is not None and ledger_truncated is False
+    position_currencies = {str(row.get("currency") or "").upper() for row in observations.positions}
+    cash_currencies = {str(row.get("currency") or "").upper() for row in observations.cash}
+    position_scope_currency = observations.initial_market_currency if not position_currencies or position_currencies == {observations.initial_market_currency} else None
+    cash_scope_currency = observations.initial_market_currency if not cash_currencies or cash_currencies == {observations.initial_market_currency} else None
+
+    surfaces = {
+        "positions": surface(observations.positions, complete=observations.initial_positions_complete and bool(snapshot_time),
+                             scope=scoped("account_strategy_positions", currency=position_scope_currency, end=snapshot_time)),
+        "cash": surface(observations.cash, complete=observations.initial_cash_complete and bool(snapshot_time),
+                        scope=scoped("returned_account_cash", currency=cash_scope_currency, end=snapshot_time)),
+        "open_orders": {"status": order_status, "items": None if order_rows is None else rows(order_rows),
+                        "scope": scoped("all_client_open_orders", end=observed_time)},
+        "recent_executions": surface(observations.recent_executions, complete=execution_scope is not None,
+                                     scope=scoped("broker_requested_window", start=execution_scope.get("requested_from") if execution_scope else None,
+                                                  end=observed_time, gateway=execution_scope.get("gateway_availability") if execution_scope else None)),
+        "local_execution_ledger": {"status": "unknown" if ledger_records_count is None else "complete" if ledger_complete else "partial",
+                                   "items": None if ledger_records_count is None else [{"record_count": str(ledger_records_count)}],
+                                   "scope": scoped("bounded_live_claims_and_outcomes", end=observed_time, limit="256",
+                                                   truncated=None if ledger_truncated is None else str(ledger_truncated).lower())},
+    }
+    facts = {"schema_version": "ibkr_initial_facts.v1",
+             "account_scope_sha256": calculate_broker_observation_sha256(observations.account_scope),
+             "observed_at": observed_at.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+             "surfaces": surfaces}
+    payload = json.dumps(facts, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return facts, hashlib.sha256(payload).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -266,6 +403,8 @@ class IBKRReconciliationCandidate:
     recovery_blockers: tuple[BrokerReconciliationFinding, ...]
     expected_digests_configured: bool
     execution_ledger_records_count: int
+    comparison_covered: frozenset[str] = frozenset()
+    initial_ledger_truncated: bool | None = None
 
     @property
     def permits_active_lkg(self) -> bool:
@@ -289,6 +428,7 @@ def collect_read_only_reconciliation_observations(
     fetch_portfolio_snapshot: Callable[..., Any],
     market_currency: str,
     cash_only_execution: bool,
+    initial_enrollment: bool = False,
 ) -> IBKRReconciliationObservations:
     """Read and normalise all broker surfaces needed by a continuity check.
 
@@ -338,14 +478,36 @@ def collect_read_only_reconciliation_observations(
         )
         for option_position in option_positions
     )
-    open_orders = [
-        record
-        for trade in _load_all_open_trades(ib)
-        if (record := _normalise_open_trade(trade, selected_account_ids=selected_account_ids)) is not None
-    ]
+    open_orders = []
+    initial_open_orders = [] if initial_enrollment else None
+    for trade in (load_read_only_open_trades(ib) if initial_enrollment else _load_all_open_trades(ib)):
+        record = _normalise_open_trade(trade, selected_account_ids=selected_account_ids)
+        if record is None:
+            continue
+        open_orders.append(record)
+        if initial_open_orders is not None:
+            display = dict(record)
+            order, order_status = getattr(trade, "order", None), getattr(trade, "orderStatus", None)
+            for field, source, attribute in (("limit_price", order, "lmtPrice"), ("aux_price", order, "auxPrice"),
+                                             ("filled", order_status, "filled"), ("remaining", order_status, "remaining")):
+                if source is None or getattr(source, attribute, None) is None:
+                    display[field] = None
+            initial_open_orders.append(display)
+    execution_scope = None
+    if initial_enrollment:
+        if len(selected_account_ids) != 1:
+            raise IBKRReconciliationReadError("Initial enrollment requires exactly one account.")
+        from ib_insync import ExecutionFilter
+        start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        native_filter = ExecutionFilter(acctCode=selected_account_ids[0], time=start.strftime("%Y%m%d %H:%M:%S UTC"))
+        native_executions = _load_recent_executions(ib, execution_filter=native_filter, require_response=True)
+        execution_scope = {"requested_from": start.isoformat().replace("+00:00", "Z"),
+                           "gateway_availability": "current_broker_day"}
+    else:
+        native_executions = _load_recent_executions(ib)
     executions = [
         record
-        for fill in _load_recent_executions(ib)
+        for fill in native_executions
         if (record := _normalise_execution(fill, selected_account_ids=selected_account_ids)) is not None
     ]
     return IBKRReconciliationObservations(
@@ -360,6 +522,13 @@ def collect_read_only_reconciliation_observations(
         ),
         open_orders=tuple(_sorted_records(open_orders)),
         recent_executions=tuple(_sorted_records(executions)),
+        initial_open_orders=tuple(_sorted_records(initial_open_orders)) if initial_open_orders is not None else None,
+        initial_execution_scope=execution_scope,
+        initial_market_currency=_text(market_currency).upper() if initial_enrollment else None,
+        initial_snapshot_at=getattr(snapshot, "as_of", None) if initial_enrollment else None,
+        initial_positions_complete=metadata.get("initial_positions_source_complete") is True if initial_enrollment else False,
+        initial_cash_complete=(bool(cash_balances) and all(_text(v.get("currency")) and _text(v.get("account_id")) for v in cash_balances)
+                               and any(_text(v.get("currency")).upper() == _text(market_currency).upper() for v in cash_balances)) if initial_enrollment else False,
     )
 
 
@@ -420,6 +589,7 @@ def build_reconciliation_candidate(
     project_id: str | None,
     env_reader: Callable[[str, str | None], str | None] = os.getenv,
     observed_at: datetime | None = None,
+    initial_enrollment: bool = False,
 ) -> IBKRReconciliationCandidate:
     """Build a fail-closed, redacted recovery candidate from read-only data.
 
@@ -440,14 +610,19 @@ def build_reconciliation_candidate(
         env_reader=env_reader,
         project_id=project_id,
     )
-    local_execution_ledger_sha256, ledger_records_count = (
-        execution_state_store.calculate_recent_ledger_digest(
+    ledger_args = dict(
             platform=platform_id,
             strategy_profile=strategy_profile,
             account_scope=account_group,
             execution_mode="live",
-        )
     )
+    if initial_enrollment:
+        local_execution_ledger_sha256, ledger_records_count, ledger_truncated = (
+            execution_state_store.calculate_recent_ledger_digest_with_coverage(**ledger_args)
+        )
+    else:
+        local_execution_ledger_sha256, ledger_records_count = execution_state_store.calculate_recent_ledger_digest(**ledger_args)
+        ledger_truncated = None
     baseline_id, baseline_target_sha256, runtime_target_sha256 = _continuity_fields(runtime_target)
 
     def matches(key: str, actual_digest: str) -> bool:
@@ -497,6 +672,8 @@ def build_reconciliation_candidate(
         recovery_blockers=blockers,
         expected_digests_configured=expected_digests is not None,
         execution_ledger_records_count=ledger_records_count,
+        comparison_covered=observations.comparison_covered,
+        initial_ledger_truncated=ledger_truncated,
     )
 
 
