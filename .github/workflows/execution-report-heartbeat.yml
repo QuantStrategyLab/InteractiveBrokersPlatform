@@ -170,6 +170,18 @@ jobs:
         env:
           IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ (matrix.target == 'additional-1' || matrix.target == 'additional-2' || matrix.target == 'additional-3') && secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON || '' }}
 
+      - name: Publish today's bound runtime daily projection
+        if: ${{ !cancelled() && github.event_name == 'schedule' && github.ref == 'refs/heads/main' && github.run_attempt == 1 }}
+        env:
+          IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}
+          IBKR_RUNTIME_DAILY_TARGET_KEY: ${{ secrets.IBKR_RUNTIME_DAILY_TARGET_KEY }}
+          IBKR_RUNTIME_DAILY_ACCOUNT_KEY: ${{ secrets.IBKR_PERIOD_RETURN_ACCOUNT_KEY }}
+          IBKR_RUNTIME_DAILY_SYNC_TOKEN: ${{ secrets.IBKR_RUNTIME_DAILY_SYNC_TOKEN }}
+        run: |
+          IBKR_RUNTIME_DAILY_BUSINESS_DATE="$(TZ=America/New_York date +%F)"
+          export IBKR_RUNTIME_DAILY_BUSINESS_DATE
+          uv run --no-sync python -m scripts.publish_primary_day_once
+
   paused-refresh-preflight:
     name: Inspect or back up archived paused IBKR account-facts state
     if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.account_facts_target == 'paused-refresh-preflight' || inputs.account_facts_target == 'paused-refresh-state-backup') }}

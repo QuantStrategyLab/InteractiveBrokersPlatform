@@ -21,7 +21,7 @@ def test_primary_trading_day_accepted(env):
 
 
 @pytest.mark.parametrize("key,value", [
-    ("GITHUB_EVENT_NAME", "schedule"), ("GITHUB_RUN_ATTEMPT", "2"),
+    ("GITHUB_EVENT_NAME", "push"), ("GITHUB_RUN_ATTEMPT", "2"),
     ("IBKR_ACCOUNT_FACTS_TARGET", "additional1"), ("GITHUB_REF", "refs/heads/other"),
     ("IBKR_RUNTIME_DAILY_BUSINESS_DATE", "2026-10-31"),
     ("IBKR_RUNTIME_DAILY_BUSINESS_DATE", "2025-12-25"),
@@ -38,6 +38,14 @@ def test_invalid_dispatch_stops_before_publication(env, monkeypatch, key, value,
 
 
 original_preflight = entry.preflight
+
+
+def test_schedule_accepts_only_current_market_day(env):
+    env["GITHUB_EVENT_NAME"] = "schedule"
+    with pytest.raises(ValueError, match="date_invalid"):
+        entry.preflight(env, today=date(2026, 10, 29))
+    env["IBKR_RUNTIME_DAILY_BUSINESS_DATE"] = "2026-10-29"
+    entry.preflight(env, today=date(2026, 10, 29))
 
 
 def test_additional_slot_selects_only_its_explicit_mapping(env, monkeypatch):
