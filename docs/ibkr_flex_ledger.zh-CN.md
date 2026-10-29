@@ -216,6 +216,10 @@ target、scope、selector 与来源绑定复用原 `IBKR_ACCOUNT_FACTS_ADDITIONA
 来源 ID 按既有 `_bound_source_id` 计算。无效、重复或与 primary 冲突的配置在网络请求前拒绝。
 这些配置含私有身份，不能放入公开样例、Git、日志或普通产物。
 
+可选 `IBKR_PERIOD_RETURN_ADDITIONAL1_ACCOUNT_KEY` 仅用于追加 additional-1 的已有接收端 key；
+它与原 JSON 在进程内合并，不改写 JSON 或其他账户。若原 JSON 同时包含 additional-1，
+两者必须一致，否则在请求前拒绝。仅配置该槽不创建接收绑定，也不证明该槽真实身份。
+
 启用后，一次生成并领取的 XML 在内存中按各槽分别校验和投影；原 1019 有限等待仍只领取
 同一句柄。原入口保留 primary 的收益、成交和流水逻辑，附加槽只发布原生 TWR 及合格的
 `nav_change`，不额外发布附加账户成交、流水或余额快照。未列出的槽不会因为出现在报表中
