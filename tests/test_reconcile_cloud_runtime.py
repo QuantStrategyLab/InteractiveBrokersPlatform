@@ -174,11 +174,13 @@ class ReconcileCloudRuntimeTests(unittest.TestCase):
         candidate["spec"]["containers"][0]["env"].append({"name": "RUNTIME_TARGET_ENABLED", "value": "true"})
         candidate["spec"]["containers"][0]["env"].append({"name": "SECRET", "valueFrom": {"secretKeyRef": {"name": "retained", "key": "1"}}})
         expected = {"RUNTIME_TARGET_JSON": "{}", "RUNTIME_TARGET_ENABLED": "true"}
-        cases = ["pass", "wrong_image", "wrong_commit", "wrong_switch", "wrong_target", "wrong_latest",
+        cases = ["pass", "nonce_only", "changed_label", "wrong_image", "wrong_commit", "wrong_switch", "wrong_target", "wrong_latest",
                  "traffic_changed", "wrong_name", "unhealthy", "changed_secret", "changed_network"]
         for case in cases:
             with self.subTest(case=case):
                 current = json.loads(json.dumps(candidate))
+                if case == "nonce_only": current["metadata"]["labels"]["client.knative.dev/nonce"] = "synthetic"
+                if case == "changed_label": current["metadata"]["labels"]["other-label"] = "changed"
                 if case == "wrong_image": current["spec"]["containers"][0]["image"] = "other"
                 if case == "wrong_commit": current["metadata"]["labels"]["commit-sha"] = "other"
                 if case == "wrong_switch": current["spec"]["containers"][0]["env"][1]["value"] = "false"
@@ -203,11 +205,11 @@ class ReconcileCloudRuntimeTests(unittest.TestCase):
                                   expected_commit="current-workflow-commit", dry_run=False,
                                   env_sync_baseline=old, env_sync_revision="unit-service-eabc-1", env_sync_expected=expected,
                                   switch_only=True, env_sync_service={"spec": {"template": {"spec": {"containers": [{}]}}}})
-                    if case == "pass": rcr.ensure_latest_traffic(**kwargs)
+                    if case in {"pass", "nonce_only"}: rcr.ensure_latest_traffic(**kwargs)
                     else:
                         with self.assertRaises((rcr.ReconcileError, ValueError)): rcr.ensure_latest_traffic(**kwargs)
                 updates = [row for row in calls if row[:4] == ["gcloud", "run", "services", "update-traffic"]]
-                self.assertEqual(len(updates), 1 if case == "pass" else 0)
+                self.assertEqual(len(updates), 1 if case in {"pass", "nonce_only"} else 0)
                 if updates: self.assertIn("--to-revisions=unit-service-eabc-1=100", updates[0])
                 self.assertFalse(any(row[:4] == ["gcloud", "run", "revisions", "list"] for row in calls))
 
