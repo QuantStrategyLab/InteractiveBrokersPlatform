@@ -1,5 +1,5 @@
 name: Deploy Cloud Run
-run-name: ${{ inputs.notification_marker_mode != '' && inputs.notification_marker_mode != 'disabled' && 'Notification check (isolated)' || 'Deploy Cloud Run' }}
+run-name: ${{ inputs.runtime_switch_only && format('Runtime switch {0}', inputs.request_id) || (inputs.notification_marker_mode != '' && inputs.notification_marker_mode != 'disabled' && 'Notification check (isolated)' || 'Deploy Cloud Run') }}
 
 on:
   workflow_dispatch:
@@ -41,6 +41,15 @@ on:
           - hk-verify
       configured_service:
         description: "Exact inventory service_name required for configured target."
+        required: false
+        type: string
+      runtime_switch_only:
+        description: "Apply one existing target's enabled switch without changing other service or scheduler configuration."
+        required: true
+        type: boolean
+        default: false
+      request_id:
+        description: "Unique lowercase UUID for correlating a runtime switch request."
         required: false
         type: string
       source_commit:
@@ -118,6 +127,8 @@ jobs:
       notification_readback_only: ${{ inputs.notification_readback_only }}
       target: ${{ inputs.target }}
       configured_service: ${{ inputs.configured_service }}
+      runtime_switch_only: ${{ inputs.runtime_switch_only }}
+      request_id: ${{ inputs.request_id }}
       source_commit: ${{ inputs.source_commit }}
       expected_serving_revision_digest: ${{ inputs.expected_serving_revision_digest }}
       expected_full_target_digest: ${{ inputs.expected_full_target_digest }}

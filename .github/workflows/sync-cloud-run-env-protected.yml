@@ -23,6 +23,12 @@ on:
       configured_service:
         type: string
         required: false
+      runtime_switch_only:
+        type: boolean
+        required: false
+      request_id:
+        type: string
+        required: false
       source_commit:
         type: string
         required: false
@@ -129,6 +135,8 @@ jobs:
       CLOUD_RUN_CLEANUP_ENABLED: ${{ vars.CLOUD_RUN_CLEANUP_ENABLED }}
       WORKFLOW_TARGET: ${{ inputs.target || 'configured' }}
       INPUT_CONFIGURED_SERVICE: ${{ inputs.configured_service }}
+      INPUT_RUNTIME_SWITCH_ONLY: ${{ inputs.runtime_switch_only }}
+      INPUT_REQUEST_ID: ${{ inputs.request_id }}
       INPUT_SOURCE_COMMIT: ${{ inputs.source_commit }}
       SOURCE_COMMIT: ${{ inputs.source_commit || github.sha }}
       INPUT_CLOUD_RUN_REGION: ${{ inputs.cloud_run_region }}
@@ -312,6 +320,19 @@ jobs:
             scheduler_sync_enabled=true
           fi
 
+          if [ "${INPUT_RUNTIME_SWITCH_ONLY:-false}" = "true" ] && \
+             { [ "${WORKFLOW_TARGET:-configured}" != "configured" ] || [ "${deploy_enabled}" = "true" ] || \
+               [ "${env_sync_enabled}" != "true" ] || [ "${traffic_shift_enabled}" != "true" ] || \
+               [ "${scheduler_sync_enabled}" != "true" ]; }; then
+            echo "Runtime switch requires one configured target, no image build, and enabled sync controls." >&2
+            exit 1
+          fi
+          if [ "${INPUT_RUNTIME_SWITCH_ONLY:-false}" = "true" ] && \
+             [[ ! "${INPUT_REQUEST_ID:-}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+            echo "Runtime switch requires a lowercase UUID request_id." >&2
+            exit 1
+          fi
+
           if [ "${WORKFLOW_TARGET:-configured}" = "configured" ] && [ -z "${INPUT_CONFIGURED_SERVICE:-}" ]; then
             if [ "${deploy_enabled}" = "true" ] || [ "${env_sync_enabled}" = "true" ] || [ "${traffic_shift_enabled}" = "true" ] || [ "${scheduler_sync_enabled}" = "true" ]; then
               echo "configured target requires exact configured_service; refusing multi-service default mutations." >&2
@@ -451,7 +472,7 @@ jobs:
           version: ">= 416.0.0"
 
       - name: Fetch opt-in immutable recovery state ledger
-        if: steps.config.outputs.enabled == 'true' && env.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_URI != ''
+        if: steps.config.outputs.enabled == 'true' && inputs.runtime_switch_only != true && env.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_URI != ''
         env:
           RECOVERY_STATE_LEDGER_URI: ${{ env.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_URI }}
         run: |
@@ -527,7 +548,7 @@ jobs:
           PY
 
       - name: Validate env sync inputs
-        if: steps.config.outputs.env_sync_enabled == 'true'
+        if: steps.config.outputs.env_sync_enabled == 'true' && inputs.runtime_switch_only != true
         env:
           SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
         run: |
@@ -864,10 +885,12 @@ jobs:
             done
           done
 
-      - name: Sync Cloud Run environment
-        if: steps.config.outputs.env_sync_enabled == 'true'
+      - name: Prepare env-only revision and runtime switch
+        if: steps.config.outputs.env_sync_enabled == 'true' && steps.config.outputs.deploy_enabled != 'true' && steps.config.outputs.traffic_shift_enabled == 'true'
         env:
           SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
+          EXACT_ENV_TRAFFIC: ${{ steps.config.outputs.deploy_enabled != 'true' && steps.config.outputs.traffic_shift_enabled == 'true' }}
+          RUNTIME_SWITCH_ONLY: ${{ inputs.runtime_switch_only }}
         run: |
           set -euo pipefail
 
@@ -878,6 +901,140 @@ jobs:
           for target in plan["targets"]:
               print(target["service_name"])
           PY
+          )
+          if [ "${#target_services[@]}" -eq 0 ]; then
+            echo "Cloud Run env sync did not resolve any targets." >&2
+            exit 1
+          fi
+          if [ "${EXACT_ENV_TRAFFIC}" = "true" ]; then
+            if [ "${#target_services[@]}" -ne 1 ]; then
+              echo "Env-only traffic requires one target." >&2
+              exit 1
+            fi
+            umask 077
+            evidence_dir="${RUNNER_TEMP}/ibkr-env-sync-evidence"
+            mkdir "${evidence_dir}"
+            cloud_run_service="${target_services[0]}"
+            gcloud run services describe "${cloud_run_service}" --project="${GCP_PROJECT_ID}" \
+              --region="${CLOUD_RUN_REGION}" --format=json > "${evidence_dir}/baseline-service.json"
+            baseline_revision="$(python - "${evidence_dir}/baseline-service.json" <<'PY'
+          import json, sys
+          service = json.load(open(sys.argv[1], encoding="utf-8"))
+          traffic = [row for row in service.get("status", {}).get("traffic", []) if row.get("percent", 0) > 0]
+          if len(traffic) != 1 or traffic[0].get("percent") != 100 or not traffic[0].get("revisionName"):
+              raise SystemExit("Env-only traffic requires one serving revision.")
+          print(traffic[0]["revisionName"])
+          PY
+            )"
+            gcloud run revisions describe "${baseline_revision}" --project="${GCP_PROJECT_ID}" \
+              --region="${CLOUD_RUN_REGION}" --format=json > "${evidence_dir}/baseline-revision.json"
+            revision_suffix="e$(printf '%x' "${GITHUB_RUN_ID}")-${GITHUB_RUN_ATTEMPT}"
+            candidate_revision="${cloud_run_service}-${revision_suffix}"
+            if [ "${#candidate_revision}" -gt 63 ]; then
+              echo "Env-only candidate revision name is too long." >&2
+              exit 1
+            fi
+            printf '%s' "${candidate_revision}" > "${evidence_dir}/candidate-revision.txt"
+            echo "IBKR_ENV_SYNC_EVIDENCE_DIR=${evidence_dir}" >> "$GITHUB_ENV"
+            echo "IBKR_ENV_SYNC_REVISION_SUFFIX=${revision_suffix}" >> "$GITHUB_ENV"
+          fi
+
+          if [ "${RUNTIME_SWITCH_ONLY:-false}" = "true" ]; then
+            switch_result="$(uv run --no-sync python - "${evidence_dir}/baseline-revision.json" <<'PY'
+          import json, os, sys
+          from scripts.reconcile_cloud_runtime import validate_switch_baseline
+          plan = json.loads(os.environ["SYNC_PLAN_JSON"])
+          desired, unchanged = validate_switch_baseline(json.load(open(sys.argv[1], encoding="utf-8")), plan["targets"][0])
+          print(desired, str(unchanged).lower())
+          PY
+            )"
+            read -r desired_switch switch_unchanged <<< "${switch_result}"
+            python - "${desired_switch}" "${evidence_dir}/baseline-revision.json" <<'PY'
+          import hashlib, json, os, sys
+          from pathlib import Path
+          plan = json.loads(os.environ["SYNC_PLAN_JSON"])["targets"][0]
+          revision = json.load(open(sys.argv[2], encoding="utf-8"))
+          rows = revision.get("spec", {}).get("containers", [{}])[0].get("env", [])
+          target = json.loads(next((row.get("value") for row in rows if row.get("name") == "RUNTIME_TARGET_JSON"), "{}"))
+          continuity = target.get("live_continuity", {}).get("state")
+          if continuity not in {"ACTIVE_LKG", "ACTIVE_REDUCED", "RECONCILE_ONLY", "RISK_REDUCTION_ONLY", "PAUSED", "ROLLBACK_LKG"}:
+              continuity = "unknown"
+          result = {"status": "unknown", "platform_applied": False, "request_id": os.environ["INPUT_REQUEST_ID"],
+                    "operation": "enable" if sys.argv[1] == "true" else "disable", "continuity": continuity,
+                    "run_id": os.environ["GITHUB_RUN_ID"], "attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+                    "target_sha256": hashlib.sha256(plan["service_name"].encode()).hexdigest(),
+                    "enabled": None, "scheduler_state": "unknown", "revision_sha256": None}
+          (Path(os.environ["RUNNER_TEMP"]) / "ibkr-runtime-switch-result.json").write_text(json.dumps(result), encoding="utf-8")
+          PY
+            if [ "${desired_switch}" = "false" ]; then
+              uv run --no-sync python - "${evidence_dir}/baseline-service.json" <<'PY'
+          import json, os, subprocess, sys
+          from pathlib import Path
+
+          service = json.load(open(sys.argv[1], encoding="utf-8"))
+          plan = json.loads(os.environ["SYNC_PLAN_JSON"])["targets"][0]
+          project, region = os.environ["GCP_PROJECT_ID"], os.environ["CLOUD_RUN_REGION"]
+          location = os.environ.get("CLOUD_SCHEDULER_LOCATION") or region
+          result_path = Path(os.environ["RUNNER_TEMP"]) / "ibkr-runtime-switch-result.json"
+          result = json.loads(result_path.read_text(encoding="utf-8"))
+          def run(args):
+              value = subprocess.run(args, capture_output=True, text=True, check=False)
+              if value.returncode:
+                  raise SystemExit("runtime_switch_stop_scheduler_failed_or_unknown")
+              return value.stdout
+          service_args = ["gcloud", "run", "services", "describe", plan["service_name"], f"--project={project}", f"--region={region}", "--format=json"]
+          current = json.loads(run(service_args))
+          if not service.get("metadata", {}).get("resourceVersion") or service["metadata"]["resourceVersion"] != current.get("metadata", {}).get("resourceVersion"):
+              raise SystemExit("runtime_switch_service_changed_before_stop")
+          url = service["status"]["url"].rstrip("/") + "/run"
+          jobs = json.loads(run(["gcloud", "scheduler", "jobs", "list", f"--project={project}", f"--location={location}", "--format=json"]))
+          matches = [job for job in jobs if job.get("httpTarget", {}).get("uri", "").split("?", 1)[0].rstrip("/") == url]
+          if len(matches) != 1 or matches[0].get("state") not in {"ENABLED", "PAUSED"}:
+              raise SystemExit("runtime_switch_scheduler_not_unique")
+          job = matches[0]; name = job["name"].rsplit("/", 1)[-1]
+          if job["state"] == "ENABLED":
+              run(["gcloud", "scheduler", "jobs", "pause", name, f"--project={project}", f"--location={location}", "--quiet"])
+          after = json.loads(run(["gcloud", "scheduler", "jobs", "describe", name, f"--project={project}", f"--location={location}", "--format=json"]))
+          fields = ("httpTarget", "schedule", "timeZone", "retryConfig", "attemptDeadline")
+          if after.get("state") != "PAUSED" or any(job.get(key) != after.get(key) for key in fields):
+              raise SystemExit("runtime_switch_stop_scheduler_readback_mismatch")
+          result.update(status="partial", scheduler_state="PAUSED", scheduler_changed=job["state"] == "ENABLED")
+          result_path.write_text(json.dumps(result), encoding="utf-8")
+          print("runtime_switch_stop_scheduler_paused")
+          PY
+            fi
+            if [ "${switch_unchanged}" = "true" ]; then
+              printf '%s' "${baseline_revision}" > "${evidence_dir}/candidate-revision.txt"
+              touch "${evidence_dir}/no-op"
+              echo "Runtime switch already matches; checking scheduler without staging."
+              exit 0
+            fi
+            gcloud run services describe "${cloud_run_service}" --project="${GCP_PROJECT_ID}" \
+              --region="${CLOUD_RUN_REGION}" --format=json > "${evidence_dir}/before-update.json"
+            python - "${evidence_dir}/baseline-service.json" "${evidence_dir}/before-update.json" <<'PY'
+          import json, sys
+          before, current = [json.load(open(path, encoding="utf-8")) for path in sys.argv[1:]]
+          if not before.get("metadata", {}).get("resourceVersion") or before["metadata"]["resourceVersion"] != current.get("metadata", {}).get("resourceVersion"):
+              raise SystemExit("Runtime service changed before switch update.")
+          PY
+            gcloud run services update "${cloud_run_service}" --project="${GCP_PROJECT_ID}" \
+              --region="${CLOUD_RUN_REGION}" --no-traffic --revision-suffix="${revision_suffix}" \
+              --update-env-vars="RUNTIME_TARGET_ENABLED=${desired_switch}" --quiet
+            exit 0
+          fi
+
+      - name: Sync Cloud Run environment
+        if: steps.config.outputs.env_sync_enabled == 'true' && inputs.runtime_switch_only != true
+        env:
+          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
+          EXACT_ENV_TRAFFIC: ${{ steps.config.outputs.deploy_enabled != 'true' && steps.config.outputs.traffic_shift_enabled == 'true' }}
+        run: |
+          set -euo pipefail
+          mapfile -t target_services < <(python - <<'PY2'
+          import json, os
+          for target in json.loads(os.environ["SYNC_PLAN_JSON"])["targets"]:
+              print(target["service_name"])
+          PY2
           )
           if [ "${#target_services[@]}" -eq 0 ]; then
             echo "Cloud Run env sync did not resolve any targets." >&2
@@ -1238,6 +1395,9 @@ jobs:
               --remove-env-vars "$(IFS=,; echo "${remove_env_vars[*]}")"
               --update-env-vars "^|^$(join_by_delimiter "|" "${env_pairs[@]}")"
             )
+            if [ "${EXACT_ENV_TRAFFIC:-false}" = "true" ]; then
+              gcloud_args+=(--revision-suffix "${IBKR_ENV_SYNC_REVISION_SUFFIX}")
+            fi
 
             if [ "${#remove_secret_vars[@]}" -gt 0 ]; then
               gcloud_args+=(--remove-secrets "$(IFS=,; echo "${remove_secret_vars[*]}")")
@@ -1260,14 +1420,25 @@ jobs:
           SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
         run: |
           set -euo pipefail
+          if [ -n "${IBKR_ENV_SYNC_EVIDENCE_DIR:-}" ] && [ -f "${IBKR_ENV_SYNC_EVIDENCE_DIR}/no-op" ]; then
+            echo "No configuration revision was needed."
+            exit 0
+          fi
+          exact_revision_args=()
+          if [ -n "${IBKR_ENV_SYNC_EVIDENCE_DIR:-}" ]; then
+            exact_revision_args+=(--env-sync-evidence-dir "${IBKR_ENV_SYNC_EVIDENCE_DIR}")
+          fi
+          if [ "${INPUT_RUNTIME_SWITCH_ONLY:-false}" = "true" ]; then
+            exact_revision_args+=(--runtime-switch-only)
+          fi
           uv run --no-sync python scripts/reconcile_cloud_runtime.py \
             --platform=ibkr \
             --project="${GCP_PROJECT_ID}" \
             --region="${CLOUD_RUN_REGION}" \
-            --ensure-latest-traffic
+            --ensure-latest-traffic "${exact_revision_args[@]}"
 
       - name: Verify strategy plugin mounts
-        if: steps.config.outputs.env_sync_enabled == 'true'
+        if: steps.config.outputs.env_sync_enabled == 'true' && inputs.runtime_switch_only != true
         env:
           SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
           STRATEGY_PLUGIN_MOUNT_ENV_NAMES: IBKR_STRATEGY_PLUGIN_MOUNTS_JSON
@@ -1275,8 +1446,86 @@ jobs:
           set -euo pipefail
           python3 scripts/verify_cloud_run_strategy_plugin_mounts.py
 
+      - name: Reconcile existing runtime switch scheduler
+        if: steps.config.outputs.scheduler_sync_enabled == 'true' && inputs.runtime_switch_only == true
+        env:
+          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
+        run: |
+          set -euo pipefail
+          uv run --no-sync python - <<'PY'
+          import hashlib, json, os, subprocess
+          from pathlib import Path
+          from scripts.reconcile_cloud_runtime import validate_switch_baseline
+
+          def run(args):
+              result = subprocess.run(args, capture_output=True, text=True, check=False)
+              if result.returncode != 0:
+                  raise SystemExit("runtime_switch_scheduler_operation_failed_or_unknown")
+              return result.stdout
+
+          project = os.environ["GCP_PROJECT_ID"]
+          region = os.environ["CLOUD_RUN_REGION"]
+          location = os.environ.get("CLOUD_SCHEDULER_LOCATION") or region
+          target = json.loads(os.environ["SYNC_PLAN_JSON"])["targets"][0]
+          service_name = target["service_name"]
+          revision_name = (Path(os.environ["IBKR_ENV_SYNC_EVIDENCE_DIR"]) / "candidate-revision.txt").read_text().strip()
+          service_args = ["gcloud", "run", "services", "describe", service_name, f"--project={project}", f"--region={region}", "--format=json"]
+          service = json.loads(run(service_args))
+          traffic = [row for row in service.get("status", {}).get("traffic", []) if row.get("percent", 0) > 0]
+          if len(traffic) != 1 or traffic[0].get("percent") != 100 or traffic[0].get("revisionName") != revision_name:
+              raise SystemExit("runtime_switch_serving_revision_mismatch")
+          revision = json.loads(run(["gcloud", "run", "revisions", "describe", revision_name, f"--project={project}", f"--region={region}", "--format=json"]))
+          desired, unchanged = validate_switch_baseline(revision, target)
+          if not unchanged:
+              raise SystemExit("runtime_switch_serving_value_mismatch")
+          url = service["status"]["url"].rstrip("/") + "/run"
+          jobs = json.loads(run(["gcloud", "scheduler", "jobs", "list", f"--project={project}", f"--location={location}", "--format=json"]))
+          matches = [job for job in jobs if job.get("httpTarget", {}).get("uri", "").split("?", 1)[0].rstrip("/") == url]
+          if len(matches) != 1 or matches[0].get("state") not in {"ENABLED", "PAUSED"}:
+              raise SystemExit("runtime_switch_scheduler_not_unique")
+          before = matches[0]
+          current = json.loads(run(service_args))
+          if service.get("metadata", {}).get("resourceVersion") != current.get("metadata", {}).get("resourceVersion"):
+              raise SystemExit("runtime_switch_service_changed")
+          desired_state = "ENABLED" if desired == "true" else "PAUSED"
+          job_name = before["name"].rsplit("/", 1)[-1]
+          if before["state"] != desired_state:
+              run(["gcloud", "scheduler", "jobs", "resume" if desired == "true" else "pause", job_name,
+                   f"--project={project}", f"--location={location}", "--quiet"])
+          after = json.loads(run(["gcloud", "scheduler", "jobs", "describe", job_name,
+                                  f"--project={project}", f"--location={location}", "--format=json"]))
+          fields = ("httpTarget", "schedule", "timeZone", "retryConfig", "attemptDeadline")
+          if after.get("state") != desired_state or any(before.get(key) != after.get(key) for key in fields):
+              raise SystemExit("runtime_switch_scheduler_readback_mismatch")
+          result_path = Path(os.environ["RUNNER_TEMP"]) / "ibkr-runtime-switch-result.json"
+          prior = json.loads(result_path.read_text(encoding="utf-8")) if result_path.exists() else {}
+          continuity = json.loads(next(row["value"] for row in revision["spec"]["containers"][0]["env"] if row.get("name") == "RUNTIME_TARGET_JSON")).get("live_continuity", {}).get("state")
+          if continuity not in {"ACTIVE_LKG", "ACTIVE_REDUCED", "RECONCILE_ONLY", "RISK_REDUCTION_ONLY", "PAUSED", "ROLLBACK_LKG"}:
+              continuity = "unknown"
+          result = {"status": "applied", "platform_applied": True, "enabled": desired == "true", "scheduler_state": desired_state,
+                    "request_id": os.environ["INPUT_REQUEST_ID"],
+                    "operation": "enable" if desired == "true" else "disable",
+                    "continuity": continuity,
+                    "service_changed": not (Path(os.environ["IBKR_ENV_SYNC_EVIDENCE_DIR"]) / "no-op").exists(),
+                    "scheduler_changed": prior.get("scheduler_changed", False) or before["state"] != desired_state,
+                    "revision_sha256": hashlib.sha256(revision_name.encode()).hexdigest(),
+                    "target_sha256": hashlib.sha256(service_name.encode()).hexdigest(),
+                    "run_id": os.environ["GITHUB_RUN_ID"], "attempt": os.environ["GITHUB_RUN_ATTEMPT"]}
+          result_path.write_text(json.dumps(result), encoding="utf-8")
+          print(json.dumps(result))
+          PY
+
+      - name: Save runtime switch result
+        if: always() && inputs.runtime_switch_only == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: ibkr-runtime-switch-result-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ibkr-runtime-switch-result.json
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Sync Cloud Scheduler schedule
-        if: steps.config.outputs.scheduler_sync_enabled == 'true'
+        if: steps.config.outputs.scheduler_sync_enabled == 'true' && inputs.runtime_switch_only != true
         env:
           SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
         run: |
