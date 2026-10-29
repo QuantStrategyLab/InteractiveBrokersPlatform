@@ -507,6 +507,9 @@ def _stop_additional_publication(status: str, detail: Mapping[str, Any]) -> bool
     return True
 
 def main(argv: Sequence[str] = ()) -> int:
+    if os.environ.get("ADDITIONAL_RETURN_SLOT") and tuple(argv) != ("--additional-returns-only",):
+        print(json.dumps({"status": "configuration_incomplete"}))
+        return 2
     if tuple(argv) == ("--cashflow-only",):
         return _cashflow_only()
     diagnostics = {}
@@ -528,6 +531,11 @@ def main(argv: Sequence[str] = ()) -> int:
                 raise PeriodReturnError("historical_date_required")
             if additional_only and not config["additional_returns"]:
                 raise PeriodReturnError("additional_return_configuration_invalid")
+            slot = os.environ.get("ADDITIONAL_RETURN_SLOT", "")
+            if slot:
+                if not additional_only or not config.get("report_date") or slot not in config["additional_returns"]:
+                    raise PeriodReturnError("additional_return_configuration_invalid")
+                config["additional_returns"] = {slot: config["additional_returns"][slot]}
         except Exception:
             status = "configuration_incomplete"
         else:

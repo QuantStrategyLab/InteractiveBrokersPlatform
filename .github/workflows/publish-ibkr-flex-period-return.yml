@@ -27,6 +27,11 @@ on:
         type: boolean
         required: false
         default: false
+      additional_return_slot:
+        description: "Optional one additional slot for a historical return-only request."
+        type: string
+        required: false
+        default: ""
       primary_return_only:
         description: "Publish only the primary account native daily return for report_date."
         type: boolean
@@ -88,6 +93,10 @@ jobs:
       - name: Generate, collect and publish once
         run: |
           publisher_args=()
+          if [ -n "$ADDITIONAL_RETURN_SLOT" ] && { [ "$ADDITIONAL_RETURNS_ONLY" != "true" ] || [ "$PRIMARY_RETURN_ONLY" = "true" ] || [ "$EXTERNAL_FLOW_ONLY" = "true" ] || [ -z "$IBKR_NATIVE_RETURN_DATE" ]; }; then
+            echo "additional_return_slot_mode_invalid" >&2
+            exit 2
+          fi
           if [ "$PRIMARY_RETURN_ONLY" = "true" ]; then
             if [ "$EXTERNAL_FLOW_ONLY" = "true" ] || [ "$ADDITIONAL_RETURNS_ONLY" = "true" ] || [ -n "$IBKR_FLOW_PERIOD_FROM$IBKR_FLOW_PERIOD_TO" ] || [ -z "$IBKR_NATIVE_RETURN_DATE" ]; then
               echo "primary_return_mode_invalid" >&2
@@ -114,6 +123,7 @@ jobs:
           IBKR_PERIOD_RETURN_PUBLISH_ENABLED: "true"
           EXTERNAL_FLOW_ONLY: ${{ inputs.external_flow_only }}
           ADDITIONAL_RETURNS_ONLY: ${{ inputs.additional_returns_only }}
+          ADDITIONAL_RETURN_SLOT: ${{ inputs.additional_return_slot }}
           PRIMARY_RETURN_ONLY: ${{ inputs.primary_return_only }}
           IBKR_FLOW_PERIOD_FROM: ${{ inputs.flow_period_from }}
           IBKR_FLOW_PERIOD_TO: ${{ inputs.flow_period_to }}
