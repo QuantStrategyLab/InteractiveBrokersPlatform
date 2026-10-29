@@ -35,6 +35,7 @@ from scripts.build_reconciliation_baseline_candidate import (
     load_authenticated_source_inputs, validate_authenticated_candidate,
 )
 from scripts.publish_reconciliation_recovery_source import (
+    RECONCILIATION_RECOVERY_USER_AGENT,
     _load_json,
     _parse_time,
     extract_baseline_candidate,
@@ -79,7 +80,7 @@ def read_console_confirmation(
         raise ValueError(f"{RECONCILIATION_RECOVERY_CONTROLLER_TOKEN_ENV} is required")
     request = Request(
         f"{normalized_url}?{urlencode({'recovery_id': recovery_id})}",
-        headers={"Authorization": f"Bearer {normalized_token}"},
+        headers={"Authorization": f"Bearer {normalized_token}", "User-Agent": RECONCILIATION_RECOVERY_USER_AGENT},
         method="GET",
     )
     request_opener = opener or build_opener(_NoRedirect).open

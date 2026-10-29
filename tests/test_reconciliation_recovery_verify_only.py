@@ -301,6 +301,7 @@ def test_read_console_confirmation_uses_dedicated_bearer_header() -> None:
     assert result == {"ok": True}
     request = received["request"]
     assert getattr(request, "get_header")("Authorization") == "Bearer controller-token"
+    assert getattr(request, "get_header")("User-agent") == "QSL-IBKR-Reconciliation/1.0"
     assert "recovery_id=ibkr-soxl-live-recovery" in getattr(request, "full_url")
 
 
