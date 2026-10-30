@@ -58,6 +58,40 @@ def test_no_trade_heartbeat_respects_window_and_notification_policy():
     )
 
 
+def test_failed_snapshot_heartbeat_does_not_claim_no_rebalance(tmp_path):
+    messages = []
+
+    class FakeIB:
+        def isConnected(self):
+            return True
+
+        def disconnect(self):
+            pass
+
+    run_strategy_core(
+        connect_ib=FakeIB,
+        get_current_portfolio=lambda _ib: ({}, {"equity": 1000.0, "buying_power": 500.0}),
+        compute_signals=lambda _ib, _holdings: (
+            None, "", False, "", {
+                "strategy_profile": "synthetic",
+                "snapshot_guard_decision": "fail_closed",
+                "fail_reason": "feature snapshot computation failed: TypeError",
+            },
+        ),
+        execute_rebalance=lambda *_args, **_kwargs: pytest.fail("unexpected execution"),
+        send_tg_message=messages.append,
+        translator=build_translator("zh"),
+        separator="---",
+        strategy_display_name="Synthetic",
+        reconciliation_output_path=tmp_path / "record.json",
+    )
+    assert messages
+    assert "未生成策略调仓决策" in messages[0]
+    assert "无需调仓" not in messages[0]
+    assert "本轮未执行" not in messages[0]
+    assert "TypeError" in messages[0]
+
+
 def _weight_allocation(targets, *, risk_symbols=(), income_symbols=(), safe_haven_symbols=()):
     return {
         "target_mode": "weight",
@@ -74,6 +108,7 @@ def _build_test_translator():
         "heartbeat_title": "heartbeat",
         "rebalance_title": "rebalance",
         "no_trades": "no trades",
+        "signal_decision_unavailable": "strategy rebalance decision unavailable",
         "existing_status": "pre-existing status",
         "equity": "equity",
         "buying_power": "buying_power",
@@ -1385,7 +1420,7 @@ def test_no_target_brake_through_real_session_and_guarded_wrapper(tmp_path, monk
               "policy": {"capital_kind": "OWN_REAL", "product": "BROKERAGE", "phase": "LIVE", "account_type": "CASH", "style": "INTRADAY", "preference": "CAPITAL_PRESERVATION", "currency": "USD", "source": "synthetic", "effective_at": "2026-10-01T00:00:00Z", "valid_until": "2026-11-01T00:00:00Z", "version": "one"}}
     identity = BrokerAccountIdentity(platform_id="ibkr", account_types=("CASH",), account_modes=("LIVE",), account_id_fingerprint="sha256:" + "1" * 64)
     receipt = {"attestation_state": "self_attested", "release_id": "synthetic", "strategy_release": {"revision": "synthetic"}}
-    config = IBKRRebalanceConfig(translator=_build_test_translator(), separator="---", reconciliation_output_path=tmp_path / "reconciliation", strategy_profile="synthetic", execution_mode="live", account_ids=("U00000001",), runtime_release_receipt=receipt)
+    config = IBKRRebalanceConfig(translator=_build_test_translator(), separator="---", reconciliation_output_path=tmp_path / "reconciliation", strategy_profile="synthetic", execution_mode="live", account_ids=("U00000001",), runtime_release_receipt=receipt, notify_no_trade_cycles=False)
     session = AccountSubmissionSession(ExecutionMarkerStore(local_dir=tmp_path / "journal"), broker="ibkr", account_id="U00000001", owner_id="owner", profile="synthetic", intent_id="a" * 64, release_id=submission_release_digest(receipt), account_domain=domain, observed_account_id="U00000001", broker_identity=identity, observed_at="2026-10-30T02:00:00Z", decision_at="2026-10-30T02:00:00Z", clock=lambda: "2026-10-30T02:00:00Z", observed_environment="LIVE", observed_server="test", observed_currency="USD", observed_lifecycle_id="one")
     dummy = OrderIntent(symbol="VOO", side="sell", quantity=2, account_id="U00000001")
     with pytest.raises(AccountSubmissionError, match="risk reservation required"):
@@ -1399,7 +1434,51 @@ def test_no_target_brake_through_real_session_and_guarded_wrapper(tmp_path, monk
     class FakeIB:
         def isConnected(self): return True
         def disconnect(self): return None
-    result = run_strategy_core(config=config, connect_ib=lambda: FakeIB(), get_current_portfolio=lambda _ib: ({"VOO": {"quantity": 2}}, {"equity": 8000, "buying_power": 0}), compute_signals=lambda _ib, _holdings: (None, "signal", False, "no target", {"strategy_profile": "synthetic", "peak_equity_usd": 9500, "realized_vol": float("nan")}), execute_rebalance=lambda *_a, **_kw: [], send_tg_message=lambda _message: None, translator=_build_test_translator(), separator="---", reconciliation_output_path=tmp_path / "reconciliation", account_brake_session=session, account_brake_submit=platform.submit_market_order_intent, account_brake_order_intent_cls=OrderIntent)
+    messages = []
+    monkeypatch.delenv("IBKR_UNIFIED_NOTIFICATION_ENABLED", raising=False)
+    result = run_strategy_core(config=config, connect_ib=lambda: FakeIB(), get_current_portfolio=lambda _ib: ({"VOO": {"quantity": 2}}, {"equity": 8000, "buying_power": 0}), compute_signals=lambda _ib, _holdings: (None, "signal", False, "no target", {"strategy_profile": "synthetic", "peak_equity_usd": 9500, "realized_vol": float("nan")}), execute_rebalance=lambda *_a, **_kw: [], send_tg_message=messages.append, translator=_build_test_translator(), separator="---", reconciliation_output_path=tmp_path / "reconciliation", account_brake_session=session, account_brake_submit=platform.submit_market_order_intent, account_brake_order_intent_cls=OrderIntent)
     assert result.signal_metadata["account_brake_observation"]["hard_brake_triggered"]
     assert len(submitted) == 1 and submitted[0].side == "sell" and submitted[0].quantity == 2
+    assert messages and "strategy rebalance decision unavailable" in messages[0]
+    assert "no trades" not in messages[0]
     assert next(iter(session.read_state()["attempts"].values()))["certainty"] == "KNOWN_PENDING"
+
+
+@pytest.mark.parametrize("status,expected_status", [
+    ("Submitted", "Submitted"), ("PendingSubmit", "PendingSubmit"),
+    ("broker_status_unrecognized", "unknown"), ("", "unknown"),
+])
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_brake_order_details_unavailable_do_not_report_zero(
+    strategy_module_factory, status, expected_status, dry_run
+):
+    platform = strategy_module_factory()
+    metadata = {"account_brake_observation": {"hard_brake_triggered": True, "submission_status": status}}
+    record = build_reconciliation_record(
+        strategy_profile="synthetic", mode="live", trade_date=None, snapshot_as_of=None,
+        signal_metadata=metadata, target_weights=None, execution_summary=None,
+    )
+    cycle = SimpleNamespace(result="synthetic", signal_metadata=metadata, account_facts={})
+    summary = platform._build_cycle_report_summary(cycle, {}, record, dry_run=dry_run)
+    assert summary["orders_submitted_count"] is None
+    assert summary["account_brake_submission_status"] == expected_status
+    assert summary["orders_submitted_coverage"] == "strategy_only_account_brake_details_unavailable"
+    assert record["orders_submitted"] == []
+    assert record["orders_submitted_coverage"] == summary["orders_submitted_coverage"]
+    if dry_run:
+        assert summary["orders_previewed_count"] is None
+        assert summary["dry_run_order_preview_available"] is None
+        assert platform._build_notification_delivery_log_for_report(
+            platform="ibkr", strategy_profile="synthetic", run_id="synthetic", dry_run=True,
+            orders_previewed_count=None, delivery_events=[{"delivery_status": "sent"}],
+        ) == {}
+
+
+@pytest.mark.parametrize("status,orders", [("no_position", []), (None, []), (None, [{"status": "Submitted"}])])
+def test_report_preserves_known_strategy_order_counts(strategy_module_factory, status, orders):
+    platform = strategy_module_factory()
+    metadata = {"account_brake_observation": {"submission_status": status}} if status else {}
+    cycle = SimpleNamespace(result="synthetic", signal_metadata=metadata, account_facts={})
+    summary = platform._build_cycle_report_summary(cycle, {"orders_submitted": orders}, {}, dry_run=False)
+    assert summary["orders_submitted_count"] == len(orders)
+    assert "orders_submitted_coverage" not in summary

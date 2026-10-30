@@ -13,7 +13,7 @@ from scripts import daily_dry_run_digest as drill
 from scripts import execution_report_heartbeat as heartbeat
 
 
-def capture_cycle(monkeypatch, case, locale, *, metadata_overrides=None):
+def capture_cycle(monkeypatch, case, locale, *, metadata_overrides=None, notify_no_trade_cycles=True):
     calls = []
     class Broker:
         def isConnected(self):
@@ -60,7 +60,7 @@ def capture_cycle(monkeypatch, case, locale, *, metadata_overrides=None):
         connect_ib=connect, get_current_portfolio=portfolio, compute_signals=signals,
         execute_rebalance=execute, send_tg_message=lambda message: calls.append(["send", message]) or True,
         config=IBKRRebalanceConfig(translator=build_translator(locale), separator="---",
-                                   strategy_display_name="Example", notify_no_trade_cycles=True),
+                                   strategy_display_name="Example", notify_no_trade_cycles=notify_no_trade_cycles),
     )
     return json.loads(json.dumps({"calls": calls, "result": result.result}, default=lambda value: "<timestamp>" if isinstance(value, dt.datetime) else str(value)))
 
@@ -144,6 +144,49 @@ SCENARIOS = [("cycle", c) for c in ("heartbeat", "no_order", "filled", "pending"
 ]
 CAPTURE = {"cycle": capture_cycle, "heartbeat": capture_heartbeat, "drill": capture_drill,
            "attention": capture_attention, "runtime": capture_runtime_failure}
+
+
+@pytest.mark.parametrize("locale,healthy", [
+    ("zh", "✅ 无需调仓"), ("en", "✅ No rebalance needed"),
+])
+def test_known_no_signal_retains_legacy_heartbeat(monkeypatch, locale, healthy):
+    monkeypatch.delenv("IBKR_UNIFIED_NOTIFICATION_ENABLED", raising=False)
+    monkeypatch.delenv("QSL_ROUTINE_NOTIFICATION_MODE", raising=False)
+    observed = capture_cycle(monkeypatch, "heartbeat", locale, metadata_overrides={
+        "snapshot_guard_decision": "proceed", "no_op_reason": "no_signal",
+    })
+    message = next(call[1] for call in observed["calls"] if call[0] == "send")
+    assert healthy in message
+
+
+@pytest.mark.parametrize("locale,healthy,unavailable", [
+    ("zh", "✅ 无需调仓", "未生成策略调仓决策"),
+    ("en", "✅ No rebalance needed", "Strategy rebalance decision unavailable"),
+])
+@pytest.mark.parametrize("metadata", [
+    {"snapshot_guard_decision": "fail_closed"},
+    {"fail_reason": "synthetic snapshot error"},
+    {"execution_blocked_reason": "synthetic block"},
+    {"error": "synthetic error"},
+    {"no_op_reason": "source_unavailable"},
+    {"no_op_reason": "outside_execution_window_unavailable"},
+    {"snapshot_guard_decision": "unknown"},
+    {"snapshot_guard_decision": "fail_closed", "fail_reason": "synthetic snapshot error",
+     "notification_context": {"status": {"code": "no_order_no_rebalance", "params": {}}}},
+])
+def test_failed_no_target_heartbeat_is_not_presented_as_healthy(
+    monkeypatch, locale, healthy, unavailable, metadata
+):
+    monkeypatch.delenv("IBKR_UNIFIED_NOTIFICATION_ENABLED", raising=False)
+    monkeypatch.delenv("QSL_ROUTINE_NOTIFICATION_MODE", raising=False)
+    observed = capture_cycle(monkeypatch, "heartbeat", locale, metadata_overrides=metadata,
+                             notify_no_trade_cycles=False)
+    message = next(call[1] for call in observed["calls"] if call[0] == "send")
+    assert unavailable in message
+    assert healthy not in message
+    assert ("本轮无需调仓" if locale == "zh" else "no rebalance needed this cycle") not in message
+    if metadata.get("fail_reason"):
+        assert metadata["fail_reason"] in message
 
 
 @pytest.mark.parametrize("legacy_mode", [None, "daily_digest"])

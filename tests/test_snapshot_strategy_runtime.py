@@ -346,6 +346,38 @@ def test_platform_reserved_cash_policy_can_raise_strategy_cash_reserve(strategy_
 
     assert module.CASH_RESERVE_RATIO == pytest.approx(0.05)
     assert module.CASH_RESERVE_FLOOR_USD == pytest.approx(250.0)
+    assert module.STRATEGY_RUNTIME.merged_runtime_config["cash_reserve_ratio"] == pytest.approx(0.05)
+
+
+def test_global_etf_snapshot_filters_only_platform_cash_reserve():
+    source = {"cash_reserve_ratio": 0.05, "top_n": 2, "unexpected_parameter": 1}
+    config = strategy_runtime_module._snapshot_signal_runtime_config("global_etf_rotation", source)
+    assert config == {"top_n": 2, "unexpected_parameter": 1}
+    assert source["cash_reserve_ratio"] == 0.05
+    assert strategy_runtime_module._snapshot_signal_runtime_config("another_profile", source) == source
+
+
+def test_global_etf_snapshot_uses_filtered_execution_reserve_without_changing_weights():
+    from us_equity_strategies.strategies.global_etf_rotation import compute_signals_from_feature_snapshot
+
+    rows = [
+        dict(as_of="2026-03-31", symbol="AAA", role="ranking_pool_etf", close=100,
+             momentum_13612w=0.3, score=0.3, sma_pass=True, eligible=True, vol_126=0.2),
+        dict(as_of="2026-03-31", symbol="SPY", role="canary_asset", close=100,
+             momentum_13612w=0.1, score=0.1, sma_pass=True, eligible=False, vol_126=0.2),
+    ]
+    kwargs = {"as_of_date": "2026-03-31", "top_n": 2,
+              "translator": lambda key, **_kwargs: key}
+    with_reserve = {**kwargs, "cash_reserve_ratio": 0.05}
+    filtered = strategy_runtime_module._snapshot_signal_runtime_config("global_etf_rotation", with_reserve)
+    expected = compute_signals_from_feature_snapshot(rows, (), **kwargs)
+    assert compute_signals_from_feature_snapshot(rows, (), **filtered) == expected
+    assert expected[0] == {"AAA": 0.5, "BIL": 0.5}
+    unknown = strategy_runtime_module._snapshot_signal_runtime_config(
+        "global_etf_rotation", {**with_reserve, "unexpected_parameter": 1}
+    )
+    with pytest.raises(TypeError, match="unexpected_parameter"):
+        compute_signals_from_feature_snapshot(rows, (), **unknown)
 
 
 @pytest.mark.skip(reason="Tech/Communication is research-only and no longer an IBKR live profile")

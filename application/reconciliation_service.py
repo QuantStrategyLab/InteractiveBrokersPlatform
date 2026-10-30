@@ -6,8 +6,23 @@ import json
 import tempfile
 from pathlib import Path
 from typing import Any
+from collections.abc import Mapping
 
 import pandas as pd
+
+
+def account_brake_submission_status(signal_metadata: Mapping[str, Any] | None) -> str | None:
+    """Return a safe status when a brake submission was attempted without order details."""
+    observation = (signal_metadata or {}).get("account_brake_observation")
+    if not isinstance(observation, Mapping) or "submission_status" not in observation:
+        return None
+    status = str(observation.get("submission_status") or "").strip()
+    if status == "no_position":
+        return None
+    if status in {"Submitted", "PreSubmitted", "PendingSubmit", "ApiPending", "ApiPendingSubmit",
+                  "Filled", "PartiallyFilled", "Partial"}:
+        return status
+    return "unknown"
 
 
 def _json_safe(value: Any):
@@ -96,6 +111,10 @@ def build_reconciliation_record(
         "fail_reason": signal_metadata.get("fail_reason"),
         "status_icon": signal_metadata.get("status_icon"),
     }
+    brake_status = account_brake_submission_status(signal_metadata)
+    if brake_status is not None:
+        record["account_brake_submission_status"] = brake_status
+        record["orders_submitted_coverage"] = "strategy_only_account_brake_details_unavailable"
     return _json_safe(record)
 
 
