@@ -4,6 +4,7 @@ import datetime as dt
 import json
 import re
 import subprocess
+import urllib.parse
 from types import SimpleNamespace
 
 from scripts import cloud_run_runtime_guard as guard
@@ -88,6 +89,40 @@ def test_telegram_token_falls_back_to_secret_manager(monkeypatch):
         "--project",
         "interactivebrokersquant",
     ]
+
+
+def test_telegram_sender_disables_link_preview_and_preserves_message_and_recipients(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_TOKEN", "synthetic-token")
+    monkeypatch.setenv("GLOBAL_TELEGRAM_CHAT_ID", "chat-one,chat-two,chat-one")
+    requests = []
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+    def capture_request(request, timeout):
+        requests.append((request, timeout))
+        return Response()
+
+    monkeypatch.setattr(guard.urllib.request, "urlopen", capture_request)
+    message = "Runtime alert\nhttps://example.test/actions/runs/1"
+
+    assert guard._send_telegram(message) is True
+    assert len(requests) == 2
+    for (request, timeout), chat_id in zip(requests, ("chat-one", "chat-two")):
+        assert request.full_url == "https://api.telegram.org/botsynthetic-token/sendMessage"
+        assert request.get_method() == "POST"
+        assert timeout == 15
+        payload = urllib.parse.parse_qs(request.data.decode())
+        assert payload.pop("chat_id") == [chat_id]
+        assert payload.pop("text") == [message]
+        assert json.loads(payload.pop("link_preview_options")[0]) == {"is_disabled": True}
+        assert payload == {}
 
 
 def test_cloud_run_log_query_retries_transient_google_error(monkeypatch):
@@ -372,3 +407,4 @@ def test_explicit_disabled_service_is_removed_using_target_defaults(monkeypatch)
     )
 
     assert guard._load_services() == ["enabled-service"]
+
