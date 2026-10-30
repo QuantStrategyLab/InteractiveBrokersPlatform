@@ -80,6 +80,17 @@ def _release_revision(target):
     return image_identity._sha(release.get("strategy_revision")) if isinstance(release, dict) else None
 
 
+def _safe_release_target_observation(target, lock):
+    unavailable = {"release_identity": "unavailable", "release_revision": "unavailable",
+                   "risk_binding_revision": "unavailable", "source_lock_revision": "unavailable",
+                   "artifact_qualification": "not_assessed"}
+    try:
+        from scripts.release_target_observation import classify
+        return classify(target, lock)
+    except Exception:
+        return unavailable
+
+
 def diagnose(ctx, source: Path, run=command) -> dict:
     if pilot.command(["git", "-C", str(source), "rev-parse", "HEAD"], stage="source_commit_unverified").strip() != ctx.source_commit:
         raise pilot.ReleaseError("source_commit_unverified")
@@ -122,6 +133,7 @@ def diagnose(ctx, source: Path, run=command) -> dict:
                reason="metadata_observed" if complete and verified else "dependency_metadata_incomplete",
                source_stable=True, immutable_image_verified=True, ues_identity_verified=verified,
                source_lock_status="observed" if lock else "unavailable", dependencies=dependencies)
+    out["release_target_observation"] = _safe_release_target_observation(before["target"], lock)
     if stamp_equal is False:
         out.update(status="unavailable", reason="ues_stamp_conflict")
     elif not verified:
@@ -168,3 +180,4 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

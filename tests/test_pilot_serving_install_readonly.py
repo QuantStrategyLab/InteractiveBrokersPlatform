@@ -105,6 +105,38 @@ def test_plugin_missing_remains_partial_without_hiding_verified_ues(chain):
     assert out["equalities"]["installed_ues_equals_actual_serving_release"] is True
 
 
+@pytest.mark.parametrize("failure", ["classify", "import"])
+def test_optional_observation_failure_preserves_existing_main_result(chain, monkeypatch, tmp_path, capsys, failure):
+    from scripts import release_target_observation as observer
+    import builtins
+
+    def fail(*_args, **_kwargs):
+        raise RuntimeError(PRIVATE)
+
+    if failure == "classify":
+        monkeypatch.setattr(observer, "classify", fail)
+    else:
+        real_import = builtins.__import__
+        def guarded_import(name, *args, **kwargs):
+            if name == "scripts.release_target_observation":
+                raise ImportError(PRIVATE)
+            return real_import(name, *args, **kwargs)
+        monkeypatch.setattr(builtins, "__import__", guarded_import)
+    path = tmp_path / "safe.json"
+    assert reader.main(["--source-dir", "synthetic-source", "--receipt", str(path)]) == 0
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    assert result["status"] == "observed" and result["reason"] == "metadata_observed"
+    assert result["equalities"]["installed_ues_equals_actual_serving_release"] is True
+    assert result["equalities"]["installed_ues_equals_deployment_inventory_release"] is False
+    assert result["equalities"]["installed_ues_equals_source_lock"] is True
+    assert result["equalities"]["installed_ues_equals_actual_risk_binding"] is None
+    assert result["release_target_observation"]["release_identity"] == "unavailable"
+    assert result["release_target_observation"]["artifact_qualification"] == "not_assessed"
+    assert sum(args[:4] == ("gcloud", "run", "services", "describe") for args, _ in chain["calls"]) == 2
+    assert PRIVATE not in captured.out + captured.err + path.read_text()
+
+
 def test_stamp_conflict_is_unavailable_even_when_package_commit_is_observed(chain):
     chain["probe"]["ues_stamp"] = "f" * 40
     out = chain["execute"]()
@@ -262,3 +294,4 @@ def test_workflow_uses_single_protected_target_original_identity_and_deployment_
     assert "--direct-tcp --receipt" in callee
     for forbidden in ("docker build", "docker push", "refresh_artifact_registry_keep", "sync_env", "approve_traffic", "approve_scheduler", "secrets versions access"):
         assert forbidden not in callee
+
