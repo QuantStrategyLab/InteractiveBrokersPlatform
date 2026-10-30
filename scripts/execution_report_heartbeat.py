@@ -1207,7 +1207,7 @@ def _notify_normal_heartbeat(name: str, detail: str, *, quiet_eligible: bool = T
                             send_error=lambda: _send_telegram(
                                 "⚠️ 汇总候选写入未确认；请检查候选存储及运行记录。" if _notification_locale() == "zh"
                                 else "⚠️ Digest candidate write unconfirmed; check candidate storage and run records."))
-            if kind == "healthy_heartbeat" and confirmed is not True:
+            if confirmed is not True:
                 coverage_confirmed = False
         return coverage_confirmed
     if quiet_eligible:

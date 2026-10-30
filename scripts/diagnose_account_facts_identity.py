@@ -431,6 +431,24 @@ def diagnose_identity(
     result["account_facts_stages"] = _diagnose_account_facts_stages(
         report, expected=expected, source_report_uri=source_report_uri,
     )
+    # Evidence only: the recovery workflow independently rechecks the actual
+    # serving revision, account identity and report before preparing anything.
+    stages = result["account_facts_stages"]
+    if (result["freshness_status"] == "fresh"
+            and result["cloud_run_metadata_status"] == "read"
+            and equalities["report_equals_ready"] is True
+            and result["serving_traffic"]["report_is_only_serving_revision"] is True
+            and all(stages[name] == "verified" for name in (
+                "report_envelope", "source_report_provenance", "scope_identity",
+                "snapshot_schema", "account_identity", "observation_interval"))):
+        try:
+            revision_hash = hashlib.sha256(revision.encode("utf-8")).hexdigest()
+        except UnicodeEncodeError:
+            pass
+        else:
+            result["serving_revision_evidence"] = {
+                "status": "observed", "serving_revision_sha256": revision_hash,
+            }
     result["snapshot_issue"] = _snapshot_issue(report, result["account_facts_stages"])
     result["report_stop_reason"] = _report_stop_reason(report, result["account_facts_stages"])
     return result

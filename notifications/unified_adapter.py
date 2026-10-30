@@ -467,6 +467,11 @@ def publish_cycle(publisher, *, notification, execution, attention=False):
     from dataclasses import replace
     from quant_platform_kit.notifications.unified_contract import order_identity_digest
     report = _RUN.get() or {}
+    def mark_incident_unavailable():
+        if isinstance(report, dict):
+            summary = report.setdefault("summary", {})
+            if isinstance(summary, dict):
+                summary["notification_error"] = "notification_incident_marker_unavailable"
     dry_run = report.get("dry_run") is True
     kind = _kind(execution, dry_run=dry_run)
     facts = digest_evidence(execution, dry_run=dry_run)
@@ -489,7 +494,12 @@ def publish_cycle(publisher, *, notification, execution, attention=False):
     except Exception:
         print("notification_cycle_identity_unavailable", flush=True)
         try:
-            publisher.publish(coverage_notice() if kind in {"routine_cycle", "order_submitted", "fill"} else notification)
+            if kind in {"routine_cycle", "order_submitted", "fill"}:
+                publisher.publish(coverage_notice())
+            elif not enabled():
+                publisher.publish(notification)
+            else:
+                mark_incident_unavailable()
         except Exception:
             print("notification_error_delivery_failed", flush=True)
         return False
@@ -503,17 +513,17 @@ def publish_cycle(publisher, *, notification, execution, attention=False):
         if ids and all(ids):
             event = replace(event, order_execution_digest=order_identity_digest(json.dumps(sorted(ids))))
     sent_attempted = False
+    def tracked_send():
+        nonlocal sent_attempted
+        sent_attempted = True
+        return publisher.publish(notification)
     def immediate():
-        def tracked_send():
-            nonlocal sent_attempted
-            sent_attempted = True
-            return publisher.publish(notification)
         return send_incident(event, tracked_send, family="cycle")
     try:
         result = route_notification_event(
             event, env=os.environ, flag_key=FLAG,
             persist_candidate=lambda fact: _checked_candidate(_with_routine_observations(fact, report), actually_ran=True, dry_run=dry_run),
-            legacy=lambda: publisher.publish(notification), immediate=immediate,
+            legacy=tracked_send, immediate=immediate,
         )
     except CandidatePersistenceError:
         failure = replace(event, event_kind="real_error", incident_reason="candidate_persistence")
@@ -533,9 +543,9 @@ def publish_cycle(publisher, *, notification, execution, attention=False):
                 print("notification_candidate_error_delivery_failed", flush=True)
         return False
     except Exception:
-        print("notification_incident_marker_unavailable", flush=True)
-        if not sent_attempted and kind not in {"routine_cycle", "order_submitted", "fill"}:
-            return publisher.publish(notification)
+        print("notification_incident_marker_unavailable_after_send" if sent_attempted else "notification_incident_marker_unavailable", flush=True)
+        if enabled() and kind not in {"routine_cycle", "order_submitted", "fill"}:
+            mark_incident_unavailable()
         return False
     if not result.candidate_persisted:
         print("notification_candidate_write_unconfirmed", flush=True)
@@ -610,8 +620,12 @@ def verified_order_summary(report):
 
 
 def receipt_notification_kind(report, *, quiet_eligible):
-    summary = report.get("summary") or {}
-    evidence = {**report, **(report.get("diagnostics") or {}), **(report.get("summary") or {})}
+    summary = report.get("summary")
+    diagnostics = report.get("diagnostics")
+    if summary is not None and not isinstance(summary, Mapping) or diagnostics is not None and not isinstance(diagnostics, Mapping):
+        return "receipt_unacceptable"
+    summary = summary or {}
+    evidence = {**report, **(diagnostics or {}), **summary}
     classification = _kind(evidence, dry_run=report.get("dry_run") is True)
     if classification in {"auth_failure", "blocked_run", "real_error"}:
         return classification
@@ -666,18 +680,13 @@ def publish_monitor(*, kind, send, report=None, target=None, now=None, family="r
             if send_error:
                 send_error()
             return False
-        return send()
+        return False
     # A monitor observation is ordered by its check time. The candidate stays in
     # the original source run's business window; its incident uses fresh proof.
     from dataclasses import replace
     observed = replace(event, occurred_at=now or datetime.now(timezone.utc))
-    send_attempted = False
     def immediate():
-        def tracked_send():
-            nonlocal send_attempted
-            send_attempted = True
-            return send()
-        return send_incident(observed, tracked_send, family=family, store=_state_store(values))
+        return send_incident(observed, send, family=family, store=_state_store(values))
     if report is None:
         # QRS has no non-counting monitor channel. No receipt means no business
         # run to attach a candidate to; keep only the durable immediate alert.
@@ -685,7 +694,7 @@ def publish_monitor(*, kind, send, report=None, target=None, now=None, family="r
             return immediate()
         except Exception:
             print("notification_monitor_marker_unavailable", flush=True)
-            return False if send_attempted else send()
+            return False
     try:
         result = route_notification_event(
             event, env=os.environ, flag_key=FLAG,
@@ -704,7 +713,7 @@ def publish_monitor(*, kind, send, report=None, target=None, now=None, family="r
             if send_error:
                 send_error()
             return False
-        return False if send_attempted else send()
+        return False
     if not result.candidate_persisted:
         print("notification_candidate_write_unconfirmed", flush=True)
     if kind == "healthy_heartbeat":

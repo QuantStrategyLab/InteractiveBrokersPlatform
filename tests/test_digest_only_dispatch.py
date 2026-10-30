@@ -33,6 +33,33 @@ class Publisher:
 
 
 class DigestOnlyDispatch(TestCase):
+    def test_failed_urgent_transport_is_never_retried_or_raised(self):
+        class BrokenPublisher:
+            def __init__(self):
+                self.calls = 0
+            def publish(self, notification):
+                self.calls += 1
+                raise OSError("synthetic uncertain send")
+        source = {"run_id": "run-one", "started_at": datetime.now(timezone.utc).isoformat(), "dry_run": False}
+        identity = {"DIGEST_OPAQUE_ACCOUNT_UID": "synthetic-account", "DIGEST_TARGET_ID": "synthetic-target",
+                    "STRATEGY_PROFILE": "synthetic-profile"}
+        for flag in ("false", "true"):
+            with self.subTest(flag=flag), patch.dict(adapter.os.environ, {**identity, adapter.FLAG: flag}, clear=True), \
+                 patch.object(adapter, "_state_store", side_effect=OSError("synthetic marker")):
+                publisher = BrokenPublisher()
+                self.assertFalse(adapter.with_run(source, adapter.publish_cycle, publisher,
+                    notification=RenderedNotification("error", "error"), execution={"execution_status": "error"}))
+                self.assertEqual(publisher.calls, 1 if flag == "false" else 0)
+                if flag == "true":
+                    self.assertEqual(source["summary"]["notification_error"], "notification_incident_marker_unavailable")
+        with patch.dict(adapter.os.environ, {**identity, adapter.FLAG: "true"}, clear=True), \
+             patch.object(adapter, "_checked_candidate", return_value=False), \
+             patch.object(adapter, "send_incident", side_effect=lambda event, send, **kw: send()):
+            publisher = BrokenPublisher()
+            self.assertFalse(adapter.with_run(source, adapter.publish_cycle, publisher,
+                notification=RenderedNotification("error", "error"), execution={"execution_status": "error"}))
+            self.assertEqual(publisher.calls, 1)
+
     def test_real_reporting_adapter_result_requires_confirmed_gcs_uri(self):
         results = [(None, False),
                    (RuntimeReportPersistResult(local_path="/tmp/report.json"), False),
@@ -252,8 +279,9 @@ class DigestOnlyDispatch(TestCase):
             self.assertEqual(adapter.receipt_notification_kind(pending, quiet_eligible=True), "order_status_unknown")
         with patch.dict(adapter.os.environ, {}, clear=True):
             self.assertEqual(adapter.receipt_notification_kind(base, quiet_eligible=True), "healthy_heartbeat")
+        self.assertEqual(adapter.receipt_notification_kind({"summary": "bad"}, quiet_eligible=False), "receipt_unacceptable")
 
-    def test_monitor_marker_failure_keeps_urgent_alert_without_duplicate(self):
+    def test_monitor_marker_failure_does_not_send_untracked_urgent_alert(self):
         report = {"run_id": "synthetic", "started_at": datetime.now(timezone.utc).isoformat(), "dry_run": False}
         env = {adapter.FLAG: "true", "DIGEST_OPAQUE_ACCOUNT_UID": "synthetic-account",
                "DIGEST_TARGET_ID": "synthetic-target", "STRATEGY_PROFILE": "synthetic-profile"}
@@ -261,9 +289,9 @@ class DigestOnlyDispatch(TestCase):
         with patch.dict(adapter.os.environ, env, clear=True), \
              patch.object(adapter, "_checked_candidate", return_value=False), \
              patch.object(adapter, "_state_store", side_effect=OSError("synthetic")):
-            self.assertTrue(adapter.publish_monitor(kind="receipt_missing", report=report,
+            self.assertFalse(adapter.publish_monitor(kind="receipt_missing", report=report,
                 send=lambda: sent.append("urgent") or True))
-        self.assertEqual(sent, ["urgent"])
+        self.assertEqual(sent, [])
 
     def test_unbound_healthy_monitor_reports_coverage_once(self):
         notices = []
@@ -271,6 +299,11 @@ class DigestOnlyDispatch(TestCase):
             self.assertFalse(adapter.publish_monitor(kind="healthy_heartbeat", report={}, send=lambda: None,
                 send_error=lambda: notices.append("coverage")))
         self.assertEqual(notices, ["coverage"])
+
+    def test_urgent_monitor_marker_failure_propagates_unsuccessful_status(self):
+        with patch.object(adapter, "receipt_notification_kind", return_value="receipt_missing"), \
+             patch.object(heartbeat, "publish_monitor", return_value=False):
+            self.assertFalse(heartbeat._notify_normal_heartbeat("synthetic", "unconfirmed", reports=[({}, False)]))
 
     def test_heartbeat_routes_proven_pending_to_candidate_even_with_legacy_flag(self):
         now = datetime.now(timezone.utc)
