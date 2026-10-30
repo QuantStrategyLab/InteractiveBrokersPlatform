@@ -62,7 +62,7 @@ jobs:
       - name: Check QPK pin consistency
         run: |
           set -euo pipefail
-          QPK_EXPECTED_PIN=3146d43ab29cf378063ed9865f5d303629874863 uv run --no-sync python scripts/check_qpk_pin_consistency.py
+          QPK_EXPECTED_PIN=2b04882058666ebc81d1650d93fa2105ec4ba3d8 uv run --no-sync python scripts/check_qpk_pin_consistency.py
 
       - name: Ensure uv.lock matches pyproject.toml
         run: uv lock --check
@@ -126,3 +126,4 @@ jobs:
           assert cases
           assert not any(c.find("skipped") is not None or c.find("failure") is not None or c.find("error") is not None for c in cases)
           PY
+

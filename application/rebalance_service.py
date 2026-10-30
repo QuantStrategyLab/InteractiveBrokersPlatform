@@ -17,7 +17,7 @@ from application.reconciliation_service import (
 )
 from application.signal_snapshot import build_signal_snapshot
 from notifications.events import NotificationPublisher
-from notifications.unified_adapter import enabled as unified_enabled, publish_cycle
+from notifications.unified_adapter import publish_cycle
 from notifications import renderers as notification_renderers
 from notifications.renderers import _build_order_batch_lines
 from quant_platform_kit.common.execution_state import build_execution_marker_key, claim_account_owner
@@ -118,8 +118,6 @@ def _should_suppress_noop_notification(
     no-trade cycle when no-trade notifications are enabled.
     """
     metadata = signal_metadata if isinstance(signal_metadata, Mapping) else {}
-    if unified_enabled():
-        return False  # The notification adapter must persist before suppressing.
     from quant_platform_kit.notifications.digest_routing import defer_routine_cycle_to_digest
     if has_error or any(metadata.get(key) for key in (
         "error", "errors", "fail_reason", "execution_blocked_reason", "plugin_error",
@@ -192,7 +190,9 @@ def _has_notification_attention(signal_metadata, execution_summary=None, *, reas
         )):
             return True
         status = str(scope.get("execution_status") or "").strip().lower()
-        if status not in {"", "no_op", "no_action", "completed", "executed", "dry_run", "dry_run_completed"}:
+        from notifications.unified_adapter import _known_pending_orders
+        known_pending = status in {"pending", "pending_reconciliation", "submitted", "broker_acknowledged", "partially_filled"} and _known_pending_orders(scope)
+        if status not in {"", "no_op", "no_action", "completed", "executed", "dry_run", "dry_run_completed"} and not known_pending:
             return True
         if str(scope.get("risk_gate") or "").strip().upper() in {"BLOCK", "BLOCKED", "REJECT", "REJECTED", "DENY", "DENIED"}:
             return True
@@ -202,8 +202,6 @@ def _has_notification_attention(signal_metadata, execution_summary=None, *, reas
 
 
 def _should_publish_execution_notification(*, config, signal_metadata, execution_summary, trade_logs) -> bool:
-    if unified_enabled():
-        return True  # Includes quiet/dry-run coverage; delivery is adapter-owned.
     from quant_platform_kit.notifications.digest_routing import defer_routine_cycle_to_digest
 
     if _has_notification_attention(
@@ -1188,7 +1186,7 @@ def run_strategy_core(
                     ),
                     flush=True,
                 )
-            else:
+            if not bool(getattr(config, "dry_run_only", False)):
                 publish_cycle(
                     notification_publisher,
                     execution={"execution_status": "no_action", **(signal_metadata or {}), **(blocked_summary or {})},
@@ -1283,7 +1281,7 @@ def run_strategy_core(
                     ),
                     flush=True,
                 )
-            else:
+            if not bool(getattr(config, "dry_run_only", False)):
                 publish_cycle(
                     notification_publisher,
                     execution={**(signal_metadata or {}), "execution_status": "no_op", "no_op_reason": "execution_already_recorded"},
@@ -1451,13 +1449,10 @@ def run_strategy_core(
             ),
             flush=True,
         )
-        if _should_publish_execution_notification(
-            config=config, signal_metadata=signal_metadata,
-            execution_summary=execution_summary, trade_logs=trade_logs,
-        ):
+        if not bool(getattr(config, "dry_run_only", False)):
             publish_cycle(
                 notification_publisher,
-                execution={**(signal_metadata or {}), **(execution_summary or {})},
+                execution={**({"execution_status": "no_action"} if execution_summary is None and isinstance(trade_logs, (list, tuple)) and not trade_logs else {}), **(signal_metadata or {}), **(execution_summary or {})},
                 attention=_has_notification_attention(signal_metadata, execution_summary,
                     reason_codes=getattr(config, "notification_attention_reason_codes", ())),
                 notification=notification_renderers.render_trade_notification(
@@ -1527,3 +1522,4 @@ def execute_account_brake_reduction(ib, *, admission, session, order_intent_cls,
         return submit_order_intent(ib, intent, account_execution_session=session, execution_grant=grant,
                                    reduction_position=signed_quantity, reduction_pending_quantity=0.0)
     return None
+

@@ -16,18 +16,20 @@ alone does not establish a fill. This does not supply the missing order receipt;
 downstream readers must honor the coverage marker, and their complete coverage
 has not been verified.
 
-`QSL_ROUTINE_NOTIFICATION_MODE` defaults to `immediate`. Exact `daily_digest`
-opts into one central bilingual digest. `QSL_DIGEST_ROUTINE_ORDERS=false` retains
-immediate confirmed order notices. Failed, pending, uncertain, risk, persistence
-and authentication outcomes retain immediate alerts. Healthy idle cycles and
-routine plugin observations do not produce individual pushes.
+Routine cycles, broker-identified orders and healthy heartbeat observations
+are persisted for the central bilingual daily digest regardless of legacy
+routing flags. An acknowledgement or partial fill does not establish a full
+fill. Missing or conflicting broker identity, unknown outcomes, reconciliation
+failures, risk, persistence and authentication errors retain immediate alerts.
+If a candidate cannot be persisted, the runtime sends an operational failure
+notice rather than the routine message and does not report the cycle deferred.
 
 Shared notification modules are imported directly from the pinned QPK package
-(`db70e1ca647ee29577432233d9dc2ea9e6eb1c4e`): `display_names`,
+(`2b04882058666ebc81d1650d93fa2105ec4ba3d8`): `display_names`,
 `digest_candidates`, `digest_routing` and `unified_contract`. The local
 `notifications/digest_snapshot/digest_archive.py` remains an IBKR-specific
-vendored copy because it adds IBKR archive persistence hooks. Existing
-QPK/strategy pins, order execution, funding, risk, account enablement and
+vendored copy because it adds IBKR archive persistence hooks. Strategy pins,
+order execution, funding, risk, account enablement and
 durable report writes are unchanged.
 
 Before enabling routing, validate the exact active target's private archived
@@ -42,7 +44,7 @@ missing evidence is unknown, never zero. No new collector or scheduler is added.
 An explicit `risk_gate=APPROVE` with only the `risk_gate:passed` marker is
 normal approval evidence. Notification classification uses a copy without that
 marker; the execution result and risk decision remain intact. Mixed, unknown or
-restrictive flags, pending orders and errors retain immediate delivery. Server
+restrictive flags and errors retain immediate delivery. Server
 logs record only the resulting notification kind, without private event facts.
 
 Before uploading a legacy `primary-live` projection, the existing scheduled
@@ -72,4 +74,5 @@ provider audit entries remain in their original restricted logs and are not
 passed as Telegram technical details, including when the deployed formatter is
 pinned to an older shared package. Guard detection, deduplication and failure
 exit codes are unchanged.
+
 

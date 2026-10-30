@@ -122,7 +122,9 @@ def test_unset_empty_invalid_flags_delegate_without_writes(monkeypatch, flag):
 
 def test_routine_persists_before_deferral_and_exports_unique_runs(routing):
     state, candidates = routing
-    summary = {"execution_status": "completed", "orders_submitted": [], "orders_filled": []}
+    summary = {"execution_status": "completed", "orders_submitted": [], "orders_filled": [], "orders_pending": [],
+               "orders_partially_filled": [], "option_orders_filled": [], "option_orders_pending": [],
+               "option_orders_partially_filled": []}
     assert cycle(summary)[1] == []
     assert cycle(summary)[1] == []
     assert cycle(summary, source=report("second-run"))[1] == []
@@ -137,10 +139,12 @@ def test_routine_persists_before_deferral_and_exports_unique_runs(routing):
 
 
 @pytest.mark.parametrize("locale,notice", [("zh", "汇总候选写入未确认"), ("en", "Digest candidate write unconfirmed")])
-def test_failed_candidate_does_not_silence_the_original_send(routing, monkeypatch, locale, notice):
+def test_failed_candidate_sends_only_persistence_error(routing, monkeypatch, locale, notice):
     routing[1].ack = False
     monkeypatch.setenv("NOTIFY_LANG", locale)
-    assert notice in cycle({"execution_status": "no_op", "orders_submitted": []})[1][0]
+    result, sent = cycle({"execution_status": "no_op", "orders_submitted": []})
+    assert result is False and notice in sent[0]
+    assert "compact" not in sent[0]
 
 
 @pytest.mark.parametrize("kind,summary", [
@@ -158,13 +162,15 @@ def test_urgent_events_dedupe_across_runs_and_recovery_allows_new_alert(routing,
     assert cycle(summary, source=report("worse-again", started_at=(NOW + timedelta(minutes=2)).isoformat()))[1] == ["compact"]
 
 
-def test_real_order_and_fill_counts_stay_immediate_and_unknown_is_preserved(routing):
-    order = {"status": "filled", "order_id": "synthetic-order", "symbol": "AAA"}
-    summary = {"execution_status": "completed", "orders_submitted": [order], "orders_filled": [order]}
-    assert cycle(summary)[1] == ["compact"]
+def test_real_order_and_fill_counts_are_deferred_and_unknown_is_preserved(routing):
+    order = {"status": "filled", "broker_order_id": "synthetic-order", "symbol": "AAA"}
+    summary = {"execution_status": "completed", "orders_submitted": [], "orders_filled": [order],
+               "orders_pending": [], "orders_partially_filled": [], "option_orders_filled": [],
+               "option_orders_pending": [], "option_orders_partially_filled": []}
+    assert cycle(summary)[1] == []
     row = next(iter(routing[1].rows.values()))[1]["runs"][0]
     assert row["order_count"] == 1 and row["fill_count"] is None
-    assert cycle(summary)[1] == ["compact"]
+    assert cycle(summary)[1] == []
     assert next(iter(routing[1].rows.values()))[1]["runs"][0]["order_count"] == 1
 
 
@@ -205,7 +211,8 @@ def test_marker_read_error_never_falls_back_to_untracked_send(routing, monkeypat
 def test_unknown_identity_keeps_routine_visible_without_zero_counts(routing, monkeypatch):
     monkeypatch.delenv("DIGEST_OPAQUE_ACCOUNT_UID")
     result, sends = cycle({"execution_status": "no_op"})
-    assert sends == [] and result is False
+    assert result is False and len(sends) == 1
+    assert "compact" not in sends[0]
     assert routing[1].rows == {}
 
 
@@ -664,3 +671,4 @@ def test_conflicting_same_event_counts_remain_unknown_after_later_duplicates(rou
     row = next(iter(routing[1].rows.values()))[1]["runs"][0]
     assert row[field] is None and row["field_status"][field] == "unknown"
     assert row["status"] == "alert" and row["cycle_count"] == 1
+
