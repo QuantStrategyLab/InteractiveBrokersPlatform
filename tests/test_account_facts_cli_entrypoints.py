@@ -38,6 +38,11 @@ STATIC_COMMAND = re.search(
     r"(?m)^        run: (python3 [^\n]*diagnose_image_static_source[^\n]*)$",
     IDENTITY_WORKFLOW,
 ).group(1)
+SERVING_WORKFLOW = (ROOT / ".github/workflows/serving-image-identity-diagnose.yml").read_text()
+SERVING_COMMANDS = re.findall(
+    r"(?m)^        run: (python3 [^\n]*diagnose_serving_image_identity[^\n]*)$",
+    SERVING_WORKFLOW,
+)
 
 
 @pytest.fixture
@@ -211,4 +216,36 @@ def test_identity_workflow_preflight_validates_synthetic_target_without_external
     body = json.loads(result.stdout)
     assert body["reason"] == "target_config_valid"
     assert body["projection_passed"] is None, "preflight must keep real report qualification unknown"
+    assert not env_path.exists()
+
+
+@pytest.mark.parametrize("command", SERVING_COMMANDS)
+def test_serving_workflow_cli_imports_before_rejecting_missing_configuration(cli_workspace, command):
+    run, env_path, _ = cli_workspace
+    assert len(SERVING_COMMANDS) == 2
+    result = run(command, target="primary-live")
+
+    assert result.returncode == 1
+    assert result.stderr == "", "serving inspection must reach its safe result without import errors"
+    assert json.loads(result.stdout)["reason"] == "target_config_unavailable"
+    assert not env_path.exists()
+
+
+def test_serving_workflow_preflight_validates_synthetic_target_without_external_calls(cli_workspace):
+    run, env_path, _ = cli_workspace
+    command = next(command for command in SERVING_COMMANDS if command.endswith(" --preflight"))
+    result = run(command, target="primary-live", settings={
+        "IBKR_ACCOUNT_FACTS_PROJECT_ID": "example-project",
+        "IBKR_ACCOUNT_FACTS_SERVICE_NAME": "synthetic-service",
+        "IBKR_ACCOUNT_FACTS_RUNTIME_REVISION": "synthetic-revision",
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE": "synthetic-live",
+        "IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR": "synthetic-deployment",
+    })
+
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    body = json.loads(result.stdout)
+    assert body["reason"] == "target_config_valid"
+    assert body["status"] == "preflight"
+    assert body["independent_release_approval"] == "unknown"
     assert not env_path.exists()

@@ -252,7 +252,7 @@ def test_workflow_manual_main_preflight_before_auth_without_business_channels():
     text=Path('.github/workflows/serving-image-identity-diagnose.yml').read_text()
     assert "workflow_dispatch:" in text and "github.ref == 'refs/heads/main'" in text
     assert "schedule:" not in text
-    assert text.index('scripts/diagnose_serving_image_identity.py --preflight') < text.index('google-github-actions/auth')
+    assert text.index('-m scripts.diagnose_serving_image_identity --preflight') < text.index('google-github-actions/auth')
     assert "SYNC_TOKEN" not in text and "TELEGRAM" not in text and "upload-artifact" not in text
     assert all(t in text for t in ['primary-live','additional-1','additional-2','additional-3'])
 
