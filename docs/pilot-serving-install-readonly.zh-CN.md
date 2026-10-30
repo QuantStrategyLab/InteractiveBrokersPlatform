@@ -6,6 +6,8 @@
 
 公开回执只含固定状态、每个包的 metadata 状态、nullable equality 和独立 `ues_identity_verified`。actual serving release 来自真实 serving target；`deployment_inventory_release` 来自受保护部署 inventory；source lock 只来自本次准确源码的 uv.lock，不能当成已批准风险版本。原版本值、镜像地址、服务、账号、绑定、配置和异常不输出或保存。
 
+可选 `release_target_observation` 仅对已读取的 serving target 和 source lock 输出固定枚举：release identity 形状、release 与风险绑定的 revision 是否匹配 source lock，以及锁来源是否 observed 或 unavailable。缺失、无效和无法比较保持独立；不输出 revision 或原始字段。它不查找或验证配置、政策、证据、插件工件，`artifact_qualification=not_assessed`；形状有效及版本一致均不代表发布资格。可选观察失败只返回 unavailable，不改变原诊断状态、结论或退出码。
+
 plugin 缺失或缺少提交 metadata 时整体保留 partial，退出码仍为 1；只要 UES distribution 的提交与 stamp 一致，独立 UES 身份仍可核实。stamp 与 distribution 冲突则明确不可用，不把冲突升级为策略版本合格。读取失败或身份漂移保留 unknown/null，不用零值或主分支版本补造。
 
 默认镜像模式没有 build、push、KEEP、deploy、IAM、Secret 内容、券商、策略或通知操作。镜像安装身份取证不授予交易、风险政策、恢复或发布权限。
@@ -19,3 +21,4 @@ plugin 缺失或缺少提交 metadata 时整体保留 partial，退出码仍为 
 `gateway_tcp_preflight=true` 默认关闭，仅能与 runner 模式一起使用，且与引用摘要模式互斥。原声明必须通过单账户/live 绑定、正 client ID 和端口检查，并采用原直连路线；否则不打开 socket，不尝试其他地址、VM/IAP、身份或端口。它仅对原配置 host/port 解析出的首个地址发起一次 TCP 连接，连接等待上限 5 秒，成功后立即关闭；不发送或读取任何券商协议，不认证、读取账户或调用 SDK。port 沿用账户组优先、`IB_GATEWAY_PORT` 回退和 live/paper 默认值。安全结果只新增 nullable `gateway_tcp_connected`、是否尝试及固定失败类别，不输出地址、端口或底层异常。结果只代表该次地址/端口尝试，仍不代表券商身份、其他解析地址、隔离运行时或完整周期已通过。
 
 同时指定 `configuration_reference_only=true` 时只核来源摘要：要求 ACCOUNT_GROUP 和配置 Secret 名称均为明确字面声明，返回准确 `projects/.../secrets/...` 引用的 SHA256。它不重试已失败的 payload 读取，不取 Secret 内容、VM、token 或 IAP，不执行 IAM。只在云端解析原声明；用于将受保护现役引用与管理客户端已有定位作准确比较，不把引用名或配置正文放入产物。不支持的声明形状保持 unavailable。
+
