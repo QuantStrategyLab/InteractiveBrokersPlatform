@@ -72,7 +72,7 @@ class DigestOnlyDispatch(TestCase):
              patch.object(adapter, "recover_incidents"), \
              patch.object(rebalance_service, "write_reconciliation_record", return_value="synthetic"), \
              patch.object(rebalance_service, "_record_platform_execution_telemetry"):
-            adapter.with_run(report, rebalance_service.run_strategy_core,
+            result = adapter.with_run(report, rebalance_service.run_strategy_core,
                 connect_ib=lambda: Broker(), get_current_portfolio=lambda _: ({}, {"equity": 1000.0, "buying_power": 500.0}),
                 compute_signals=lambda *_: ({"SYN": .5}, "", False, "", signals),
                 execute_rebalance=lambda *args, **kw: ([], pending_order()),
@@ -80,6 +80,7 @@ class DigestOnlyDispatch(TestCase):
                 config=IBKRRebalanceConfig(translator=lambda key, **kwargs: key, separator="---",
                                            strategy_display_name="Example", notify_no_trade_cycles=False))
         self.assertEqual(sends, [])
+        self.assertEqual(result.result, "OK - executed")
         self.assertEqual(len(candidates), 1)
         self.assertEqual((candidates[0]["event_kind"], candidates[0]["order_count"], candidates[0]["fill_count"]),
                          ("order_submitted", 1, None))
@@ -178,13 +179,14 @@ class DigestOnlyDispatch(TestCase):
              patch.object(adapter, "recover_incidents"), \
              patch.object(rebalance_service, "write_reconciliation_record", return_value="synthetic"), \
              patch.object(rebalance_service, "_record_platform_execution_telemetry"):
-            adapter.with_run(report, rebalance_service.run_strategy_core,
+            result = adapter.with_run(report, rebalance_service.run_strategy_core,
                 connect_ib=lambda: Broker(), get_current_portfolio=lambda _: ({}, {"equity": 1000.0, "buying_power": 500.0}),
                 compute_signals=lambda *_: (None, "", False, "", {"strategy_profile": "synthetic-profile"}),
                 execute_rebalance=lambda *args, **kw: ([], {}), send_tg_message=lambda text: sends.append(text) or True,
                 config=IBKRRebalanceConfig(translator=lambda key, **kwargs: key, separator="---",
                                            strategy_display_name="Example", notify_no_trade_cycles=False))
         self.assertEqual(sends, [])
+        self.assertEqual(result.result, "OK - no-op")
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0]["event_kind"], "routine_cycle")
 
@@ -238,6 +240,37 @@ class DigestOnlyDispatch(TestCase):
         self.assertTrue(adapter.verified_pending_summary(report))
         report["summary"]["orders_submitted_count"] = 0
         self.assertFalse(adapter.verified_pending_summary(report))
+
+    def test_missing_auth_and_contradictory_pending_stay_urgent(self):
+        base = {"dry_run": False, "diagnostics": {}, "summary": {"execution_status": "no_action"}}
+        with patch.dict(adapter.os.environ, {adapter.FLAG: "true"}, clear=True):
+            self.assertEqual(adapter.receipt_notification_kind(base, quiet_eligible=True), "receipt_missing")
+            receipt = {"outcome": "no_action"}
+            auth = {**base, "execution_receipt": receipt, "summary": {"execution_status": "no_action", "auth_expired": True}}
+            pending = {**base, "execution_receipt": receipt, "summary": {"execution_status": "pending", "orders_pending_count": 1}}
+            self.assertEqual(adapter.receipt_notification_kind(auth, quiet_eligible=True), "auth_failure")
+            self.assertEqual(adapter.receipt_notification_kind(pending, quiet_eligible=True), "order_status_unknown")
+        with patch.dict(adapter.os.environ, {}, clear=True):
+            self.assertEqual(adapter.receipt_notification_kind(base, quiet_eligible=True), "healthy_heartbeat")
+
+    def test_monitor_marker_failure_keeps_urgent_alert_without_duplicate(self):
+        report = {"run_id": "synthetic", "started_at": datetime.now(timezone.utc).isoformat(), "dry_run": False}
+        env = {adapter.FLAG: "true", "DIGEST_OPAQUE_ACCOUNT_UID": "synthetic-account",
+               "DIGEST_TARGET_ID": "synthetic-target", "STRATEGY_PROFILE": "synthetic-profile"}
+        sent = []
+        with patch.dict(adapter.os.environ, env, clear=True), \
+             patch.object(adapter, "_checked_candidate", return_value=False), \
+             patch.object(adapter, "_state_store", side_effect=OSError("synthetic")):
+            self.assertTrue(adapter.publish_monitor(kind="receipt_missing", report=report,
+                send=lambda: sent.append("urgent") or True))
+        self.assertEqual(sent, ["urgent"])
+
+    def test_unbound_healthy_monitor_reports_coverage_once(self):
+        notices = []
+        with patch.object(adapter, "event_for", side_effect=ValueError("synthetic")):
+            self.assertFalse(adapter.publish_monitor(kind="healthy_heartbeat", report={}, send=lambda: None,
+                send_error=lambda: notices.append("coverage")))
+        self.assertEqual(notices, ["coverage"])
 
     def test_heartbeat_routes_proven_pending_to_candidate_even_with_legacy_flag(self):
         now = datetime.now(timezone.utc)

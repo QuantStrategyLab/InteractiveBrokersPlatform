@@ -1187,21 +1187,31 @@ def _send_telegram(message: str, *, retry_429_once: bool = False) -> bool:
 
 
 def _notify_normal_heartbeat(name: str, detail: str, *, quiet_eligible: bool = True,
-                             reports=None, now=None) -> None:
+                             reports=None, now=None) -> bool:
     if reports:
+        if any(not (item[1] if isinstance(item, tuple) else quiet_eligible) for item in reports):
+            message = format_operational_alert(
+                locale=_notification_locale(), alert_type="execution_report_heartbeat", name=name,
+                issues=["运行检查证据待核对" if _notification_locale() == "zh" else "Runtime check evidence needs review"],
+                technical_details=[detail],
+            )
+            print(message)
         # No-due/closed-session observations do not invent an actual run.
+        coverage_confirmed = True
         for observation in reports or ():
             report, report_quiet = observation if isinstance(observation, tuple) else (observation, quiet_eligible)
             from notifications.unified_adapter import receipt_notification_kind
             kind = receipt_notification_kind(report, quiet_eligible=report_quiet)
-            publish_monitor(kind=kind, report=report, now=now,
+            confirmed = publish_monitor(kind=kind, report=report, now=now,
                             send=lambda: _send_telegram(monitor_message(kind)),
                             send_error=lambda: _send_telegram(
                                 "⚠️ 汇总候选写入未确认；请检查候选存储及运行记录。" if _notification_locale() == "zh"
                                 else "⚠️ Digest candidate write unconfirmed; check candidate storage and run records."))
-        return
+            if kind == "healthy_heartbeat" and confirmed is not True:
+                coverage_confirmed = False
+        return coverage_confirmed
     if quiet_eligible:
-        return
+        return True
     message = format_operational_alert(
         locale=_notification_locale(), alert_type="execution_report_heartbeat", name=name,
         issues=["运行检查证据待核对" if _notification_locale() == "zh" else "Runtime check evidence needs review"],
@@ -1209,6 +1219,7 @@ def _notify_normal_heartbeat(name: str, detail: str, *, quiet_eligible: bool = T
     )
     if not _send_telegram(message):
         raise RuntimeError("Execution report heartbeat summary was not acknowledged")
+    return True
 
 
 def _no_due_detail() -> str:
@@ -1448,25 +1459,25 @@ def main(now: dt.datetime | None = None) -> int:
             if visible_report_details:
                 details += "; " + "; ".join(visible_report_details)
             print(f"Execution report heartbeat OK for {name}: {details}")
-            _notify_normal_heartbeat(
+            notified = _notify_normal_heartbeat(
                 name, _notice("heartbeat_accepted_report", detail=details) if all(quiet_by_service[key] for key in required_keys) else details,
                 quiet_eligible=all(quiet_by_service[key] for key in required_keys),
                 reports=accepted_payloads, now=now,
             )
-            return 0
+            return 0 if notified or not fail_workflow else 1
     if accepted and not list_errors and not read_incomplete and not latest_report_issues:
         uri, updated, reason, execution_backend = accepted[0]
         print(
             f"Execution report heartbeat OK for {name}: {reason}, updated={updated.isoformat()}, "
             f"backend={execution_backend}, uri={uri}"
         )
-        _notify_normal_heartbeat(
+        notified = _notify_normal_heartbeat(
             name,
             _notice("heartbeat_accepted_report", detail=f"{reason}@{updated.isoformat()}") if all(quiet_reports) else "; ".join(visible_report_details),
             quiet_eligible=all(quiet_reports),
             reports=accepted_payloads, now=now,
         )
-        return 0
+        return 0 if notified or not fail_workflow else 1
 
     issues = []
     technical_details = list(latest_report_issues)

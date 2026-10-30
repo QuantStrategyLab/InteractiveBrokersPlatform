@@ -151,17 +151,35 @@ def mock_heartbeat(monkeypatch, payload):
     monkeypatch.setattr(heartbeat, '_cat_gcs_json', lambda *args, **kw: payload)
     sent = []
     monkeypatch.setattr(heartbeat, '_send_telegram', lambda msg, **kw: sent.append(msg) or True)
+    # These disposition tests isolate heartbeat classification from storage;
+    # the dedicated adapter tests exercise real per-run binding and fake CAS.
+    def confirmed_monitor(*, kind, send, **kwargs):
+        if kind == 'healthy_heartbeat':
+            return True
+        return send()
+    monkeypatch.setattr(heartbeat, 'publish_monitor', confirmed_monitor)
     return sent
 
 
 @pytest.mark.parametrize('flag', [None, 'false', 'true'])
-def test_heartbeat_explicit_normal_preserves_manual_flag(monkeypatch, capsys, flag):
+def test_heartbeat_success_stays_daily_even_with_manual_flag(monkeypatch, capsys, flag):
     if flag is not None:
         monkeypatch.setenv('RUNTIME_HEARTBEAT_NOTIFY_ON_SUCCESS', flag)
     sent = mock_heartbeat(monkeypatch, report())
     assert heartbeat.main(NOW) == 0
-    assert bool(sent) is (flag == 'true')
+    assert not sent
     assert 'heartbeat OK' in capsys.readouterr().out
+
+
+def test_unconfirmed_healthy_candidate_alerts_and_fails_workflow(monkeypatch):
+    sent = mock_heartbeat(monkeypatch, report())
+    def unconfirmed(*, send_error, **kwargs):
+        send_error()
+        return False
+    monkeypatch.setattr(heartbeat, 'publish_monitor', unconfirmed)
+    assert heartbeat.main(NOW) == 1
+    assert len(sent) == 1
+    assert 'candidate' in sent[0].lower() or '候选' in sent[0]
 
 
 @pytest.mark.parametrize('execution_status', ['unknown', 'partial', 'pending_reconciliation', 'reconciliation_required'])
@@ -516,11 +534,11 @@ def test_unconfirmed_check_message_never_claims_normal_or_trade_failure(monkeypa
     assert '交易失败' not in sent[0]
 
 
-def test_confirmed_manual_opt_in_uses_existing_normal_formatter(monkeypatch):
+def test_confirmed_manual_opt_in_stays_daily(monkeypatch):
     monkeypatch.setenv('RUNTIME_HEARTBEAT_NOTIFY_ON_SUCCESS', 'true')
     sent = mock_heartbeat(monkeypatch, report())
     assert heartbeat.main(NOW) == 0
-    assert heartbeat._notice('status_normal') in sent[0]
+    assert not sent
 
 
 @pytest.mark.parametrize('due_at', [None, NOW - dt.timedelta(hours=2), NOW - dt.timedelta(minutes=30)])
@@ -550,3 +568,4 @@ def test_market_closed_drill_requires_explicit_strict_zero_count(monkeypatch, co
     success = type(count) is int and count == 0
     assert drill.main(NOW) == (0 if success else 1)
     assert bool(sent) is not success
+

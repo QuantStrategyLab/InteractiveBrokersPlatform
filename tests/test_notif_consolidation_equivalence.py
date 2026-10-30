@@ -86,7 +86,10 @@ def capture_heartbeat(monkeypatch, case, locale):
     monkeypatch.setattr(heartbeat, "_list_gcs_objects", lambda *a, **kw: [] if case == "missing" else [
         {"url": "gs://synthetic/reports/a.json", "metadata": {"updated": "2026-10-16T20:00:00Z"}},
     ])
-    monkeypatch.setattr(heartbeat, "_cat_gcs_json", lambda *a, **kw: {"status": "ok", "execution_backend": "gateway"})
+    monkeypatch.setattr(heartbeat, "_cat_gcs_json", lambda *a, **kw: {
+        "status": "ok", "execution_backend": "gateway", "run_id": "synthetic-run",
+        "started_at": "2026-10-16T20:00:00Z", "strategy_profile": "synthetic_strategy",
+        "summary": {"execution_status": "no_action"}})
     monkeypatch.setattr(heartbeat, "_is_quiet_report", lambda *a, **kw: True)
     monkeypatch.setattr(heartbeat, "_send_telegram", lambda message, **kw: calls.append([message, kw]) or True)
     result = heartbeat.main(now=dt.datetime(2026, 10, 16, 22, 20, tzinfo=dt.timezone.utc))
@@ -146,17 +149,32 @@ CAPTURE = {"cycle": capture_cycle, "heartbeat": capture_heartbeat, "drill": capt
            "attention": capture_attention, "runtime": capture_runtime_failure}
 
 
+def _candidate_capture(monkeypatch, function, *args, **kwargs):
+    from notifications import unified_adapter as adapter
+    candidates = []
+    monkeypatch.setattr(adapter, "_identity", lambda target=None: ({"platform_id": "ibkr", "opaque_account_uid": "synthetic-account", "target_id": "synthetic-target", "strategy_profile": "synthetic_strategy"}, {}))
+    monkeypatch.setattr(adapter, "_checked_candidate", lambda fact, **kw: candidates.append(fact) or True)
+    monkeypatch.setattr(adapter, "recover_incidents", lambda *args, **kwargs: None)
+    report = {"run_id": "synthetic-run", "started_at": "2026-10-16T20:00:00Z", "dry_run": False}
+    token = adapter._RUN.set(report)
+    try:
+        observed = function(monkeypatch, *args, **kwargs)
+    finally:
+        adapter._RUN.reset(token)
+    return observed, candidates
+
+
 @pytest.mark.parametrize("locale,healthy", [
     ("zh", "✅ 无需调仓"), ("en", "✅ No rebalance needed"),
 ])
 def test_known_no_signal_retains_legacy_heartbeat(monkeypatch, locale, healthy):
     monkeypatch.delenv("IBKR_UNIFIED_NOTIFICATION_ENABLED", raising=False)
     monkeypatch.delenv("QSL_ROUTINE_NOTIFICATION_MODE", raising=False)
-    observed = capture_cycle(monkeypatch, "heartbeat", locale, metadata_overrides={
+    observed, candidates = _candidate_capture(monkeypatch, capture_cycle, "heartbeat", locale, metadata_overrides={
         "snapshot_guard_decision": "proceed", "no_op_reason": "no_signal",
     })
-    message = next(call[1] for call in observed["calls"] if call[0] == "send")
-    assert healthy in message
+    assert not [call for call in observed["calls"] if call[0] == "send"]
+    assert len(candidates) == 1 and candidates[0]["event_kind"] == "routine_cycle"
 
 
 @pytest.mark.parametrize("locale,healthy,unavailable", [
@@ -205,9 +223,25 @@ def test_flags_off_entrypoints_match_main_call_recorders(monkeypatch, kind, case
         monkeypatch.setenv("IBKR_UNIFIED_NOTIFICATION_ENABLED", flag)
     golden = json.loads((Path(__file__).parent / "fixtures/notif_main_2f16cb9.json").read_text())
     expected = golden[("daily_digest:" if legacy_mode else "") + f"{kind}:{case}:{locale}"]
-    observed = CAPTURE[kind](monkeypatch, case, locale)
+    routine = (kind == "cycle" and case in {"heartbeat", "no_order"}) or (kind == "heartbeat" and case == "healthy")
+    if routine:
+        observed, candidates = _candidate_capture(monkeypatch, CAPTURE[kind], case, locale)
+        assert len(candidates) == 1
+    else:
+        observed = CAPTURE[kind](monkeypatch, case, locale)
     expected = copy.deepcopy(expected)
     for call in expected.get("calls", []):
         if call[0] == "execute":
             call[-1]["account_execution_session"] = None
+    if routine:
+        if "calls" in expected:
+            expected["calls"] = [call for call in expected["calls"] if call[0] != "send"]
+        else:
+            expected["sends"] = []
+    elif kind == "cycle" and case == "filled" and legacy_mode:
+        expected = copy.deepcopy(golden[f"{kind}:{case}:{locale}"])
+        for call in expected.get("calls", []):
+            if call[0] == "execute":
+                call[-1]["account_execution_session"] = None
     assert observed == expected
+

@@ -470,7 +470,16 @@ def test_trade_notification_localizes_compact_signal_state_for_zh_and_en():
     assert "🎯 Entry Signal" not in en_notification.compact_text
 
 
-def test_run_strategy_core_passes_signal_metadata_to_execution():
+def test_run_strategy_core_passes_signal_metadata_to_execution(monkeypatch):
+    from datetime import datetime, timezone
+    from notifications import unified_adapter as adapter
+    from quant_platform_kit.notifications.unified_contract import NotificationEvent
+    candidates = []
+    monkeypatch.setattr(adapter, "event_for", lambda kind, **kwargs: NotificationEvent(
+        kind, datetime.now(timezone.utc), platform_id="ibkr", opaque_account_uid="synthetic-account",
+        target_id="synthetic-target", strategy_profile="synthetic-strategy", source_run_id="synthetic-run"))
+    monkeypatch.setattr(adapter, "_checked_candidate", lambda fact, **kwargs: candidates.append(fact) or True)
+    monkeypatch.setattr(adapter, "recover_incidents", lambda *args, **kwargs: None)
     observed = {"messages": [], "strategy_symbols": None}
 
     class FakeIB:
@@ -542,6 +551,7 @@ def test_run_strategy_core_passes_signal_metadata_to_execution():
     assert observed["strategy_symbols"] == ("AAA", "BOXX")
     assert observed["signal_metadata"]["managed_symbols"] == ("AAA", "BOXX")
     assert observed["messages"] == []
+    assert len(candidates) == 1 and candidates[0]["event_kind"] == "routine_cycle"
 
 
 def test_run_strategy_core_writes_reconciliation_record(tmp_path):
@@ -986,7 +996,16 @@ def test_no_target_preserves_independent_account_brake(tmp_path):
 
 
 
-def test_run_strategy_core_prefers_structured_noop_status_in_zh():
+def test_run_strategy_core_prefers_structured_noop_status_in_zh(monkeypatch):
+    from datetime import datetime, timezone
+    from notifications import unified_adapter as adapter
+    from quant_platform_kit.notifications.unified_contract import NotificationEvent
+    candidates = []
+    monkeypatch.setattr(adapter, "event_for", lambda kind, **kwargs: NotificationEvent(
+        kind, datetime.now(timezone.utc), platform_id="ibkr", opaque_account_uid="synthetic-account",
+        target_id="synthetic-target", strategy_profile="synthetic-strategy", source_run_id="synthetic-run"))
+    monkeypatch.setattr(adapter, "_checked_candidate", lambda fact, **kwargs: candidates.append(fact) or True)
+    monkeypatch.setattr(adapter, "recover_incidents", lambda *args, **kwargs: None)
     observed = {"messages": []}
 
     class FakeIB:
@@ -1033,6 +1052,7 @@ def test_run_strategy_core_prefers_structured_noop_status_in_zh():
 
     assert result.result == "OK - no-op"
     assert observed["messages"] == []
+    assert len(candidates) == 1 and candidates[0]["event_kind"] == "routine_cycle"
 
 
 @pytest.fixture
@@ -1482,3 +1502,4 @@ def test_report_preserves_known_strategy_order_counts(strategy_module_factory, s
     summary = platform._build_cycle_report_summary(cycle, {"orders_submitted": orders}, {}, dry_run=False)
     assert summary["orders_submitted_count"] == len(orders)
     assert "orders_submitted_coverage" not in summary
+

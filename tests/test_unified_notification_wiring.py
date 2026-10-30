@@ -5,14 +5,14 @@ from application.rebalance_service import _should_publish_execution_notification
 from notifications.unified_adapter import _kind
 
 
-def test_every_cycle_reaches_digest_or_urgent_classifier(monkeypatch):
+def test_confirmed_orders_defer_but_pending_failed_and_opt_out_stay_immediate(monkeypatch):
     monkeypatch.setenv("QSL_ROUTINE_NOTIFICATION_MODE", "daily_digest")
     config = SimpleNamespace(dry_run_only=False, notify_no_trade_cycles=True)
     summary = {"execution_status": "completed", "orders_submitted": [{"status": "filled"}], "orders_filled": [{"status": "filled"}]}
     original = deepcopy(summary)
     def publish(value):
         return _should_publish_execution_notification(config=config, signal_metadata={}, execution_summary=value, trade_logs=["trade"])
-    assert publish(summary)
+    assert not publish(summary)
     assert summary == original
     assert publish({**summary, "orders_pending": [{"status": "pending"}], "execution_status": "pending_reconciliation"})
     assert publish({**summary, "error": "synthetic_failure"})
@@ -29,7 +29,7 @@ def test_final_no_order_is_not_a_standalone_execution_result(monkeypatch):
                   "orders_skipped": [{"symbol": "TQQQ", "reason": reason.split(":")[0]}],
                   "skipped_reasons": [reason] if reason != "target_diff_below_threshold" else []}
         assert _kind(result) == "routine_cycle"
-        assert _should_publish_execution_notification(
+        assert not _should_publish_execution_notification(
             config=config, signal_metadata={}, execution_summary=result, trade_logs=[])
     for reason in ("outside_execution_window", "outside_monthly_execution_window"):
         assert _kind({"execution_status": "no_action", "no_op_reason": reason}) == "routine_cycle"
@@ -46,4 +46,3 @@ def test_final_no_order_is_not_a_standalone_execution_result(monkeypatch):
     assert _kind({"execution_status": "completed", "orders_filled": [{"status": "filled"}]}) == "fill"
     assert _kind({"execution_status": "completed", "orders_submitted": [{"status": "rejected"}]}) == "order_status_unknown"
     assert _kind({"execution_status": "completed", "orders_submitted": [{"status": "filled"}]}) == "order_submitted"
-

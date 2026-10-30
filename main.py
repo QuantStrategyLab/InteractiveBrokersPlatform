@@ -1181,7 +1181,9 @@ def _build_cycle_report_summary(cycle_result, execution_summary, reconciliation_
         summary["quote_snapshot"] = quote_snapshot
     from notifications.unified_adapter import digest_evidence
     summary["notification_digest"] = digest_evidence(execution_summary, dry_run=dry_run)
-    if not dry_run and brake_status is None:
+    outcome_keys = ("orders_filled", "orders_pending", "orders_partially_filled",
+                    "option_orders_filled", "option_orders_pending", "option_orders_partially_filled")
+    if not dry_run and brake_status is None and all(isinstance(execution_summary.get(key), (list, tuple)) for key in outcome_keys):
         summary["orders_submitted_count"] = summary["notification_digest"]["order_count"]
     return summary
 
@@ -1937,15 +1939,16 @@ def _handle_request(
                     raise RuntimeError("durable_execution_report_unconfirmed")
             except Exception as persist_exc:
                 print(f"failed to persist execution report: {persist_exc}", flush=True)
-                from quant_platform_kit.common.operational_notification_localization import resolve_operational_notification_locale
-                zh = resolve_operational_notification_locale(NOTIFY_LANG) == "zh"
-                message = ("⚠️ 运行报告写入未确认；汇总观察可能缺失，请检查运行记录。" if zh else
-                           "⚠️ Runtime report write unconfirmed; digest observations may be missing. Check run records.")
-                try:
-                    if not send_tg_message(message):
+                if report.get("status") != "error":
+                    from quant_platform_kit.common.operational_notification_localization import resolve_operational_notification_locale
+                    zh = resolve_operational_notification_locale(NOTIFY_LANG) == "zh"
+                    message = ("⚠️ 运行报告写入未确认；汇总观察可能缺失，请检查运行记录。" if zh else
+                               "⚠️ Runtime report write unconfirmed; digest observations may be missing. Check run records.")
+                    try:
+                        if not send_tg_message(message):
+                            print("notification_report_coverage_alert_failed", flush=True)
+                    except Exception:
                         print("notification_report_coverage_alert_failed", flush=True)
-                except Exception:
-                    print("notification_report_coverage_alert_failed", flush=True)
 
 
 @app.route("/run", methods=["POST"])
