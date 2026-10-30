@@ -345,13 +345,13 @@ def _known_pending_orders(execution):
             return False
         allowed = ({"filled"} if key.endswith("_filled") and "partially" not in key else
                    {"partiallyfilled", "partial"} if "partially" in key else
-                   {"pendingsubmit", "apipending", "apipendingsubmit", "submitted", "presubmitted"})
+                   {"submitted", "presubmitted"})
         if any(not isinstance(order, Mapping) or str(order.get("status") or "").strip().lower() not in allowed for order in values):
             return False
         orders.extend(values)
         if "pending" in key or "partially" in key:
             pending.extend(values)
-    known = {"pendingsubmit", "apipending", "apipendingsubmit", "submitted", "presubmitted", "partiallyfilled", "partial", "filled"}
+    known = {"submitted", "presubmitted", "partiallyfilled", "partial", "filled"}
     ids = [str(order.get("broker_order_id") or "") if isinstance(order, Mapping) else "" for order in orders]
     return bool(pending) and len(ids) == len(set(ids)) and all(
         isinstance(order, Mapping) and order.get("broker_order_id")
