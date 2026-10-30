@@ -33,6 +33,8 @@ metadata 完整可读取时 exit0 只说明本次 image 证据已取得。读取
 
 该模式还以 `configured_revision_source` 独立比较原受保护配置中的 revision：只允许同 service 下合法名称的一次 metadata GET；与 serving 相同时复用已读对象。只投影 `equals_serving`、四项 scope equality、固定 reason 及 scope 全部匹配后合法 40hex `commit-sha` 标签 `declared_source_sha`，不输出 revision 标识或账户。缺标签、配置修订不可读、目标不匹配或非法名称保持 null/固定原因，不替换原 expected revision，不改变 serving 的原准入和退出结果。此标签观察不证明构建字节、部署流程或批准；缺 serving 部署 locator 时仍可保留独立配置观察，整体部署 provenance 保持 unknown。
 
+`serving_runtime_declarations` 仅从已读、scope 相等的 serving revision 投影 `RUNTIME_TARGET_ENABLED`、`IBKR_DRY_RUN_ONLY` 的明确 true/false literal，以及 target 内明确的 live/paper `execution_mode` 和布尔 `dry_run_only`。缺失、引用 Secret、重复或无法识别时为 null；不读取 Secret、不新增云请求，也不从 expected 或默认值推断。声明值不是运行时消费或执行资格证明，不改变原 provenance 准入和退出结果。
+
 ```bash
 gh workflow run account-facts-identity-diagnose.yml \
   --repo QuantStrategyLab/InteractiveBrokersPlatform --ref main \
