@@ -59,28 +59,29 @@ class AccountRiskFactReadinessTest(unittest.TestCase):
                     metadata={"account_ids": ("TEST",), "cash_balances": rows})
                 self.assertEqual(build_ibkr_account_facts(snapshot), {})
 
-    def test_receipt_survives_account_bound_report_serialization(self):
-        import json
-        from pathlib import Path
-        from tempfile import TemporaryDirectory
-        import main
-        from application.cycle_result import StrategyCycleResult
-        from quant_platform_kit.common.runtime_reports import finalize_runtime_report, write_runtime_report_json
+def test_receipt_survives_account_bound_report_serialization(strategy_module_factory, monkeypatch, tmp_path):
+    import json
+    import sys
+    from application.cycle_result import StrategyCycleResult
+    from quant_platform_kit.common.runtime_reports import finalize_runtime_report, write_runtime_report_json
 
-        facts = self.facts((self.settled(),))
-        cycle = StrategyCycleResult(result="ok", account_facts=facts)
-        target = SimpleNamespace(account_selector=("TEST",))
-        with patch.object(main, "RUNTIME_SETTINGS", SimpleNamespace(runtime_target=target)):
-            summary = main._build_cycle_report_summary(cycle, {}, {}, dry_run=False)
-        report = finalize_runtime_report({}, status="ok", summary=summary)
-        with TemporaryDirectory() as directory:
-            path = Path(directory) / "report.json"
-            write_runtime_report_json(report, output_path=path)
-            restored = json.loads(path.read_text())
-        self.assertEqual(restored["summary"]["account_facts"]["account_risk_fact_readiness"],
-                         facts["account_risk_fact_readiness"])
-        with patch.object(main, "RUNTIME_SETTINGS", SimpleNamespace(runtime_target=SimpleNamespace(account_selector=("OTHER",)))):
-            self.assertNotIn("account_facts", main._build_cycle_report_summary(cycle, {}, {}, dry_run=False))
+    # The existing factory replaces sys.modules["main"]. Restore its prior
+    # state as well as the factory's monkeypatched environment after the test.
+    monkeypatch.setitem(sys.modules, "main", sys.modules.get("main"))
+    main = strategy_module_factory()
+    cases = AccountRiskFactReadinessTest()
+    facts = cases.facts((cases.settled(),))
+    cycle = StrategyCycleResult(result="ok", account_facts=facts)
+    target = SimpleNamespace(account_selector=("TEST",))
+    with patch.object(main, "RUNTIME_SETTINGS", SimpleNamespace(runtime_target=target)):
+        summary = main._build_cycle_report_summary(cycle, {}, {}, dry_run=False)
+    report = finalize_runtime_report({}, status="ok", summary=summary)
+    path = tmp_path / "report.json"
+    write_runtime_report_json(report, output_path=path)
+    restored = json.loads(path.read_text())
+    assert restored["summary"]["account_facts"]["account_risk_fact_readiness"] == facts["account_risk_fact_readiness"]
+    with patch.object(main, "RUNTIME_SETTINGS", SimpleNamespace(runtime_target=SimpleNamespace(account_selector=("OTHER",)))):
+        assert "account_facts" not in main._build_cycle_report_summary(cycle, {}, {}, dry_run=False)
 
 
 if __name__ == "__main__":
