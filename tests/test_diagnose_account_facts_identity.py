@@ -1265,7 +1265,12 @@ def _source_metadata_case(monkeypatch):
         if args[:4] == ("gcloud", "run", "services", "describe"):
             value = case.get("after_service", service) if sum(c[:4] == args[:4] for c in case["calls"]) > 1 else service
         elif args[:4] == ("gcloud", "run", "revisions", "describe"):
-            value = revision
+            if args[4] == expected["expected_runtime_revision"] and "configured_revision" in case:
+                if case.get("configured_read_failure"):
+                    return subprocess.CompletedProcess(args, 1, PRIVATE, PRIVATE)
+                value = case["configured_revision"]
+            else:
+                value = revision
         elif args[:4] == ("gh", "api", "--hostname", "github.com"):
             route = args[4]
             if route.endswith("/actions/runs/2468"):
@@ -1315,6 +1320,77 @@ def test_source_metadata_only_workflow_wire_preserves_default_report_mode():
                         "        env:\n          GH_TOKEN: ${{ github.token }}\n"
                         "        run: python3 -m scripts.diagnose_account_facts_identity --serving-source-metadata-only\n")
     assert "GH_TOKEN" not in workflow.split(old_step)[0]
+
+
+@pytest.mark.parametrize("failure", [None, "read", "identity", "scope", "missing_target", "label", "invalid_name"])
+def test_configured_source_comparison_never_replaces_serving_or_its_admission(monkeypatch, capsys, failure):
+    from copy import deepcopy
+
+    case = _source_metadata_case(monkeypatch)
+    configured = case["expected"]["expected_service_name"] + "-00009-abc"
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_RUNTIME_REVISION", configured)
+    case["expected"]["expected_runtime_revision"] = configured
+    case["configured_revision"] = deepcopy(case["revision"])
+    old = case["configured_revision"]
+    old["metadata"]["name"] = configured
+    old["metadata"]["labels"]["commit-sha"] = "d" * 40
+    if failure == "read":
+        case["configured_read_failure"] = True
+    elif failure == "identity":
+        old["metadata"]["name"] = PRIVATE + "-wrong"
+    elif failure == "scope":
+        target = json.loads(old["spec"]["containers"][0]["env"][0]["value"])
+        target["account_scope"] = PRIVATE + "-different"
+        old["spec"]["containers"][0]["env"][0]["value"] = json.dumps(target)
+    elif failure == "missing_target":
+        old["spec"]["containers"][0]["env"] = []
+    elif failure == "label":
+        old["metadata"]["labels"]["commit-sha"] = PRIVATE
+    elif failure == "invalid_name":
+        monkeypatch.setenv("IBKR_ACCOUNT_FACTS_RUNTIME_REVISION", "other-service-private")
+    before = deepcopy(case["expected"])
+
+    assert diagnostic.main(["--serving-source-metadata-only"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    comparison = out["configured_revision_source"]
+    assert out["reason"] == "deploy_provenance_verified"
+    assert out["selected_source_sha"] == "b" * 40
+    assert out["deployment_provenance_status"] == "verified"
+    assert out["independent_release_approval"] == "unknown"
+    assert case["expected"] == before
+    assert comparison["declared_source_sha"] == ("d" * 40 if failure is None else None)
+    if failure is None:
+        assert comparison["equals_serving"] is False
+        assert comparison["reason"] == "source_label_observed"
+        assert all(value is True for value in comparison["scope_equalities"].values())
+    if failure == "scope":
+        assert comparison["scope_equalities"]["account_scope"] is False
+    assert PRIVATE not in json.dumps(out) and configured not in json.dumps(out)
+    assert all(call[:4] in {("gcloud", "run", "services", "describe"),
+                           ("gcloud", "run", "revisions", "describe"),
+                           ("gh", "api", "--hostname", "github.com")} for call in case["calls"])
+
+
+def test_configured_same_as_serving_reuses_exact_revision_without_another_cloud_read(monkeypatch, capsys):
+    case = _source_metadata_case(monkeypatch)
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_RUNTIME_REVISION", case["revision"]["metadata"]["name"])
+    assert diagnostic.main(["--serving-source-metadata-only"]) == 0
+    comparison = json.loads(capsys.readouterr().out)["configured_revision_source"]
+    assert comparison["equals_serving"] is True
+    assert comparison["declared_source_sha"] == "b" * 40
+    assert len([call for call in case["calls"] if call[:4] == ("gcloud", "run", "revisions", "describe")]) == 1
+
+
+def test_configured_source_observation_survives_missing_serving_deploy_locator(monkeypatch, capsys):
+    case = _source_metadata_case(monkeypatch)
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_RUNTIME_REVISION", case["revision"]["metadata"]["name"])
+    case["revision"]["metadata"]["labels"].pop("github-run-id")
+    assert diagnostic.main(["--serving-source-metadata-only"]) == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out["reason"] == "source_labels_unavailable"
+    assert out["selected_source_sha"] is None
+    assert out["configured_revision_source"]["declared_source_sha"] == "b" * 40
+    assert out["deployment_provenance_status"] == "unknown"
 
 
 def test_source_metadata_only_invalid_protected_config_stops_before_cloud(monkeypatch, capsys):
