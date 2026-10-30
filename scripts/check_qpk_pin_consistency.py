@@ -2,7 +2,7 @@
 """Check QuantStrategyLab direct git dependency pins.
 
 Guards two failure modes:
-- QuantPlatformKit refs must match the canonical QPK_PIN on main.
+- QuantPlatformKit refs, including qsl.toml, must match the expected QPK_PIN.
 - Any QuantStrategyLab git dependency appearing in multiple dependency files
   must use one consistent ref across requirements/constraints/pyproject.
 
@@ -14,6 +14,7 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
 import urllib.request
 from pathlib import Path
 
@@ -84,6 +85,29 @@ def main() -> int:
                     print("     → fixed")
         if fix and updated != content:
             path.write_text(updated, encoding="utf-8")
+
+    qsl_path = Path.cwd() / "qsl.toml"
+    if qsl_path.is_file():
+        try:
+            qsl_text = qsl_path.read_text(encoding="utf-8")
+            qsl_sha = tomllib.loads(qsl_text)["qsl"]["requires"]["quant_platform_kit"]
+            if not isinstance(qsl_sha, str) or not re.fullmatch(r"[a-f0-9]{40}", qsl_sha):
+                raise ValueError("expected a 40-character QPK SHA")
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            errors += 1
+            print(f"  ❌ qsl.toml: invalid QPK pin: {exc}")
+        else:
+            if qsl_sha != target:
+                errors += 1
+                print(f"  ❌ qsl.toml: QPK@{qsl_sha[:12]} (expected {target[:12]})")
+                if fix:
+                    pattern = r'(?ms)(^\[qsl\.requires\][^\[]*?^\s*quant_platform_kit\s*=\s*")' + re.escape(qsl_sha) + r'(")'
+                    updated, count = re.subn(pattern, lambda match: match[1] + target + match[2], qsl_text)
+                    if count != 1:
+                        print("     → unable to safely fix qsl.toml")
+                    else:
+                        qsl_path.write_text(updated, encoding="utf-8")
+                        print("     → fixed")
 
     for repo, matches in sorted(qsl_refs.items()):
         refs = sorted({ref for _, _, ref in matches})
