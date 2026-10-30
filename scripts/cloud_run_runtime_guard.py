@@ -637,7 +637,11 @@ def _send_telegram(message: str) -> bool:
     ok = True
     base_url = "https://api.telegram.org"
     for token_value, chat_id in unique_targets:
-        body = urllib.parse.urlencode({"chat_id": chat_id, "text": message}).encode()
+        body = urllib.parse.urlencode({
+            "chat_id": chat_id,
+            "text": message,
+            "link_preview_options": json.dumps({"is_disabled": True}),
+        }).encode()
         request = urllib.request.Request(
             f"{base_url.rstrip('/')}/bot{token_value}/sendMessage",
             data=body,
@@ -814,3 +818,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
