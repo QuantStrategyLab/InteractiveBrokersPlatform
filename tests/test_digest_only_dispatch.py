@@ -374,3 +374,13 @@ class DigestOnlyDispatch(TestCase):
         self.assertEqual(conflict["routine_observation_counts"], {"watch": None})
         self.assertEqual(conflict["field_status"]["routine_observation_counts"], "unknown")
         self.assertEqual((conflict["cycle_count"], conflict["order_count"]), (1, 1))
+
+
+def test_pre_ack_order_statuses_remain_urgent():
+    from notifications.unified_adapter import _known_pending_orders, _kind
+    keys = ("orders_filled", "orders_pending", "orders_partially_filled", "option_orders_filled", "option_orders_pending", "option_orders_partially_filled")
+    for status in ("PendingSubmit", "ApiPending", "ApiPendingSubmit"):
+        evidence = {key: [] for key in keys}
+        evidence.update(execution_status="pending_reconciliation", orders_pending=[{"broker_order_id": "synthetic", "status": status}])
+        assert not _known_pending_orders(evidence)
+        assert _kind(evidence) == "order_status_unknown"
