@@ -639,6 +639,21 @@ def _configured_source_metadata(expected: Mapping[str, Any], *, serving: str,
     return result
 
 
+def _serving_runtime_declarations(container: Mapping[str, Any], target: Mapping[str, Any]) -> dict[str, Any]:
+    """Project literal serving declarations, never defaults or execution eligibility."""
+    result: dict[str, Any] = {}
+    env = container.get("env")
+    for name in ("RUNTIME_TARGET_ENABLED", "IBKR_DRY_RUN_ONLY"):
+        rows = [row for row in env if isinstance(row, Mapping) and row.get("name") == name] if isinstance(env, list) else []
+        value = rows[0].get("value") if len(rows) == 1 and "valueFrom" not in rows[0] else None
+        result[name] = {"true": True, "false": False}.get(value.strip().lower()) if isinstance(value, str) else None
+    mode = target.get("execution_mode")
+    result["execution_mode"] = mode if isinstance(mode, str) and mode in {"live", "paper"} else None
+    dry_run = target.get("dry_run_only")
+    result["target_dry_run_only"] = dry_run if type(dry_run) is bool else None
+    return result
+
+
 def diagnose_serving_source_metadata(expected: Mapping[str, Any], *, source_sha: object = None) -> dict[str, Any]:
     result = _source_result(source_sha)
     try:
@@ -673,6 +688,7 @@ def diagnose_serving_source_metadata(expected: Mapping[str, Any], *, source_sha:
         result["scope_equalities"] = _source_scope(target, expected)
         if any(v is not True for v in result["scope_equalities"].values()):
             raise publisher._ProjectionError("deployed_target_mismatch")
+        result["serving_runtime_declarations"] = _serving_runtime_declarations(container, target)
         result["configured_revision_source"] = _configured_source_metadata(
             expected, serving=serving, serving_revision=revision, image=image, region=region)
         labels = metadata.get("labels")

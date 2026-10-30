@@ -1393,6 +1393,49 @@ def test_configured_source_observation_survives_missing_serving_deploy_locator(m
     assert out["deployment_provenance_status"] == "unknown"
 
 
+@pytest.mark.parametrize("value,expected", [("true", True), ("false", False), ("FALSE", False),
+                                           (PRIVATE, None), (None, None), (True, None)])
+def test_serving_declarations_only_project_explicit_recognized_literals(value, expected):
+    result = diagnostic._serving_runtime_declarations(
+        {"env": [{"name": "RUNTIME_TARGET_ENABLED", "value": value},
+                 {"name": "IBKR_DRY_RUN_ONLY", "value": "true"},
+                 {"name": PRIVATE, "value": PRIVATE}]},
+        {"execution_mode": "live", "dry_run_only": False, PRIVATE: PRIVATE})
+    assert result == {"RUNTIME_TARGET_ENABLED": expected, "IBKR_DRY_RUN_ONLY": True,
+                      "execution_mode": "live", "target_dry_run_only": False}
+    assert PRIVATE not in json.dumps(result)
+
+
+@pytest.mark.parametrize("env", [None, [], [{"name": "RUNTIME_TARGET_ENABLED", "valueFrom": {"secretKeyRef": PRIVATE}}],
+    [{"name": "RUNTIME_TARGET_ENABLED", "value": "true", "valueFrom": PRIVATE}],
+    [{"name": "RUNTIME_TARGET_ENABLED", "value": "true"}, {"name": "RUNTIME_TARGET_ENABLED", "value": "false"}]])
+def test_serving_declarations_do_not_infer_missing_indirect_or_conflicting_values(env):
+    assert diagnostic._serving_runtime_declarations({"env": env}, {"execution_mode": PRIVATE, "dry_run_only": "false"}) == {
+        "RUNTIME_TARGET_ENABLED": None, "IBKR_DRY_RUN_ONLY": None,
+        "execution_mode": None, "target_dry_run_only": None,
+    }
+
+
+def test_source_mode_preserves_serving_declarations_without_deployment_locator_or_new_cloud_reads(monkeypatch, capsys):
+    case = _source_metadata_case(monkeypatch)
+    container = case["revision"]["spec"]["containers"][0]
+    target = json.loads(container["env"][0]["value"])
+    target.update(execution_mode="paper", dry_run_only=True)
+    container["env"][0]["value"] = json.dumps(target)
+    container["env"].append({"name": "RUNTIME_TARGET_ENABLED", "value": "false"})
+    case["revision"]["metadata"]["labels"].pop("github-run-id")
+    assert diagnostic.main(["--serving-source-metadata-only"]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["reason"] == "source_labels_unavailable"
+    assert result["serving_runtime_declarations"] == {
+        "RUNTIME_TARGET_ENABLED": False, "IBKR_DRY_RUN_ONLY": None,
+        "execution_mode": "paper", "target_dry_run_only": True,
+    }
+    assert result["independent_release_approval"] == "unknown"
+    assert len(case["calls"]) == 2
+    assert PRIVATE not in json.dumps(result)
+
+
 def test_source_metadata_only_invalid_protected_config_stops_before_cloud(monkeypatch, capsys):
     case = _source_metadata_case(monkeypatch)
     monkeypatch.setenv("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", "[]")
