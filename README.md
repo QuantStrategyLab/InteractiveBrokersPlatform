@@ -1,5 +1,29 @@
 # InteractiveBrokersPlatform
 
+## Account risk facts in runtime reports
+
+When account facts pass the existing physical-account selector check, the report
+may include `summary.account_facts.account_risk_fact_readiness` with schema
+`ibkr.account_risk_fact_readiness.v1`. This receipt describes only the snapshot
+report: `scope` is `SNAPSHOT_REPORT_ONLY`, `admission` is `NOT_EVALUATED` and
+`status` is `NOT_READY`. It is not an execution decision or an authorization.
+`snapshot_observed_at` is the capture time, not a verified broker freshness
+watermark. Fees, quantity permissions, account domain and approved budget are
+`UNVERIFIED`; the order observation watermark is `MISSING`.
+
+`settled_cash` is scoped to USD and the native `SettledCash` tag. Its status is
+`MISSING`, `INVALID`, `AMBIGUOUS`, `UNVERIFIED_SCOPE` or `OBSERVED`. Only a
+single valid account-values-cache row with no model code includes the value,
+source method, model scope and snapshot observation time. A `CashBalance` or
+settlement schedule is not substituted for `SettledCash`; observation does not
+prove spendable funds or freshness.
+
+The receipt is absent when account facts cannot be built, including missing or
+invalid cash rows, or when the physical-account selector does not match. Legacy
+reports can also lack it. A consumer must treat an absent receipt as
+`NOT_REPORTED` and not ready; absence does not establish why the evidence is
+missing. This reporting state does not alter the separate execution gate.
+
 [Chinese README](README.zh-CN.md)
 
 InteractiveBrokersPlatform is QuantStrategyLab's Interactive Brokers multi-market execution runtime. It runs US and HK equity profiles through IBKR runtime services, under dry-run, paper, and live controls. It is an execution layer, not a strategy research repository: strategy logic comes from `UsEquityStrategies` / `HkEquityStrategies`, and snapshot or validation artifacts come from `UsEquitySnapshotPipelines` / `HkEquitySnapshotPipelines` when a profile requires them.

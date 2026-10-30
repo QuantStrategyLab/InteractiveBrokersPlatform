@@ -242,6 +242,42 @@ def build_cash_source_details(rows, *, observed_at):
         for (currency, tag), detail in sorted(details.items())])
 
 
+def build_account_risk_fact_readiness(rows, *, observed_at, currency="USD"):
+    """Describe evidence available in this snapshot, without granting admission.
+
+    The capture time is not a broker event watermark or a freshness guarantee.
+    An account-wide settled value requires exactly one native row with explicit
+    unmodelled account scope. Legacy grouped rows cannot establish that scope.
+    """
+    candidates = [row for row in rows if row.get("currency") == currency and "SettledCash" in row]
+    settled = {"status": "MISSING", "currency": currency, "source_tag": "SettledCash"}
+    if len(candidates) > 1:
+        settled["status"] = "AMBIGUOUS"
+    elif candidates:
+        row = candidates[0]
+        value = _decimal_text(row["SettledCash"])
+        if value is None:
+            settled["status"] = "INVALID"
+        elif row.get("source_method") != "account_values_cache" or row.get("model_scope") != "no_model_code":
+            settled["status"] = "UNVERIFIED_SCOPE"
+        else:
+            settled.update(status="OBSERVED", value=value, source_method="account_values_cache",
+                model_scope="no_model_code", observed_at=observed_at)
+    return {
+        "schema_version": "ibkr.account_risk_fact_readiness.v1",
+        "scope": "SNAPSHOT_REPORT_ONLY",
+        "admission": "NOT_EVALUATED",
+        "status": "NOT_READY",
+        "snapshot_observed_at": observed_at,
+        "broker_freshness": "UNVERIFIED",
+        "settled_cash": settled,
+        "fee_schedule": "UNVERIFIED",
+        "quantity_permissions": "UNVERIFIED",
+        "order_observation_watermark": "MISSING",
+        "account_domain_and_approved_budget": "UNVERIFIED",
+    }
+
+
 def inspect_cash_source_details(value, *, cash_observations, observed_at, currency="USD", selected_cash=None):
     """Expose bounded metadata only for validated, present cash values."""
     result = dict(status="NOT_REPORTED" if value is None else "INVALID", fields={})
