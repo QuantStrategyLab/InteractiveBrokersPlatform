@@ -25,7 +25,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from quant_platform_kit.common.execution_receipts import validate_execution_receipt
 from quant_platform_kit.common.operational_notification_localization import (
     format_operational_alert,
-    format_operational_heartbeat_status,
     operational_notification_text,
     resolve_operational_notification_locale,
 )
@@ -984,6 +983,8 @@ def _market_closed_by_calendar(payload: dict[str, Any]) -> bool:
 
 def _is_quiet_report(payload: dict[str, Any], *, now: dt.datetime | None = None) -> bool:
     """Quiet a complete healthy receipt without duplicating the business notification."""
+    from notifications.unified_adapter import verified_pending_summary
+    pending_is_known = verified_pending_summary(payload)
     if payload.get("errors") != [] or not isinstance(payload.get("errors"), list):
         return False
     if _report_errors(payload) or _report_notification_failure(payload):
@@ -1012,7 +1013,7 @@ def _is_quiet_report(payload: dict[str, Any], *, now: dt.datetime | None = None)
             if key in scope and (type(scope[key]) is not int or scope[key] < 0):
                 return False
         execution_status = str(scope.get("execution_status") or "").strip().lower()
-        if execution_status and execution_status not in {"no_op", "no_action", "completed", "dry_run_completed", "executed", "submitted", "broker_acknowledged", "partially_filled", "pending"}:
+        if execution_status and execution_status not in {"no_op", "no_action", "completed", "dry_run_completed", "executed", "submitted", "broker_acknowledged", "partially_filled", "pending"} and not (pending_is_known and execution_status == "pending_reconciliation"):
             return False
     if "execution_receipt" in payload:
         try:
@@ -1020,7 +1021,7 @@ def _is_quiet_report(payload: dict[str, Any], *, now: dt.datetime | None = None)
         except (ValueError, TypeError):
             return False
         if (
-            receipt["outcome"] in {"reconciliation_required", "failed", "risk_blocked"}
+            (receipt["outcome"] in {"reconciliation_required", "failed", "risk_blocked"} and not (pending_is_known and receipt["outcome"] == "reconciliation_required"))
             or receipt["strategy_profile"] != payload.get("strategy_profile")
             or receipt["platform"] != {"interactive_brokers": "ibkr", "charles_schwab": "schwab"}.get(payload.get("platform"), payload.get("platform"))
         ):
@@ -1060,7 +1061,7 @@ def _is_quiet_report(payload: dict[str, Any], *, now: dt.datetime | None = None)
         return _market_closed_by_calendar(closure_payload)
     return (
         status.lower() in {"ok", "success", "completed", "no_action"}
-        and str(summary.get("execution_status") or "").lower() in {"no_op", "no_action", "completed", "dry_run_completed", "executed", "submitted", "broker_acknowledged", "partially_filled", "pending"}
+        and (str(summary.get("execution_status") or "").lower() in {"no_op", "no_action", "completed", "dry_run_completed", "executed", "submitted", "broker_acknowledged", "partially_filled", "pending"} or pending_is_known)
         and type(summary.get("orders_submitted_count")) is int
         and summary["orders_submitted_count"] >= 0
     )
@@ -1187,27 +1188,25 @@ def _send_telegram(message: str, *, retry_429_once: bool = False) -> bool:
 
 def _notify_normal_heartbeat(name: str, detail: str, *, quiet_eligible: bool = True,
                              reports=None, now=None) -> None:
-    if unified_enabled():
+    if reports:
         # No-due/closed-session observations do not invent an actual run.
         for observation in reports or ():
             report, report_quiet = observation if isinstance(observation, tuple) else (observation, quiet_eligible)
             from notifications.unified_adapter import receipt_notification_kind
             kind = receipt_notification_kind(report, quiet_eligible=report_quiet)
             publish_monitor(kind=kind, report=report, now=now,
-                            send=lambda: _send_telegram(monitor_message(kind)))
-        return
-    if quiet_eligible and not _env_bool("RUNTIME_HEARTBEAT_NOTIFY_ON_SUCCESS", False):
+                            send=lambda: _send_telegram(monitor_message(kind)),
+                            send_error=lambda: _send_telegram(
+                                "⚠️ 汇总候选写入未确认；请检查候选存储及运行记录。" if _notification_locale() == "zh"
+                                else "⚠️ Digest candidate write unconfirmed; check candidate storage and run records."))
         return
     if quiet_eligible:
-        message = format_operational_heartbeat_status(
-            locale=_notification_locale(), name=name, detail=detail,
-        )
-    else:
-        message = format_operational_alert(
-            locale=_notification_locale(), alert_type="execution_report_heartbeat", name=name,
-            issues=["运行检查证据待核对" if _notification_locale() == "zh" else "Runtime check evidence needs review"],
-            technical_details=[detail],
-        )
+        return
+    message = format_operational_alert(
+        locale=_notification_locale(), alert_type="execution_report_heartbeat", name=name,
+        issues=["运行检查证据待核对" if _notification_locale() == "zh" else "Runtime check evidence needs review"],
+        technical_details=[detail],
+    )
     if not _send_telegram(message):
         raise RuntimeError("Execution report heartbeat summary was not acknowledged")
 
@@ -1452,7 +1451,7 @@ def main(now: dt.datetime | None = None) -> int:
             _notify_normal_heartbeat(
                 name, _notice("heartbeat_accepted_report", detail=details) if all(quiet_by_service[key] for key in required_keys) else details,
                 quiet_eligible=all(quiet_by_service[key] for key in required_keys),
-                **({"reports": accepted_payloads, "now": now} if unified_enabled() else {}),
+                reports=accepted_payloads, now=now,
             )
             return 0
     if accepted and not list_errors and not read_incomplete and not latest_report_issues:
@@ -1465,7 +1464,7 @@ def main(now: dt.datetime | None = None) -> int:
             name,
             _notice("heartbeat_accepted_report", detail=f"{reason}@{updated.isoformat()}") if all(quiet_reports) else "; ".join(visible_report_details),
             quiet_eligible=all(quiet_reports),
-            **({"reports": accepted_payloads, "now": now} if unified_enabled() else {}),
+            reports=accepted_payloads, now=now,
         )
         return 0
 
@@ -1526,3 +1525,4 @@ def main(now: dt.datetime | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

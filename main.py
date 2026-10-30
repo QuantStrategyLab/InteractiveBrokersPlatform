@@ -1179,10 +1179,10 @@ def _build_cycle_report_summary(cycle_result, execution_summary, reconciliation_
     quote_snapshot = execution_summary.get("quote_snapshot") or reconciliation_record.get("quote_snapshot")
     if quote_snapshot:
         summary["quote_snapshot"] = quote_snapshot
-    from quant_platform_kit.notifications.digest_routing import daily_digest_enabled
-    if daily_digest_enabled():
-        from quant_platform_kit.notifications.digest_candidates import summary_evidence
-        summary["notification_digest"] = summary_evidence(execution_summary, dry_run=dry_run)
+    from notifications.unified_adapter import digest_evidence
+    summary["notification_digest"] = digest_evidence(execution_summary, dry_run=dry_run)
+    if not dry_run and brake_status is None:
+        summary["orders_submitted_count"] = summary["notification_digest"]["order_count"]
     return summary
 
 
@@ -1273,7 +1273,7 @@ def _build_notification_delivery_summary(delivery_events: list[dict]) -> dict:
 def publish_strategy_plugin_alerts(signals, *, report=None):
     from quant_platform_kit.notifications.digest_routing import immediate_plugin_signals
     result = dispatch_strategy_plugin_alerts(
-        immediate_plugin_signals(signals),
+        immediate_plugin_signals(signals, mode="daily_digest"),
         notification_settings=RUNTIME_SETTINGS,
         translator=t,
         strategy_label=STRATEGY_PROFILE,
@@ -1602,6 +1602,9 @@ def _handle_request(
             signals=strategy_plugin_signals,
             error=strategy_plugin_error,
         )
+        if not strategy_plugin_error:
+            from notifications.unified_adapter import routine_observation_counts_from_signals
+            report.setdefault("summary", {})["routine_observation_counts"] = routine_observation_counts_from_signals(strategy_plugin_signals)
         lock_acquired = STRATEGY_RUN_LOCK.acquire(blocking=False)
         log_runtime_event(
             log_context,
@@ -1929,8 +1932,20 @@ def _handle_request(
                 else:
                     report_path = persist_execution_report(report, dry_run_only_override=dry_run_only_override)
                 print(f"execution_report {report_path}", flush=True)
+                from application.runtime_reporting_adapters import confirmed_gcs_report_uri
+                if not confirmed_gcs_report_uri(report_path):
+                    raise RuntimeError("durable_execution_report_unconfirmed")
             except Exception as persist_exc:
                 print(f"failed to persist execution report: {persist_exc}", flush=True)
+                from quant_platform_kit.common.operational_notification_localization import resolve_operational_notification_locale
+                zh = resolve_operational_notification_locale(NOTIFY_LANG) == "zh"
+                message = ("⚠️ 运行报告写入未确认；汇总观察可能缺失，请检查运行记录。" if zh else
+                           "⚠️ Runtime report write unconfirmed; digest observations may be missing. Check run records.")
+                try:
+                    if not send_tg_message(message):
+                        print("notification_report_coverage_alert_failed", flush=True)
+                except Exception:
+                    print("notification_report_coverage_alert_failed", flush=True)
 
 
 @app.route("/run", methods=["POST"])
@@ -2079,3 +2094,4 @@ def health():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+

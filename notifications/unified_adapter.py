@@ -13,6 +13,7 @@ from quant_platform_kit.notifications.unified_contract import (
     CandidatePersistenceError, IncidentTracker, NotificationEvent,
     effective_notification_mode, route_notification_event, unified_notification_enabled,
 )
+from quant_platform_kit.common.operational_notification_localization import resolve_operational_notification_locale
 
 FLAG = "IBKR_UNIFIED_NOTIFICATION_ENABLED"
 _RUN = ContextVar("ibkr_notification_run", default=None)
@@ -29,8 +30,6 @@ def effective_mode(env=None):
 
 
 def with_run(report, function, *args, **kwargs):
-    if not enabled():
-        return function(*args, **kwargs)
     token = _RUN.set(report)
     try:
         return function(*args, **kwargs)
@@ -109,11 +108,13 @@ def _state_store(env=None):
 
 def persist_candidate(fact, *, actually_ran=True, dry_run=False, state_store=None, candidate_store=None, env=None, block_reason=None):
     """Persist event/run identity and bridge the existing candidate producer."""
-    from scripts.project_digest_candidates import project_notification_events
+    from scripts.project_digest_candidates import merge_routine_observation_counts, project_notification_events
     if actually_ran is not True:
         raise CandidatePersistenceError("notification_candidate_business_run_required")
     if fact.get("coverage_status") != "known" or not fact.get("dedupe_key"):
         raise CandidatePersistenceError("notification_candidate_identity_unknown")
+    if "routine_observation_counts" in fact:
+        merge_routine_observation_counts(fact["routine_observation_counts"], fact["routine_observation_counts"])
     values = os.environ if env is None else env
     slot = values.get("DIGEST_STORE_TARGET", "")
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,40}", slot):
@@ -135,7 +136,7 @@ def persist_candidate(fact, *, actually_ran=True, dry_run=False, state_store=Non
             # from the same run or lose an earlier abnormal observation.
             count_fields = ("order_count", "fill_count")
             def comparable(v):
-                return {k: x for k, x in v["event"].items() if k not in ("occurred_at", *count_fields)}
+                return {k: x for k, x in v["event"].items() if k not in ("occurred_at", "routine_observation_counts", *count_fields)}
             if comparable(prior) != comparable(record) or prior.get("dry_run") != dry_run:
                 record = {**prior, "conflict": True}
             else:
@@ -146,6 +147,12 @@ def persist_candidate(fact, *, actually_ran=True, dry_run=False, state_store=Non
                     conflict |= before is not None and after is not None and before != after
                     if before is None:
                         merged[field] = after
+                old_observations = prior["event"].get("routine_observation_counts")
+                new_observations = fact.get("routine_observation_counts")
+                if old_observations is not None and new_observations is not None:
+                    merged["routine_observation_counts"] = merge_routine_observation_counts(old_observations, new_observations)
+                elif new_observations is not None:
+                    merged["routine_observation_counts"] = merge_routine_observation_counts(new_observations, new_observations)
                 record = {**prior, "event": merged,
                           **({"conflict": True} if conflict else {}),
                           **({"block_reason": block_reason} if block_reason else {})}
@@ -199,6 +206,28 @@ def event_for(kind, *, reason=None, report=None, target=None, order_count=None, 
         source_run_id=source.get("run_id"), incident_reason=reason,
         order_count=order_count, fill_count=fill_count,
     )
+
+
+def routine_observation_counts(report):
+    """Count allowlisted routine plugin routes without exporting raw payloads."""
+    summary = report.get("summary") if isinstance(report, Mapping) else None
+    if not isinstance(summary, Mapping) or "routine_observation_counts" not in summary:
+        return None
+    routes = {"watch", "opportunity_watch", "panic_reversal", "taco_rebound"}
+    counts = summary["routine_observation_counts"]
+    if not isinstance(counts, Mapping) or not set(counts).issubset(routes) or any(type(value) is not int or value < 0 for value in counts.values()):
+        return None
+    return dict(counts)
+
+
+def routine_observation_counts_from_signals(signals):
+    from quant_platform_kit.notifications.digest_candidates import routine_observation_counts as count_signals
+    return count_signals(signals)
+
+
+def _with_routine_observations(fact, report):
+    counts = routine_observation_counts(report)
+    return {**fact, "routine_observation_counts": counts} if counts is not None else fact
 
 
 class OrderedMarkerStore:
@@ -296,6 +325,69 @@ def _notification_evidence(execution):
     return execution
 
 
+def _known_pending_orders(execution):
+    """Recognize broker-identified, nonterminal orders without asserting a fill."""
+    if execution.get("outcome_unknown") or execution.get("submission_halted") or execution.get("reconciliation_required"):
+        return False
+    normal_skips = {"min_notional", "quantity_zero", "target_diff_below_threshold",
+                    "rebalance_diff_below_threshold", "below_threshold", "threshold_not_met"}
+    if any(str(reason).partition(":")[0] not in normal_skips
+           for reason in execution.get("skipped_reasons", ()) or ()):
+        return False
+    keys = ("orders_filled", "orders_pending", "orders_partially_filled", "option_orders_filled", "option_orders_pending", "option_orders_partially_filled")
+    orders, pending = [], []
+    for key in keys:
+        values = execution.get(key)
+        if not isinstance(values, (list, tuple)):
+            return False
+        count_key = key + "_count"
+        if count_key in execution and (type(execution[count_key]) is not int or execution[count_key] != len(values)):
+            return False
+        allowed = ({"filled"} if key.endswith("_filled") and "partially" not in key else
+                   {"partiallyfilled", "partial"} if "partially" in key else
+                   {"pendingsubmit", "apipending", "apipendingsubmit", "submitted", "presubmitted"})
+        if any(not isinstance(order, Mapping) or str(order.get("status") or "").strip().lower() not in allowed for order in values):
+            return False
+        orders.extend(values)
+        if "pending" in key or "partially" in key:
+            pending.extend(values)
+    known = {"pendingsubmit", "apipending", "apipendingsubmit", "submitted", "presubmitted", "partiallyfilled", "partial", "filled"}
+    ids = [str(order.get("broker_order_id") or "") if isinstance(order, Mapping) else "" for order in orders]
+    return bool(pending) and len(ids) == len(set(ids)) and all(
+        isinstance(order, Mapping) and order.get("broker_order_id")
+        and str(order.get("status") or "").strip().lower() in known
+        for order in orders
+    )
+
+
+def digest_evidence(execution, *, dry_run=False):
+    """Derive notification counts from disjoint IBKR broker outcome collections."""
+    from quant_platform_kit.notifications.digest_candidates import cycle_evidence, summary_evidence
+    execution = _notification_evidence(execution)
+    if dry_run:
+        return summary_evidence(execution, dry_run=True)
+    keys = ("orders_filled", "orders_pending", "orders_partially_filled",
+            "option_orders_filled", "option_orders_pending", "option_orders_partially_filled")
+    if not all(isinstance(execution.get(key), (list, tuple)) for key in keys):
+        return {"schema_version": "qsl.notification_cycle.v1", "order_count": None,
+                "fill_count": None, "routine": False, "dry_run": False}
+    orders = [item for key in keys for item in execution[key]]
+    if not orders:
+        facts = summary_evidence(execution, dry_run=False)
+        if _kind(execution) == "routine_cycle":
+            facts["routine"] = True
+        return facts
+    identities = [str(order.get("broker_order_id") or "") if isinstance(order, Mapping) else "" for order in orders]
+    if not all(identities) or len(set(identities)) != len(identities):
+        return {"schema_version": "qsl.notification_cycle.v1", "order_count": None,
+                "fill_count": None, "routine": False, "dry_run": False}
+    facts = cycle_evidence(execution, orders, known_pending=_known_pending_orders(execution))
+    if facts.get("routine") is True:
+        from quant_platform_kit.notifications.unified_contract import order_identity_digest
+        facts["order_execution_digest"] = order_identity_digest(json.dumps(sorted(identities)))
+    return facts
+
+
 def _kind(execution, *, dry_run=False):
     execution = _notification_evidence(execution)
     if execution.get("auth_expired") or execution.get("auth_failure"):
@@ -303,12 +395,15 @@ def _kind(execution, *, dry_run=False):
     if any(execution.get(k) for k in ("error", "errors", "fail_reason", "plugin_error", "persistence_error",
                                      "report_persistence_error", "notification_error", "strategy_plugin_error")):
         return "real_error"
-    if any(execution.get(k) for k in ("orders_pending", "option_orders_pending", "orders_partially_filled",
+    if execution.get("outcome_unknown") or execution.get("submission_halted") or execution.get("reconciliation_required"):
+        return "order_status_unknown"
+    known_pending = _known_pending_orders(execution)
+    if not known_pending and any(execution.get(k) for k in ("orders_pending", "option_orders_pending", "orders_partially_filled",
                                      "option_orders_partially_filled", "orders_pending_count", "option_orders_pending_count",
                                      "pending_reconciliation", "reconciliation_required")):
         return "order_status_unknown"
     status = str(execution.get("execution_status") or "").lower()
-    if status in {"pending", "unknown", "pending_reconciliation", "submitted", "broker_acknowledged", "partially_filled"}:
+    if status in {"pending", "unknown", "pending_reconciliation", "submitted", "broker_acknowledged", "partially_filled"} and not known_pending:
         return "order_status_unknown"
     if status in {"error", "failed", "failure"}:
         return "real_error"
@@ -317,6 +412,8 @@ def _kind(execution, *, dry_run=False):
                                               "account_new_risk_buy_blocked", "small_account_buy_blocked", "risk_flags"))
             or str(execution.get("risk_gate") or "").upper() in {"BLOCK", "BLOCKED", "REJECT", "REJECTED", "DENY", "DENIED"}):
         return "blocked_run"
+    if known_pending:
+        return "order_submitted"
     reason = str(execution.get("no_op_reason") or "").split(":", 1)[0]
     known_reasons = {"", "no_action", "no_signal", "no_rebalance", "below_threshold", "threshold_not_met",
         "rebalance_diff_below_threshold", "target_diff_below_threshold", "min_notional", "quantity_zero",
@@ -362,50 +459,54 @@ def _kind(execution, *, dry_run=False):
 
 
 def publish_cycle(publisher, *, notification, execution, attention=False):
-    if not enabled():
-        return publisher.publish(notification)
     execution = _notification_evidence(execution)
     from dataclasses import replace
-    from quant_platform_kit.notifications.digest_candidates import summary_evidence
     from quant_platform_kit.notifications.unified_contract import order_identity_digest
     report = _RUN.get() or {}
     dry_run = report.get("dry_run") is True
     kind = _kind(execution, dry_run=dry_run)
+    facts = digest_evidence(execution, dry_run=dry_run)
+    if kind in {"order_submitted", "fill"} and facts.get("routine") is not True:
+        kind = "order_status_unknown"
     if attention and kind in {"routine_cycle", "order_submitted", "fill"}:
         kind = "receipt_unacceptable"  # Earlier attention cannot be cleared by merging a later summary.
     print("notification_cycle_classified kind=" + kind, flush=True)
-    facts = summary_evidence(execution, dry_run=dry_run)
     reason = kind
     reason_code = str(execution.get("no_op_reason") or "").split(":", 1)[0]
     if re.fullmatch(r"[a-zA-Z0-9_]{1,100}", reason_code):
         reason += ":" + reason_code
     event = event_for(kind, reason=reason, order_count=facts["order_count"], fill_count=facts["fill_count"])
     if kind in {"order_submitted", "fill"}:
-        orders = list(execution.get("orders_submitted") or ()) + list(execution.get("option_orders_submitted") or ())
-        ids = [next((str(order[k]) for k in ("permId", "orderId", "order_id", "execution_id") if order.get(k) is not None), "") for order in orders]
+        orders = [order for key in ("orders_filled", "orders_pending", "orders_partially_filled",
+                                   "option_orders_filled", "option_orders_pending", "option_orders_partially_filled")
+                  for order in execution.get(key, ()) or ()]
+        if not orders:
+            orders = list(execution.get("orders_submitted") or ()) + list(execution.get("option_orders_submitted") or ())
+        ids = [next((str(order[k]) for k in ("broker_order_id", "permId", "orderId", "order_id", "execution_id") if order.get(k) is not None), "") for order in orders]
         if ids and all(ids):
             event = replace(event, order_execution_digest=order_identity_digest(json.dumps(sorted(ids))))
     def immediate():
-        if kind in {"order_submitted", "fill"}:
-            return publisher.publish(notification)  # Real orders/fills retain their immediate sender.
         return send_incident(event, lambda: publisher.publish(notification), family="cycle")
     try:
         result = route_notification_event(
             event, env=os.environ, flag_key=FLAG,
-            persist_candidate=lambda fact: _checked_candidate(fact, actually_ran=True, dry_run=dry_run),
+            persist_candidate=lambda fact: _checked_candidate(_with_routine_observations(fact, report), actually_ran=True, dry_run=dry_run),
             legacy=lambda: publisher.publish(notification), immediate=immediate,
         )
     except CandidatePersistenceError:
         from notifications.events import RenderedNotification
-        zh = str(os.environ.get("QSL_NOTIFY_LANG") or os.environ.get("NOTIFY_LANG") or "zh").startswith("zh")
-        notice = "⚠️ 汇总候选写入未确认；本次保留即时通知。" if zh else "⚠️ Digest candidate write unconfirmed; keeping this notification immediate."
+        zh = resolve_operational_notification_locale(os.environ.get("QSL_NOTIFY_LANG") or os.environ.get("NOTIFY_LANG")) == "zh"
+        notice = "⚠️ 汇总候选写入未确认；请检查候选存储及运行记录。" if zh else "⚠️ Digest candidate write unconfirmed; check candidate storage and run records."
         failure = replace(event, event_kind="real_error", incident_reason="candidate_persistence")
         try:
-            return send_incident(failure, lambda: publisher.publish(RenderedNotification(
-                notification.detailed_text + "\n" + notice, notification.compact_text + "\n" + notice)), family="candidate")
+            send_incident(failure, lambda: publisher.publish(RenderedNotification(notice, notice)), family="candidate")
         except Exception:
             print("notification_candidate_and_marker_unavailable", flush=True)
-            return False
+            try:
+                publisher.publish(RenderedNotification(notice, notice))
+            except Exception:
+                print("notification_candidate_error_delivery_failed", flush=True)
+        return False
     except Exception:
         print("notification_incident_marker_unavailable", flush=True)
         return False
@@ -433,9 +534,63 @@ def _checked_candidate(fact, **kwargs):
 
 
 
+def verified_pending_summary(report):
+    summary = report.get("summary") if isinstance(report, Mapping) else None
+    if not isinstance(summary, Mapping) or report.get("dry_run") is not False:
+        return False
+    facts = summary.get("notification_digest")
+    if not isinstance(facts, Mapping):
+        return False
+    count = facts.get("order_count")
+    if not (facts.get("schema_version") == "qsl.notification_cycle.v1" and facts.get("dry_run") is False
+            and facts.get("routine") is True and type(count) is int and count > 0
+            and type(summary.get("orders_submitted_count")) is int and summary.get("orders_submitted_count") == count
+            and summary.get("execution_status") == "pending_reconciliation"
+            and summary.get("no_op_reason") == "broker_order_pending_confirmation"):
+        return False
+    if not re.fullmatch(r"[0-9a-f]{64}", str(facts.get("order_execution_digest") or "")):
+        return False
+    return not any(scope.get(key) for scope in (report, summary, report.get("diagnostics") or {}, report.get("error_summary") or {})
+                   if isinstance(scope, Mapping)
+                   for key in ("errors", "error", "outcome_unknown", "submission_halted", "reconciliation_required",
+                               "execution_blocked", "execution_blocked_reason", "persistence_error", "notification_error",
+                               "plugin_error", "strategy_plugin_error", "strategy_plugin_alert_error",
+                               "strategy_run_persistence_error", "report_persistence_error", "market_hours_check_error"))
+
+
+def verified_order_summary(report):
+    """Accept only a bound positive digest fact, without inferring a fill."""
+    if not isinstance(report, Mapping) or report.get("dry_run") is not False:
+        return False
+    summary = report.get("summary")
+    if not isinstance(summary, Mapping) or summary.get("execution_status") not in {"executed", "completed"}:
+        return False
+    facts = summary.get("notification_digest")
+    if not isinstance(facts, Mapping):
+        return False
+    count = facts.get("order_count")
+    if not (facts.get("schema_version") == "qsl.notification_cycle.v1" and facts.get("dry_run") is False
+            and facts.get("routine") is True and type(count) is int and count > 0
+            and type(summary.get("orders_submitted_count")) is int and summary.get("orders_submitted_count") == count
+            and re.fullmatch(r"[0-9a-f]{64}", str(facts.get("order_execution_digest") or ""))):
+        return False
+    return not any(scope.get(key) for scope in (report, summary, report.get("diagnostics") or {}, report.get("error_summary") or {})
+                   if isinstance(scope, Mapping)
+                   for key in ("errors", "error", "outcome_unknown", "submission_halted", "reconciliation_required",
+                               "execution_blocked", "execution_blocked_reason", "persistence_error", "notification_error",
+                               "plugin_error", "strategy_plugin_error", "strategy_plugin_alert_error",
+                               "strategy_run_persistence_error", "report_persistence_error", "market_hours_check_error"))
+
+
 def receipt_notification_kind(report, *, quiet_eligible):
+    summary = report.get("summary") or {}
+    if (quiet_eligible and isinstance(summary, Mapping)
+            and str(summary.get("execution_status") or "").lower() in {"no_op", "no_action", "completed", "executed", "dry_run_completed", "pending", "submitted", "broker_acknowledged", "partially_filled"}):
+        return "healthy_heartbeat"
     if not isinstance(report.get("execution_receipt"), Mapping):
         return "receipt_missing"
+    if quiet_eligible and verified_pending_summary(report):
+        return "healthy_heartbeat"
     evidence = {**report, **(report.get("diagnostics") or {}), **(report.get("summary") or {})}
     classification = _kind(evidence, dry_run=report.get("dry_run") is True)
     if classification in {"auth_failure", "order_status_unknown", "blocked_run", "real_error"}:
@@ -443,7 +598,7 @@ def receipt_notification_kind(report, *, quiet_eligible):
     return "healthy_heartbeat" if quiet_eligible else "receipt_unacceptable"
 
 def monitor_message(kind):
-    zh = str(os.environ.get("QSL_NOTIFY_LANG") or os.environ.get("NOTIFY_LANG") or "zh").startswith("zh")
+    zh = resolve_operational_notification_locale(os.environ.get("QSL_NOTIFY_LANG") or os.environ.get("NOTIFY_LANG")) == "zh"
     messages = {
         "receipt_missing": ("⚠️ 缺少执行回执；请检查最近一次运行。", "⚠️ Execution receipt missing; check the latest run."),
         "receipt_stale": ("⚠️ 执行回执已过期；请检查最近应运行的周期。", "⚠️ Execution receipt stale; check the latest due cycle."),
@@ -457,9 +612,9 @@ def monitor_message(kind):
     return messages.get(kind, messages["receipt_unacceptable"])[0 if zh else 1]
 
 
-def publish_monitor(*, kind, send, report=None, target=None, now=None, family="receipt"):
+def publish_monitor(*, kind, send, report=None, target=None, now=None, family="receipt", send_error=None):
     """Called only after the existing monitor has classified its original evidence."""
-    if not enabled():
+    if not enabled() and kind != "healthy_heartbeat":
         return send()
     source = report or {}
     target = target or source.get("runtime_target")
@@ -473,23 +628,31 @@ def publish_monitor(*, kind, send, report=None, target=None, now=None, family="r
     from dataclasses import replace
     observed = replace(event, occurred_at=now or datetime.now(timezone.utc))
     _, values = _identity(target)
-    state = _state_store(values)
     def immediate():
-        return send_incident(observed, send, family=family, store=state)
+        return send_incident(observed, send, family=family, store=_state_store(values))
     if report is None:
         # QRS has no non-counting monitor channel. No receipt means no business
         # run to attach a candidate to; keep only the durable immediate alert.
         return immediate()
-    result = route_notification_event(
-        event, env=os.environ, flag_key=FLAG,
-        persist_candidate=lambda fact: _checked_candidate(fact, actually_ran=report is not None,
-            dry_run=source.get("dry_run") is True, env=values),
-        legacy=send, immediate=immediate,
-    )
+    try:
+        result = route_notification_event(
+            event, env=os.environ, flag_key=FLAG,
+            persist_candidate=lambda fact: _checked_candidate(_with_routine_observations(fact, source), actually_ran=report is not None,
+                dry_run=source.get("dry_run") is True, env=values),
+            legacy=send, immediate=immediate,
+        )
+    except CandidatePersistenceError:
+        print("notification_candidate_write_unconfirmed", flush=True)
+        if send_error:
+            send_error()
+        return False
     if not result.candidate_persisted:
         print("notification_candidate_write_unconfirmed", flush=True)
     if kind == "healthy_heartbeat":
-        recover_incidents(observed, family=family, store=state)
+        try:
+            recover_incidents(observed, family=family, store=_state_store(values))
+        except Exception:
+            print("notification_recovery_marker_unavailable", flush=True)
     return result.result is not False
 
 
@@ -556,7 +719,8 @@ def persist_archived_reports(reports, env, *, now=None):
             raise ValueError("candidate_source_invalid")
         summary = report.get("summary") or {}
         facts = summary.get("notification_digest") or {}
-        kind = _kind({**summary, "errors": (report.get("error_summary") or {}).get("errors") or report.get("errors")}, dry_run=report["dry_run"])
+        kind = ("order_submitted" if verified_pending_summary(report) or verified_order_summary(report) else
+                _kind({**summary, "errors": (report.get("error_summary") or {}).get("errors") or report.get("errors")}, dry_run=report["dry_run"]))
         valid_facts = facts.get("schema_version") == "qsl.notification_cycle.v1" and facts.get("dry_run") is report["dry_run"]
         if report["status"] in {"error", "aborted", "failed"}:
             kind = "real_error"
@@ -577,15 +741,20 @@ def persist_archived_reports(reports, env, *, now=None):
             from dataclasses import replace
             from quant_platform_kit.notifications.unified_contract import order_identity_digest
             orders = list(summary.get("orders_submitted") or ()) + list(summary.get("option_orders_submitted") or ())
-            ids = [next((str(order[k]) for k in ("permId", "orderId", "order_id", "execution_id") if order.get(k) is not None), "") for order in orders]
+            ids = [next((str(order[k]) for k in ("broker_order_id", "permId", "orderId", "order_id", "execution_id") if order.get(k) is not None), "") for order in orders]
             if ids and all(ids):
                 event = replace(event, order_execution_digest=order_identity_digest(json.dumps(sorted(ids))))
+            elif valid_facts:
+                digest = facts.get("order_execution_digest")
+                if isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest):
+                    event = replace(event, order_execution_digest=digest)
         from scripts.project_digest_candidates import _latest_notification_block_reason
         from quant_platform_kit.common.execution_receipts import attach_execution_receipt
         def validate_receipt(source):
             return attach_execution_receipt(dict(source), source.get("execution_receipt"))["execution_receipt"]
         block_reason = _latest_notification_block_reason([report], validate_receipt)
-        if not _checked_candidate(event.to_candidate(), env=env, actually_ran=True,
+        if not _checked_candidate(_with_routine_observations(event.to_candidate(), report), env=env, actually_ran=True,
                                   dry_run=report["dry_run"], block_reason=block_reason):
             raise CandidatePersistenceError("notification_candidate_write_unconfirmed")
     return {"status": "projected", "uploaded": True, "runs": len(reports)}
+

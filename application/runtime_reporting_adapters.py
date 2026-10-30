@@ -18,6 +18,11 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def confirmed_gcs_report_uri(value: object) -> bool:
+    """The adapter returns the confirmed cloud URI as a string, or a local path."""
+    return isinstance(value, str) and value.startswith("gs://")
+
+
 @dataclass(frozen=True)
 class IBKRRuntimeReportingAdapters:
     runtime_assembly: RuntimeAssembly
@@ -222,3 +227,4 @@ def build_runtime_reporting_adapters(
         printer=printer,
         clock=clock,
     )
+

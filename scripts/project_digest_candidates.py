@@ -969,6 +969,20 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 
+def merge_routine_observation_counts(left: Mapping[str, Any], right: Mapping[str, Any]) -> dict[str, Any]:
+    """Merge known maps without losing an already observed category conflict."""
+    allowed = {"watch", "opportunity_watch", "panic_reversal", "taco_rebound"}
+    for value in (left, right):
+        if (not isinstance(value, Mapping) or not set(value).issubset(allowed)
+                or any(count is not None and (type(count) is not int or count < 0) for count in value.values())):
+            raise ValueError("notification_observation_counts_invalid")
+    result = {}
+    for key in left.keys() | right.keys():
+        a, b = left.get(key, 0), right.get(key, 0)
+        result[key] = a if a is not None and a == b else None
+    return result
+
+
 def project_notification_events(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """Export one row per source run, with only that run's counts and events.
 
@@ -1003,6 +1017,21 @@ def project_notification_events(records: Sequence[Mapping[str, Any]]) -> dict[st
                    as_of=max((item["event"]["occurred_at"] for item in items), key=_parse_timestamp),
                    notification_events=list({item["event"]["dedupe_key"]: dict(item["event"]) for item in items}.values()))
         field_status = {"cycle_count": "known"}
+        observations = [item["event"]["routine_observation_counts"] for item in items
+                        if "routine_observation_counts" in item["event"]]
+        if observations:
+            try:
+                counts = dict(observations[0])
+                counts = merge_routine_observation_counts(counts, counts)
+                for value in observations[1:]:
+                    counts = merge_routine_observation_counts(counts, value)
+            except (TypeError, ValueError):
+                field_status["routine_observation_counts"] = "unknown"
+            else:
+                row["routine_observation_counts"] = counts
+                field_status["routine_observation_counts"] = "unknown" if any(value is None for value in counts.values()) else "known"
+        else:
+            field_status["routine_observation_counts"] = "unknown"
         real = [item for item in business if item.get("dry_run") is False]
         count_conflict = False
         for field in ("order_count", "fill_count"):
@@ -1022,8 +1051,11 @@ def project_notification_events(records: Sequence[Mapping[str, Any]]) -> dict[st
         if alert:
             row.update(reason_code="notification_incident_observed", execution_status="execution_alert")
         else:
-            row["execution_status"] = "executed" if row["order_count"] else "no_action"
+            kinds = {item["event"]["event_kind"] for item in items}
+            row["execution_status"] = ("order_submitted" if "order_submitted" in kinds else
+                                       "executed" if "fill" in kinds else "no_action")
         if business and all(item.get("dry_run") is True for item in business):
             row["execution_mode"] = "dry_run"
         rows.append(row)
     return {"schema_version": SCHEMA_VERSION, "producer_status": "projected", "runs": rows}
+

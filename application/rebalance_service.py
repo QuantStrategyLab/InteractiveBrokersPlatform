@@ -17,7 +17,7 @@ from application.reconciliation_service import (
 )
 from application.signal_snapshot import build_signal_snapshot
 from notifications.events import NotificationPublisher
-from notifications.unified_adapter import enabled as unified_enabled, publish_cycle
+from notifications.unified_adapter import publish_cycle
 from notifications import renderers as notification_renderers
 from notifications.renderers import _build_order_batch_lines
 from quant_platform_kit.common.execution_state import build_execution_marker_key, claim_account_owner
@@ -109,45 +109,8 @@ def _should_suppress_noop_notification(
     has_error: bool = False,
     notify_no_trade_cycles: bool = True,
 ) -> bool:
-    """Return True when we should skip sending a Telegram notification.
-
-    Suppress when:
-    - Outside execution window (monthly/weekly cadence)
-    - No orders placed, no errors, and no-trade cycle notifications are disabled
-    Waiting for a signal inside an authorized execution window is a completed
-    no-trade cycle when no-trade notifications are enabled.
-    """
-    metadata = signal_metadata if isinstance(signal_metadata, Mapping) else {}
-    if unified_enabled():
-        return False  # The notification adapter must persist before suppressing.
-    from quant_platform_kit.notifications.digest_routing import defer_routine_cycle_to_digest
-    if has_error or any(metadata.get(key) for key in (
-        "error", "errors", "fail_reason", "execution_blocked_reason", "plugin_error",
-        "persistence_error", "report_persistence_error", "notification_error",
-        "pending_reconciliation", "reconciliation_required",
-    )):
-        return False
-    execution_status = str(metadata.get("execution_status") or "").strip().lower()
-    if execution_status and execution_status not in {"no_op", "no_action", "completed", "dry_run_completed"}:
-        return False
-    if _execution_summary_has_order_activity(metadata):
-        return False
-    if defer_routine_cycle_to_digest(metadata, submitted_order_count=order_count):
-        return True
-    if order_count == 0 and not notify_no_trade_cycles:
-        return True
-    no_op_reason = str(metadata.get("no_op_reason") or "").strip()
-    if no_op_reason.startswith(("outside_execution_window", "outside_monthly_execution_window")):
-        return True
-    notification_context = metadata.get("notification_context")
-    if isinstance(notification_context, Mapping):
-        status_context = notification_context.get("status")
-        if isinstance(status_context, Mapping) and str(status_context.get("code") or "").strip() in {
-            "status_monthly_snapshot_waiting_window",
-            "status_no_execution_window_after_snapshot",
-        }:
-            return True
-    return False
+    """Allow the durable adapter to classify and persist every cycle."""
+    return False  # Persist every cycle before suppressing its routine message.
 
 
 def _execution_summary_has_order_activity(execution_summary: Mapping[str, object] | None) -> bool:
@@ -192,7 +155,9 @@ def _has_notification_attention(signal_metadata, execution_summary=None, *, reas
         )):
             return True
         status = str(scope.get("execution_status") or "").strip().lower()
-        if status not in {"", "no_op", "no_action", "completed", "executed", "dry_run", "dry_run_completed"}:
+        from notifications.unified_adapter import _known_pending_orders
+        known_pending = status in {"pending", "pending_reconciliation", "submitted", "broker_acknowledged", "partially_filled"} and _known_pending_orders(scope)
+        if status not in {"", "no_op", "no_action", "completed", "executed", "dry_run", "dry_run_completed"} and not known_pending:
             return True
         if str(scope.get("risk_gate") or "").strip().upper() in {"BLOCK", "BLOCKED", "REJECT", "REJECTED", "DENY", "DENIED"}:
             return True
@@ -202,29 +167,7 @@ def _has_notification_attention(signal_metadata, execution_summary=None, *, reas
 
 
 def _should_publish_execution_notification(*, config, signal_metadata, execution_summary, trade_logs) -> bool:
-    if unified_enabled():
-        return True  # Includes quiet/dry-run coverage; delivery is adapter-owned.
-    from quant_platform_kit.notifications.digest_routing import defer_routine_cycle_to_digest
-
-    if _has_notification_attention(
-        signal_metadata, execution_summary,
-        reason_codes=getattr(config, "notification_attention_reason_codes", ()),
-    ):
-        return True
-    if bool(getattr(config, "dry_run_only", False)):
-        return False
-    has_orders = _has_order_activity(trade_logs=trade_logs, execution_summary=execution_summary)
-    evidence = {**(signal_metadata or {}), **(execution_summary or {})}
-    from quant_platform_kit.notifications.digest_candidates import summary_evidence
-    facts = summary_evidence(evidence)
-    confirmed_orders = [{"status": "filled"} for _ in range(facts["order_count"] or 0)] if facts["routine"] else None
-    count = (facts["order_count"] if facts["order_count"] is not None else -1) if has_orders else 0
-    if defer_routine_cycle_to_digest(evidence, submitted_order_count=count,
-            submitted_orders=confirmed_orders):
-        return False
-    return has_orders or bool(
-        getattr(config, "notify_no_trade_cycles", False)
-    )
+    return True  # The notification adapter classifies and persists each cycle.
 
 
 def _normalize_reconciliation_mode(value: object, *, fallback: str = "") -> str:
@@ -1527,3 +1470,4 @@ def execute_account_brake_reduction(ib, *, admission, session, order_intent_cls,
         return submit_order_intent(ib, intent, account_execution_session=session, execution_grant=grant,
                                    reduction_position=signed_quantity, reduction_pending_quantity=0.0)
     return None
+

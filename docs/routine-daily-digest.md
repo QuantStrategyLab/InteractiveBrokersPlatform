@@ -1,20 +1,19 @@
-# Routine daily digest migration (owner approval required)
+# Routine daily digest
 
 Reuse the existing private candidates and central daily digest. The generic
-`QSL_ROUTINE_NOTIFICATION_MODE` defaults to `immediate`; explicitly selecting
-`daily_digest` defers verified healthy no-order notices from both normal and
-no-op notification paths. Risk blocks, unknown/pending orders, reconciliation
-or persistence errors and all real order activity remain immediate.
+Routine cycles, known broker acknowledgements and healthy heartbeats are
+persisted for the daily digest regardless of legacy routing flags. Unknown
+outcomes, reconciliation failures, risk and persistence errors remain immediate.
+An acknowledged or partially filled order is not proof of a full fill.
 
 Results and account reports still follow the existing persistence path.
-Deferral is not delivery. The QPK pin contains only notification changes on
-the exact former consumer pin; this draft does not change risk evaluation,
-trading settings, recipient mapping, schedules or production flags.
+Deferral is not delivery. This notification policy does not change risk
+evaluation, trading settings, recipient mapping or schedules.
 
-Approve deployment and a one-platform flag change only after fresh matching
-private candidates, window coverage, actual central delivery and urgent-path
-verification. Keep unknown fill counts unknown. Existing templates support
+Validate fresh matching private candidates, window coverage, actual central
+delivery and urgent-path verification. Keep unknown fill counts unknown. Existing templates support
 `zh-CN` and `en`; configure language independently of routing.
 
-中文：默认保留现有通知。核验日报替代链后，负责人可批准正常无单周期进入同一份
-日报；风控、订单未知、待对账和运行异常不等待日报。部署及开关变更须另行批准。
+中文：正常周期、已确认接收的订单和健康心跳进入日报；订单状态未知、对账失败、
+风控和持久化异常即时通知。券商已接收或部分成交不代表完全成交。
+
