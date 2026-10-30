@@ -593,6 +593,52 @@ def _source_result(source_sha: object, reason: str = "source_metadata_unavailabl
     }
 
 
+def _configured_source_metadata(expected: Mapping[str, Any], *, serving: str,
+                                serving_revision: Mapping[str, Any], image: Any,
+                                region: str) -> dict[str, Any]:
+    """Observe the original configured revision without changing serving admission."""
+    result = {
+        "reason": "revision_identity_invalid", "equals_serving": None,
+        "declared_source_sha": None,
+        "scope_equalities": dict.fromkeys(("service_name", "account_scope", "deployment_selector", "account_selector")),
+    }
+    configured = expected.get("expected_runtime_revision")
+    if (not isinstance(configured, str) or not image._NAME.fullmatch(configured)
+        or not configured.startswith(expected["expected_service_name"] + "-")):
+        return result
+    result["equals_serving"] = configured == serving
+    try:
+        revision = serving_revision if configured == serving else image._json_command(
+            ("gcloud", "run", "revisions", "describe", configured, "--project",
+             expected["expected_project_id"], "--region", region, "--format=json"),
+            "revision_metadata_unavailable")
+        metadata = revision.get("metadata") if isinstance(revision, Mapping) else None
+        if not isinstance(metadata, Mapping) or metadata.get("name") != configured:
+            return result
+        spec = revision.get("spec")
+        containers = spec.get("containers") if isinstance(spec, Mapping) else None
+        if not isinstance(containers, list) or len(containers) != 1 or not isinstance(containers[0], Mapping):
+            result["reason"] = "revision_metadata_invalid"
+            return result
+        env = containers[0].get("env")
+        rows = [r for r in env if isinstance(r, Mapping) and r.get("name") == "RUNTIME_TARGET_JSON"] if isinstance(env, list) else []
+        if len(rows) != 1 or not isinstance(rows[0].get("value"), str):
+            result["reason"] = "deployed_target_mismatch"
+            return result
+        target = json.loads(rows[0]["value"])
+        result["scope_equalities"] = _source_scope(target, expected)
+        if any(value is not True for value in result["scope_equalities"].values()):
+            result["reason"] = "deployed_target_mismatch"
+            return result
+        labels = metadata.get("labels")
+        result["declared_source_sha"] = image._sha(labels.get("commit-sha")) if isinstance(labels, Mapping) else None
+        result["reason"] = "source_label_observed" if result["declared_source_sha"] else "source_labels_unavailable"
+    except Exception:
+        # An optional comparison must not hide serving evidence or provider text.
+        result["reason"] = "revision_metadata_unavailable"
+    return result
+
+
 def diagnose_serving_source_metadata(expected: Mapping[str, Any], *, source_sha: object = None) -> dict[str, Any]:
     result = _source_result(source_sha)
     try:
@@ -627,6 +673,8 @@ def diagnose_serving_source_metadata(expected: Mapping[str, Any], *, source_sha:
         result["scope_equalities"] = _source_scope(target, expected)
         if any(v is not True for v in result["scope_equalities"].values()):
             raise publisher._ProjectionError("deployed_target_mismatch")
+        result["configured_revision_source"] = _configured_source_metadata(
+            expected, serving=serving, serving_revision=revision, image=image, region=region)
         labels = metadata.get("labels")
         selected = image._sha(labels.get("commit-sha")) if isinstance(labels, Mapping) else None
         run_id = labels.get("github-run-id") if isinstance(labels, Mapping) else None

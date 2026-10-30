@@ -31,6 +31,8 @@ metadata 完整可读取时 exit0 只说明本次 image 证据已取得。读取
 
 输出仍使用现有 `ibkr.account_facts_identity_diagnostic.v1` 的显式 `status=metadata_only` 分支，仅含固定 reason、四项 nullable scope equality、image/provenance状态、serving稳定性及已证明的公开 `selected_source_sha`。revision/digest/run ID/私有配置/账户/日志与 token 不输出。`deploy_provenance_verified` / exit0只表示部署来源链被核对；`loaded_source_status` 和 `independent_release_approval` 始终 unknown，不代替正在运行的加载证明、source批准或 producer/receiver绑定修复。
 
+该模式还以 `configured_revision_source` 独立比较原受保护配置中的 revision：只允许同 service 下合法名称的一次 metadata GET；与 serving 相同时复用已读对象。只投影 `equals_serving`、四项 scope equality、固定 reason 及 scope 全部匹配后合法 40hex `commit-sha` 标签 `declared_source_sha`，不输出 revision 标识或账户。缺标签、配置修订不可读、目标不匹配或非法名称保持 null/固定原因，不替换原 expected revision，不改变 serving 的原准入和退出结果。此标签观察不证明构建字节、部署流程或批准；缺 serving 部署 locator 时仍可保留独立配置观察，整体部署 provenance 保持 unknown。
+
 ```bash
 gh workflow run account-facts-identity-diagnose.yml \
   --repo QuantStrategyLab/InteractiveBrokersPlatform --ref main \
