@@ -377,12 +377,29 @@ def release(ctx: Context, source: Path, env: Mapping[str, str], run=command, tak
     import io
     coverage = binding.new_report()
     try:
-        installed = {"image": binding.revision_from_image(image), "lockfile": binding.revision_from_lockfile(source / "uv.lock")}
+        image_revision = binding.revision_from_image(image)
+    except Exception:
+        progress["ues_binding_reason"] = "image_probe_error"
+        raise ReleaseError("image_binding_unverified") from None
+    try:
+        lock_revision = binding.revision_from_lockfile(source / "uv.lock")
+    except Exception:
+        progress["ues_binding_reason"] = "lockfile_error"
+        raise ReleaseError("image_binding_unverified") from None
+    installed = {"image": image_revision, "lockfile": lock_revision}
+    try:
         with contextlib.redirect_stdout(io.StringIO()):
             failures = binding.check(installed, [(ctx.service, actual_target)], report=coverage)
     except Exception:
+        progress["ues_binding_reason"] = "binding_check_error"
         raise ReleaseError("image_binding_unverified") from None
     if failures:
+        if not all(binding.safe_revision(value) for value in installed.values()):
+            progress["ues_binding_reason"] = "installed_revision_invalid"
+        elif image_revision != lock_revision:
+            progress["ues_binding_reason"] = "installed_revision_mismatch"
+        else:
+            progress["ues_binding_reason"] = "target_binding_mismatch"
         raise ReleaseError("image_binding_unverified")
     labels = _json(run(["docker", "image", "inspect", image, "--format={{json .Config.Labels}}"], stage="image_source_unverified"))
     if not isinstance(labels, dict) or labels.get("org.opencontainers.image.revision") != ctx.source_commit:
