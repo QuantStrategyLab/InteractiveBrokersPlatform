@@ -74,6 +74,8 @@ Organization documentation rules are checked by `python scripts/check_style.py`,
 
 ## Do not
 
+- Only the owner, or a reviewer explicitly authorized by the owner, may apply the `owner-approved` label; coding agents must never apply it to their own PRs.
+
 - Do not break the fail-closed execution claim, the one-time order markers or the
   unknown-outcome handling.
 - Do not reuse a production Gateway session, switch, strategy version or order
