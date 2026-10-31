@@ -1,0 +1,3333 @@
+{
+  "candidate_main_sha256": "ef3ab072868dcb3447b19d224c63879cfa11a3d3906db7d25ac51b77171feb04",
+  "candidate_revision": "e094c9f65a34a566b1c8bfc63990fc8a3df76866",
+  "component_contract": {
+    "component_body_sha256": "fcdf339c0326d1527004a334a72ba348c76880410cb0e6a8799acd79773749f9",
+    "helper_definitions_sha256": "675ad20ed1bd20ce32fac21e6bc3b5057a616b70cd7ac0977f4cbc0f8753d664",
+    "keyword_parameters": [
+      "cycle_result",
+      "execution_summary",
+      "report",
+      "log_context",
+      "notification_delivery_events",
+      "execution_window",
+      "dry_run_only_override"
+    ],
+    "statement_count": 22
+  },
+  "evidence_kind": "synthetic",
+  "legacy_main_sha256": "f13b55f501c404ef249bb3344bd69136beb8e0ead382e827d082217180b46637",
+  "legacy_revision": "d220b2dcc83decb0931aa0088dd3a9f9d119a383",
+  "observations": {
+    "soxl_soxx_trend_income/conflicting_receipt": {
+      "events": [
+        {
+          "operation": "build_runtime_report_base"
+        },
+        {
+          "operation": "seed_conflicting_receipt"
+        },
+        {
+          "operation": "emit_runtime_log",
+          "payload": {
+            "account_scope": "synthetic-scope",
+            "deploy_target": "synthetic-offline",
+            "event": "strategy_signal_snapshot",
+            "execution_window": "execution",
+            "generated_at": "2026-01-02T12:00:00+00:00",
+            "indicators": {
+              "active_risk_asset": "SOXL",
+              "benchmark_price": 100.0,
+              "benchmark_symbol": "SOXX"
+            },
+            "latest_price_source": "synthetic_quote",
+            "market_date": "2026-01-01",
+            "message": "Strategy signal snapshot",
+            "platform": "ibkr",
+            "run_id": "synthetic-soxl_soxx_trend_income-conflicting_receipt",
+            "runtime_target": {
+              "account_scope": "synthetic-scope",
+              "account_selector": [
+                "synthetic-account"
+              ],
+              "deployment_selector": null,
+              "dry_run_only": false,
+              "execution_environment": "paper",
+              "execution_mode": "live",
+              "execution_windows": null,
+              "platform_id": "ibkr",
+              "service_name": null,
+              "strategy_profile": "soxl_soxx_trend_income",
+              "strategy_release": {
+                "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "effective_session": "2026-01-01",
+                "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "release_id": "synthetic-release",
+                "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            },
+            "schema_version": "signal_snapshot.v1",
+            "service_name": "synthetic-service",
+            "severity": "INFO",
+            "signal_as_of": "2026-01-01",
+            "strategy_profile": "soxl_soxx_trend_income",
+            "target_weights": {
+              "SGOV": 0.75,
+              "SOXL": 0.25
+            },
+            "timestamp": "2026-01-02T12:00:10Z"
+          }
+        },
+        {
+          "operation": "attach_cycle_execution_receipt"
+        }
+      ],
+      "exception": {
+        "message": "runtime_report already has a different execution receipt",
+        "type": "ValueError"
+      },
+      "report": {
+        "account_group": null,
+        "account_ids": [
+          "synthetic-account"
+        ],
+        "account_region": null,
+        "account_scope": "synthetic-scope",
+        "artifacts": {
+          "feature_snapshot_manifest_path": null,
+          "feature_snapshot_path": null,
+          "reconciliation_output_path": null,
+          "strategy_config_path": null
+        },
+        "decision_at": "2026-01-02T12:00:00+00:00",
+        "deploy_target": "synthetic-offline",
+        "diagnostics": {
+          "ib_client_id": 0,
+          "ib_connect_timeout_seconds": 0,
+          "ib_gateway_host": "synthetic.invalid",
+          "ib_gateway_ip_mode": "",
+          "ib_gateway_mode": "paper",
+          "ib_gateway_port": 0,
+          "runtime_revision": "synthetic-runtime-revision",
+          "strategy_config_source": "synthetic-config"
+        },
+        "dry_run": false,
+        "errors": [],
+        "execution_receipt": {
+          "broker_confirmation": "not_applicable",
+          "execution_mode": "live",
+          "observed_at": "2026-01-02T12:00:09Z",
+          "outcome": "no_action",
+          "platform": "ibkr",
+          "receipt_id": "execution-receipt.67de56dc597b2f9c148d9cf1315881bc",
+          "schema_version": "qsl_execution_receipt.v1",
+          "strategy_profile": "soxl_soxx_trend_income",
+          "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "finished_at": null,
+        "instance_name": null,
+        "platform": "interactive_brokers",
+        "project_id": null,
+        "run_id": "synthetic-soxl_soxx_trend_income-conflicting_receipt",
+        "run_source": "cloud_run",
+        "runtime_release_receipt": {
+          "attestation_state": "self_attested",
+          "loaded_at": "2026-01-02T12:00:00Z",
+          "release_id": "synthetic-release",
+          "runtime_revision": "synthetic-runtime-revision",
+          "schema_version": "runtime_loaded_receipt.v1",
+          "strategy_release": {
+            "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "effective_session": "2026-01-01",
+            "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "release_id": "synthetic-release",
+            "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "runtime_target": {
+          "account_scope": "synthetic-scope",
+          "account_selector": [
+            "synthetic-account"
+          ],
+          "deployment_selector": null,
+          "dry_run_only": false,
+          "execution_environment": "paper",
+          "execution_mode": "live",
+          "execution_windows": null,
+          "platform_id": "ibkr",
+          "service_name": null,
+          "strategy_profile": "soxl_soxx_trend_income",
+          "strategy_release": {
+            "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "effective_session": "2026-01-01",
+            "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "release_id": "synthetic-release",
+            "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "schema_version": "runtime_report.v1",
+        "service_name": "synthetic-service",
+        "started_at": "2026-01-02T12:00:00Z",
+        "status": "started",
+        "strategy_domain": "us_equity",
+        "strategy_profile": "soxl_soxx_trend_income",
+        "summary": {
+          "account_ids": [
+            "synthetic-account"
+          ],
+          "effective_date": "2026-01-02",
+          "execution_calendar_source": "signal_date",
+          "execution_timing_contract": "same_trading_day",
+          "managed_symbols": [
+            "SOXL",
+            "SGOV"
+          ],
+          "safe_haven": "SGOV",
+          "signal_date": "2026-01-02",
+          "signal_effective_after_trading_days": 0,
+          "signal_source": "synthetic-input",
+          "status_icon": "synthetic",
+          "strategy_display_name": "Synthetic strategy",
+          "strategy_display_name_localized": "Synthetic strategy"
+        }
+      }
+    },
+    "soxl_soxx_trend_income/dry_run_preview": {
+      "events": [
+        {
+          "operation": "build_runtime_report_base"
+        },
+        {
+          "operation": "emit_runtime_log",
+          "payload": {
+            "account_scope": "synthetic-scope",
+            "deploy_target": "synthetic-offline",
+            "event": "strategy_signal_snapshot",
+            "execution_window": "dry_run",
+            "generated_at": "2026-01-02T12:00:00+00:00",
+            "indicators": {
+              "active_risk_asset": "SOXL",
+              "benchmark_price": 100.0,
+              "benchmark_symbol": "SOXX"
+            },
+            "latest_price_source": "synthetic_quote",
+            "market_date": "2026-01-01",
+            "message": "Strategy signal snapshot",
+            "platform": "ibkr",
+            "run_id": "synthetic-soxl_soxx_trend_income-dry_run_preview",
+            "runtime_target": {
+              "account_scope": "synthetic-scope",
+              "account_selector": [
+                "synthetic-account"
+              ],
+              "deployment_selector": null,
+              "dry_run_only": true,
+              "execution_environment": "dry_run",
+              "execution_mode": "paper",
+              "execution_windows": null,
+              "platform_id": "ibkr",
+              "service_name": null,
+              "strategy_profile": "soxl_soxx_trend_income",
+              "strategy_release": {
+                "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "effective_session": "2026-01-01",
+                "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "release_id": "synthetic-release",
+                "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            },
+            "schema_version": "signal_snapshot.v1",
+            "service_name": "synthetic-service",
+            "severity": "INFO",
+            "signal_as_of": "2026-01-01",
+            "strategy_profile": "soxl_soxx_trend_income",
+            "target_weights": {
+              "SGOV": 0.75,
+              "SOXL": 0.25
+            },
+            "timestamp": "2026-01-02T12:00:10Z"
+          }
+        },
+        {
+          "operation": "attach_cycle_execution_receipt"
+        },
+        {
+          "operation": "finalize_runtime_report"
+        },
+        {
+          "operation": "emit_runtime_log",
+          "payload": {
+            "account_scope": "synthetic-scope",
+            "deploy_target": "synthetic-offline",
+            "event": "strategy_cycle_completed",
+            "execution_status": "dry_run",
+            "execution_window": "dry_run",
+            "message": "Strategy dry-run completed",
+            "platform": "interactive_brokers",
+            "result": "synthetic-cycle-result",
+            "run_id": "synthetic-soxl_soxx_trend_income-dry_run_preview",
+            "runtime_target": {
+              "account_scope": "synthetic-scope",
+              "account_selector": [
+                "synthetic-account"
+              ],
+              "deployment_selector": null,
+              "dry_run_only": true,
+              "execution_environment": "dry_run",
+              "execution_mode": "paper",
+              "execution_windows": null,
+              "platform_id": "ibkr",
+              "service_name": null,
+              "strategy_profile": "soxl_soxx_trend_income",
+              "strategy_release": {
+                "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "effective_session": "2026-01-01",
+                "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "release_id": "synthetic-release",
+                "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            },
+            "service_name": "synthetic-service",
+            "severity": "INFO",
+            "strategy_profile": "soxl_soxx_trend_income",
+            "timestamp": "2026-01-02T12:00:10Z"
+          }
+        }
+      ],
+      "exception": null,
+      "report": {
+        "account_group": null,
+        "account_ids": [
+          "synthetic-account"
+        ],
+        "account_region": null,
+        "account_scope": "synthetic-scope",
+        "artifacts": {
+          "feature_snapshot_manifest_path": null,
+          "feature_snapshot_path": null,
+          "reconciliation_output_path": null,
+          "reconciliation_record_path": "synthetic/reconciliation.json",
+          "strategy_config_path": null
+        },
+        "decision_at": "2026-01-02T12:00:00+00:00",
+        "deploy_target": "synthetic-offline",
+        "diagnostics": {
+          "ib_client_id": 0,
+          "ib_connect_timeout_seconds": 0,
+          "ib_gateway_host": "synthetic.invalid",
+          "ib_gateway_ip_mode": "",
+          "ib_gateway_mode": "paper",
+          "ib_gateway_port": 0,
+          "price_source_mode": "synthetic_quote",
+          "result": "synthetic-cycle-result",
+          "runtime_revision": "synthetic-runtime-revision",
+          "signal_snapshot": {
+            "generated_at": "2026-01-02T12:00:00+00:00",
+            "indicators": {
+              "active_risk_asset": "SOXL",
+              "benchmark_price": 100.0,
+              "benchmark_symbol": "SOXX"
+            },
+            "latest_price_source": "synthetic_quote",
+            "market_date": "2026-01-01",
+            "platform": "ibkr",
+            "schema_version": "signal_snapshot.v1",
+            "signal_as_of": "2026-01-01",
+            "strategy_profile": "soxl_soxx_trend_income",
+            "target_weights": {
+              "SGOV": 0.75,
+              "SOXL": 0.25
+            }
+          },
+          "snapshot_price_fallback_symbols": [],
+          "strategy_config_source": "synthetic-config"
+        },
+        "dry_run": true,
+        "errors": [],
+        "execution_receipt": {
+          "broker_confirmation": "not_applicable",
+          "execution_mode": "paper",
+          "observed_at": "2026-01-02T12:00:09Z",
+          "outcome": "no_action",
+          "platform": "ibkr",
+          "receipt_id": "execution-receipt.194751974b03844a66e26b18251b4fdc",
+          "schema_version": "qsl_execution_receipt.v1",
+          "strategy_profile": "soxl_soxx_trend_income",
+          "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "finished_at": "2026-01-02T12:00:10Z",
+        "instance_name": null,
+        "platform": "interactive_brokers",
+        "project_id": null,
+        "run_id": "synthetic-soxl_soxx_trend_income-dry_run_preview",
+        "run_source": "cloud_run",
+        "runtime_release_receipt": {
+          "attestation_state": "self_attested",
+          "loaded_at": "2026-01-02T12:00:00Z",
+          "release_id": "synthetic-release",
+          "runtime_revision": "synthetic-runtime-revision",
+          "schema_version": "runtime_loaded_receipt.v1",
+          "strategy_release": {
+            "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "effective_session": "2026-01-01",
+            "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "release_id": "synthetic-release",
+            "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "runtime_target": {
+          "account_scope": "synthetic-scope",
+          "account_selector": [
+            "synthetic-account"
+          ],
+          "deployment_selector": null,
+          "dry_run_only": true,
+          "execution_environment": "dry_run",
+          "execution_mode": "paper",
+          "execution_windows": null,
+          "platform_id": "ibkr",
+          "service_name": null,
+          "strategy_profile": "soxl_soxx_trend_income",
+          "strategy_release": {
+            "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "effective_session": "2026-01-01",
+            "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "release_id": "synthetic-release",
+            "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "schema_version": "runtime_report.v1",
+        "service_name": "synthetic-service",
+        "started_at": "2026-01-02T12:00:00Z",
+        "status": "ok",
+        "strategy_domain": "us_equity",
+        "strategy_profile": "soxl_soxx_trend_income",
+        "summary": {
+          "account_facts": {
+            "account_ids": [
+              "synthetic-account"
+            ],
+            "net_liquidation": 1000.0,
+            "observed_at": "2026-01-02T12:00:00+00:00",
+            "schema_version": "ibkr_account_snapshot.v1"
+          },
+          "account_ids": [
+            "synthetic-account"
+          ],
+          "dry_run_order_preview_available": true,
+          "effective_date": "2026-01-02",
+          "execution_calendar_source": "signal_date",
+          "execution_status": "dry_run",
+          "execution_timing_contract": "same_trading_day",
+          "managed_symbols": [
+            "SOXL",
+            "SGOV"
+          ],
+          "no_op_reason": null,
+          "notification_delivery_log": {
+            "delivery_events": [
+              {
+                "compact_text_length": 17,
+                "compact_text_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+                "delivery_status": "sent",
+                "sink": "synthetic-sink",
+                "transport_acknowledged": true
+              }
+            ],
+            "locales": [
+              "en",
+              "zh-Hans"
+            ],
+            "notification_contains_order_preview_summary": true,
+            "notification_contains_platform": true,
+            "notification_contains_profile": true,
+            "notification_contains_validation_status": true,
+            "notification_correlation_id": "synthetic-soxl_soxx_trend_income-dry_run_preview",
+            "notification_event_type": "hk_snapshot_live_enablement_dry_run",
+            "notification_redacts_sensitive_fields": true,
+            "notification_schema_version": "hk_live_enablement_notification.v1",
+            "orders_previewed": 1,
+            "platform": "interactive_brokers",
+            "profile": "soxl_soxx_trend_income",
+            "redaction_policy": "raw notification text is not persisted; only sha256 and length are recorded",
+            "validation_status": "passed"
+          },
+          "notification_delivery_summary": {
+            "all_acknowledged": true,
+            "attempted_count": 1,
+            "delivery_events": [
+              {
+                "compact_text_length": 17,
+                "compact_text_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+                "delivery_status": "sent",
+                "sink": "synthetic-sink",
+                "transport_acknowledged": true
+              }
+            ],
+            "failed_count": 0,
+            "sent_count": 1
+          },
+          "notification_digest": {
+            "dry_run": true,
+            "routine": false,
+            "schema_version": "qsl.notification_cycle.v1"
+          },
+          "orders_previewed_count": 1,
+          "orders_skipped_count": 0,
+          "orders_submitted_count": 1,
+          "quote_snapshot": {
+            "SOXL": {
+              "price": 100.0,
+              "source": "synthetic_quote"
+            }
+          },
+          "result": "synthetic-cycle-result",
+          "safe_haven": "SGOV",
+          "signal_date": "2026-01-02",
+          "signal_effective_after_trading_days": 0,
+          "signal_source": "synthetic-input",
+          "snapshot_price_fallback_count": 0,
+          "snapshot_price_fallback_used": false,
+          "status_icon": "synthetic",
+          "strategy_display_name": "Synthetic strategy",
+          "strategy_display_name_localized": "Synthetic strategy"
+        }
+      }
+    },
+    "soxl_soxx_trend_income/expected_guard": {
+      "events": [
+        {
+          "operation": "build_runtime_report_base"
+        },
+        {
+          "operation": "emit_runtime_log",
+          "payload": {
+            "account_scope": "synthetic-scope",
+            "deploy_target": "synthetic-offline",
+            "event": "strategy_signal_snapshot",
+            "execution_window": "execution",
+            "generated_at": "2026-01-02T12:00:00+00:00",
+            "indicators": {
+              "active_risk_asset": "SOXL",
+              "benchmark_price": 100.0,
+              "benchmark_symbol": "SOXX"
+            },
+            "latest_price_source": "synthetic_quote",
+            "market_date": "2026-01-01",
+            "message": "Strategy signal snapshot",
+            "platform": "ibkr",
+            "run_id": "synthetic-soxl_soxx_trend_income-expected_guard",
+            "runtime_target": {
+              "account_scope": "synthetic-scope",
+              "account_selector": [
+                "synthetic-account"
+              ],
+              "deployment_selector": null,
+              "dry_run_only": false,
+              "execution_environment": "paper",
+              "execution_mode": "live",
+              "execution_windows": null,
+              "platform_id": "ibkr",
+              "service_name": null,
+              "strategy_profile": "soxl_soxx_trend_income",
+              "strategy_release": {
+                "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "effective_session": "2026-01-01",
+                "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "release_id": "synthetic-release",
+                "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            },
+            "schema_version": "signal_snapshot.v1",
+            "service_name": "synthetic-service",
+            "severity": "INFO",
+            "signal_as_of": "2026-01-01",
+            "strategy_profile": "soxl_soxx_trend_income",
+            "target_weights": {
+              "SGOV": 0.75,
+              "SOXL": 0.25
+            },
+            "timestamp": "2026-01-02T12:00:10Z"
+          }
+        },
+        {
+          "operation": "attach_cycle_execution_receipt"
+        },
+        {
+          "operation": "finalize_runtime_report"
+        },
+        {
+          "operation": "emit_runtime_log",
+          "payload": {
+            "account_scope": "synthetic-scope",
+            "deploy_target": "synthetic-offline",
+            "event": "strategy_cycle_completed",
+            "execution_status": "blocked",
+            "execution_window": "execution",
+            "message": "Strategy execution completed",
+            "no_op_reason": "same_day_execution_locked:synthetic",
+            "platform": "interactive_brokers",
+            "result": "synthetic-cycle-result",
+            "run_id": "synthetic-soxl_soxx_trend_income-expected_guard",
+            "runtime_target": {
+              "account_scope": "synthetic-scope",
+              "account_selector": [
+                "synthetic-account"
+              ],
+              "deployment_selector": null,
+              "dry_run_only": false,
+              "execution_environment": "paper",
+              "execution_mode": "live",
+              "execution_windows": null,
+              "platform_id": "ibkr",
+              "service_name": null,
+              "strategy_profile": "soxl_soxx_trend_income",
+              "strategy_release": {
+                "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "effective_session": "2026-01-01",
+                "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "release_id": "synthetic-release",
+                "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            },
+            "service_name": "synthetic-service",
+            "severity": "INFO",
+            "strategy_profile": "soxl_soxx_trend_income",
+            "timestamp": "2026-01-02T12:00:10Z"
+          }
+        }
+      ],
+      "exception": null,
+      "report": {
+        "account_group": null,
+        "account_ids": [
+          "synthetic-account"
+        ],
+        "account_region": null,
+        "account_scope": "synthetic-scope",
+        "artifacts": {
+          "feature_snapshot_manifest_path": null,
+          "feature_snapshot_path": null,
+          "reconciliation_output_path": null,
+          "reconciliation_record_path": "synthetic/reconciliation.json",
+          "strategy_config_path": null
+        },
+        "decision_at": "2026-01-02T12:00:00+00:00",
+        "deploy_target": "synthetic-offline",
+        "diagnostics": {
+          "ib_client_id": 0,
+          "ib_connect_timeout_seconds": 0,
+          "ib_gateway_host": "synthetic.invalid",
+          "ib_gateway_ip_mode": "",
+          "ib_gateway_mode": "paper",
+          "ib_gateway_port": 0,
+          "price_source_mode": "synthetic_quote",
+          "result": "synthetic-cycle-result",
+          "runtime_revision": "synthetic-runtime-revision",
+          "signal_snapshot": {
+            "generated_at": "2026-01-02T12:00:00+00:00",
+            "indicators": {
+              "active_risk_asset": "SOXL",
+              "benchmark_price": 100.0,
+              "benchmark_symbol": "SOXX"
+            },
+            "latest_price_source": "synthetic_quote",
+            "market_date": "2026-01-01",
+            "platform": "ibkr",
+            "schema_version": "signal_snapshot.v1",
+            "signal_as_of": "2026-01-01",
+            "strategy_profile": "soxl_soxx_trend_income",
+            "target_weights": {
+              "SGOV": 0.75,
+              "SOXL": 0.25
+            }
+          },
+          "snapshot_price_fallback_symbols": [],
+          "strategy_config_source": "synthetic-config"
+        },
+        "dry_run": false,
+        "errors": [],
+        "execution_receipt": {
+          "broker_confirmation": "not_applicable",
+          "execution_mode": "live",
+          "observed_at": "2026-01-02T12:00:09Z",
+          "outcome": "risk_blocked",
+          "platform": "ibkr",
+          "receipt_id": "execution-receipt.78b1592b294d5f4d794c0b1d84793f49",
+          "schema_version": "qsl_execution_receipt.v1",
+          "strategy_profile": "soxl_soxx_trend_income",
+          "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "finished_at": "2026-01-02T12:00:10Z",
+        "instance_name": null,
+        "platform": "interactive_brokers",
+        "project_id": null,
+        "run_id": "synthetic-soxl_soxx_trend_income-expected_guard",
+        "run_source": "cloud_run",
+        "runtime_release_receipt": {
+          "attestation_state": "self_attested",
+          "loaded_at": "2026-01-02T12:00:00Z",
+          "release_id": "synthetic-release",
+          "runtime_revision": "synthetic-runtime-revision",
+          "schema_version": "runtime_loaded_receipt.v1",
+          "strategy_release": {
+            "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "effective_session": "2026-01-01",
+            "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "release_id": "synthetic-release",
+            "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "runtime_target": {
+          "account_scope": "synthetic-scope",
+          "account_selector": [
+            "synthetic-account"
+          ],
+          "deployment_selector": null,
+          "dry_run_only": false,
+          "execution_environment": "paper",
+          "execution_mode": "live",
+          "execution_windows": null,
+          "platform_id": "ibkr",
+          "service_name": null,
+          "strategy_profile": "soxl_soxx_trend_income",
+          "strategy_release": {
+            "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "effective_session": "2026-01-01",
+            "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "release_id": "synthetic-release",
+            "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "schema_version": "runtime_report.v1",
+        "service_name": "synthetic-service",
+        "started_at": "2026-01-02T12:00:00Z",
+        "status": "ok",
+        "strategy_domain": "us_equity",
+        "strategy_profile": "soxl_soxx_trend_income",
+        "summary": {
+          "account_facts": {
+            "account_ids": [
+              "synthetic-account"
+            ],
+            "net_liquidation": 1000.0,
+            "observed_at": "2026-01-02T12:00:00+00:00",
+            "schema_version": "ibkr_account_snapshot.v1"
+          },
+          "account_ids": [
+            "synthetic-account"
+          ],
+          "dry_run_order_preview_available": false,
+          "effective_date": "2026-01-02",
+          "execution_calendar_source": "signal_date",
+          "execution_status": "blocked",
+          "execution_timing_contract": "same_trading_day",
+          "managed_symbols": [
+            "SOXL",
+            "SGOV"
+          ],
+          "no_op_reason": "same_day_execution_locked:synthetic",
+          "notification_delivery_summary": {
+            "all_acknowledged": true,
+            "attempted_count": 1,
+            "delivery_events": [
+              {
+                "compact_text_length": 17,
+                "compact_text_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+                "delivery_status": "sent",
+                "sink": "synthetic-sink",
+                "transport_acknowledged": true
+              }
+            ],
+            "failed_count": 0,
+            "sent_count": 1
+          },
+          "notification_digest": {
+            "dry_run": false,
+            "routine": false,
+            "schema_version": "qsl.notification_cycle.v1"
+          },
+          "orders_previewed_count": 0,
+          "orders_skipped_count": 0,
+          "orders_submitted_count": 0,
+          "quote_snapshot": {
+            "SOXL": {
+              "price": 100.0,
+              "source": "synthetic_quote"
+            }
+          },
+          "result": "synthetic-cycle-result",
+          "safe_haven": "SGOV",
+          "signal_date": "2026-01-02",
+          "signal_effective_after_trading_days": 0,
+          "signal_source": "synthetic-input",
+          "snapshot_price_fallback_count": 0,
+          "snapshot_price_fallback_used": false,
+          "status_icon": "synthetic",
+          "strategy_display_name": "Synthetic strategy",
+          "strategy_display_name_localized": "Synthetic strategy"
+        }
+      }
+    },
+    "soxl_soxx_trend_income/failed_submission": {
+      "events": [
+        {
+          "operation": "build_runtime_report_base"
+        },
+        {
+          "operation": "emit_runtime_log",
+          "payload": {
+            "account_scope": "synthetic-scope",
+            "deploy_target": "synthetic-offline",
+            "event": "strategy_signal_snapshot",
+            "execution_window": "execution",
+            "generated_at": "2026-01-02T12:00:00+00:00",
+            "indicators": {
+              "active_risk_asset": "SOXL",
+              "benchmark_price": 100.0,
+              "benchmark_symbol": "SOXX"
+            },
+            "latest_price_source": "synthetic_quote",
+            "market_date": "2026-01-01",
+            "message": "Strategy signal snapshot",
+            "platform": "ibkr",
+            "run_id": "synthetic-soxl_soxx_trend_income-failed_submission",
+            "runtime_target": {
+              "account_scope": "synthetic-scope",
+              "account_selector": [
+                "synthetic-account"
+              ],
+              "deployment_selector": null,
+              "dry_run_only": false,
+              "execution_environment": "paper",
+              "execution_mode": "live",
+              "execution_windows": null,
+              "platform_id": "ibkr",
+              "service_name": null,
+              "strategy_profile": "soxl_soxx_trend_income",
+              "strategy_release": {
+                "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "effective_session": "2026-01-01",
+                "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "release_id": "synthetic-release",
+                "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            },
+            "schema_version": "signal_snapshot.v1",
+            "service_name": "synthetic-service",
+            "severity": "INFO",
+            "signal_as_of": "2026-01-01",
+            "strategy_profile": "soxl_soxx_trend_income",
+            "target_weights": {
+              "SGOV": 0.75,
+              "SOXL": 0.25
+            },
+            "timestamp": "2026-01-02T12:00:10Z"
+          }
+        },
+        {
+          "operation": "append_runtime_report_error"
+        },
+        {
+          "operation": "attach_cycle_execution_receipt"
+        },
+        {
+          "operation": "finalize_runtime_report"
+        },
+        {
+          "operation": "emit_runtime_log",
+          "payload": {
+            "account_scope": "synthetic-scope",
+            "deploy_target": "synthetic-offline",
+            "event": "strategy_cycle_blocked",
+            "execution_status": "error",
+            "execution_window": "execution",
+            "message": "Strategy execution blocked",
+            "no_op_reason": "synthetic_transport_unknown",
+            "platform": "interactive_brokers",
+            "result": "synthetic-cycle-result",
+            "run_id": "synthetic-soxl_soxx_trend_income-failed_submission",
+            "runtime_target": {
+              "account_scope": "synthetic-scope",
+              "account_selector": [
+                "synthetic-account"
+              ],
+              "deployment_selector": null,
+              "dry_run_only": false,
+              "execution_environment": "paper",
+              "execution_mode": "live",
+              "execution_windows": null,
+              "platform_id": "ibkr",
+              "service_name": null,
+              "strategy_profile": "soxl_soxx_trend_income",
+              "strategy_release": {
+                "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "effective_session": "2026-01-01",
+                "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "release_id": "synthetic-release",
+                "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            },
+            "service_name": "synthetic-service",
+            "severity": "ERROR",
+            "strategy_profile": "soxl_soxx_trend_income",
+            "timestamp": "2026-01-02T12:00:10Z"
+          }
+        }
+      ],
+      "exception": null,
+      "report": {
+        "account_group": null,
+        "account_ids": [
+          "synthetic-account"
+        ],
+        "account_region": null,
+        "account_scope": "synthetic-scope",
+        "artifacts": {
+          "feature_snapshot_manifest_path": null,
+          "feature_snapshot_path": null,
+          "reconciliation_output_path": null,
+          "reconciliation_record_path": "synthetic/reconciliation.json",
+          "strategy_config_path": null
+        },
+        "decision_at": "2026-01-02T12:00:00+00:00",
+        "deploy_target": "synthetic-offline",
+        "diagnostics": {
+          "failure_category": "strategy_execution_blocked",
+          "ib_client_id": 0,
+          "ib_connect_timeout_seconds": 0,
+          "ib_gateway_host": "synthetic.invalid",
+          "ib_gateway_ip_mode": "",
+          "ib_gateway_mode": "paper",
+          "ib_gateway_port": 0,
+          "price_source_mode": "synthetic_quote",
+          "result": "synthetic-cycle-result",
+          "runtime_revision": "synthetic-runtime-revision",
+          "signal_snapshot": {
+            "generated_at": "2026-01-02T12:00:00+00:00",
+            "indicators": {
+              "active_risk_asset": "SOXL",
+              "benchmark_price": 100.0,
+              "benchmark_symbol": "SOXX"
+            },
+            "latest_price_source": "synthetic_quote",
+            "market_date": "2026-01-01",
+            "platform": "ibkr",
+            "schema_version": "signal_snapshot.v1",
+            "signal_as_of": "2026-01-01",
+            "strategy_profile": "soxl_soxx_trend_income",
+            "target_weights": {
+              "SGOV": 0.75,
+              "SOXL": 0.25
+            }
+          },
+          "snapshot_price_fallback_symbols": [],
+          "strategy_config_source": "synthetic-config"
+        },
+        "dry_run": false,
+        "errors": [
+          {
+            "error_type": "StrategyExecutionBlocked",
+            "failure_category": "strategy_execution_blocked",
+            "message": "Strategy execution status is error; reason=synthetic_transport_unknown",
+            "stage": "strategy_execution"
+          }
+        ],
+        "execution_receipt": {
+          "broker_confirmation": "not_observed",
+          "execution_mode": "live",
+          "observed_at": "2026-01-02T12:00:09Z",
+          "outcome": "failed",
+          "platform": "ibkr",
+          "receipt_id": "execution-receipt.6401ee0771ca10c76849f8812a8cdd67",
+          "schema_version": "qsl_execution_receipt.v1",
+          "strategy_profile": "soxl_soxx_trend_income",
+          "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "finished_at": "2026-01-02T12:00:10Z",
+        "instance_name": null,
+        "platform": "interactive_brokers",
+        "project_id": null,
+        "run_id": "synthetic-soxl_soxx_trend_income-failed_submission",
+        "run_source": "cloud_run",
+        "runtime_release_receipt": {
+          "attestation_state": "self_attested",
+          "loaded_at": "2026-01-02T12:00:00Z",
+          "release_id": "synthetic-release",
+          "runtime_revision": "synthetic-runtime-revision",
+          "schema_version": "runtime_loaded_receipt.v1",
+          "strategy_release": {
+            "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "effective_session": "2026-01-01",
+            "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "release_id": "synthetic-release",
+            "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "runtime_target": {
+          "account_scope": "synthetic-scope",
+          "account_selector": [
+            "synthetic-account"
+          ],
+          "deployment_selector": null,
+          "dry_run_only": false,
+          "execution_environment": "paper",
+          "execution_mode": "live",
+          "execution_windows": null,
+          "platform_id": "ibkr",
+          "service_name": null,
+          "strategy_profile": "soxl_soxx_trend_income",
+          "strategy_release": {
+            "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "effective_session": "2026-01-01",
+            "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "release_id": "synthetic-release",
+            "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "schema_version": "runtime_report.v1",
+        "service_name": "synthetic-service",
+        "started_at": "2026-01-02T12:00:00Z",
+        "status": "error",
+        "strategy_domain": "us_equity",
+        "strategy_profile": "soxl_soxx_trend_income",
+        "summary": {
+          "account_facts": {
+            "account_ids": [
+              "synthetic-account"
+            ],
+            "net_liquidation": 1000.0,
+            "observed_at": "2026-01-02T12:00:00+00:00",
+            "schema_version": "ibkr_account_snapshot.v1"
+          },
+          "account_ids": [
+            "synthetic-account"
+          ],
+          "dry_run_order_preview_available": false,
+          "effective_date": "2026-01-02",
+          "execution_calendar_source": "signal_date",
+          "execution_status": "error",
+          "execution_timing_contract": "same_trading_day",
+          "managed_symbols": [
+            "SOXL",
+            "SGOV"
+          ],
+          "no_op_reason": "synthetic_transport_unknown",
+          "notification_delivery_summary": {
+            "all_acknowledged": true,
+            "attempted_count": 1,
+            "delivery_events": [
+              {
+                "compact_text_length": 17,
+                "compact_text_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+                "delivery_status": "sent",
+                "sink": "synthetic-sink",
+                "transport_acknowledged": true
+              }
+            ],
+            "failed_count": 0,
+            "sent_count": 1
+          },
+          "notification_digest": {
+            "dry_run": false,
+            "routine": false,
+            "schema_version": "qsl.notification_cycle.v1"
+          },
+          "orders_previewed_count": 0,
+          "orders_skipped_count": 0,
+          "orders_submitted_count": 1,
+          "quote_snapshot": {
+            "SOXL": {
+              "price": 100.0,
+              "source": "synthetic_quote"
+            }
+          },
+          "result": "synthetic-cycle-result",
+          "safe_haven": "SGOV",
+          "signal_date": "2026-01-02",
+          "signal_effective_after_trading_days": 0,
+          "signal_source": "synthetic-input",
+          "snapshot_price_fallback_count": 0,
+          "snapshot_price_fallback_used": false,
+          "status_icon": "synthetic",
+          "strategy_display_name": "Synthetic strategy",
+          "strategy_display_name_localized": "Synthetic strategy"
+        }
+      }
+    },
+    "soxl_soxx_trend_income/pending_reconciliation": {
+      "events": [
+        {
+          "operation": "build_runtime_report_base"
+        },
+        {
+          "operation": "emit_runtime_log",
+          "payload": {
+            "account_scope": "synthetic-scope",
+            "deploy_target": "synthetic-offline",
+            "event": "strategy_signal_snapshot",
+            "execution_window": "execution",
+            "generated_at": "2026-01-02T12:00:00+00:00",
+            "indicators": {
+              "active_risk_asset": "SOXL",
+              "benchmark_price": 100.0,
+              "benchmark_symbol": "SOXX"
+            },
+            "latest_price_source": "synthetic_quote",
+            "market_date": "2026-01-01",
+            "message": "Strategy signal snapshot",
+            "platform": "ibkr",
+            "run_id": "synthetic-soxl_soxx_trend_income-pending_reconciliation",
+            "runtime_target": {
+              "account_scope": "synthetic-scope",
+              "account_selector": [
+                "synthetic-account"
+              ],
+              "deployment_selector": null,
+              "dry_run_only": false,
+              "execution_environment": "paper",
+              "execution_mode": "live",
+              "execution_windows": null,
+              "platform_id": "ibkr",
+              "service_name": null,
+              "strategy_profile": "soxl_soxx_trend_income",
+              "strategy_release": {
+                "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "effective_session": "2026-01-01",
+                "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "release_id": "synthetic-release",
+                "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            },
+            "schema_version": "signal_snapshot.v1",
+            "service_name": "synthetic-service",
+            "severity": "INFO",
+            "signal_as_of": "2026-01-01",
+            "strategy_profile": "soxl_soxx_trend_income",
+            "target_weights": {
+              "SGOV": 0.75,
+              "SOXL": 0.25
+            },
+            "timestamp": "2026-01-02T12:00:10Z"
+          }
+        },
+        {
+          "operation": "attach_cycle_execution_receipt"
+        },
+        {
+          "operation": "finalize_runtime_report"
+        },
+        {
+          "operation": "emit_runtime_log",
+          "payload": {
+            "account_scope": "synthetic-scope",
+            "deploy_target": "synthetic-offline",
+            "event": "strategy_cycle_completed",
+            "execution_status": "pending_reconciliation",
+            "execution_window": "execution",
+            "message": "Strategy execution completed",
+            "platform": "interactive_brokers",
+            "result": "synthetic-cycle-result",
+            "run_id": "synthetic-soxl_soxx_trend_income-pending_reconciliation",
+            "runtime_target": {
+              "account_scope": "synthetic-scope",
+              "account_selector": [
+                "synthetic-account"
+              ],
+              "deployment_selector": null,
+              "dry_run_only": false,
+              "execution_environment": "paper",
+              "execution_mode": "live",
+              "execution_windows": null,
+              "platform_id": "ibkr",
+              "service_name": null,
+              "strategy_profile": "soxl_soxx_trend_income",
+              "strategy_release": {
+                "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "effective_session": "2026-01-01",
+                "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "release_id": "synthetic-release",
+                "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            },
+            "service_name": "synthetic-service",
+            "severity": "INFO",
+            "strategy_profile": "soxl_soxx_trend_income",
+            "timestamp": "2026-01-02T12:00:10Z"
+          }
+        }
+      ],
+      "exception": null,
+      "report": {
+        "account_group": null,
+        "account_ids": [
+          "synthetic-account"
+        ],
+        "account_region": null,
+        "account_scope": "synthetic-scope",
+        "artifacts": {
+          "feature_snapshot_manifest_path": null,
+          "feature_snapshot_path": null,
+          "reconciliation_output_path": null,
+          "reconciliation_record_path": "synthetic/reconciliation.json",
+          "strategy_config_path": null
+        },
+        "decision_at": "2026-01-02T12:00:00+00:00",
+        "deploy_target": "synthetic-offline",
+        "diagnostics": {
+          "ib_client_id": 0,
+          "ib_connect_timeout_seconds": 0,
+          "ib_gateway_host": "synthetic.invalid",
+          "ib_gateway_ip_mode": "",
+          "ib_gateway_mode": "paper",
+          "ib_gateway_port": 0,
+          "price_source_mode": "synthetic_quote",
+          "result": "synthetic-cycle-result",
+          "runtime_revision": "synthetic-runtime-revision",
+          "signal_snapshot": {
+            "generated_at": "2026-01-02T12:00:00+00:00",
+            "indicators": {
+              "active_risk_asset": "SOXL",
+              "benchmark_price": 100.0,
+              "benchmark_symbol": "SOXX"
+            },
+            "latest_price_source": "synthetic_quote",
+            "market_date": "2026-01-01",
+            "platform": "ibkr",
+            "schema_version": "signal_snapshot.v1",
+            "signal_as_of": "2026-01-01",
+            "strategy_profile": "soxl_soxx_trend_income",
+            "target_weights": {
+              "SGOV": 0.75,
+              "SOXL": 0.25
+            }
+          },
+          "snapshot_price_fallback_symbols": [],
+          "strategy_config_source": "synthetic-config"
+        },
+        "dry_run": false,
+        "errors": [],
+        "execution_receipt": {
+          "broker_confirmation": "reconciliation_required",
+          "execution_mode": "live",
+          "observed_at": "2026-01-02T12:00:09Z",
+          "outcome": "reconciliation_required",
+          "platform": "ibkr",
+          "receipt_id": "execution-receipt.b117257e4099c60e51b3997b725e4fbb",
+          "schema_version": "qsl_execution_receipt.v1",
+          "strategy_profile": "soxl_soxx_trend_income",
+          "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "finished_at": "2026-01-02T12:00:10Z",
+        "instance_name": null,
+        "platform": "interactive_brokers",
+        "project_id": null,
+        "run_id": "synthetic-soxl_soxx_trend_income-pending_reconciliation",
+        "run_source": "cloud_run",
+        "runtime_release_receipt": {
+          "attestation_state": "self_attested",
+          "loaded_at": "2026-01-02T12:00:00Z",
+          "release_id": "synthetic-release",
+          "runtime_revision": "synthetic-runtime-revision",
+          "schema_version": "runtime_loaded_receipt.v1",
+          "strategy_release": {
+            "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "effective_session": "2026-01-01",
+            "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "release_id": "synthetic-release",
+            "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "runtime_target": {
+          "account_scope": "synthetic-scope",
+          "account_selector": [
+            "synthetic-account"
+          ],
+          "deployment_selector": null,
+          "dry_run_only": false,
+          "execution_environment": "paper",
+          "execution_mode": "live",
+          "execution_windows": null,
+          "platform_id": "ibkr",
+          "service_name": null,
+          "strategy_profile": "soxl_soxx_trend_income",
+          "strategy_release": {
+            "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "effective_session": "2026-01-01",
+            "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "release_id": "synthetic-release",
+            "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "schema_version": "runtime_report.v1",
+        "service_name": "synthetic-service",
+        "started_at": "2026-01-02T12:00:00Z",
+        "status": "ok",
+        "strategy_domain": "us_equity",
+        "strategy_profile": "soxl_soxx_trend_income",
+        "summary": {
+          "account_facts": {
+            "account_ids": [
+              "synthetic-account"
+            ],
+            "net_liquidation": 1000.0,
+            "observed_at": "2026-01-02T12:00:00+00:00",
+            "schema_version": "ibkr_account_snapshot.v1"
+          },
+          "account_ids": [
+            "synthetic-account"
+          ],
+          "dry_run_order_preview_available": false,
+          "effective_date": "2026-01-02",
+          "execution_calendar_source": "signal_date",
+          "execution_status": "pending_reconciliation",
+          "execution_timing_contract": "same_trading_day",
+          "managed_symbols": [
+            "SOXL",
+            "SGOV"
+          ],
+          "no_op_reason": null,
+          "notification_delivery_summary": {
+            "all_acknowledged": true,
+            "attempted_count": 1,
+            "delivery_events": [
+              {
+                "compact_text_length": 17,
+                "compact_text_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+                "delivery_status": "sent",
+                "sink": "synthetic-sink",
+                "transport_acknowledged": true
+              }
+            ],
+            "failed_count": 0,
+            "sent_count": 1
+          },
+          "notification_digest": {
+            "dry_run": false,
+            "routine": false,
+            "schema_version": "qsl.notification_cycle.v1"
+          },
+          "orders_previewed_count": 0,
+          "orders_skipped_count": 0,
+          "orders_submitted_count": 1,
+          "quote_snapshot": {
+            "SOXL": {
+              "price": 100.0,
+              "source": "synthetic_quote"
+            }
+          },
+          "result": "synthetic-cycle-result",
+          "safe_haven": "SGOV",
+          "signal_date": "2026-01-02",
+          "signal_effective_after_trading_days": 0,
+          "signal_source": "synthetic-input",
+          "snapshot_price_fallback_count": 0,
+          "snapshot_price_fallback_used": false,
+          "status_icon": "synthetic",
+          "strategy_display_name": "Synthetic strategy",
+          "strategy_display_name_localized": "Synthetic strategy"
+        }
+      }
+    },
+    "soxl_soxx_trend_income/submitted_unconfirmed": {
+      "events": [
+        {
+          "operation": "build_runtime_report_base"
+        },
+        {
+          "operation": "emit_runtime_log",
+          "payload": {
+            "account_scope": "synthetic-scope",
+            "deploy_target": "synthetic-offline",
+            "event": "strategy_signal_snapshot",
+            "execution_window": "execution",
+            "generated_at": "2026-01-02T12:00:00+00:00",
+            "indicators": {
+              "active_risk_asset": "SOXL",
+              "benchmark_price": 100.0,
+              "benchmark_symbol": "SOXX"
+            },
+            "latest_price_source": "synthetic_quote",
+            "market_date": "2026-01-01",
+            "message": "Strategy signal snapshot",
+            "platform": "ibkr",
+            "run_id": "synthetic-soxl_soxx_trend_income-submitted_unconfirmed",
+            "runtime_target": {
+              "account_scope": "synthetic-scope",
+              "account_selector": [
+                "synthetic-account"
+              ],
+              "deployment_selector": null,
+              "dry_run_only": false,
+              "execution_environment": "paper",
+              "execution_mode": "live",
+              "execution_windows": null,
+              "platform_id": "ibkr",
+              "service_name": null,
+              "strategy_profile": "soxl_soxx_trend_income",
+              "strategy_release": {
+                "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "effective_session": "2026-01-01",
+                "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "release_id": "synthetic-release",
+                "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            },
+            "schema_version": "signal_snapshot.v1",
+            "service_name": "synthetic-service",
+            "severity": "INFO",
+            "signal_as_of": "2026-01-01",
+            "strategy_profile": "soxl_soxx_trend_income",
+            "target_weights": {
+              "SGOV": 0.75,
+              "SOXL": 0.25
+            },
+            "timestamp": "2026-01-02T12:00:10Z"
+          }
+        },
+        {
+          "operation": "attach_cycle_execution_receipt"
+        },
+        {
+          "operation": "finalize_runtime_report"
+        },
+        {
+          "operation": "emit_runtime_log",
+          "payload": {
+            "account_scope": "synthetic-scope",
+            "deploy_target": "synthetic-offline",
+            "event": "strategy_cycle_completed",
+            "execution_status": "submitted",
+            "execution_window": "execution",
+            "message": "Strategy execution completed",
+            "platform": "interactive_brokers",
+            "result": "synthetic-cycle-result",
+            "run_id": "synthetic-soxl_soxx_trend_income-submitted_unconfirmed",
+            "runtime_target": {
+              "account_scope": "synthetic-scope",
+              "account_selector": [
+                "synthetic-account"
+              ],
+              "deployment_selector": null,
+              "dry_run_only": false,
+              "execution_environment": "paper",
+              "execution_mode": "live",
+              "execution_windows": null,
+              "platform_id": "ibkr",
+              "service_name": null,
+              "strategy_profile": "soxl_soxx_trend_income",
+              "strategy_release": {
+                "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "effective_session": "2026-01-01",
+                "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "release_id": "synthetic-release",
+                "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            },
+            "service_name": "synthetic-service",
+            "severity": "INFO",
+            "strategy_profile": "soxl_soxx_trend_income",
+            "timestamp": "2026-01-02T12:00:10Z"
+          }
+        }
+      ],
+      "exception": null,
+      "report": {
+        "account_group": null,
+        "account_ids": [
+          "synthetic-account"
+        ],
+        "account_region": null,
+        "account_scope": "synthetic-scope",
+        "artifacts": {
+          "feature_snapshot_manifest_path": null,
+          "feature_snapshot_path": null,
+          "reconciliation_output_path": null,
+          "reconciliation_record_path": "synthetic/reconciliation.json",
+          "strategy_config_path": null
+        },
+        "decision_at": "2026-01-02T12:00:00+00:00",
+        "deploy_target": "synthetic-offline",
+        "diagnostics": {
+          "ib_client_id": 0,
+          "ib_connect_timeout_seconds": 0,
+          "ib_gateway_host": "synthetic.invalid",
+          "ib_gateway_ip_mode": "",
+          "ib_gateway_mode": "paper",
+          "ib_gateway_port": 0,
+          "price_source_mode": "synthetic_quote",
+          "result": "synthetic-cycle-result",
+          "runtime_revision": "synthetic-runtime-revision",
+          "signal_snapshot": {
+            "generated_at": "2026-01-02T12:00:00+00:00",
+            "indicators": {
+              "active_risk_asset": "SOXL",
+              "benchmark_price": 100.0,
+              "benchmark_symbol": "SOXX"
+            },
+            "latest_price_source": "synthetic_quote",
+            "market_date": "2026-01-01",
+            "platform": "ibkr",
+            "schema_version": "signal_snapshot.v1",
+            "signal_as_of": "2026-01-01",
+            "strategy_profile": "soxl_soxx_trend_income",
+            "target_weights": {
+              "SGOV": 0.75,
+              "SOXL": 0.25
+            }
+          },
+          "snapshot_price_fallback_symbols": [],
+          "strategy_config_source": "synthetic-config"
+        },
+        "dry_run": false,
+        "errors": [],
+        "execution_receipt": {
+          "broker_confirmation": "not_observed",
+          "execution_mode": "live",
+          "observed_at": "2026-01-02T12:00:09Z",
+          "outcome": "submitted",
+          "platform": "ibkr",
+          "receipt_id": "execution-receipt.d49aae465e1233393f9b1a2254f2ccca",
+          "schema_version": "qsl_execution_receipt.v1",
+          "strategy_profile": "soxl_soxx_trend_income",
+          "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "finished_at": "2026-01-02T12:00:10Z",
+        "instance_name": null,
+        "platform": "interactive_brokers",
+        "project_id": null,
+        "run_id": "synthetic-soxl_soxx_trend_income-submitted_unconfirmed",
+        "run_source": "cloud_run",
+        "runtime_release_receipt": {
+          "attestation_state": "self_attested",
+          "loaded_at": "2026-01-02T12:00:00Z",
+          "release_id": "synthetic-release",
+          "runtime_revision": "synthetic-runtime-revision",
+          "schema_version": "runtime_loaded_receipt.v1",
+          "strategy_release": {
+            "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "effective_session": "2026-01-01",
+            "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "release_id": "synthetic-release",
+            "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "runtime_target": {
+          "account_scope": "synthetic-scope",
+          "account_selector": [
+            "synthetic-account"
+          ],
+          "deployment_selector": null,
+          "dry_run_only": false,
+          "execution_environment": "paper",
+          "execution_mode": "live",
+          "execution_windows": null,
+          "platform_id": "ibkr",
+          "service_name": null,
+          "strategy_profile": "soxl_soxx_trend_income",
+          "strategy_release": {
+            "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "effective_session": "2026-01-01",
+            "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "release_id": "synthetic-release",
+            "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "schema_version": "runtime_report.v1",
+        "service_name": "synthetic-service",
+        "started_at": "2026-01-02T12:00:00Z",
+        "status": "ok",
+        "strategy_domain": "us_equity",
+        "strategy_profile": "soxl_soxx_trend_income",
+        "summary": {
+          "account_facts": {
+            "account_ids": [
+              "synthetic-account"
+            ],
+            "net_liquidation": 1000.0,
+            "observed_at": "2026-01-02T12:00:00+00:00",
+            "schema_version": "ibkr_account_snapshot.v1"
+          },
+          "account_ids": [
+            "synthetic-account"
+          ],
+          "dry_run_order_preview_available": false,
+          "effective_date": "2026-01-02",
+          "execution_calendar_source": "signal_date",
+          "execution_status": "submitted",
+          "execution_timing_contract": "same_trading_day",
+          "managed_symbols": [
+            "SOXL",
+            "SGOV"
+          ],
+          "no_op_reason": null,
+          "notification_delivery_summary": {
+            "all_acknowledged": true,
+            "attempted_count": 1,
+            "delivery_events": [
+              {
+                "compact_text_length": 17,
+                "compact_text_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+                "delivery_status": "sent",
+                "sink": "synthetic-sink",
+                "transport_acknowledged": true
+              }
+            ],
+            "failed_count": 0,
+            "sent_count": 1
+          },
+          "notification_digest": {
+            "dry_run": false,
+            "routine": false,
+            "schema_version": "qsl.notification_cycle.v1"
+          },
+          "orders_previewed_count": 0,
+          "orders_skipped_count": 0,
+          "orders_submitted_count": 1,
+          "quote_snapshot": {
+            "SOXL": {
+              "price": 100.0,
+              "source": "synthetic_quote"
+            }
+          },
+          "result": "synthetic-cycle-result",
+          "safe_haven": "SGOV",
+          "signal_date": "2026-01-02",
+          "signal_effective_after_trading_days": 0,
+          "signal_source": "synthetic-input",
+          "snapshot_price_fallback_count": 0,
+          "snapshot_price_fallback_used": false,
+          "status_icon": "synthetic",
+          "strategy_display_name": "Synthetic strategy",
+          "strategy_display_name_localized": "Synthetic strategy"
+        }
+      }
+    },
+    "tqqq_growth_income/conflicting_receipt": {
+      "events": [
+        {
+          "operation": "build_runtime_report_base"
+        },
+        {
+          "operation": "seed_conflicting_receipt"
+        },
+        {
+          "operation": "emit_runtime_log",
+          "payload": {
+            "account_scope": "synthetic-scope",
+            "deploy_target": "synthetic-offline",
+            "event": "strategy_signal_snapshot",
+            "execution_window": "execution",
+            "generated_at": "2026-01-02T12:00:00+00:00",
+            "indicators": {
+              "active_risk_asset": "TQQQ",
+              "benchmark_price": 100.0,
+              "benchmark_symbol": "QQQ"
+            },
+            "latest_price_source": "synthetic_quote",
+            "market_date": "2026-01-01",
+            "message": "Strategy signal snapshot",
+            "platform": "ibkr",
+            "run_id": "synthetic-tqqq_growth_income-conflicting_receipt",
+            "runtime_target": {
+              "account_scope": "synthetic-scope",
+              "account_selector": [
+                "synthetic-account"
+              ],
+              "deployment_selector": null,
+              "dry_run_only": false,
+              "execution_environment": "paper",
+              "execution_mode": "live",
+              "execution_windows": null,
+              "platform_id": "ibkr",
+              "service_name": null,
+              "strategy_profile": "tqqq_growth_income",
+              "strategy_release": {
+                "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "effective_session": "2026-01-01",
+                "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "release_id": "synthetic-release",
+                "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            },
+            "schema_version": "signal_snapshot.v1",
+            "service_name": "synthetic-service",
+            "severity": "INFO",
+            "signal_as_of": "2026-01-01",
+            "strategy_profile": "tqqq_growth_income",
+            "target_weights": {
+              "SGOV": 0.75,
+              "TQQQ": 0.25
+            },
+            "timestamp": "2026-01-02T12:00:10Z"
+          }
+        },
+        {
+          "operation": "attach_cycle_execution_receipt"
+        }
+      ],
+      "exception": {
+        "message": "runtime_report already has a different execution receipt",
+        "type": "ValueError"
+      },
+      "report": {
+        "account_group": null,
+        "account_ids": [
+          "synthetic-account"
+        ],
+        "account_region": null,
+        "account_scope": "synthetic-scope",
+        "artifacts": {
+          "feature_snapshot_manifest_path": null,
+          "feature_snapshot_path": null,
+          "reconciliation_output_path": null,
+          "strategy_config_path": null
+        },
+        "decision_at": "2026-01-02T12:00:00+00:00",
+        "deploy_target": "synthetic-offline",
+        "diagnostics": {
+          "ib_client_id": 0,
+          "ib_connect_timeout_seconds": 0,
+          "ib_gateway_host": "synthetic.invalid",
+          "ib_gateway_ip_mode": "",
+          "ib_gateway_mode": "paper",
+          "ib_gateway_port": 0,
+          "runtime_revision": "synthetic-runtime-revision",
+          "strategy_config_source": "synthetic-config"
+        },
+        "dry_run": false,
+        "errors": [],
+        "execution_receipt": {
+          "broker_confirmation": "not_applicable",
+          "execution_mode": "live",
+          "observed_at": "2026-01-02T12:00:09Z",
+          "outcome": "no_action",
+          "platform": "ibkr",
+          "receipt_id": "execution-receipt.9ae8942364e43e0621da8c0eff0dbb38",
+          "schema_version": "qsl_execution_receipt.v1",
+          "strategy_profile": "tqqq_growth_income",
+          "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "finished_at": null,
+        "instance_name": null,
+        "platform": "interactive_brokers",
+        "project_id": null,
+        "run_id": "synthetic-tqqq_growth_income-conflicting_receipt",
+        "run_source": "cloud_run",
+        "runtime_release_receipt": {
+          "attestation_state": "self_attested",
+          "loaded_at": "2026-01-02T12:00:00Z",
+          "release_id": "synthetic-release",
+          "runtime_revision": "synthetic-runtime-revision",
+          "schema_version": "runtime_loaded_receipt.v1",
+          "strategy_release": {
+            "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "effective_session": "2026-01-01",
+            "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "release_id": "synthetic-release",
+            "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "runtime_target": {
+          "account_scope": "synthetic-scope",
+          "account_selector": [
+            "synthetic-account"
+          ],
+          "deployment_selector": null,
+          "dry_run_only": false,
+          "execution_environment": "paper",
+          "execution_mode": "live",
+          "execution_windows": null,
+          "platform_id": "ibkr",
+          "service_name": null,
+          "strategy_profile": "tqqq_growth_income",
+          "strategy_release": {
+            "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "effective_session": "2026-01-01",
+            "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "release_id": "synthetic-release",
+            "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "schema_version": "runtime_report.v1",
+        "service_name": "synthetic-service",
+        "started_at": "2026-01-02T12:00:00Z",
+        "status": "started",
+        "strategy_domain": "us_equity",
+        "strategy_profile": "tqqq_growth_income",
+        "summary": {
+          "account_ids": [
+            "synthetic-account"
+          ],
+          "effective_date": "2026-01-02",
+          "execution_calendar_source": "signal_date",
+          "execution_timing_contract": "same_trading_day",
+          "managed_symbols": [
+            "TQQQ",
+            "SGOV"
+          ],
+          "safe_haven": "SGOV",
+          "signal_date": "2026-01-02",
+          "signal_effective_after_trading_days": 0,
+          "signal_source": "synthetic-input",
+          "status_icon": "synthetic",
+          "strategy_display_name": "Synthetic strategy",
+          "strategy_display_name_localized": "Synthetic strategy"
+        }
+      }
+    },
+    "tqqq_growth_income/dry_run_preview": {
+      "events": [
+        {
+          "operation": "build_runtime_report_base"
+        },
+        {
+          "operation": "emit_runtime_log",
+          "payload": {
+            "account_scope": "synthetic-scope",
+            "deploy_target": "synthetic-offline",
+            "event": "strategy_signal_snapshot",
+            "execution_window": "dry_run",
+            "generated_at": "2026-01-02T12:00:00+00:00",
+            "indicators": {
+              "active_risk_asset": "TQQQ",
+              "benchmark_price": 100.0,
+              "benchmark_symbol": "QQQ"
+            },
+            "latest_price_source": "synthetic_quote",
+            "market_date": "2026-01-01",
+            "message": "Strategy signal snapshot",
+            "platform": "ibkr",
+            "run_id": "synthetic-tqqq_growth_income-dry_run_preview",
+            "runtime_target": {
+              "account_scope": "synthetic-scope",
+              "account_selector": [
+                "synthetic-account"
+              ],
+              "deployment_selector": null,
+              "dry_run_only": true,
+              "execution_environment": "dry_run",
+              "execution_mode": "paper",
+              "execution_windows": null,
+              "platform_id": "ibkr",
+              "service_name": null,
+              "strategy_profile": "tqqq_growth_income",
+              "strategy_release": {
+                "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "effective_session": "2026-01-01",
+                "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "release_id": "synthetic-release",
+                "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            },
+            "schema_version": "signal_snapshot.v1",
+            "service_name": "synthetic-service",
+            "severity": "INFO",
+            "signal_as_of": "2026-01-01",
+            "strategy_profile": "tqqq_growth_income",
+            "target_weights": {
+              "SGOV": 0.75,
+              "TQQQ": 0.25
+            },
+            "timestamp": "2026-01-02T12:00:10Z"
+          }
+        },
+        {
+          "operation": "attach_cycle_execution_receipt"
+        },
+        {
+          "operation": "finalize_runtime_report"
+        },
+        {
+          "operation": "emit_runtime_log",
+          "payload": {
+            "account_scope": "synthetic-scope",
+            "deploy_target": "synthetic-offline",
+            "event": "strategy_cycle_completed",
+            "execution_status": "dry_run",
+            "execution_window": "dry_run",
+            "message": "Strategy dry-run completed",
+            "platform": "interactive_brokers",
+            "result": "synthetic-cycle-result",
+            "run_id": "synthetic-tqqq_growth_income-dry_run_preview",
+            "runtime_target": {
+              "account_scope": "synthetic-scope",
+              "account_selector": [
+                "synthetic-account"
+              ],
+              "deployment_selector": null,
+              "dry_run_only": true,
+              "execution_environment": "dry_run",
+              "execution_mode": "paper",
+              "execution_windows": null,
+              "platform_id": "ibkr",
+              "service_name": null,
+              "strategy_profile": "tqqq_growth_income",
+              "strategy_release": {
+                "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "effective_session": "2026-01-01",
+                "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "release_id": "synthetic-release",
+                "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            },
+            "service_name": "synthetic-service",
+            "severity": "INFO",
+            "strategy_profile": "tqqq_growth_income",
+            "timestamp": "2026-01-02T12:00:10Z"
+          }
+        }
+      ],
+      "exception": null,
+      "report": {
+        "account_group": null,
+        "account_ids": [
+          "synthetic-account"
+        ],
+        "account_region": null,
+        "account_scope": "synthetic-scope",
+        "artifacts": {
+          "feature_snapshot_manifest_path": null,
+          "feature_snapshot_path": null,
+          "reconciliation_output_path": null,
+          "reconciliation_record_path": "synthetic/reconciliation.json",
+          "strategy_config_path": null
+        },
+        "decision_at": "2026-01-02T12:00:00+00:00",
+        "deploy_target": "synthetic-offline",
+        "diagnostics": {
+          "ib_client_id": 0,
+          "ib_connect_timeout_seconds": 0,
+          "ib_gateway_host": "synthetic.invalid",
+          "ib_gateway_ip_mode": "",
+          "ib_gateway_mode": "paper",
+          "ib_gateway_port": 0,
+          "price_source_mode": "synthetic_quote",
+          "result": "synthetic-cycle-result",
+          "runtime_revision": "synthetic-runtime-revision",
+          "signal_snapshot": {
+            "generated_at": "2026-01-02T12:00:00+00:00",
+            "indicators": {
+              "active_risk_asset": "TQQQ",
+              "benchmark_price": 100.0,
+              "benchmark_symbol": "QQQ"
+            },
+            "latest_price_source": "synthetic_quote",
+            "market_date": "2026-01-01",
+            "platform": "ibkr",
+            "schema_version": "signal_snapshot.v1",
+            "signal_as_of": "2026-01-01",
+            "strategy_profile": "tqqq_growth_income",
+            "target_weights": {
+              "SGOV": 0.75,
+              "TQQQ": 0.25
+            }
+          },
+          "snapshot_price_fallback_symbols": [],
+          "strategy_config_source": "synthetic-config"
+        },
+        "dry_run": true,
+        "errors": [],
+        "execution_receipt": {
+          "broker_confirmation": "not_applicable",
+          "execution_mode": "paper",
+          "observed_at": "2026-01-02T12:00:09Z",
+          "outcome": "no_action",
+          "platform": "ibkr",
+          "receipt_id": "execution-receipt.4ee802f40f2c2a6e60b35393d8fbea07",
+          "schema_version": "qsl_execution_receipt.v1",
+          "strategy_profile": "tqqq_growth_income",
+          "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "finished_at": "2026-01-02T12:00:10Z",
+        "instance_name": null,
+        "platform": "interactive_brokers",
+        "project_id": null,
+        "run_id": "synthetic-tqqq_growth_income-dry_run_preview",
+        "run_source": "cloud_run",
+        "runtime_release_receipt": {
+          "attestation_state": "self_attested",
+          "loaded_at": "2026-01-02T12:00:00Z",
+          "release_id": "synthetic-release",
+          "runtime_revision": "synthetic-runtime-revision",
+          "schema_version": "runtime_loaded_receipt.v1",
+          "strategy_release": {
+            "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "effective_session": "2026-01-01",
+            "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "release_id": "synthetic-release",
+            "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "runtime_target": {
+          "account_scope": "synthetic-scope",
+          "account_selector": [
+            "synthetic-account"
+          ],
+          "deployment_selector": null,
+          "dry_run_only": true,
+          "execution_environment": "dry_run",
+          "execution_mode": "paper",
+          "execution_windows": null,
+          "platform_id": "ibkr",
+          "service_name": null,
+          "strategy_profile": "tqqq_growth_income",
+          "strategy_release": {
+            "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "effective_session": "2026-01-01",
+            "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "release_id": "synthetic-release",
+            "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "schema_version": "runtime_report.v1",
+        "service_name": "synthetic-service",
+        "started_at": "2026-01-02T12:00:00Z",
+        "status": "ok",
+        "strategy_domain": "us_equity",
+        "strategy_profile": "tqqq_growth_income",
+        "summary": {
+          "account_facts": {
+            "account_ids": [
+              "synthetic-account"
+            ],
+            "net_liquidation": 1000.0,
+            "observed_at": "2026-01-02T12:00:00+00:00",
+            "schema_version": "ibkr_account_snapshot.v1"
+          },
+          "account_ids": [
+            "synthetic-account"
+          ],
+          "dry_run_order_preview_available": true,
+          "effective_date": "2026-01-02",
+          "execution_calendar_source": "signal_date",
+          "execution_status": "dry_run",
+          "execution_timing_contract": "same_trading_day",
+          "managed_symbols": [
+            "TQQQ",
+            "SGOV"
+          ],
+          "no_op_reason": null,
+          "notification_delivery_log": {
+            "delivery_events": [
+              {
+                "compact_text_length": 17,
+                "compact_text_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+                "delivery_status": "sent",
+                "sink": "synthetic-sink",
+                "transport_acknowledged": true
+              }
+            ],
+            "locales": [
+              "en",
+              "zh-Hans"
+            ],
+            "notification_contains_order_preview_summary": true,
+            "notification_contains_platform": true,
+            "notification_contains_profile": true,
+            "notification_contains_validation_status": true,
+            "notification_correlation_id": "synthetic-tqqq_growth_income-dry_run_preview",
+            "notification_event_type": "hk_snapshot_live_enablement_dry_run",
+            "notification_redacts_sensitive_fields": true,
+            "notification_schema_version": "hk_live_enablement_notification.v1",
+            "orders_previewed": 1,
+            "platform": "interactive_brokers",
+            "profile": "tqqq_growth_income",
+            "redaction_policy": "raw notification text is not persisted; only sha256 and length are recorded",
+            "validation_status": "passed"
+          },
+          "notification_delivery_summary": {
+            "all_acknowledged": true,
+            "attempted_count": 1,
+            "delivery_events": [
+              {
+                "compact_text_length": 17,
+                "compact_text_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+                "delivery_status": "sent",
+                "sink": "synthetic-sink",
+                "transport_acknowledged": true
+              }
+            ],
+            "failed_count": 0,
+            "sent_count": 1
+          },
+          "notification_digest": {
+            "dry_run": true,
+            "routine": false,
+            "schema_version": "qsl.notification_cycle.v1"
+          },
+          "orders_previewed_count": 1,
+          "orders_skipped_count": 0,
+          "orders_submitted_count": 1,
+          "quote_snapshot": {
+            "TQQQ": {
+              "price": 100.0,
+              "source": "synthetic_quote"
+            }
+          },
+          "result": "synthetic-cycle-result",
+          "safe_haven": "SGOV",
+          "signal_date": "2026-01-02",
+          "signal_effective_after_trading_days": 0,
+          "signal_source": "synthetic-input",
+          "snapshot_price_fallback_count": 0,
+          "snapshot_price_fallback_used": false,
+          "status_icon": "synthetic",
+          "strategy_display_name": "Synthetic strategy",
+          "strategy_display_name_localized": "Synthetic strategy"
+        }
+      }
+    },
+    "tqqq_growth_income/expected_guard": {
+      "events": [
+        {
+          "operation": "build_runtime_report_base"
+        },
+        {
+          "operation": "emit_runtime_log",
+          "payload": {
+            "account_scope": "synthetic-scope",
+            "deploy_target": "synthetic-offline",
+            "event": "strategy_signal_snapshot",
+            "execution_window": "execution",
+            "generated_at": "2026-01-02T12:00:00+00:00",
+            "indicators": {
+              "active_risk_asset": "TQQQ",
+              "benchmark_price": 100.0,
+              "benchmark_symbol": "QQQ"
+            },
+            "latest_price_source": "synthetic_quote",
+            "market_date": "2026-01-01",
+            "message": "Strategy signal snapshot",
+            "platform": "ibkr",
+            "run_id": "synthetic-tqqq_growth_income-expected_guard",
+            "runtime_target": {
+              "account_scope": "synthetic-scope",
+              "account_selector": [
+                "synthetic-account"
+              ],
+              "deployment_selector": null,
+              "dry_run_only": false,
+              "execution_environment": "paper",
+              "execution_mode": "live",
+              "execution_windows": null,
+              "platform_id": "ibkr",
+              "service_name": null,
+              "strategy_profile": "tqqq_growth_income",
+              "strategy_release": {
+                "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "effective_session": "2026-01-01",
+                "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "release_id": "synthetic-release",
+                "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            },
+            "schema_version": "signal_snapshot.v1",
+            "service_name": "synthetic-service",
+            "severity": "INFO",
+            "signal_as_of": "2026-01-01",
+            "strategy_profile": "tqqq_growth_income",
+            "target_weights": {
+              "SGOV": 0.75,
+              "TQQQ": 0.25
+            },
+            "timestamp": "2026-01-02T12:00:10Z"
+          }
+        },
+        {
+          "operation": "attach_cycle_execution_receipt"
+        },
+        {
+          "operation": "finalize_runtime_report"
+        },
+        {
+          "operation": "emit_runtime_log",
+          "payload": {
+            "account_scope": "synthetic-scope",
+            "deploy_target": "synthetic-offline",
+            "event": "strategy_cycle_completed",
+            "execution_status": "blocked",
+            "execution_window": "execution",
+            "message": "Strategy execution completed",
+            "no_op_reason": "same_day_execution_locked:synthetic",
+            "platform": "interactive_brokers",
+            "result": "synthetic-cycle-result",
+            "run_id": "synthetic-tqqq_growth_income-expected_guard",
+            "runtime_target": {
+              "account_scope": "synthetic-scope",
+              "account_selector": [
+                "synthetic-account"
+              ],
+              "deployment_selector": null,
+              "dry_run_only": false,
+              "execution_environment": "paper",
+              "execution_mode": "live",
+              "execution_windows": null,
+              "platform_id": "ibkr",
+              "service_name": null,
+              "strategy_profile": "tqqq_growth_income",
+              "strategy_release": {
+                "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "effective_session": "2026-01-01",
+                "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "release_id": "synthetic-release",
+                "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            },
+            "service_name": "synthetic-service",
+            "severity": "INFO",
+            "strategy_profile": "tqqq_growth_income",
+            "timestamp": "2026-01-02T12:00:10Z"
+          }
+        }
+      ],
+      "exception": null,
+      "report": {
+        "account_group": null,
+        "account_ids": [
+          "synthetic-account"
+        ],
+        "account_region": null,
+        "account_scope": "synthetic-scope",
+        "artifacts": {
+          "feature_snapshot_manifest_path": null,
+          "feature_snapshot_path": null,
+          "reconciliation_output_path": null,
+          "reconciliation_record_path": "synthetic/reconciliation.json",
+          "strategy_config_path": null
+        },
+        "decision_at": "2026-01-02T12:00:00+00:00",
+        "deploy_target": "synthetic-offline",
+        "diagnostics": {
+          "ib_client_id": 0,
+          "ib_connect_timeout_seconds": 0,
+          "ib_gateway_host": "synthetic.invalid",
+          "ib_gateway_ip_mode": "",
+          "ib_gateway_mode": "paper",
+          "ib_gateway_port": 0,
+          "price_source_mode": "synthetic_quote",
+          "result": "synthetic-cycle-result",
+          "runtime_revision": "synthetic-runtime-revision",
+          "signal_snapshot": {
+            "generated_at": "2026-01-02T12:00:00+00:00",
+            "indicators": {
+              "active_risk_asset": "TQQQ",
+              "benchmark_price": 100.0,
+              "benchmark_symbol": "QQQ"
+            },
+            "latest_price_source": "synthetic_quote",
+            "market_date": "2026-01-01",
+            "platform": "ibkr",
+            "schema_version": "signal_snapshot.v1",
+            "signal_as_of": "2026-01-01",
+            "strategy_profile": "tqqq_growth_income",
+            "target_weights": {
+              "SGOV": 0.75,
+              "TQQQ": 0.25
+            }
+          },
+          "snapshot_price_fallback_symbols": [],
+          "strategy_config_source": "synthetic-config"
+        },
+        "dry_run": false,
+        "errors": [],
+        "execution_receipt": {
+          "broker_confirmation": "not_applicable",
+          "execution_mode": "live",
+          "observed_at": "2026-01-02T12:00:09Z",
+          "outcome": "risk_blocked",
+          "platform": "ibkr",
+          "receipt_id": "execution-receipt.c7ffbf4d86f65f69acd712de6688ebb1",
+          "schema_version": "qsl_execution_receipt.v1",
+          "strategy_profile": "tqqq_growth_income",
+          "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "finished_at": "2026-01-02T12:00:10Z",
+        "instance_name": null,
+        "platform": "interactive_brokers",
+        "project_id": null,
+        "run_id": "synthetic-tqqq_growth_income-expected_guard",
+        "run_source": "cloud_run",
+        "runtime_release_receipt": {
+          "attestation_state": "self_attested",
+          "loaded_at": "2026-01-02T12:00:00Z",
+          "release_id": "synthetic-release",
+          "runtime_revision": "synthetic-runtime-revision",
+          "schema_version": "runtime_loaded_receipt.v1",
+          "strategy_release": {
+            "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "effective_session": "2026-01-01",
+            "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "release_id": "synthetic-release",
+            "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "runtime_target": {
+          "account_scope": "synthetic-scope",
+          "account_selector": [
+            "synthetic-account"
+          ],
+          "deployment_selector": null,
+          "dry_run_only": false,
+          "execution_environment": "paper",
+          "execution_mode": "live",
+          "execution_windows": null,
+          "platform_id": "ibkr",
+          "service_name": null,
+          "strategy_profile": "tqqq_growth_income",
+          "strategy_release": {
+            "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "effective_session": "2026-01-01",
+            "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "release_id": "synthetic-release",
+            "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "schema_version": "runtime_report.v1",
+        "service_name": "synthetic-service",
+        "started_at": "2026-01-02T12:00:00Z",
+        "status": "ok",
+        "strategy_domain": "us_equity",
+        "strategy_profile": "tqqq_growth_income",
+        "summary": {
+          "account_facts": {
+            "account_ids": [
+              "synthetic-account"
+            ],
+            "net_liquidation": 1000.0,
+            "observed_at": "2026-01-02T12:00:00+00:00",
+            "schema_version": "ibkr_account_snapshot.v1"
+          },
+          "account_ids": [
+            "synthetic-account"
+          ],
+          "dry_run_order_preview_available": false,
+          "effective_date": "2026-01-02",
+          "execution_calendar_source": "signal_date",
+          "execution_status": "blocked",
+          "execution_timing_contract": "same_trading_day",
+          "managed_symbols": [
+            "TQQQ",
+            "SGOV"
+          ],
+          "no_op_reason": "same_day_execution_locked:synthetic",
+          "notification_delivery_summary": {
+            "all_acknowledged": true,
+            "attempted_count": 1,
+            "delivery_events": [
+              {
+                "compact_text_length": 17,
+                "compact_text_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+                "delivery_status": "sent",
+                "sink": "synthetic-sink",
+                "transport_acknowledged": true
+              }
+            ],
+            "failed_count": 0,
+            "sent_count": 1
+          },
+          "notification_digest": {
+            "dry_run": false,
+            "routine": false,
+            "schema_version": "qsl.notification_cycle.v1"
+          },
+          "orders_previewed_count": 0,
+          "orders_skipped_count": 0,
+          "orders_submitted_count": 0,
+          "quote_snapshot": {
+            "TQQQ": {
+              "price": 100.0,
+              "source": "synthetic_quote"
+            }
+          },
+          "result": "synthetic-cycle-result",
+          "safe_haven": "SGOV",
+          "signal_date": "2026-01-02",
+          "signal_effective_after_trading_days": 0,
+          "signal_source": "synthetic-input",
+          "snapshot_price_fallback_count": 0,
+          "snapshot_price_fallback_used": false,
+          "status_icon": "synthetic",
+          "strategy_display_name": "Synthetic strategy",
+          "strategy_display_name_localized": "Synthetic strategy"
+        }
+      }
+    },
+    "tqqq_growth_income/failed_submission": {
+      "events": [
+        {
+          "operation": "build_runtime_report_base"
+        },
+        {
+          "operation": "emit_runtime_log",
+          "payload": {
+            "account_scope": "synthetic-scope",
+            "deploy_target": "synthetic-offline",
+            "event": "strategy_signal_snapshot",
+            "execution_window": "execution",
+            "generated_at": "2026-01-02T12:00:00+00:00",
+            "indicators": {
+              "active_risk_asset": "TQQQ",
+              "benchmark_price": 100.0,
+              "benchmark_symbol": "QQQ"
+            },
+            "latest_price_source": "synthetic_quote",
+            "market_date": "2026-01-01",
+            "message": "Strategy signal snapshot",
+            "platform": "ibkr",
+            "run_id": "synthetic-tqqq_growth_income-failed_submission",
+            "runtime_target": {
+              "account_scope": "synthetic-scope",
+              "account_selector": [
+                "synthetic-account"
+              ],
+              "deployment_selector": null,
+              "dry_run_only": false,
+              "execution_environment": "paper",
+              "execution_mode": "live",
+              "execution_windows": null,
+              "platform_id": "ibkr",
+              "service_name": null,
+              "strategy_profile": "tqqq_growth_income",
+              "strategy_release": {
+                "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "effective_session": "2026-01-01",
+                "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "release_id": "synthetic-release",
+                "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            },
+            "schema_version": "signal_snapshot.v1",
+            "service_name": "synthetic-service",
+            "severity": "INFO",
+            "signal_as_of": "2026-01-01",
+            "strategy_profile": "tqqq_growth_income",
+            "target_weights": {
+              "SGOV": 0.75,
+              "TQQQ": 0.25
+            },
+            "timestamp": "2026-01-02T12:00:10Z"
+          }
+        },
+        {
+          "operation": "append_runtime_report_error"
+        },
+        {
+          "operation": "attach_cycle_execution_receipt"
+        },
+        {
+          "operation": "finalize_runtime_report"
+        },
+        {
+          "operation": "emit_runtime_log",
+          "payload": {
+            "account_scope": "synthetic-scope",
+            "deploy_target": "synthetic-offline",
+            "event": "strategy_cycle_blocked",
+            "execution_status": "error",
+            "execution_window": "execution",
+            "message": "Strategy execution blocked",
+            "no_op_reason": "synthetic_transport_unknown",
+            "platform": "interactive_brokers",
+            "result": "synthetic-cycle-result",
+            "run_id": "synthetic-tqqq_growth_income-failed_submission",
+            "runtime_target": {
+              "account_scope": "synthetic-scope",
+              "account_selector": [
+                "synthetic-account"
+              ],
+              "deployment_selector": null,
+              "dry_run_only": false,
+              "execution_environment": "paper",
+              "execution_mode": "live",
+              "execution_windows": null,
+              "platform_id": "ibkr",
+              "service_name": null,
+              "strategy_profile": "tqqq_growth_income",
+              "strategy_release": {
+                "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "effective_session": "2026-01-01",
+                "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "release_id": "synthetic-release",
+                "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            },
+            "service_name": "synthetic-service",
+            "severity": "ERROR",
+            "strategy_profile": "tqqq_growth_income",
+            "timestamp": "2026-01-02T12:00:10Z"
+          }
+        }
+      ],
+      "exception": null,
+      "report": {
+        "account_group": null,
+        "account_ids": [
+          "synthetic-account"
+        ],
+        "account_region": null,
+        "account_scope": "synthetic-scope",
+        "artifacts": {
+          "feature_snapshot_manifest_path": null,
+          "feature_snapshot_path": null,
+          "reconciliation_output_path": null,
+          "reconciliation_record_path": "synthetic/reconciliation.json",
+          "strategy_config_path": null
+        },
+        "decision_at": "2026-01-02T12:00:00+00:00",
+        "deploy_target": "synthetic-offline",
+        "diagnostics": {
+          "failure_category": "strategy_execution_blocked",
+          "ib_client_id": 0,
+          "ib_connect_timeout_seconds": 0,
+          "ib_gateway_host": "synthetic.invalid",
+          "ib_gateway_ip_mode": "",
+          "ib_gateway_mode": "paper",
+          "ib_gateway_port": 0,
+          "price_source_mode": "synthetic_quote",
+          "result": "synthetic-cycle-result",
+          "runtime_revision": "synthetic-runtime-revision",
+          "signal_snapshot": {
+            "generated_at": "2026-01-02T12:00:00+00:00",
+            "indicators": {
+              "active_risk_asset": "TQQQ",
+              "benchmark_price": 100.0,
+              "benchmark_symbol": "QQQ"
+            },
+            "latest_price_source": "synthetic_quote",
+            "market_date": "2026-01-01",
+            "platform": "ibkr",
+            "schema_version": "signal_snapshot.v1",
+            "signal_as_of": "2026-01-01",
+            "strategy_profile": "tqqq_growth_income",
+            "target_weights": {
+              "SGOV": 0.75,
+              "TQQQ": 0.25
+            }
+          },
+          "snapshot_price_fallback_symbols": [],
+          "strategy_config_source": "synthetic-config"
+        },
+        "dry_run": false,
+        "errors": [
+          {
+            "error_type": "StrategyExecutionBlocked",
+            "failure_category": "strategy_execution_blocked",
+            "message": "Strategy execution status is error; reason=synthetic_transport_unknown",
+            "stage": "strategy_execution"
+          }
+        ],
+        "execution_receipt": {
+          "broker_confirmation": "not_observed",
+          "execution_mode": "live",
+          "observed_at": "2026-01-02T12:00:09Z",
+          "outcome": "failed",
+          "platform": "ibkr",
+          "receipt_id": "execution-receipt.609aec410c9916e4c9e9d88ef6dbfff3",
+          "schema_version": "qsl_execution_receipt.v1",
+          "strategy_profile": "tqqq_growth_income",
+          "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "finished_at": "2026-01-02T12:00:10Z",
+        "instance_name": null,
+        "platform": "interactive_brokers",
+        "project_id": null,
+        "run_id": "synthetic-tqqq_growth_income-failed_submission",
+        "run_source": "cloud_run",
+        "runtime_release_receipt": {
+          "attestation_state": "self_attested",
+          "loaded_at": "2026-01-02T12:00:00Z",
+          "release_id": "synthetic-release",
+          "runtime_revision": "synthetic-runtime-revision",
+          "schema_version": "runtime_loaded_receipt.v1",
+          "strategy_release": {
+            "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "effective_session": "2026-01-01",
+            "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "release_id": "synthetic-release",
+            "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "runtime_target": {
+          "account_scope": "synthetic-scope",
+          "account_selector": [
+            "synthetic-account"
+          ],
+          "deployment_selector": null,
+          "dry_run_only": false,
+          "execution_environment": "paper",
+          "execution_mode": "live",
+          "execution_windows": null,
+          "platform_id": "ibkr",
+          "service_name": null,
+          "strategy_profile": "tqqq_growth_income",
+          "strategy_release": {
+            "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "effective_session": "2026-01-01",
+            "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "release_id": "synthetic-release",
+            "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "schema_version": "runtime_report.v1",
+        "service_name": "synthetic-service",
+        "started_at": "2026-01-02T12:00:00Z",
+        "status": "error",
+        "strategy_domain": "us_equity",
+        "strategy_profile": "tqqq_growth_income",
+        "summary": {
+          "account_facts": {
+            "account_ids": [
+              "synthetic-account"
+            ],
+            "net_liquidation": 1000.0,
+            "observed_at": "2026-01-02T12:00:00+00:00",
+            "schema_version": "ibkr_account_snapshot.v1"
+          },
+          "account_ids": [
+            "synthetic-account"
+          ],
+          "dry_run_order_preview_available": false,
+          "effective_date": "2026-01-02",
+          "execution_calendar_source": "signal_date",
+          "execution_status": "error",
+          "execution_timing_contract": "same_trading_day",
+          "managed_symbols": [
+            "TQQQ",
+            "SGOV"
+          ],
+          "no_op_reason": "synthetic_transport_unknown",
+          "notification_delivery_summary": {
+            "all_acknowledged": true,
+            "attempted_count": 1,
+            "delivery_events": [
+              {
+                "compact_text_length": 17,
+                "compact_text_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+                "delivery_status": "sent",
+                "sink": "synthetic-sink",
+                "transport_acknowledged": true
+              }
+            ],
+            "failed_count": 0,
+            "sent_count": 1
+          },
+          "notification_digest": {
+            "dry_run": false,
+            "routine": false,
+            "schema_version": "qsl.notification_cycle.v1"
+          },
+          "orders_previewed_count": 0,
+          "orders_skipped_count": 0,
+          "orders_submitted_count": 1,
+          "quote_snapshot": {
+            "TQQQ": {
+              "price": 100.0,
+              "source": "synthetic_quote"
+            }
+          },
+          "result": "synthetic-cycle-result",
+          "safe_haven": "SGOV",
+          "signal_date": "2026-01-02",
+          "signal_effective_after_trading_days": 0,
+          "signal_source": "synthetic-input",
+          "snapshot_price_fallback_count": 0,
+          "snapshot_price_fallback_used": false,
+          "status_icon": "synthetic",
+          "strategy_display_name": "Synthetic strategy",
+          "strategy_display_name_localized": "Synthetic strategy"
+        }
+      }
+    },
+    "tqqq_growth_income/pending_reconciliation": {
+      "events": [
+        {
+          "operation": "build_runtime_report_base"
+        },
+        {
+          "operation": "emit_runtime_log",
+          "payload": {
+            "account_scope": "synthetic-scope",
+            "deploy_target": "synthetic-offline",
+            "event": "strategy_signal_snapshot",
+            "execution_window": "execution",
+            "generated_at": "2026-01-02T12:00:00+00:00",
+            "indicators": {
+              "active_risk_asset": "TQQQ",
+              "benchmark_price": 100.0,
+              "benchmark_symbol": "QQQ"
+            },
+            "latest_price_source": "synthetic_quote",
+            "market_date": "2026-01-01",
+            "message": "Strategy signal snapshot",
+            "platform": "ibkr",
+            "run_id": "synthetic-tqqq_growth_income-pending_reconciliation",
+            "runtime_target": {
+              "account_scope": "synthetic-scope",
+              "account_selector": [
+                "synthetic-account"
+              ],
+              "deployment_selector": null,
+              "dry_run_only": false,
+              "execution_environment": "paper",
+              "execution_mode": "live",
+              "execution_windows": null,
+              "platform_id": "ibkr",
+              "service_name": null,
+              "strategy_profile": "tqqq_growth_income",
+              "strategy_release": {
+                "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "effective_session": "2026-01-01",
+                "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "release_id": "synthetic-release",
+                "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            },
+            "schema_version": "signal_snapshot.v1",
+            "service_name": "synthetic-service",
+            "severity": "INFO",
+            "signal_as_of": "2026-01-01",
+            "strategy_profile": "tqqq_growth_income",
+            "target_weights": {
+              "SGOV": 0.75,
+              "TQQQ": 0.25
+            },
+            "timestamp": "2026-01-02T12:00:10Z"
+          }
+        },
+        {
+          "operation": "attach_cycle_execution_receipt"
+        },
+        {
+          "operation": "finalize_runtime_report"
+        },
+        {
+          "operation": "emit_runtime_log",
+          "payload": {
+            "account_scope": "synthetic-scope",
+            "deploy_target": "synthetic-offline",
+            "event": "strategy_cycle_completed",
+            "execution_status": "pending_reconciliation",
+            "execution_window": "execution",
+            "message": "Strategy execution completed",
+            "platform": "interactive_brokers",
+            "result": "synthetic-cycle-result",
+            "run_id": "synthetic-tqqq_growth_income-pending_reconciliation",
+            "runtime_target": {
+              "account_scope": "synthetic-scope",
+              "account_selector": [
+                "synthetic-account"
+              ],
+              "deployment_selector": null,
+              "dry_run_only": false,
+              "execution_environment": "paper",
+              "execution_mode": "live",
+              "execution_windows": null,
+              "platform_id": "ibkr",
+              "service_name": null,
+              "strategy_profile": "tqqq_growth_income",
+              "strategy_release": {
+                "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "effective_session": "2026-01-01",
+                "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "release_id": "synthetic-release",
+                "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            },
+            "service_name": "synthetic-service",
+            "severity": "INFO",
+            "strategy_profile": "tqqq_growth_income",
+            "timestamp": "2026-01-02T12:00:10Z"
+          }
+        }
+      ],
+      "exception": null,
+      "report": {
+        "account_group": null,
+        "account_ids": [
+          "synthetic-account"
+        ],
+        "account_region": null,
+        "account_scope": "synthetic-scope",
+        "artifacts": {
+          "feature_snapshot_manifest_path": null,
+          "feature_snapshot_path": null,
+          "reconciliation_output_path": null,
+          "reconciliation_record_path": "synthetic/reconciliation.json",
+          "strategy_config_path": null
+        },
+        "decision_at": "2026-01-02T12:00:00+00:00",
+        "deploy_target": "synthetic-offline",
+        "diagnostics": {
+          "ib_client_id": 0,
+          "ib_connect_timeout_seconds": 0,
+          "ib_gateway_host": "synthetic.invalid",
+          "ib_gateway_ip_mode": "",
+          "ib_gateway_mode": "paper",
+          "ib_gateway_port": 0,
+          "price_source_mode": "synthetic_quote",
+          "result": "synthetic-cycle-result",
+          "runtime_revision": "synthetic-runtime-revision",
+          "signal_snapshot": {
+            "generated_at": "2026-01-02T12:00:00+00:00",
+            "indicators": {
+              "active_risk_asset": "TQQQ",
+              "benchmark_price": 100.0,
+              "benchmark_symbol": "QQQ"
+            },
+            "latest_price_source": "synthetic_quote",
+            "market_date": "2026-01-01",
+            "platform": "ibkr",
+            "schema_version": "signal_snapshot.v1",
+            "signal_as_of": "2026-01-01",
+            "strategy_profile": "tqqq_growth_income",
+            "target_weights": {
+              "SGOV": 0.75,
+              "TQQQ": 0.25
+            }
+          },
+          "snapshot_price_fallback_symbols": [],
+          "strategy_config_source": "synthetic-config"
+        },
+        "dry_run": false,
+        "errors": [],
+        "execution_receipt": {
+          "broker_confirmation": "reconciliation_required",
+          "execution_mode": "live",
+          "observed_at": "2026-01-02T12:00:09Z",
+          "outcome": "reconciliation_required",
+          "platform": "ibkr",
+          "receipt_id": "execution-receipt.80c4e075f389be5389a6ad4867573e90",
+          "schema_version": "qsl_execution_receipt.v1",
+          "strategy_profile": "tqqq_growth_income",
+          "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "finished_at": "2026-01-02T12:00:10Z",
+        "instance_name": null,
+        "platform": "interactive_brokers",
+        "project_id": null,
+        "run_id": "synthetic-tqqq_growth_income-pending_reconciliation",
+        "run_source": "cloud_run",
+        "runtime_release_receipt": {
+          "attestation_state": "self_attested",
+          "loaded_at": "2026-01-02T12:00:00Z",
+          "release_id": "synthetic-release",
+          "runtime_revision": "synthetic-runtime-revision",
+          "schema_version": "runtime_loaded_receipt.v1",
+          "strategy_release": {
+            "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "effective_session": "2026-01-01",
+            "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "release_id": "synthetic-release",
+            "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "runtime_target": {
+          "account_scope": "synthetic-scope",
+          "account_selector": [
+            "synthetic-account"
+          ],
+          "deployment_selector": null,
+          "dry_run_only": false,
+          "execution_environment": "paper",
+          "execution_mode": "live",
+          "execution_windows": null,
+          "platform_id": "ibkr",
+          "service_name": null,
+          "strategy_profile": "tqqq_growth_income",
+          "strategy_release": {
+            "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "effective_session": "2026-01-01",
+            "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "release_id": "synthetic-release",
+            "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "schema_version": "runtime_report.v1",
+        "service_name": "synthetic-service",
+        "started_at": "2026-01-02T12:00:00Z",
+        "status": "ok",
+        "strategy_domain": "us_equity",
+        "strategy_profile": "tqqq_growth_income",
+        "summary": {
+          "account_facts": {
+            "account_ids": [
+              "synthetic-account"
+            ],
+            "net_liquidation": 1000.0,
+            "observed_at": "2026-01-02T12:00:00+00:00",
+            "schema_version": "ibkr_account_snapshot.v1"
+          },
+          "account_ids": [
+            "synthetic-account"
+          ],
+          "dry_run_order_preview_available": false,
+          "effective_date": "2026-01-02",
+          "execution_calendar_source": "signal_date",
+          "execution_status": "pending_reconciliation",
+          "execution_timing_contract": "same_trading_day",
+          "managed_symbols": [
+            "TQQQ",
+            "SGOV"
+          ],
+          "no_op_reason": null,
+          "notification_delivery_summary": {
+            "all_acknowledged": true,
+            "attempted_count": 1,
+            "delivery_events": [
+              {
+                "compact_text_length": 17,
+                "compact_text_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+                "delivery_status": "sent",
+                "sink": "synthetic-sink",
+                "transport_acknowledged": true
+              }
+            ],
+            "failed_count": 0,
+            "sent_count": 1
+          },
+          "notification_digest": {
+            "dry_run": false,
+            "routine": false,
+            "schema_version": "qsl.notification_cycle.v1"
+          },
+          "orders_previewed_count": 0,
+          "orders_skipped_count": 0,
+          "orders_submitted_count": 1,
+          "quote_snapshot": {
+            "TQQQ": {
+              "price": 100.0,
+              "source": "synthetic_quote"
+            }
+          },
+          "result": "synthetic-cycle-result",
+          "safe_haven": "SGOV",
+          "signal_date": "2026-01-02",
+          "signal_effective_after_trading_days": 0,
+          "signal_source": "synthetic-input",
+          "snapshot_price_fallback_count": 0,
+          "snapshot_price_fallback_used": false,
+          "status_icon": "synthetic",
+          "strategy_display_name": "Synthetic strategy",
+          "strategy_display_name_localized": "Synthetic strategy"
+        }
+      }
+    },
+    "tqqq_growth_income/submitted_unconfirmed": {
+      "events": [
+        {
+          "operation": "build_runtime_report_base"
+        },
+        {
+          "operation": "emit_runtime_log",
+          "payload": {
+            "account_scope": "synthetic-scope",
+            "deploy_target": "synthetic-offline",
+            "event": "strategy_signal_snapshot",
+            "execution_window": "execution",
+            "generated_at": "2026-01-02T12:00:00+00:00",
+            "indicators": {
+              "active_risk_asset": "TQQQ",
+              "benchmark_price": 100.0,
+              "benchmark_symbol": "QQQ"
+            },
+            "latest_price_source": "synthetic_quote",
+            "market_date": "2026-01-01",
+            "message": "Strategy signal snapshot",
+            "platform": "ibkr",
+            "run_id": "synthetic-tqqq_growth_income-submitted_unconfirmed",
+            "runtime_target": {
+              "account_scope": "synthetic-scope",
+              "account_selector": [
+                "synthetic-account"
+              ],
+              "deployment_selector": null,
+              "dry_run_only": false,
+              "execution_environment": "paper",
+              "execution_mode": "live",
+              "execution_windows": null,
+              "platform_id": "ibkr",
+              "service_name": null,
+              "strategy_profile": "tqqq_growth_income",
+              "strategy_release": {
+                "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "effective_session": "2026-01-01",
+                "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "release_id": "synthetic-release",
+                "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            },
+            "schema_version": "signal_snapshot.v1",
+            "service_name": "synthetic-service",
+            "severity": "INFO",
+            "signal_as_of": "2026-01-01",
+            "strategy_profile": "tqqq_growth_income",
+            "target_weights": {
+              "SGOV": 0.75,
+              "TQQQ": 0.25
+            },
+            "timestamp": "2026-01-02T12:00:10Z"
+          }
+        },
+        {
+          "operation": "attach_cycle_execution_receipt"
+        },
+        {
+          "operation": "finalize_runtime_report"
+        },
+        {
+          "operation": "emit_runtime_log",
+          "payload": {
+            "account_scope": "synthetic-scope",
+            "deploy_target": "synthetic-offline",
+            "event": "strategy_cycle_completed",
+            "execution_status": "submitted",
+            "execution_window": "execution",
+            "message": "Strategy execution completed",
+            "platform": "interactive_brokers",
+            "result": "synthetic-cycle-result",
+            "run_id": "synthetic-tqqq_growth_income-submitted_unconfirmed",
+            "runtime_target": {
+              "account_scope": "synthetic-scope",
+              "account_selector": [
+                "synthetic-account"
+              ],
+              "deployment_selector": null,
+              "dry_run_only": false,
+              "execution_environment": "paper",
+              "execution_mode": "live",
+              "execution_windows": null,
+              "platform_id": "ibkr",
+              "service_name": null,
+              "strategy_profile": "tqqq_growth_income",
+              "strategy_release": {
+                "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "effective_session": "2026-01-01",
+                "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "release_id": "synthetic-release",
+                "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            },
+            "service_name": "synthetic-service",
+            "severity": "INFO",
+            "strategy_profile": "tqqq_growth_income",
+            "timestamp": "2026-01-02T12:00:10Z"
+          }
+        }
+      ],
+      "exception": null,
+      "report": {
+        "account_group": null,
+        "account_ids": [
+          "synthetic-account"
+        ],
+        "account_region": null,
+        "account_scope": "synthetic-scope",
+        "artifacts": {
+          "feature_snapshot_manifest_path": null,
+          "feature_snapshot_path": null,
+          "reconciliation_output_path": null,
+          "reconciliation_record_path": "synthetic/reconciliation.json",
+          "strategy_config_path": null
+        },
+        "decision_at": "2026-01-02T12:00:00+00:00",
+        "deploy_target": "synthetic-offline",
+        "diagnostics": {
+          "ib_client_id": 0,
+          "ib_connect_timeout_seconds": 0,
+          "ib_gateway_host": "synthetic.invalid",
+          "ib_gateway_ip_mode": "",
+          "ib_gateway_mode": "paper",
+          "ib_gateway_port": 0,
+          "price_source_mode": "synthetic_quote",
+          "result": "synthetic-cycle-result",
+          "runtime_revision": "synthetic-runtime-revision",
+          "signal_snapshot": {
+            "generated_at": "2026-01-02T12:00:00+00:00",
+            "indicators": {
+              "active_risk_asset": "TQQQ",
+              "benchmark_price": 100.0,
+              "benchmark_symbol": "QQQ"
+            },
+            "latest_price_source": "synthetic_quote",
+            "market_date": "2026-01-01",
+            "platform": "ibkr",
+            "schema_version": "signal_snapshot.v1",
+            "signal_as_of": "2026-01-01",
+            "strategy_profile": "tqqq_growth_income",
+            "target_weights": {
+              "SGOV": 0.75,
+              "TQQQ": 0.25
+            }
+          },
+          "snapshot_price_fallback_symbols": [],
+          "strategy_config_source": "synthetic-config"
+        },
+        "dry_run": false,
+        "errors": [],
+        "execution_receipt": {
+          "broker_confirmation": "not_observed",
+          "execution_mode": "live",
+          "observed_at": "2026-01-02T12:00:09Z",
+          "outcome": "submitted",
+          "platform": "ibkr",
+          "receipt_id": "execution-receipt.3b428974e9840c9dd94266b361250d4b",
+          "schema_version": "qsl_execution_receipt.v1",
+          "strategy_profile": "tqqq_growth_income",
+          "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "finished_at": "2026-01-02T12:00:10Z",
+        "instance_name": null,
+        "platform": "interactive_brokers",
+        "project_id": null,
+        "run_id": "synthetic-tqqq_growth_income-submitted_unconfirmed",
+        "run_source": "cloud_run",
+        "runtime_release_receipt": {
+          "attestation_state": "self_attested",
+          "loaded_at": "2026-01-02T12:00:00Z",
+          "release_id": "synthetic-release",
+          "runtime_revision": "synthetic-runtime-revision",
+          "schema_version": "runtime_loaded_receipt.v1",
+          "strategy_release": {
+            "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "effective_session": "2026-01-01",
+            "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "release_id": "synthetic-release",
+            "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "runtime_target": {
+          "account_scope": "synthetic-scope",
+          "account_selector": [
+            "synthetic-account"
+          ],
+          "deployment_selector": null,
+          "dry_run_only": false,
+          "execution_environment": "paper",
+          "execution_mode": "live",
+          "execution_windows": null,
+          "platform_id": "ibkr",
+          "service_name": null,
+          "strategy_profile": "tqqq_growth_income",
+          "strategy_release": {
+            "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "effective_session": "2026-01-01",
+            "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "plugin_bundle_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "release_id": "synthetic-release",
+            "risk_policy_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "strategy_revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "schema_version": "runtime_report.v1",
+        "service_name": "synthetic-service",
+        "started_at": "2026-01-02T12:00:00Z",
+        "status": "ok",
+        "strategy_domain": "us_equity",
+        "strategy_profile": "tqqq_growth_income",
+        "summary": {
+          "account_facts": {
+            "account_ids": [
+              "synthetic-account"
+            ],
+            "net_liquidation": 1000.0,
+            "observed_at": "2026-01-02T12:00:00+00:00",
+            "schema_version": "ibkr_account_snapshot.v1"
+          },
+          "account_ids": [
+            "synthetic-account"
+          ],
+          "dry_run_order_preview_available": false,
+          "effective_date": "2026-01-02",
+          "execution_calendar_source": "signal_date",
+          "execution_status": "submitted",
+          "execution_timing_contract": "same_trading_day",
+          "managed_symbols": [
+            "TQQQ",
+            "SGOV"
+          ],
+          "no_op_reason": null,
+          "notification_delivery_summary": {
+            "all_acknowledged": true,
+            "attempted_count": 1,
+            "delivery_events": [
+              {
+                "compact_text_length": 17,
+                "compact_text_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+                "delivery_status": "sent",
+                "sink": "synthetic-sink",
+                "transport_acknowledged": true
+              }
+            ],
+            "failed_count": 0,
+            "sent_count": 1
+          },
+          "notification_digest": {
+            "dry_run": false,
+            "routine": false,
+            "schema_version": "qsl.notification_cycle.v1"
+          },
+          "orders_previewed_count": 0,
+          "orders_skipped_count": 0,
+          "orders_submitted_count": 1,
+          "quote_snapshot": {
+            "TQQQ": {
+              "price": 100.0,
+              "source": "synthetic_quote"
+            }
+          },
+          "result": "synthetic-cycle-result",
+          "safe_haven": "SGOV",
+          "signal_date": "2026-01-02",
+          "signal_effective_after_trading_days": 0,
+          "signal_source": "synthetic-input",
+          "snapshot_price_fallback_count": 0,
+          "snapshot_price_fallback_used": false,
+          "status_icon": "synthetic",
+          "strategy_display_name": "Synthetic strategy",
+          "strategy_display_name_localized": "Synthetic strategy"
+        }
+      }
+    }
+  },
+  "producer_registration_authorized": false,
+  "qpk_revision": "2b04882058666ebc81d1650d93fa2105ec4ba3d8",
+  "schema_version": "ibkr.synthetic_component_observations.v1",
+  "scope": "Reporting finalization component only; not an endpoint or production-faithful historical replay."
+}
