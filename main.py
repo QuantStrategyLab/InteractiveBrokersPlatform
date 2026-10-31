@@ -3,7 +3,9 @@
 import hashlib
 import json
 
-from application.decision_cycle import attach_cycle_decision_receipt, cycle_handler, current_cycle
+from application.decision_cycle import (
+    attach_cycle_decision_receipt, capture_cycle_result_evidence, cycle_handler, current_cycle,
+)
 import importlib
 import os
 import re
@@ -1712,6 +1714,11 @@ def _handle_request(
             )
         )
         execution_summary = dict(cycle_result.execution_summary or {})
+        # The account-wide brake can submit orders outside this strategy's
+        # collections; in that case those collections are not complete.
+        from application.reconciliation_service import account_brake_submission_status
+        if account_brake_submission_status(getattr(cycle_result, "signal_metadata", None)) is None:
+            capture_cycle_result_evidence(execution_summary, dry_run=bool(report.get("dry_run")))
         reconciliation_record = dict(cycle_result.reconciliation_record or {})
         signal_metadata = dict(cycle_result.signal_metadata or {})
         signal_snapshot = dict(signal_metadata.get("signal_snapshot") or {})

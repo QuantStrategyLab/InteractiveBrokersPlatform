@@ -1256,9 +1256,35 @@ def execute_rebalance(
                 raise RuntimeError("IBKR execution claim required; refusing broker submission")
             # Shadow consult after successful claim; deny must not block submit.
             consult_t1_live_submit(identity_held=True, dry_run_bypass=False)
-            grant = account_execution_session.reserve(order_intent)
+            from application.decision_cycle import current_cycle
+            cycle = current_cycle()
+            joint = cycle.get("joint_strategy_binding") if cycle is not None else None
+            required = signal_metadata.get("joint_execution_required") is True
+            if required != (joint is not None):
+                raise RuntimeError("joint strategy execution binding unavailable")
+            if required:
+                planning = joint["planning_session"]
+                if (planning.broker != "ibkr" or planning.account_id != account_execution_session.account_id
+                        or planning.profile != strategy_profile or planning.release_id != account_execution_session.release_id
+                        or planning.store is not account_execution_session.store):
+                    raise RuntimeError("joint account or release binding mismatch")
+                active_session = planning.for_intent(account_execution_session.intent_id)
+                from quant_platform_kit.common.execution_state import submission_binding_digest
+                if joint.get("allocation_sha256") != submission_binding_digest(signal_metadata["allocation"]):
+                    raise RuntimeError("joint post-risk allocation changed")
+                from application.joint_account_facts import reserve_joint_order
+                from us_equity_strategies.conditional_tqqq_candidate import canonical_tqqq_context_sha256
+                if canonical_tqqq_context_sha256(joint["context"]) != joint["input_sha256"]:
+                    raise RuntimeError("joint strategy inputs changed")
+                grant = reserve_joint_order(active_session, order_intent, joint)
+                if (canonical_tqqq_context_sha256(joint["context"]) != joint["input_sha256"]
+                        or joint.get("allocation_sha256") != submission_binding_digest(signal_metadata["allocation"])):
+                    raise RuntimeError("joint inputs changed during reservation")
+            else:
+                active_session = account_execution_session
+                grant = active_session.reserve(order_intent)
             return delegate_submit(
-                ib, order_intent, account_execution_session=account_execution_session,
+                ib, order_intent, account_execution_session=active_session,
                 execution_grant=grant, **kwargs,
             )
 
