@@ -2,6 +2,8 @@
 
 import hashlib
 import json
+
+from application.decision_cycle import attach_cycle_decision_receipt, cycle_handler, current_cycle
 import importlib
 import os
 import re
@@ -1589,6 +1591,9 @@ def _handle_request(
 
     log_context = build_request_log_context()
     report = build_execution_report(log_context, dry_run_only_override=dry_run_only_override)
+    if current_cycle() is not None:
+        report["decision_at"] = current_cycle()["decision_time"].isoformat()
+        current_cycle()["report"] = report
     signal_provenance.reset()
     if report_collector is not None:
         # Register the mutable report before any deadline-bound setup work so a
@@ -1599,6 +1604,9 @@ def _handle_request(
     deadline_exceeded = False
     try:
         strategy_plugin_signals, strategy_plugin_error = load_strategy_plugin_signals()
+        if current_cycle() is not None:
+            current_cycle()["plugin_signals"] = strategy_plugin_signals
+            current_cycle()["plugin_error"] = strategy_plugin_error
         attach_strategy_plugin_report(
             report,
             signals=strategy_plugin_signals,
@@ -1927,6 +1935,7 @@ def _handle_request(
                 # A legacy runtime target remains visible as evidence-missing;
                 # reporting metadata must never change trading behavior.
                 pass
+        attach_cycle_decision_receipt(report)
         if not deadline_exceeded and persist_report:
             try:
                 if dry_run_only_override is None:
@@ -1949,6 +1958,9 @@ def _handle_request(
                             print("notification_report_coverage_alert_failed", flush=True)
                     except Exception:
                         print("notification_report_coverage_alert_failed", flush=True)
+
+
+_handle_request = cycle_handler(_handle_request)
 
 
 @app.route("/run", methods=["POST"])
