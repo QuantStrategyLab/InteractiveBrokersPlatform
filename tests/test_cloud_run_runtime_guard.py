@@ -29,7 +29,7 @@ def test_runtime_guard_keeps_provider_audit_payload_out_of_notification(monkeypa
 
     assert guard.main() == 1
     assert len(messages) == 1
-    assert "失败日志" in messages[0]
+    assert "检测到 1 条失败记录；原因和当前状态待核对" in messages[0]
     assert "https://example.test/example/runtime/actions/runs/1" in messages[0]
     assert "AuditLog" not in messages[0]
     assert "principalEmail" not in messages[0]
