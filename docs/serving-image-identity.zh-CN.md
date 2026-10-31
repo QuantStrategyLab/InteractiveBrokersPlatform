@@ -51,6 +51,8 @@ gh workflow run account-facts-identity-diagnose.yml \
 
 匹配事件仅是请求线索，不代表成功创建；`status_code` 仅保留明确的合法 RPC 状态码，缺失为 null，不默认成功。非零状态仍保留为失败尝试线索，不升级原 provenance 或批准。
 
+`event_layouts` 只按已知 Service schema 投影固定布尔值，区分 request.service wrapper、direct spec/template、明确 revision 及与当前 serving 的 revision/digest 等式；不输出任意 key 或原字段值。该定位不扩大原查询，不改变当前 wrapper 解析或准入，不把未关联 service 事件解释为没有部署。
+
 ## 精确 registry provenance 结构观察
 
 同 workflow 提供默认关闭的 `registry_source_metadata_only`，与 `serving_source_metadata_only` 互斥；两个同时为 true 时整个 job 不运行。默认调用和原 report 输出保持，新模式仍使用原四 slot、受保护配置预检、main 与既有 WIF。通过唯一100% serving、exact revision、immutable_image 和四物理身份等式后，只对同次精确 digest 执行一次 `gcloud artifacts docker images describe --show-provenance --show-build-details --format=json`，最后确认 serving 未变。没有旧 job-log、image/build/service list、层下载、Docker、业务或生产写入；新 step 不注入 GitHub token，不增加权限。
