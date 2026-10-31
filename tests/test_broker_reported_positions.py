@@ -112,7 +112,7 @@ def _report(positions=None, scope=POSITIONS_SCOPE):
 
 _EXPECTED = dict(
     target_id="ibkr-primary",
-    expected_report_prefix="gs://qsl-runtime-reports/ibkr",
+    expected_report_prefix="gs://synthetic-runtime-reports/ibkr",
     expected_project_id="example-project",
     expected_service_name="ibkr-primary-service",
     expected_runtime_revision="runtime-revision-001",
@@ -120,7 +120,7 @@ _EXPECTED = dict(
     expected_account_selector=["U00000001"],
     expected_deployment_selector="live-primary",
 )
-_URI = "gs://qsl-runtime-reports/ibkr/report-1.json"
+_URI = "gs://synthetic-runtime-reports/ibkr/report-1.json"
 _ROW = {"symbol": "VOO", "quantity": "2", "market_value": "1000.5", "currency": "USD", "avg_cost": "412.1"}
 
 
