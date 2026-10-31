@@ -61,6 +61,17 @@ Organization documentation rules are checked by `python scripts/check_style.py`,
   `report`.
 - Renaming a document means updating its references in the same change.
 
+<!-- repository-files:begin -->
+- A public repository (one with a `LICENSE`) needs `CONTRIBUTING.md`,
+  `SECURITY.md`, `CODE_OF_CONDUCT.md` and issue / PR templates; a
+  private one needs `SECURITY.md`.
+- A public `SECURITY.md` describes disclosure, not where credentials
+  live or how they rotate; a private one describes the opposite. The
+  two are not merged.
+- Template filenames use underscores — `pull_request_template.md`,
+  `issue_template.md`. GitHub does not recognise the hyphenated form.
+<!-- repository-files:end -->
+
 ## Do not
 
 - Do not break the fail-closed execution claim, the one-time order markers or the
