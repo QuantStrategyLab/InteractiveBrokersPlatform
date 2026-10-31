@@ -691,6 +691,10 @@ def diagnose_serving_source_metadata(expected: Mapping[str, Any], *, source_sha:
         result["serving_runtime_declarations"] = _serving_runtime_declarations(container, target)
         result["configured_revision_source"] = _configured_source_metadata(
             expected, serving=serving, serving_revision=revision, image=image, region=region)
+        if os.environ.get("IBKR_INSPECT_SERVING_DEPLOYMENT_AUDIT") == "true":
+            from scripts.ibkr_deployment_audit import observe
+
+            result["deployment_audit"] = observe(expected, revision, immutable, region)
         labels = metadata.get("labels")
         selected = image._sha(labels.get("commit-sha")) if isinstance(labels, Mapping) else None
         run_id = labels.get("github-run-id") if isinstance(labels, Mapping) else None
