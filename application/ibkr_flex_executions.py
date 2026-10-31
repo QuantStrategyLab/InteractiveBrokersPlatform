@@ -254,6 +254,7 @@ def project_flex_executions(
         return unavailable("execution_record_limit")
     account_id = statement.get("accountId", "").strip()
     records = {}
+    native_trade_ids = {}
     for row in rows:
         missing = [field for field in _REQUIRED if not row.get(field)]
         if missing:
@@ -306,9 +307,11 @@ def project_flex_executions(
                   "side": row.get("buySell"), "quantity": quantity, "price": price,
                   "currency": row.get("currency"), "commission": fees["ibCommission"],
                   "commission_currency": fee_currency, "taxes": fees["taxes"]}
-        if execution_ref in records and records[execution_ref] != record:
+        if execution_ref in records and (records[execution_ref] != record
+                                         or native_trade_ids[execution_ref] != (row.get("tradeID") or None)):
             return unavailable("execution_conflict")
         records[execution_ref] = record
+        native_trade_ids[execution_ref] = row.get("tradeID") or None
         if len(records) > 256:
             return unavailable("execution_record_limit")
     return {"status": "available", "records": list(records.values()),

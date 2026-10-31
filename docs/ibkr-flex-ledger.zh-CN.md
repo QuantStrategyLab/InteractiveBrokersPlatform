@@ -435,7 +435,10 @@ reference，最多合计 6 次 `GetStatement`（总计最多 7 次服务请求�
 `correction_resolution=not_applied` 始终保留：相同价量时间不证明重复，前缀族也不证明
 Flex 中的更正关系。缺少 notes/orig* 的行有独立 unknown 计数，不借用 TWS 合同推断。
 这次新生成的报告只能提供新的来源证据，不能冒称它就是旧截图的原报告，也不证明网站已恢复。
-业务成交投影器及 `SHA256(accountId|ibExecID)` 身份规则保持不变。
+业务成交投影继续以 `SHA256(accountId|ibExecID)` 作为身份。重复身份的投影字段及
+`tradeID` 必须一致才合并；`tradeID` 在一行缺失而另一行存在也不能确认同一成交。存在
+冲突时该报告的成交投影整体不可用，不发布部分成交。无关展示字段的差异不改变去重规则；
+原生行是否覆盖完整交易历史仍须独立核验。
 
 诊断失败时 CLI 仍返回非零退出码；已有 `FlexSourceError.safe_diagnostic` 只经闭集
 字段/类型校验后保留 endpoint、分类、HTTP/provider 错误码及固定身份计数/布尔。
