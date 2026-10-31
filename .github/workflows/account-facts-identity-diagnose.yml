@@ -43,6 +43,11 @@ on:
         type: boolean
         required: true
         default: false
+      inspect_serving_deployment_audit:
+        description: With serving source mode, inspect a bounded exact-service/revision deployment AuditLog window; no configuration changes.
+        type: boolean
+        required: false
+        default: false
       registry_source_metadata_only:
         description: Read exact serving digest registry provenance shape only; no reports, logs or image execution; exclusive with serving source mode
         type: boolean
@@ -93,6 +98,7 @@ jobs:
       IBKR_PRIMARY_BACKUP_INSPECT_ONLY: ${{ inputs.inspect_primary_backup_only }}
       IBKR_PRIMARY_RECOVERY_PUBLIC_KEYS: ${{ inputs.primary_recovery_public_keys }}
       IBKR_PRIMARY_RECOVERY_MODE: ${{ inputs.prepare_primary_recovery_secrets }}
+      IBKR_INSPECT_SERVING_DEPLOYMENT_AUDIT: ${{ inputs.inspect_serving_deployment_audit && 'true' || 'false' }}
     steps:
       - name: Require infrastructure variables
         env:
@@ -100,6 +106,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [ "${IBKR_INSPECT_SERVING_DEPLOYMENT_AUDIT:-false}" = true ] && [ "${{ inputs.serving_source_metadata_only }}" != true ]; then
+            echo "status=blocked reason=deployment_audit_requires_serving_source_mode"
+            exit 2
+          fi
           if [ "${IBKR_PRIMARY_RECOVERY_MODE:-false}" = "true" ] && [ "${IBKR_PRIMARY_BACKUP_ENABLED:-false}" != "true" ]; then
             echo "status=blocked reason=recovery_requires_primary_backup_mode"
             exit 2

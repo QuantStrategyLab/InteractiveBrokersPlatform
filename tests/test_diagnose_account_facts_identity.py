@@ -1322,6 +1322,23 @@ def test_source_metadata_only_workflow_wire_preserves_default_report_mode():
     assert "GH_TOKEN" not in workflow.split(old_step)[0]
 
 
+def test_deployment_audit_is_opt_in_and_cannot_replace_original_provenance_gate(monkeypatch, capsys):
+    from scripts import ibkr_deployment_audit
+
+    case = _source_metadata_case(monkeypatch)
+    case["revision"]["metadata"]["labels"].pop("github-run-id")
+    calls = []
+    monkeypatch.setattr(ibkr_deployment_audit, "observe", lambda *args: calls.append(args) or {"audit_status": "exact_revision_events"})
+    assert diagnostic.main(["--serving-source-metadata-only"]) == 1
+    assert calls == [] and "deployment_audit" not in json.loads(capsys.readouterr().out)
+    monkeypatch.setenv("IBKR_INSPECT_SERVING_DEPLOYMENT_AUDIT", "true")
+    assert diagnostic.main(["--serving-source-metadata-only"]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert len(calls) == 1 and result["deployment_audit"]["audit_status"] == "exact_revision_events"
+    assert result["reason"] == "source_labels_unavailable" and result["selected_source_sha"] is None
+    assert result["independent_release_approval"] == "unknown"
+
+
 @pytest.mark.parametrize("failure", [None, "read", "identity", "scope", "missing_target", "label", "invalid_name"])
 def test_configured_source_comparison_never_replaces_serving_or_its_admission(monkeypatch, capsys, failure):
     from copy import deepcopy

@@ -43,6 +43,14 @@ gh workflow run account-facts-identity-diagnose.yml \
 
 该新读取补齐不同的 metadata 证据，不重跑旧失败的 image/plugin 安装探针。任何 target、流量、digest、来源或读取失败保持非零退出，停止受影响目标，不借最新 ready、tag、run head或旧记录代填。
 
+## 可选精确部署 AuditLog 线索
+
+仅在 `serving_source_metadata_only=true` 时可显式开启默认关闭的 `inspect_serving_deployment_audit`。它复用已核验 scope 的 serving revision/service/image 与创建时间，以原 cloud 身份读取同 service 创建时间前后各五分钟的 Cloud Run Admin AuditLog，最多 20 条，第 21 条识别截断。只接受请求或响应明确指向该 serving revision 的事件；不按 code label 反推 revision，不列服务或扩大时间。默认 source 模式不新增该查询。
+
+仅投影固定方法、事件计数、合法 code/run 声明、请求不可变镜像与当前 digest 是否相等以及 principal 是否存在。资源、环境、镜像路径/digest、身份和日志正文仅在 runner 内存，不输出。读取失败、截断、未知布局或空窗口不证明没有部署；metadata/log 声明不证明代码字节或独立风险批准，原 source 准入/退出和 `independent_release_approval=unknown` 不变。不变更 IAM、账户、流量、绑定、密钥或调度。
+
+匹配事件仅是请求线索，不代表成功创建；`status_code` 仅保留明确的合法 RPC 状态码，缺失为 null，不默认成功。非零状态仍保留为失败尝试线索，不升级原 provenance 或批准。
+
 ## 精确 registry provenance 结构观察
 
 同 workflow 提供默认关闭的 `registry_source_metadata_only`，与 `serving_source_metadata_only` 互斥；两个同时为 true 时整个 job 不运行。默认调用和原 report 输出保持，新模式仍使用原四 slot、受保护配置预检、main 与既有 WIF。通过唯一100% serving、exact revision、immutable_image 和四物理身份等式后，只对同次精确 digest 执行一次 `gcloud artifacts docker images describe --show-provenance --show-build-details --format=json`，最后确认 serving 未变。没有旧 job-log、image/build/service list、层下载、Docker、业务或生产写入；新 step 不注入 GitHub token，不增加权限。
