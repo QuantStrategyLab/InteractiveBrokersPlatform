@@ -79,6 +79,19 @@ def _notice(key: str, /, **values: object) -> str:
     return operational_notification_text(_notification_locale(), key, **values)
 
 
+def _display_service() -> str:
+    return "受监控服务" if _notification_locale() == "zh" else "monitored service"
+
+
+def _display_failure_count(count: int, source: str) -> str:
+    if _notification_locale() == "zh":
+        return f"{source}：检测到 {count} 条失败记录；原因和当前状态待核对"
+    return (
+        f"{source}: Detected {count} failure record{'s' if count != 1 else ''}; "
+        "cause and current status require verification"
+    )
+
+
 def _load_services() -> list[str]:
     services = []
     enabled_target_services = []
@@ -498,9 +511,9 @@ def _latest_ready_revision_started_at(project: str, service: str) -> dt.datetime
 def _cloud_run_log_since(project: str, service: str, fallback: dt.datetime) -> dt.datetime:
     try:
         revision_start = _latest_ready_revision_started_at(project, service)
-    except RuntimeError as exc:
+    except RuntimeError:
         print(
-            f"Unable to resolve latest ready revision for {service}; using lookback window: {exc}",
+            "Unable to resolve latest ready revision for a monitored service; using lookback window.",
             file=sys.stderr,
         )
         return fallback
@@ -606,9 +619,8 @@ def _load_telegram_token_from_secret() -> str:
         command.extend(["--project", project])
     result = _run_gcloud(command)
     if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip()
         print(
-            f"Unable to read Telegram token from Secret Manager: {detail or 'gcloud failed'}",
+            "Unable to read Telegram token from Secret Manager.",
             file=sys.stderr,
         )
         return ""
@@ -681,6 +693,7 @@ def main() -> int:
     since_text = since.isoformat().replace("+00:00", "Z")
 
     issues: list[str] = []
+    display_issues: list[str] = []
     details: list[str] = []
     alert_event_ids: list[str] = []
     success_count = 0
@@ -688,12 +701,14 @@ def main() -> int:
     queried_services: set[str] = set()
     cloud_run_failures_by_service: dict[str, list[dict[str, Any]]] = {}
     service_since_by_name: dict[str, dt.datetime] = {}
+    scheduler_configuration_invalid = False
 
     try:
         services = _load_services()
     except RuntimeError as exc:
         services = []
         issues.append(_notice("runtime_guard_service_configuration_error"))
+        display_issues.append(_notice("runtime_guard_service_configuration_error"))
         details.append(f"service configuration error: {exc}")
     scheduler_pattern = (
         os.environ.get("RUNTIME_GUARD_SCHEDULER_JOB_PATTERN")
@@ -709,6 +724,9 @@ def main() -> int:
             entries = _run_gcloud_logging(project, log_filter, limit)
         except RuntimeError as exc:
             issues.append(_notice("runtime_guard_cloud_run_log_query_failed", service=service))
+            display_issues.append(
+                _notice("runtime_guard_cloud_run_log_query_failed", service=_display_service())
+            )
             details.append(f"Cloud Run log query failed for {service}: {exc}")
             continue
         queried_services.add(service)
@@ -725,6 +743,9 @@ def main() -> int:
                     service=service,
                 )
             )
+            display_issues.append(
+                _display_failure_count(len(failures), f"Cloud Run ({_display_service()})")
+            )
             details.extend(_summarize(entry) for entry in failures[:5])
             alert_event_ids.extend(alert_dedupe.event_id(entry) for entry in failures)
 
@@ -738,6 +759,13 @@ def main() -> int:
                 _notice(
                     "runtime_guard_no_successful_request",
                     service=service,
+                    lookback_minutes=lookback_minutes,
+                )
+            )
+            display_issues.append(
+                _notice(
+                    "runtime_guard_no_successful_request",
+                    service=_display_service(),
                     lookback_minutes=lookback_minutes,
                 )
             )
@@ -774,19 +802,29 @@ def main() -> int:
                         count=len(failures),
                     )
                 )
+                display_issues.append(_display_failure_count(len(failures), "Cloud Scheduler"))
                 details.extend(_summarize(entry) for entry in failures[:5])
                 alert_event_ids.extend(alert_dedupe.event_id(entry) for entry in failures)
+        except re.error:
+            scheduler_configuration_invalid = True
+            issue = (
+                "调度检查配置无效"
+                if _notification_locale() == "zh"
+                else "Scheduler check configuration is invalid"
+            )
+            issues.append(issue)
+            display_issues.append(issue)
         except RuntimeError as exc:
             issues.append(_notice("runtime_guard_scheduler_log_query_failed"))
+            display_issues.append(_notice("runtime_guard_scheduler_log_query_failed"))
             details.append(f"Cloud Scheduler log query failed: {exc}")
     elif check_scheduler:
         print("Skipping Cloud Scheduler check because no scheduler job pattern could be derived.", file=sys.stderr)
 
     if not issues:
         alert_dedupe.clear_issues()
-        service_text = ", ".join(services) if services else "<none configured>"
         print(
-            f"Runtime guard OK for {name}: services={service_text}, lookback={lookback_minutes}m, successes={success_count}"
+            f"Runtime guard OK: monitored_services={len(services)}, lookback={lookback_minutes}m, successes={success_count}"
         )
         return 0
 
@@ -799,9 +837,9 @@ def main() -> int:
     message = format_operational_alert(
         locale=_notification_locale(),
         alert_type="runtime_guard",
-        name=name,
-        context={"project": project, "lookback_minutes": lookback_minutes},
-        issues=issues,
+        name="InteractiveBrokersPlatform",
+        context={"lookback_minutes": lookback_minutes},
+        issues=display_issues,
         # Keep provider audit payloads in their source logs, including on pinned QPK.
         technical_details=(),
         workflow_url=run_url,
@@ -810,10 +848,10 @@ def main() -> int:
     decision = alert_dedupe.decide(name=name, issues=issues, event_ids=alert_event_ids)
     print(decision.log_line())
     if not decision.send:
-        print(f"Runtime guard alert suppressed as a repeat for {name}; no new failure entries.")
-        return 1 if fail_workflow else 0
+        print("Runtime guard alert suppressed as a repeat; no new failure entries.")
+        return 1 if fail_workflow or scheduler_configuration_invalid else 0
     _send_telegram(message[:3900])
-    return 1 if fail_workflow else 0
+    return 1 if fail_workflow or scheduler_configuration_invalid else 0
 
 
 if __name__ == "__main__":
