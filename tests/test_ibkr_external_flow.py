@@ -62,6 +62,38 @@ def test_id_conflict_missing_section_and_reported_empty_are_distinct():
     assert ledger(row(activityCode="WITH", amount="-1"))["external_flow_facts"]["records"][0]["type"] == "withdrawal"
 
 
+def test_legacy_flow_total_uses_the_identity_checked_projection():
+    original = ledger(row())
+    duplicate = ledger(row() + row())
+    assert duplicate["net_external_flow"] == original["net_external_flow"]
+    assert len(duplicate["external_flows"]) == 2  # Raw legacy rows remain visible.
+    for rows in (row() + row(amount="101"), row() + row() + row(transactionID=None)):
+        assert ledger(rows)["net_external_flow"] is None
+        assert {"code": "duplicate_external_flow_identity_unverified"} in ledger(rows)["warnings"]
+    assert ledger("")["net_external_flow"] == {"amount": "0", "currency": "USD", "line_count": 0}
+    assert ledger(row(transactionID=None))["net_external_flow"]["amount"] == "100.12345678"
+    unique_legacy = ledger(row(accountId=None, date=None))
+    assert unique_legacy["external_flow_facts"]["status"] == "source_unavailable"
+    assert unique_legacy["net_external_flow"]["amount"] == "100.12345678"
+    assert ledger(row() + row(transactionID=None))["net_external_flow"]["line_count"] == 2
+    long_period = report(row()).replace(b'fromDate="20261001"', b'fromDate="20260901"')
+    legacy = build_flex_ledger(FlexReport(content=long_period, content_sha256="a" * 64), expected_account_ids=(ACCOUNT,))
+    assert legacy["external_flow_facts"]["status"] == "source_unavailable"
+    assert legacy["net_external_flow"]["amount"] == "100.12345678"
+
+
+def test_repeated_id_never_omits_flows_under_legacy_activity_code_normalization():
+    from application.ibkr_flex_ledger import build_flex_ledger_diagnostic
+
+    for rows in (row(activityCode="dep") * 2, row(activityCode="DEP ") * 2,
+                 row() * 2 + row(activityCode="dep", transactionID="other")):
+        source = ledger(rows)
+        assert source["net_external_flow"] is None
+        assert {"code": "duplicate_external_flow_identity_unverified"} in source["warnings"]
+        assert "duplicate_external_flow_identity_unverified" in build_flex_ledger_diagnostic(source)["warnings"]
+    assert ledger(row(activityCode="dep"))["net_external_flow"]["amount"] == "100.12345678"
+
+
 class FlowOpener:
     def __init__(self, patch=None, error=None):
         self.patch, self.error, self.calls = patch or {}, error, []
