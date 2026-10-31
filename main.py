@@ -1576,6 +1576,127 @@ def attach_signal_data_provenance(report) -> None:
         return
 
 
+def _finalize_request_cycle_report(
+    *,
+    cycle_result,
+    execution_summary: dict,
+    report: dict,
+    log_context,
+    notification_delivery_events: list[dict],
+    execution_window: str,
+    dry_run_only_override: bool | None,
+) -> None:
+    """Attach cycle diagnostics and receipts, then finalize the request report."""
+    reconciliation_record = dict(cycle_result.reconciliation_record or {})
+    signal_metadata = dict(cycle_result.signal_metadata or {})
+    signal_snapshot = dict(signal_metadata.get("signal_snapshot") or {})
+    if not signal_snapshot:
+        signal_snapshot = build_signal_snapshot(
+            platform="ibkr",
+            strategy_profile=signal_metadata.get("strategy_profile") or STRATEGY_PROFILE,
+            metadata=signal_metadata,
+            target_weights=cycle_result.target_weights,
+        )
+    if execution_summary.get("price_source_mode") or reconciliation_record.get("price_source_mode"):
+        signal_snapshot["latest_price_source"] = (
+            execution_summary.get("price_source_mode")
+            or reconciliation_record.get("price_source_mode")
+        )
+    fallback_used = bool(
+        execution_summary.get("snapshot_price_fallback_used")
+        or reconciliation_record.get("snapshot_price_fallback_used")
+    )
+    if fallback_used:
+        signal_snapshot["data_freshness_warning"] = "snapshot_price_fallback_used"
+    has_signal_snapshot = _has_signal_snapshot_details(signal_snapshot)
+    if has_signal_snapshot:
+        log_runtime_event(
+            log_context,
+            "strategy_signal_snapshot",
+            message="Strategy signal snapshot",
+            execution_window=execution_window,
+            **signal_snapshot,
+        )
+    report_summary = _build_cycle_report_summary(
+        cycle_result,
+        execution_summary,
+        reconciliation_record,
+        dry_run=bool(report.get("dry_run")),
+    )
+    notification_delivery_log = _build_notification_delivery_log_for_report(
+        platform="interactive_brokers",
+        strategy_profile=STRATEGY_PROFILE,
+        run_id=str(report.get("run_id") or ""),
+        dry_run=bool(report.get("dry_run")),
+        orders_previewed_count=report_summary.get("orders_previewed_count"),
+        delivery_events=notification_delivery_events,
+    )
+    if notification_delivery_log:
+        report_summary["notification_delivery_log"] = notification_delivery_log
+    notification_delivery_summary = _build_notification_delivery_summary(
+        notification_delivery_events
+    )
+    if notification_delivery_summary:
+        report_summary["notification_delivery_summary"] = notification_delivery_summary
+    execution_status = str(report_summary.get("execution_status") or "").strip().lower()
+    execution_failed = _is_execution_failure(
+        execution_status,
+        report_summary.get("no_op_reason"),
+    )
+    if execution_failed:
+        append_runtime_report_error(
+            report,
+            stage="strategy_execution",
+            message=(
+                f"Strategy execution status is {execution_status}; "
+                f"reason={report_summary.get('no_op_reason') or 'unspecified'}"
+            ),
+            error_type="StrategyExecutionBlocked",
+            failure_category="strategy_execution_blocked",
+        )
+    report_diagnostics = {
+        "result": cycle_result.result,
+        "price_source_mode": execution_summary.get("price_source_mode") or reconciliation_record.get("price_source_mode"),
+        "snapshot_price_fallback_symbols": execution_summary.get("snapshot_price_fallback_symbols")
+        or reconciliation_record.get("snapshot_price_fallback_symbols")
+        or [],
+        **({"signal_snapshot": signal_snapshot} if has_signal_snapshot else {}),
+    }
+    if execution_failed:
+        report_diagnostics["failure_category"] = "strategy_execution_blocked"
+    attach_cycle_execution_receipt(
+        report,
+        execution_summary,
+        reconciliation_record,
+        execution_failed=execution_failed,
+    )
+    finalize_runtime_report(
+        report,
+        status="error" if execution_failed else "ok",
+        summary=report_summary,
+        diagnostics=report_diagnostics,
+        artifacts={
+            "reconciliation_record_path": cycle_result.reconciliation_record_path,
+        },
+    )
+    log_runtime_event(
+        log_context,
+        "strategy_cycle_blocked" if execution_failed else "strategy_cycle_completed",
+        message=(
+            "Strategy execution blocked"
+            if execution_failed
+            else "Strategy dry-run completed"
+            if dry_run_only_override
+            else "Strategy execution completed"
+        ),
+        severity="ERROR" if execution_failed else "INFO",
+        execution_window=execution_window,
+        result=cycle_result.result,
+        execution_status=report_summary.get("execution_status"),
+        no_op_reason=report_summary.get("no_op_reason"),
+    )
+
+
 def _handle_request(
     *,
     dry_run_only_override: bool | None = None,
@@ -1719,113 +1840,14 @@ def _handle_request(
         from application.reconciliation_service import account_brake_submission_status
         if account_brake_submission_status(getattr(cycle_result, "signal_metadata", None)) is None:
             capture_cycle_result_evidence(execution_summary, dry_run=bool(report.get("dry_run")))
-        reconciliation_record = dict(cycle_result.reconciliation_record or {})
-        signal_metadata = dict(cycle_result.signal_metadata or {})
-        signal_snapshot = dict(signal_metadata.get("signal_snapshot") or {})
-        if not signal_snapshot:
-            signal_snapshot = build_signal_snapshot(
-                platform="ibkr",
-                strategy_profile=signal_metadata.get("strategy_profile") or STRATEGY_PROFILE,
-                metadata=signal_metadata,
-                target_weights=cycle_result.target_weights,
-            )
-        if execution_summary.get("price_source_mode") or reconciliation_record.get("price_source_mode"):
-            signal_snapshot["latest_price_source"] = (
-                execution_summary.get("price_source_mode")
-                or reconciliation_record.get("price_source_mode")
-            )
-        fallback_used = bool(
-            execution_summary.get("snapshot_price_fallback_used")
-            or reconciliation_record.get("snapshot_price_fallback_used")
-        )
-        if fallback_used:
-            signal_snapshot["data_freshness_warning"] = "snapshot_price_fallback_used"
-        has_signal_snapshot = _has_signal_snapshot_details(signal_snapshot)
-        if has_signal_snapshot:
-            log_runtime_event(
-                log_context,
-                "strategy_signal_snapshot",
-                message="Strategy signal snapshot",
-                execution_window=execution_window,
-                **signal_snapshot,
-            )
-        report_summary = _build_cycle_report_summary(
-            cycle_result,
-            execution_summary,
-            reconciliation_record,
-            dry_run=bool(report.get("dry_run")),
-        )
-        notification_delivery_log = _build_notification_delivery_log_for_report(
-            platform="interactive_brokers",
-            strategy_profile=STRATEGY_PROFILE,
-            run_id=str(report.get("run_id") or ""),
-            dry_run=bool(report.get("dry_run")),
-            orders_previewed_count=report_summary.get("orders_previewed_count"),
-            delivery_events=notification_delivery_events,
-        )
-        if notification_delivery_log:
-            report_summary["notification_delivery_log"] = notification_delivery_log
-        notification_delivery_summary = _build_notification_delivery_summary(
-            notification_delivery_events
-        )
-        if notification_delivery_summary:
-            report_summary["notification_delivery_summary"] = notification_delivery_summary
-        execution_status = str(report_summary.get("execution_status") or "").strip().lower()
-        execution_failed = _is_execution_failure(
-            execution_status,
-            report_summary.get("no_op_reason"),
-        )
-        if execution_failed:
-            append_runtime_report_error(
-                report,
-                stage="strategy_execution",
-                message=(
-                    f"Strategy execution status is {execution_status}; "
-                    f"reason={report_summary.get('no_op_reason') or 'unspecified'}"
-                ),
-                error_type="StrategyExecutionBlocked",
-                failure_category="strategy_execution_blocked",
-            )
-        report_diagnostics = {
-            "result": cycle_result.result,
-            "price_source_mode": execution_summary.get("price_source_mode") or reconciliation_record.get("price_source_mode"),
-            "snapshot_price_fallback_symbols": execution_summary.get("snapshot_price_fallback_symbols")
-            or reconciliation_record.get("snapshot_price_fallback_symbols")
-            or [],
-            **({"signal_snapshot": signal_snapshot} if has_signal_snapshot else {}),
-        }
-        if execution_failed:
-            report_diagnostics["failure_category"] = "strategy_execution_blocked"
-        attach_cycle_execution_receipt(
-            report,
-            execution_summary,
-            reconciliation_record,
-            execution_failed=execution_failed,
-        )
-        finalize_runtime_report(
-            report,
-            status="error" if execution_failed else "ok",
-            summary=report_summary,
-            diagnostics=report_diagnostics,
-            artifacts={
-                "reconciliation_record_path": cycle_result.reconciliation_record_path,
-            },
-        )
-        log_runtime_event(
-            log_context,
-            "strategy_cycle_blocked" if execution_failed else "strategy_cycle_completed",
-            message=(
-                "Strategy execution blocked"
-                if execution_failed
-                else "Strategy dry-run completed"
-                if dry_run_only_override
-                else "Strategy execution completed"
-            ),
-            severity="ERROR" if execution_failed else "INFO",
+        _finalize_request_cycle_report(
+            cycle_result=cycle_result,
+            execution_summary=execution_summary,
+            report=report,
+            log_context=log_context,
+            notification_delivery_events=notification_delivery_events,
             execution_window=execution_window,
-            result=cycle_result.result,
-            execution_status=report_summary.get("execution_status"),
-            no_op_reason=report_summary.get("no_op_reason"),
+            dry_run_only_override=dry_run_only_override,
         )
         return (response_body if dry_run_only_override else cycle_result.result), 200
     except RuntimeDeadlineExceeded as exc:
