@@ -705,7 +705,7 @@ def _execute_option_order_intents(
     order_account_id: str | None,
     buying_power: float,
 ) -> float:
-    if not option_intents:
+    if not option_intents or execution_summary.get("submission_halted") or execution_summary.get("outcome_unknown"):
         return buying_power
     _record_unsupported_option_intents(execution_summary, option_intents)
     for intent in option_intents:
@@ -777,7 +777,6 @@ def _execute_option_order_intents(
                 account_id=order_account_id,
             )
         report = submit_order_intent(ib, order_intent)
-        _, status_msg = check_order_submitted(report, translator=translator)
         status = str(getattr(report, "status", "") or "")
         order_payload = {
             **payload,
@@ -790,6 +789,10 @@ def _execute_option_order_intents(
             status=status,
             option_order=True,
         )
+        if outcome == "unknown":
+            trade_logs.append(translator("failed", reason="broker_order_outcome_unknown"))
+            return buying_power
+        _, status_msg = check_order_submitted(report, translator=translator)
         trade_logs.append(f"option {action} {symbol} {format_quantity(quantity)} @{limit_price:.2f} {status_msg}")
         if outcome != "failed" and action.startswith("buy"):
             buying_power -= estimated_notional
@@ -2271,6 +2274,8 @@ def execute_rebalance(
         order_account_id=order_account_id,
         buying_power=buying_power,
     )
+    if execution_summary.get("outcome_unknown"):
+        return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
 
     has_terminal_order = bool(
         execution_summary["orders_submitted"]

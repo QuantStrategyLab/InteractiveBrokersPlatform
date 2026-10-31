@@ -51,3 +51,15 @@ transport exceptions retain the original reservation and prevent another
 submission after session reconstruction. Tests exercise the platform submit
 wrapper with synthetic broker responses; they do not establish live broker
 reconciliation or simultaneous TQQQ and SOXL operation in a shared account.
+
+The option submission loop uses the same unknown-outcome stop as the equity
+loop. An unrecognized or missing report is recorded against the original
+option intent before notification formatting, and no later option intent is
+submitted. A previously halted cycle cannot enter the option loop. The final
+summary preserves `broker_order_outcome_unknown`; it does not recast uncertainty
+as an ordinary pending acknowledgement or estimate proceeds from that report.
+The current rebalance entry point rejects every executable option plan because
+final RiskEngine order limits are unavailable. Combined equity and option
+buying-power use is therefore not accepted by this entry point. The regression
+tests exercise the offline loop and its durable journal; they do not change
+that admission rule or enable option trading.
