@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 from quant_platform_kit.notifications.digest_candidates import project_reports
 
 _SAFE = re.compile(r"[a-z0-9][a-z0-9_-]{0,40}\Z")
+_SAFE_REASON = re.compile(r"candidate_[a-z0-9_]{0,60}\Z")
 
 
 def _read(args):
@@ -136,6 +137,11 @@ def main():
     try:
         print(json.dumps(emit(os.environ), sort_keys=True))
         return 0
-    except Exception:
-        print(json.dumps({"status": "blocked", "uploaded": False, "reason": "candidate_projection_failed"}))
+    except Exception as error:
+        # Surface our own fixed reason tokens; anything else stays generic so a
+        # private exception message can never reach the monitor log.
+        reason = str(error) if isinstance(error, ValueError) else ""
+        if not _SAFE_REASON.fullmatch(reason):
+            reason = "candidate_projection_failed"
+        print(json.dumps({"status": "blocked", "uploaded": False, "reason": reason}))
         return 1

@@ -661,6 +661,10 @@ def test_publisher_reports_unchanged_observation_without_claiming_refresh(monkey
     [
         (401, "account_facts_sync_token_invalid", "account_facts_sync_token_invalid"),
         (409, "account_facts_bindings_missing", "account_facts_bindings_missing"),
+        (409, "account_facts_binding_unmatched", "account_facts_binding_unmatched"),
+        (409, "duplicate_account_facts_binding", "duplicate_account_facts_binding"),
+        (409, "account_facts_platform_unsupported", "account_facts_platform_unsupported"),
+        (409, "external_flow_disabled", "external_flow_disabled"),
         (503, "account_facts_store_unavailable", "account_facts_store_unavailable"),
         (409, "UNAPPROVED_ERROR_SENTINEL", "unknown"),
     ],
