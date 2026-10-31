@@ -53,6 +53,8 @@ gh workflow run account-facts-identity-diagnose.yml \
 
 `event_layouts` 只按已知 Service schema 投影固定布尔值，区分 request.service wrapper、direct spec/template、明确 revision 及与当前 serving 的 revision/digest 等式；不输出任意 key 或原字段值。该定位不扩大原查询，不改变当前 wrapper 解析或准入，不把未关联 service 事件解释为没有部署。
 
+`native_operations` 仅在同一已限定窗口和 cap 内使用 Google 原生 `operation.id` 与 `producer` 的非空、完全相等组合。按 [Google LogEntryOperation 定义](https://docs.cloud.google.com/logging/docs/reference/v2/rest/v2/LogEntry#LogEntryOperation)，该组合标识同一操作，first/last 标识首末事件。仅同 service、同固定方法、唯一 first 请求和唯一 last 明确同 serving 响应时投影关系；缺字段、歧义、重复或跨 scope 保持 unknown，不跨窗口查询。原 ID/producer 不导出、不生成关联 hash。输出仍仅合法 code/run 声明、镜像等式与 nullable 首末 RPC 状态；状态缺失不补 0，关系不代表成功创建、风险批准或原 source 准入通过，原退出逻辑不变。
+
 ## 精确 registry provenance 结构观察
 
 同 workflow 提供默认关闭的 `registry_source_metadata_only`，与 `serving_source_metadata_only` 互斥；两个同时为 true 时整个 job 不运行。默认调用和原 report 输出保持，新模式仍使用原四 slot、受保护配置预检、main 与既有 WIF。通过唯一100% serving、exact revision、immutable_image 和四物理身份等式后，只对同次精确 digest 执行一次 `gcloud artifacts docker images describe --show-provenance --show-build-details --format=json`，最后确认 serving 未变。没有旧 job-log、image/build/service list、层下载、Docker、业务或生产写入；新 step 不注入 GitHub token，不增加权限。
