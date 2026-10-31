@@ -106,7 +106,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "$IBKR_INSPECT_SERVING_DEPLOYMENT_AUDIT" = true ] && [ "${{ inputs.serving_source_metadata_only }}" != true ]; then
+          if [ "${IBKR_INSPECT_SERVING_DEPLOYMENT_AUDIT:-false}" = true ] && [ "${{ inputs.serving_source_metadata_only }}" != true ]; then
             echo "status=blocked reason=deployment_audit_requires_serving_source_mode"
             exit 2
           fi
