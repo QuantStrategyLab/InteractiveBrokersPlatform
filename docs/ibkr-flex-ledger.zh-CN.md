@@ -285,6 +285,13 @@ ACK 恰好包含 `ok/stored/unchanged/account_key/period/currency/method`，布�
 `Trade.ibCommission`，避免同一笔费用被重复计入。`tradeCommission` 只取交易行上
 的佣金字段，与费用活动码不相交。
 
+当外部流行重复使用同一原生交易身份时，旧 `net_external_flow` 合计复用发布投影的
+账户、期间、币种和身份校验；完全重复的身份只计一次，冲突或不可验证时合计为 `None`。
+如果旧解析器按大小写或空白归一化识别的外部流不能被该投影覆盖，也不生成合计；
+这种情况及身份不可验证使用固定警告 `duplicate_external_flow_identity_unverified`。
+旧 `external_flows` 仍保留原始行。没有重复身份时沿用旧合计合同；它不能证明身份唯一
+或查询覆盖完整。任何合计都不代表购买力。
+
 ## 期间与收益
 
 期间只有 `fromDate`、`toDate` 都存在且 `from <= to` 时才算有效有序区间。原生 TWR

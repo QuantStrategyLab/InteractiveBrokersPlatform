@@ -45,6 +45,7 @@ _DIAGNOSTIC_CODES = frozenset({
     "native_twr_period_mismatch",
     "account_base_currency_not_usd",
     "invalid_external_flow",
+    "duplicate_external_flow_identity_unverified",
     "invalid_fee_line",
     "invalid_trade_commission",
     "external_flows_mixed_currency",
@@ -452,6 +453,9 @@ def build_flex_ledger(
     fee_lines: list[dict[str, Any]] = []
     flows_incomplete = False
     fees_incomplete = False
+    flow_ids: set[str] = set()
+    duplicate_flow_id = False
+    unprojected_legacy_flow = False
 
     funds = statement.find("StmtFunds")
     lines = funds.findall("StatementOfFundsLine") if funds is not None else []
@@ -460,6 +464,11 @@ def build_flex_ledger(
         currency = (line.get("currency") or "").strip().upper() or None
         entry_date = _iso_date(line.get("date")) or _iso_date(line.get("reportDate"))
         if code in _EXTERNAL_FLOW_CODES:
+            unprojected_legacy_flow |= line.get("activityCode") != code
+            native_id = line.get("transactionID")
+            if native_id:
+                duplicate_flow_id |= native_id in flow_ids
+                flow_ids.add(native_id)
             amount = _decimal_text(line.get("amount"))
             if amount is None or currency is None:
                 flows_incomplete = True
@@ -500,10 +509,23 @@ def build_flex_ledger(
                     "amount": commission,
                 })
 
+    flow_facts = project_flex_external_flows(statement, period=period)
     net_external_flow = None
     if funds is not None and not flows_incomplete:
-        net_external_flow = _single_currency_total(external_flows, fallback_currency=base_currency)
-        if net_external_flow is None:
+        # Only repeated native IDs require the stricter published projection;
+        # unique or absent IDs retain the existing legacy aggregate contract.
+        if duplicate_flow_id:
+            if not unprojected_legacy_flow and flow_facts["status"] == "available":
+                total_rows = flow_facts["records"]
+            else:
+                flows_incomplete = True
+                warnings.append({"code": "duplicate_external_flow_identity_unverified"})
+                total_rows = None
+        else:
+            total_rows = external_flows
+        if total_rows is not None:
+            net_external_flow = _single_currency_total(total_rows, fallback_currency=base_currency)
+        if total_rows is not None and net_external_flow is None:
             warnings.append({"code": "external_flows_mixed_currency"})
     fee_total = None
     if funds is not None and not fees_incomplete:
@@ -624,7 +646,7 @@ def build_flex_ledger(
         "period": period,
         "ending_valuation": ending_valuation,
         "external_flows": external_flows,
-        "external_flow_facts": project_flex_external_flows(statement, period=period),
+        "external_flow_facts": flow_facts,
         "net_external_flow": net_external_flow,
         "fee_lines": fee_lines,
         "fee_total": fee_total,
