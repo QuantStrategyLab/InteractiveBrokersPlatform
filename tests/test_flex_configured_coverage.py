@@ -192,7 +192,8 @@ def test_workflow_mode_is_opt_in_exclusive_and_reuses_existing_read_lane():
     assert 'selected_modes' in workflow and '--configured-account-coverage-read-once' in workflow
     assert workflow.count('inputs.configured_account_coverage_only') == 2
     assert 'group: ibkr-flex-period-return' in workflow
-    for unsafe in ('upload-artifact', 'SYNC_TOKEN', 'schedule:', 'id-token:', 'gcloud'):
+    assert "success() && inputs.export_amounts && steps.read.outcome == 'success'" in workflow
+    for unsafe in ('SYNC_TOKEN', 'schedule:', 'id-token:', 'gcloud'):
         assert unsafe not in workflow
 
 

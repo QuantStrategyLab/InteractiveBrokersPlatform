@@ -1,4 +1,4 @@
-name: Diagnose IBKR Flex Without Publishing
+name: Diagnose or Export Redacted IBKR Flex
 
 on:
   workflow_dispatch:
@@ -25,6 +25,11 @@ on:
         default: false
       execution_source_only:
         description: Inspect native execution identity and fee conflicts in an explicit max-31-day window; never publish
+        type: boolean
+        required: false
+        default: false
+      export_amounts:
+        description: Export redacted amounts as a short-lived artifact; requires an explicit max-31-day expected period
         type: boolean
         required: false
         default: false
@@ -79,12 +84,16 @@ jobs:
       - name: Validate the exact target and optional period without requests
         run: |
           selected_modes=0
-          for enabled in "$CASH_SOURCE_ONLY" "$CASHFLOW_SOURCE_ONLY" "$CONFIGURED_ACCOUNT_COVERAGE_ONLY" "$EXECUTION_SOURCE_ONLY"; do
+          for enabled in "$CASH_SOURCE_ONLY" "$CASHFLOW_SOURCE_ONLY" "$CONFIGURED_ACCOUNT_COVERAGE_ONLY" "$EXECUTION_SOURCE_ONLY" "$EXPORT_AMOUNTS"; do
             if [ "$enabled" = "true" ]; then selected_modes=$((selected_modes + 1)); fi
           done
           if [ "$selected_modes" -gt 1 ]; then
             echo "conflicting_diagnostic_modes" >&2
             exit 2
+          fi
+          if [ "$EXPORT_AMOUNTS" = "true" ]; then
+            uv run --no-sync python -m scripts.export_ibkr_flex_amounts --preflight
+            exit 0
           fi
           preflight_args=(--preflight)
           if [ "$CONFIGURED_ACCOUNT_COVERAGE_ONLY" = "true" ]; then
@@ -98,14 +107,18 @@ jobs:
           CASH_SOURCE_ONLY: ${{ inputs.cash_source_only }}
           CASHFLOW_SOURCE_ONLY: ${{ inputs.cashflow_source_only }}
           EXECUTION_SOURCE_ONLY: ${{ inputs.execution_source_only }}
+          EXPORT_AMOUNTS: ${{ inputs.export_amounts }}
           IBKR_FLEX_TOKEN: ${{ secrets.IBKR_FLEX_TOKEN }}
           IBKR_FLEX_QUERY_ID: ${{ secrets.IBKR_FLEX_QUERY_ID }}
           IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON: ${{ secrets.IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON }}
           IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON }}
           IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}
       - name: Read the original Flex request only and print fixed status
+        id: read
         run: |
-          if [ "$CONFIGURED_ACCOUNT_COVERAGE_ONLY" = "true" ]; then
+          if [ "$EXPORT_AMOUNTS" = "true" ]; then
+            uv run --no-sync python -m scripts.export_ibkr_flex_amounts --export-once
+          elif [ "$CONFIGURED_ACCOUNT_COVERAGE_ONLY" = "true" ]; then
             uv run --no-sync python -m scripts.diagnose_ibkr_flex_ledger --configured-account-coverage-read-once
           elif [ "$EXECUTION_SOURCE_ONLY" = "true" ]; then
             uv run --no-sync python -m scripts.diagnose_ibkr_flex_ledger --execution-read-once
@@ -121,9 +134,24 @@ jobs:
           CASH_SOURCE_ONLY: ${{ inputs.cash_source_only }}
           CASHFLOW_SOURCE_ONLY: ${{ inputs.cashflow_source_only }}
           EXECUTION_SOURCE_ONLY: ${{ inputs.execution_source_only }}
+          EXPORT_AMOUNTS: ${{ inputs.export_amounts }}
           IBKR_FLEX_DIAGNOSTIC_ENABLED: "true"
+          IBKR_FLEX_AMOUNT_EXPORT_ENABLED: ${{ inputs.export_amounts }}
           IBKR_FLEX_TOKEN: ${{ secrets.IBKR_FLEX_TOKEN }}
           IBKR_FLEX_QUERY_ID: ${{ secrets.IBKR_FLEX_QUERY_ID }}
           IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON: ${{ secrets.IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON }}
           IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON }}
           IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}
+      - name: Upload only the validated redacted amount projection
+        if: ${{ success() && inputs.export_amounts && steps.read.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ibkr-flex-redacted-amounts-${{ github.run_id }}
+          path: ${{ runner.temp }}/ibkr-flex-redacted-amounts.json
+          if-no-files-found: error
+          retention-days: 1
+          include-hidden-files: false
+          overwrite: false
+      - name: Remove the temporary redacted amount projection
+        if: ${{ always() && inputs.export_amounts }}
+        run: rm -f -- "$RUNNER_TEMP/ibkr-flex-redacted-amounts.json"

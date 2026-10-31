@@ -220,5 +220,11 @@ def test_manual_workflow_has_only_exact_scope_diagnostic_and_no_publication():
             "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", "IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON"):
         assert text.count("${{ secrets." + secret + " }}") == 2
     for forbidden in ("publish_ibkr_flex_period_return", "SYNC_TOKEN", "PERIOD_RETURN_", "google-github-actions/auth",
-            "actions/upload-artifact", "IBKR_FLEX_ALLOWED"):
+            "IBKR_FLEX_ALLOWED"):
         assert forbidden not in text
+
+
+def test_legacy_diagnostic_modes_do_not_upload_amounts():
+    text = Path('.github/workflows/diagnose-ibkr-flex-readonly.yml').read_text()
+    assert "success() && inputs.export_amounts && steps.read.outcome == 'success'" in text
+    assert '"$EXECUTION_SOURCE_ONLY" "$EXPORT_AMOUNTS"; do' in text
