@@ -485,6 +485,34 @@ def _load_target_entries(
     return [{"service": service} for service in services], {}, False
 
 
+def _covers_market_weekdays(field: str) -> bool:
+    """True when a day-of-week cron field fires on every Mon-Fri."""
+    values: set[int] = set()
+    for part in field.split(","):
+        part = part.strip()
+        step = 1
+        if "/" in part:
+            part, _, raw_step = part.partition("/")
+            if not raw_step.isdigit() or int(raw_step) < 1:
+                return False
+            step = int(raw_step)
+        if part == "*":
+            start, end = 0, 6
+        elif "-" in part:
+            raw_start, _, raw_end = part.partition("-")
+            if not raw_start.isdigit() or not raw_end.isdigit():
+                return False
+            start, end = int(raw_start), int(raw_end)
+        elif part.isdigit():
+            start = end = int(part)
+        else:
+            return False
+        if not 0 <= start <= 7 or not 0 <= end <= 7 or start > end:
+            return False
+        values.update(range(start, end + 1, step))
+    return {1, 2, 3, 4, 5} <= values
+
+
 def _build_target_plan(
     *,
     target: Mapping[str, object],
@@ -703,11 +731,11 @@ def _build_target_plan(
             or str(env_values.get("IBKR_FORCE_RUN") or "").lower() == "true"
             or len(precheck_fields) != 5
             or precheck_fields[2] != "*"
-            or precheck_fields[4] != "*"
+            or not _covers_market_weekdays(precheck_fields[4])
         ):
             raise ValueError(
                 "daily drill requires disabled RECONCILE_ONLY runtime, "
-                "force_run=false, and an every-day precheck schedule"
+                "force_run=false, and a precheck schedule covering market weekdays"
             )
 
     return {
