@@ -63,3 +63,92 @@ final RiskEngine order limits are unavailable. Combined equity and option
 buying-power use is therefore not accepted by this entry point. The regression
 tests exercise the offline loop and its durable journal; they do not change
 that admission rule or enable option trading.
+
+## Captured source-field evidence
+
+`scripts.historical_source_evidence.validate_source_evidence(document)` checks
+already captured, sanitized observations offline. It imports no application or
+runtime package, reads no files, and performs no network or broker operation.
+The runtime does not call this function. The contract is separate from state
+coordination, historical replay and account-journal admission.
+
+The document schema is `qsl.ibkr_source_evidence.v1`. Each source envelope keeps
+the original producer field names in `payload`; `normalized` contains the
+intake projection. A normalized field cannot supply a missing native source
+field. `evidence_kind` must distinguish `synthetic` from `historical` material.
+Neither value authenticates the observations.
+
+| Input | Required evidence and local checks |
+| --- | --- |
+| `source` | A sanitized `runtime_report.v1` payload, opaque `source_id`, capture time, and a declared immutable locator consisting of `object_alias`, `version` and `raw_bytes_sha256`. |
+| Source digests | `digest_domain` is `sanitized_json`. `payload_sha256` is recomputed over sorted, compact, ASCII-escaped JSON with non-finite numbers forbidden. The original byte digest remains a separate declaration; the function cannot recompute it from sanitized JSON. |
+| `source.producer` | Forty-character platform and QPK source revisions plus the reviewed producer file paths and SHA-256 digests embedded in the validator. An absent or unrecognized source version is blocked. Matching file digests do not establish which version was deployed. |
+| `source.sanitization` | A `qsl.ibkr_source_aliases.v1` namespace and explicit substitutions for the native run ID and three account-selector observations. Each substitution identifies its source pointer, stable alias and original-value digest. The supplied mapping must be internally one-to-one. |
+| `account_binding` | A separately located, digest-bound `qsl.sanitized_account_binding.v1` observation, referencing the report ID and sanitized digest. It declares the account domain and an effective interval with an exclusive end. This is an intake schema, not a native runtime-report field. |
+| `normalized` | The report and binding digests, profile, run alias, logical account scope, deployment revision, complete release identity, clocks, execution lane, record kind and unchanged execution receipt. `field_sources` must match the fixed source pointers; the document also carries `normalized_sha256`. |
+| Optional `daily_projection` | A separately located source from the reviewed daily producer, with a source reference in `normalized.daily_projection`. Coverage and individual fills remain `UNKNOWN`. |
+
+Physical account identity has five dimensions: `platform`,
+`execution_environment`, `server`, `lifecycle_id` and `account_alias`. The alias
+namespace includes the broker, physical execution environment, server and
+lifecycle. The account selector, reporting account list and
+`summary.account_facts.account_ids` must each contain the same single alias.
+The account snapshot must identify `ibkr_account_snapshot.v1`. A logical
+`account_scope` is insufficient, and a Gateway host is not a physical-server
+binding. Accounts at other brokers, on different servers or in different
+environments remain separate. Matching aliases and a supplied effective interval
+do not authenticate a real account or establish shared-account acceptance.
+
+The reviewed `RuntimeTarget` producer retains a legacy `execution_mode` derived
+from `dry_run_only`: it uses `paper` for a local dry run and `live` otherwise.
+That label does not establish the physical broker environment. This contract
+requires the separate `execution_environment` field, the reported Gateway mode
+and the declared account domain. A broker-paper observation can therefore retain
+the native receipt's legacy `live` label while its physical environment is
+`paper`. Missing explicit environment evidence is blocked. `dry_run` remains a
+separate execution lane; maintenance observations, diagnostics and paper-command
+reconciliation remain separate record kinds. A generic runtime report does not
+by itself attest that a strategy execution occurred.
+
+The whole-second decision clock is established before report construction and
+may precede the report start by an initialization delay. The reviewed producer
+uses the report start as the loaded-release timestamp. Checks retain that order,
+the start-to-finish interval, account-observation bounds and capture-time upper
+bounds. Receipt clocks retain their native whole-second precision. A terminal
+fallback receipt can be created after report finalization; its clock association
+remains `BLOCKED` because native receipt fields do not identify that path.
+Capture time is not evidence that a plugin or other input was published before
+the decision.
+
+`qsl_execution_receipt.v1` has no native run ID, order list or individual fill
+records. The validator preserves its original nine-field shape, verifies its
+canonical receipt digest and compares its profile, strategy revision and legacy
+mode with the containing report. A parent-report reference does not add a run
+ID to the receipt. Acknowledgement and filled-order outcomes cannot become
+individual fills, and a known unknown cycle cannot become an acknowledged
+receipt. Normalized `individual_fills` and `pending_orders` must remain
+`UNKNOWN`; omitted arrays cannot become zero activity.
+
+The current daily projection retains `coverage_unconfirmed`, an incomplete
+target record and `fills = {source: "not_connected", records: [], count: null}`.
+Its twenty-report bound does not establish archive coverage. Its opaque run IDs
+cannot be recomputed from a sanitized report's run alias; association with the
+original run remains unverified. The validator neither supplies missing runs nor
+creates original state observations. The runtime report does not retain the
+complete `input.state` and state-transition sequence needed for cross-run state
+continuity, and SOXL has no state adapter in this contract.
+
+The result always has `status` equal to `BLOCKED` or `FAIL`.
+`local_consistency` is `CONSISTENT` only when the supplied observations match
+this narrow contract; missing or unsupported evidence is `BLOCKED`, and checked
+contradictions are `FAIL`. Independent checks continue after an unsupported
+producer so that it cannot hide a separate observed conflict. Findings contain
+stable codes and scopes without source values.
+
+`execution_authorized`, `production_ready` and `historical_parity_established`
+are always false. Fixed gaps retain original-source and alias authentication,
+deployment provenance, source availability, complete history, plugin payloads,
+individual fills, pending account state, state continuity and decision-to-order
+causality. Caller fields such as `verified` or `complete` do not remove these
+gaps. Synthetic tests establish only these offline checks; they do not validate
+historical records, production behavior or a shared account.
