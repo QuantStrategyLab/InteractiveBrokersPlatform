@@ -93,7 +93,7 @@ jobs:
       DIGEST_OPAQUE_ACCOUNT_UID: ${{ secrets.DIGEST_OPAQUE_ACCOUNT_UID }}
       DIGEST_TARGET_ID: ${{ secrets.DIGEST_TARGET_ID }}
       DIGEST_TARGET_BINDINGS_JSON: ${{ secrets.DIGEST_TARGET_BINDINGS_JSON }}
-      DIGEST_CANDIDATES_GCS_URI: ${{ secrets.DIGEST_CANDIDATES_GCS_URI }}
+      DIGEST_CANDIDATES_GCS_URI: ${{ vars.DIGEST_CANDIDATES_GCS_URI }}
 
   account-facts-publisher:
     name: Publish latest fresh IBKR account-facts report
