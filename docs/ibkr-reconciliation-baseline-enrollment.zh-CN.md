@@ -170,8 +170,10 @@ IBKR、当前状态必须仍是 `RECONCILE_ONLY`、基线 ID 与目标指纹必�
 QPK 计划中的五项摘要、`no_order=true`、`execution_authority_granted=false` 和 CAS 标志
 必须完整存在。验证成功后，唯一允许的差异是
 `live_continuity.state: RECONCILE_ONLY -> ACTIVE_LKG`；五项摘要以
-`IBKR_RECONCILIATION_EXPECTED_DIGESTS_JSON` 注入运行环境。任何字段缺失、账本重放、目标
-漂移、服务不匹配或多服务误匹配都会失败关闭。
+`IBKR_RECONCILIATION_EXPECTED_DIGESTS_JSON` 注入运行环境。对匹配服务应用账本时，
+字段缺失、账本重放或目标漂移会失败关闭；多服务误匹配也会失败关闭。
+环境入口遇到指向其他服务的账本时保留当前目标且不注入该账本的摘要；直接调用应用函数时，
+服务不匹配会被拒绝。未应用账本不代表该目标已恢复或通过核验。
 
 工作流只有在仓库变量 `IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_URI` 显式非空时才会读取
 账本；URI 还必须落在专用私有桶的
