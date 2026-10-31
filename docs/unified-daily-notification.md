@@ -24,6 +24,12 @@ failures, risk, persistence and authentication errors retain immediate alerts.
 If a candidate cannot be persisted, the runtime sends an operational failure
 notice rather than the routine message and does not report the cycle deferred.
 
+The runtime guard uses a generic service label in operator messages and omits
+project identifiers. A failure-log count is an observation: its cause and the
+current state require verification. It does not establish a failed trade or a
+recovery. The workflow link remains available for investigation. Guard alert
+criteria, target selection and deduplication are unchanged.
+
 Shared notification modules are imported directly from the pinned QPK package
 (`2b04882058666ebc81d1650d93fa2105ec4ba3d8`): `display_names`,
 `digest_candidates`, `digest_routing` and `unified_contract`. The local
