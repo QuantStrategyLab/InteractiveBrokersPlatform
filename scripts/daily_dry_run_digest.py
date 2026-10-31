@@ -49,6 +49,37 @@ def _setting(name: str) -> str:
     return value
 
 
+MARKET_WEEKDAYS = frozenset({1, 2, 3, 4, 5})
+
+
+def covers_market_weekdays(field: str) -> bool:
+    """True when a day-of-week cron field fires on every Mon-Fri."""
+    values: set[int] = set()
+    for part in field.split(","):
+        part = part.strip()
+        step = 1
+        if "/" in part:
+            part, _, raw_step = part.partition("/")
+            if not raw_step.isdigit() or int(raw_step) < 1:
+                return False
+            step = int(raw_step)
+        if part == "*":
+            start, end = 0, 6
+        elif "-" in part:
+            raw_start, _, raw_end = part.partition("-")
+            if not raw_start.isdigit() or not raw_end.isdigit():
+                return False
+            start, end = int(raw_start), int(raw_end)
+        elif part.isdigit():
+            start = end = int(part)
+        else:
+            return False
+        if not 0 <= start <= 7 or not 0 <= end <= 7 or start > end:
+            return False
+        values.update(range(start, end + 1, step))
+    return MARKET_WEEKDAYS <= values
+
+
 def _targets() -> list[DrillTarget]:
     payload = json.loads(_setting("CLOUD_RUN_SERVICE_TARGETS_JSON"))
     entries = payload.get("targets") if isinstance(payload, dict) else payload
@@ -82,8 +113,12 @@ def _targets() -> list[DrillTarget]:
         ):
             raise ValueError("drill target identity is incomplete or invalid")
         fields = schedule.split()
-        if len(fields) != 5 or fields[2:] != ["*", "*", "*"]:
-            raise ValueError("drill precheck must run every day")
+        if len(fields) != 5 or fields[2] != "*" or fields[3] != "*":
+            raise ValueError("drill precheck must run every market weekday")
+        if not covers_market_weekdays(fields[4]):
+            raise ValueError("drill precheck must cover market weekdays (Mon-Fri)")
+        if not fields[0].isdigit() or not fields[1].isdigit():
+            raise ValueError("drill precheck time is invalid")
         minute, hour = int(fields[0]), int(fields[1])
         if not 0 <= minute <= 59 or not 0 <= hour <= 23:
             raise ValueError("drill precheck time is invalid")
