@@ -14,12 +14,40 @@ METHODS = {f"google.cloud.run.{version}.Services.{method}" for version, methods 
     ("v2", ("CreateService", "UpdateService"))) for method in methods}
 
 
+def _layout(payload: Mapping[str, Any], serving: str, image: str, full_revision: str) -> dict[str, Any]:
+    request = payload.get("request")
+    request = request if isinstance(request, Mapping) else {}
+    direct_spec = request.get("spec")
+    direct_template = request.get("template") or (direct_spec.get("template") if isinstance(direct_spec, Mapping) else None)
+    direct_template = direct_template if isinstance(direct_template, Mapping) else {}
+    direct_metadata = direct_template.get("metadata")
+    direct_metadata = direct_metadata if isinstance(direct_metadata, Mapping) else {}
+    names = (direct_template.get("revision"), direct_metadata.get("name"))
+    direct_spec = direct_template.get("spec")
+    containers = direct_template.get("containers") or (direct_spec.get("containers") if isinstance(direct_spec, Mapping) else None)
+    requested_image = containers[0].get("image") if isinstance(containers, list) and len(containers) == 1 and isinstance(containers[0], Mapping) else None
+    response = payload.get("response")
+    response = response if isinstance(response, Mapping) else {}
+    status = response.get("status")
+    response_names = (response.get("latestCreatedRevision"), status.get("latestCreatedRevisionName") if isinstance(status, Mapping) else None)
+    return {
+        "service_wrapper_present": isinstance(request.get("service"), Mapping),
+        "direct_spec_template_present": isinstance(request.get("spec"), Mapping) and isinstance(request["spec"].get("template"), Mapping),
+        "direct_template_present": isinstance(request.get("template"), Mapping),
+        "direct_explicit_revision_present": any(isinstance(n, str) and bool(n) for n in names),
+        "direct_revision_equals_serving": any(n in {serving, full_revision} for n in names if isinstance(n, str)),
+        "direct_pinned_image_equals_serving_digest": requested_image == image if isinstance(requested_image, str) and re.search(r"@sha256:[0-9a-f]{64}$", requested_image) else None,
+        "response_explicit_revision_present": any(isinstance(n, str) and bool(n) for n in response_names),
+        "response_revision_equals_serving": any(n in {serving, full_revision} for n in response_names if isinstance(n, str)),
+    }
+
+
 def observe(expected: Mapping[str, Any], revision: Mapping[str, Any], image: str,
             region: str, *, run: Any = None) -> dict[str, Any]:
     result = {"enabled": True, "reason": "audit_not_observed", "event_limit": 20,
         "window_seconds": 600, "window_basis": "serving_revision_creation_time",
         "audit_status": "unknown", "service_events_count": None,
-        "exact_revision_events_count": None, "events": [], "independent_release_approval": "unknown"}
+        "exact_revision_events_count": None, "events": [], "event_layouts": [], "independent_release_approval": "unknown"}
     try:
         metadata = revision["metadata"]
         serving = metadata["name"]
@@ -48,11 +76,14 @@ def observe(expected: Mapping[str, Any], revision: Mapping[str, Any], image: str
             result.update(reason="audit_read_unavailable", audit_status="truncated_or_invalid")
             return result
         observations = []
+        layouts = []
         for event in events:
             payload = event.get("protoPayload") if isinstance(event, Mapping) else None
             if not isinstance(payload, Mapping) or payload.get("resourceName") not in resources:
                 result.update(reason="audit_read_unavailable", audit_status="invalid_scope")
                 return result
+            layouts.append(_layout(payload, serving, image,
+                f"projects/{project}/locations/{region}/services/{service}/revisions/{serving}"))
             method = payload.get("methodName")
             request = payload.get("request")
             spec = request.get("service") if isinstance(request, Mapping) else None
@@ -83,7 +114,7 @@ def observe(expected: Mapping[str, Any], revision: Mapping[str, Any], image: str
                 "request_image_equals_serving_digest": requested_image == image if isinstance(requested_image, str) and re.search(r"@sha256:[0-9a-f]{64}$", requested_image) else None,
                 "principal_present": isinstance(payload.get("authenticationInfo"), Mapping) and bool(payload["authenticationInfo"].get("principalEmail"))})
         result.update(reason="deployment_audit_observed", audit_status="exact_revision_events" if observations else "no_exact_revision_event",
-                      service_events_count=len(events), exact_revision_events_count=len(observations), events=observations)
+                      service_events_count=len(events), exact_revision_events_count=len(observations), events=observations, event_layouts=layouts)
     except Exception:
         result.update(reason="audit_read_unavailable", audit_status="unavailable")
     return result

@@ -91,3 +91,29 @@ def test_empty_truncated_or_failed_audit_is_not_no_deployment_or_approval(rows, 
 def test_missing_original_creation_time_does_not_fall_back_to_current_clock():
     result, calls = run_case(revision={"metadata": {"name": REVISION}})
     assert calls == [] and result["audit_status"] == "unavailable"
+
+
+def test_direct_service_layout_is_observed_without_changing_existing_wrapper_parser():
+    row = event()
+    row["protoPayload"]["request"] = row["protoPayload"]["request"]["service"]
+    result, _ = run_case([row])
+    assert result["exact_revision_events_count"] == 0 and result["events"] == []
+    layout = result["event_layouts"][0]
+    assert layout["service_wrapper_present"] is False
+    assert layout["direct_spec_template_present"] is True
+    assert layout["direct_revision_equals_serving"] is True
+    assert layout["direct_pinned_image_equals_serving_digest"] is True
+    assert layout["response_explicit_revision_present"] is False
+    assert PRIVATE not in json.dumps(result) and IMAGE not in json.dumps(result)
+
+
+def test_wrapper_and_unlinked_direct_layout_remain_distinct_without_raw_fields():
+    linked, _ = run_case([event()])
+    assert linked["event_layouts"][0]["service_wrapper_present"] is True
+    assert linked["event_layouts"][0]["direct_spec_template_present"] is False
+    row = event()
+    row["protoPayload"]["request"] = {"spec": {"template": {"metadata": {"name": PRIVATE}}}}
+    unlinked, _ = run_case([row])
+    assert unlinked["event_layouts"][0]["direct_explicit_revision_present"] is True
+    assert unlinked["event_layouts"][0]["direct_revision_equals_serving"] is False
+    assert PRIVATE not in json.dumps(unlinked)
