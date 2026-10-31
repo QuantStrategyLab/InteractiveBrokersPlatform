@@ -198,7 +198,7 @@ def test_emit_projects_equity_from_report_when_target_matches(tmp_path, monkeypa
         },
     }
     report_path.write_text(json.dumps(body), encoding="utf-8")
-    prefix = "gs://ibkr-runtime-reports-test/prefix"
+    prefix = "gs://synthetic-runtime-reports/prefix"
     environ = {
         "IBKR_DIGEST_CANDIDATES_OUTPUT_PATH": str(out),
         "IBKR_DIGEST_ACCOUNT_FACTS_OUTPUT_PATH": str(facts_out),
@@ -234,10 +234,10 @@ def test_emit_skips_equity_when_report_projection_mismatches(tmp_path):
     environ = {
         "IBKR_DIGEST_CANDIDATES_OUTPUT_PATH": str(out),
         "IBKR_DIGEST_RUNTIME_REPORT_PATH": str(report_path),
-        "IBKR_DIGEST_SOURCE_REPORT_URI": "gs://ibkr-runtime-reports-test/prefix/x.json",
+        "IBKR_DIGEST_SOURCE_REPORT_URI": "gs://synthetic-runtime-reports/prefix/x.json",
         "IBKR_DIGEST_OPAQUE_ACCOUNT_UID": "acct_opaque_synthetic",
         "IBKR_DIGEST_TARGET_ID": "ibkr/synthetic-target",
-        "IBKR_ACCOUNT_FACTS_REPORT_PREFIX": "gs://ibkr-runtime-reports-test/prefix",
+        "IBKR_ACCOUNT_FACTS_REPORT_PREFIX": "gs://synthetic-runtime-reports/prefix",
         "IBKR_ACCOUNT_FACTS_PROJECT_ID": "interactivebrokersquant",
         "IBKR_ACCOUNT_FACTS_SERVICE_NAME": "missing-service",
         "IBKR_ACCOUNT_FACTS_RUNTIME_REVISION": "rev-x",
