@@ -49,6 +49,23 @@ def test_bad_source_stays_visible_or_rejects(mutation):
         project([source, deepcopy(source)] if mutation == "duplicate" else [source])
 
 
+@pytest.mark.parametrize(("error", "reason"), [
+    (ValueError("candidate_identity_missing"), "candidate_identity_missing"),
+    (ValueError("private account detail"), "candidate_projection_failed"),
+    (RuntimeError("private transport detail"), "candidate_projection_failed"),
+])
+def test_main_reports_allowlisted_reason_and_keeps_private_errors_generic(monkeypatch, capsys, error, reason):
+    import json
+    import notifications.digest_snapshot.digest_archive as archive
+    def failed(_env):
+        raise error
+    monkeypatch.setattr(archive, "emit", failed)
+    assert archive.main() == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "blocked", "uploaded": False, "reason": reason,
+    }
+
+
 def test_archive_default_off_and_disabled_target_never_read_or_upload():
     from notifications.digest_snapshot.digest_archive import emit
     def forbidden(*args): raise AssertionError("unexpected I/O")
