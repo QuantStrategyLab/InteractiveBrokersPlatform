@@ -287,8 +287,15 @@ ACK 恰好包含 `ok/stored/unchanged/account_key/period/currency/method`，布�
 
 ## 期间与收益
 
-期间只有 `fromDate`、`toDate` 都存在且 `from <= to` 时才算有效有序区间。仅在有效区间
-且 `ChangeInNAV.fromDate/toDate` 与报表期间完全一致时，才保留原生 TWR：
+期间只有 `fromDate`、`toDate` 都存在且 `from <= to` 时才算有效有序区间。原生 TWR
+要求一个账户信息行、一个无子节点的 NAV 行，以及与报表一致的原生日历日期。明确声明的
+账户、模型和币种不得与账户总计范围冲突；缺失的子行账户或币种沿用原合同，不单凭缺失
+判定冲突。多个或互相矛盾的来源不发布原生收益，缺失不当作零。
+
+此检查不能证明查询选择了全账户而非特定模型；缺少 model 也不是全账户认证。查询范围、
+账户绑定和来源完整性仍须独立核验。Change in NAV 字段的官方参考未列 currency，故这里
+不把该可选字段视为券商必填格式；BASE_SUMMARY 的含义也须按实际来源核验。
+
 `native_returns.twr` 是券商原生**百分比**文本，并标 `unit="percent"`（官方文档：
 [Change in NAV](https://www.ibkrguides.com/reportingreference/reportguide/changeinnav_fq.htm)，
 其 TWR 定义即 “measures the percent return”）。缺开始/结束或逆序时记

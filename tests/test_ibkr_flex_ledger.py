@@ -593,8 +593,8 @@ def test_nav_source_diagnostic_covers_public_components_without_private_values_o
     assert diagnostic["date_time_format_counts"] == {"fromDate": {"date_only": 1}, "toDate": {"date_only": 1}}
     assert diagnostic["coverage"] == diagnostic["nav_bridge"] == "not_evaluated"
     assert diagnostic["missing_fields_are_zero"] is False
-    # Even deliberately inconsistent components do not create or overwrite P/L.
-    assert ledger["native_returns"]["twr"] == "1.25" and "native_nav_change" not in ledger
+    # An explicitly model-scoped row without account information cannot produce account results.
+    assert ledger["native_returns"] == {} and "native_nav_change" not in ledger
     output = json.dumps(diagnostic)
     assert all(value not in output for value in (ACCOUNT, "76543.210987", "1.25", "EUR", "20260101", "20260131",
         "synthetic-private-alias", "synthetic-private-model", "synthetic-private-mode", "privateNavKey", "synthetic-private-value"))
@@ -666,19 +666,68 @@ def test_ledger_preserves_one_native_total_nav_row_without_calculating_or_forwar
 
 @pytest.mark.parametrize("field,value", [("currency", "USD"), ("currency", None), ("currency", " EUR"),
     ("model", None), ("model", "synthetic-model"), ("model", " "), ("accountId", None)])
-def test_unqualified_native_nav_metadata_does_not_hide_native_twr(field, value):
+def test_native_twr_rejects_explicit_nav_scope_conflicts(field, value):
     ledger = build_flex_ledger(_nav_amount_report(attributes={field: value}), expected_account_ids=(ACCOUNT,))
-    assert "native_nav_change" not in ledger and ledger["native_returns"]["twr"] == "1.25"
+    assert "native_nav_change" not in ledger
+    if (field, value) in {("currency", "USD"), ("currency", " EUR"),
+                          ("model", "synthetic-model"), ("model", " ")}:
+        assert ledger["native_returns"] == {}
+    else:
+        assert ledger["native_returns"]["twr"] == "1.25"
 
 
 @pytest.mark.parametrize("kwargs", [{"nav_copies": 2}, {"information_copies": 2}, {"child": "<PrivateChild/>"}])
-def test_ambiguous_nav_source_structure_omits_only_native_nav_metadata(kwargs):
+def test_ambiguous_nav_source_structure_blocks_native_outputs(kwargs):
     ledger = build_flex_ledger(_nav_amount_report(**kwargs), expected_account_ids=(ACCOUNT,))
-    assert "native_nav_change" not in ledger and ledger["native_returns"]["twr"] == "1.25"
+    assert "native_nav_change" not in ledger and ledger["native_returns"] == {}
 
 
 @pytest.mark.parametrize("field,value", [("fromDate", "20260102"), ("toDate", "20260130"),
     ("fromDate", "20260101;120000"), ("toDate", "20260131;120000")])
 def test_nav_source_period_requires_matching_native_calendar_dates(field, value):
     ledger = build_flex_ledger(_nav_amount_report(attributes={field: value}), expected_account_ids=(ACCOUNT,))
+    assert "native_nav_change" not in ledger
+
+
+def test_period_return_rejects_explicit_scope_conflicts_and_ambiguous_rows():
+    from datetime import datetime, timezone
+    from application.ibkr_period_return import PeriodReturnError, build_ibkr_period_return
+
+    kwargs = dict(target_id="synthetic-target", source_binding_id="a" * 64,
+                  account_scope="synthetic-scope", expected_account_ids=[ACCOUNT],
+                  observed_at=datetime(2026, 2, 1, tzinfo=timezone.utc))
+    def project(info, rows):
+        ledger = build_flex_ledger(_wrap(_statement(info + rows)), expected_account_ids=(ACCOUNT,))
+        return ledger, lambda: build_ibkr_period_return(ledger, **kwargs)
+
+    info = '<AccountInformation currency="USD"/>'
+    # Missing optional child scope fields preserve the pre-existing source contract.
+    legacy = '<ChangeInNAV fromDate="20260101" toDate="20260131" twr="1"/>'
+    _, valid = project(info, legacy)
+    assert valid()["source_value"] == "1"
+    total = (f'<ChangeInNAV accountId="{ACCOUNT}" model="" currency="USD" '
+             'fromDate="20260101" toDate="20260131" twr="1"/>')
+    model = (f'<ChangeInNAV accountId="{ACCOUNT}" model="model-A" currency="EUR" '
+             'fromDate="20260101" toDate="20260131" twr="50"/>')
+    for source_info, rows in [
+        (info, model + total), (info, total + model), (info, model),
+        (info, total.replace('currency="USD"', 'currency="EUR"')),
+        ('<AccountInformation currency="USD" model="model-A"/>', total),
+        (info + info, total),
+    ]:
+        ledger, invalid = project(source_info, rows)
+        assert "native_nav_change" not in ledger
+        with pytest.raises(PeriodReturnError, match="native_twr_unavailable"):
+            invalid()
+    with pytest.raises(FlexSourceError):
+        project(info, total.replace(ACCOUNT, "DU0000001"))
+
+
+def test_model_scoped_account_information_never_emits_nav_components():
+    report = _nav_amount_report()
+    body = report.content.replace(b'<AccountInformation currency="EUR"/>',
+                                  b'<AccountInformation currency="EUR" model="model-A"/>')
+    ledger = build_flex_ledger(FlexReport(hashlib.sha256(body).hexdigest(), body),
+                               expected_account_ids=(ACCOUNT,))
+    assert ledger["native_returns"] == {}
     assert "native_nav_change" not in ledger

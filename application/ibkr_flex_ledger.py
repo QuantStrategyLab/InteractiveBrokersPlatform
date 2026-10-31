@@ -534,7 +534,18 @@ def build_flex_ledger(
         if twr_text is not None:
             if not period_valid:
                 warnings.append({"code": "native_twr_period_unavailable"})
-            elif change_from == range_from and change_to == range_to:
+            elif change_from != range_from or change_to != range_to:
+                warnings.append({"code": "native_twr_period_mismatch"})
+            elif (
+                len(statement.findall("ChangeInNAV")) == 1 and not len(change)
+                and len(statement.findall("AccountInformation")) == 1
+                and information.get("model") in (None, "")
+                and change.get("accountId") in (None, "", account_id)
+                and change.get("model") in (None, "")
+                and change.get("currency") in (None, "", base_currency, "BASE_SUMMARY")
+                and _day(change.get("fromDate")) == range_from
+                and _day(change.get("toDate")) == range_to
+            ):
                 native_returns = {
                     "twr": twr_text,
                     "unit": "percent",
@@ -542,8 +553,6 @@ def build_flex_ledger(
                     "to": change_to,
                     "source": "ChangeInNAV.twr",
                 }
-            else:
-                warnings.append({"code": "native_twr_period_mismatch"})
 
     # Preserve only an unambiguous account-total NAV row. These private source
     # components are independently qualified by the period-return producer;
@@ -552,6 +561,7 @@ def build_flex_ledger(
     if (
         change is not None and len(statement.findall("ChangeInNAV")) == 1 and not len(change)
         and len(statement.findall("AccountInformation")) == 1 and period_valid
+        and information.get("model") in (None, "")
         and change.get("accountId") == account_id and change.get("model") == ""
         and isinstance(base_currency, str) and re.fullmatch(r"[A-Z]{3}", base_currency)
         and information.get("currency") == base_currency
