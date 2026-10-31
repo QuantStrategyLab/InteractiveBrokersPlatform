@@ -52,7 +52,7 @@ unknown fields, symlink request files, unsafe identifiers, and non-GCS prefixes.
   "account_id": "SYNTH123",
   "currency": "USD",
   "gcp_project_id": "synthetic-project",
-  "report_prefix": "gs://synthetic-private/reports/tqqq",
+  "report_prefix": "gs://<bucket>/reports/tqqq",
   "capture_id": "1f72542a-599c-4d46-a288-ac3d083d80ef",
   "binding_source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 }
