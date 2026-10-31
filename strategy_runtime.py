@@ -23,6 +23,8 @@ from quant_platform_kit.common.capital_base import (
     CapitalValuationBasis,
     build_capital_base_snapshot,
 )
+from application.daily_strategy_state import DailyStateBinding, evaluate_with_daily_state
+from application.decision_cycle import capture_decision, current_cycle
 from quant_platform_kit.common.strategy_plugins import attach_strategy_plugin_metadata
 from quant_platform_kit.ibkr import (
     build_ibkr_strategy_context,
@@ -358,6 +360,7 @@ class LoadedStrategyRuntime:
     rebalance_threshold_ratio: float = DEFAULT_REBALANCE_THRESHOLD_RATIO
     cash_reserve_floor_usd: float = 0.0
     logger: Callable[[str], None] = print
+    daily_state_binding: DailyStateBinding | None = None
     _last_capability_status: Mapping[str, str] | None = field(default=None, repr=False, compare=False)
 
     @property
@@ -1273,7 +1276,7 @@ class LoadedStrategyRuntime:
             current_holdings=current_holdings,
             ib=ib,
         )
-        decision = self.entrypoint.evaluate(ctx)
+        decision = capture_decision(evaluate_with_daily_state(self.entrypoint, ctx, self.daily_state_binding))
         managed_symbols = tuple(
             dict.fromkeys(
                 str(position.symbol).strip().upper()
@@ -1354,7 +1357,7 @@ class LoadedStrategyRuntime:
             current_holdings=current_holdings,
             ib=ib,
         )
-        decision = self.entrypoint.evaluate(ctx)
+        decision = capture_decision(evaluate_with_daily_state(self.entrypoint, ctx, self.daily_state_binding))
         safe_haven_symbol = str(self.merged_runtime_config.get("safe_haven") or "").strip().upper() or None
         managed_config_symbols = tuple(
             str(symbol) for symbol in self.merged_runtime_config.get("managed_symbols", ())
@@ -1444,7 +1447,7 @@ class LoadedStrategyRuntime:
                 portfolio_snapshot=portfolio_snapshot,
             ),
         )
-        decision = self.entrypoint.evaluate(ctx)
+        decision = capture_decision(evaluate_with_daily_state(self.entrypoint, ctx, self.daily_state_binding))
         capability_status = self._capability_status_metadata(portfolio_snapshot)
         if any(str(flag).startswith("rejected:runtime_risk") for flag in decision.risk_flags):
             diagnostics = decision.diagnostics if isinstance(decision.diagnostics, Mapping) else {}
@@ -1771,6 +1774,7 @@ def load_strategy_runtime(
     *,
     runtime_settings: PlatformRuntimeSettings,
     logger: Callable[[str], None],
+    daily_state_binding: DailyStateBinding | None = None,
 ) -> LoadedStrategyRuntime:
     strategy_definition = load_strategy_definition(raw_profile)
     entrypoint = load_strategy_entrypoint_for_profile(strategy_definition.profile)
@@ -1813,6 +1817,7 @@ def load_strategy_runtime(
             float(platform_cash_reserve_ratio),
         )
     return LoadedStrategyRuntime(
+        daily_state_binding=daily_state_binding,
         entrypoint=entrypoint,
         runtime_adapter=runtime_adapter,
         runtime_settings=runtime_settings,

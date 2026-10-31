@@ -1980,3 +1980,23 @@ def test_cash_only_runtime_overrides_force_option_overlays_off():
     assert overrides["option_growth_overlay_enabled"] is False
     assert overrides["option_income_overlay_enabled"] is False
     assert overrides["cash_reserve_ratio"] == 0.03
+
+
+def test_loaded_runtime_accepts_explicit_daily_state_binding():
+    from tests.candidate_dependency_guard import require_candidate_dependencies
+    require_candidate_dependencies()
+    from application.daily_strategy_state import DailyStateBinding
+    from quant_platform_kit.common.strategy_risk_state import StrategyRiskStateIdentity, StrategyRiskStateStore
+    from tempfile import TemporaryDirectory
+
+    with TemporaryDirectory() as directory:
+        binding = DailyStateBinding(
+            StrategyRiskStateStore(local_dir=directory),
+            StrategyRiskStateIdentity("tqqq_growth_income", "synthetic", "candidate", "a" * 64),
+            "2026-06-19", "b" * 64, None,
+        )
+        runtime = strategy_runtime_module.load_strategy_runtime(
+            "tqqq_growth_income", runtime_settings=_build_runtime_settings(profile="tqqq_growth_income"),
+            logger=lambda _: None, daily_state_binding=binding,
+        )
+        assert runtime.daily_state_binding is binding
