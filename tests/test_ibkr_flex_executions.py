@@ -109,6 +109,34 @@ def test_identical_execution_deduplicates_and_conflicting_execution_is_unknown()
     assert source["executions"]["records"] is None
 
 
+def test_duplicate_execution_with_conflicting_source_identity_is_unavailable():
+    # Trade ID is not exported, but distinct native identities cannot establish
+    # that two otherwise identical projected rows are the same broker event.
+    first = trade(tradeID="synthetic-trade-a")
+    second = trade(tradeID="synthetic-trade-b")
+    for rows in (first + second, second + first):
+        unrelated = trade(ibExecID="synthetic-other", tradeID="other-trade")
+        source = ledger(f"<Trades>{unrelated}{rows}</Trades>")
+        assert source["executions"]["status"] == "source_unavailable"
+        assert source["executions"]["records"] is None
+        assert source["executions"]["diagnostic"]["reason"] == "execution_conflict"
+        with pytest.raises(ValueError, match="source_unavailable"):
+            build_ibkr_executions(source, **CONFIG)
+    source = ledger(f"<Trades>{first}{first}</Trades>")
+    assert len(build_ibkr_executions(source, **CONFIG)["records"]) == 1
+    # A display-only difference does not manufacture a conflicting trade ID.
+    source = ledger(f'<Trades>{first}{trade(tradeID="synthetic-trade-a", description="display text")}</Trades>')
+    assert len(build_ibkr_executions(source, **CONFIG)["records"]) == 1
+    # A missing identity cannot confirm a duplicate whose other row has one.
+    for other in (trade(), trade(tradeID=""), trade(tradeID="synthetic-trade-a", quantity="-3"),
+                  trade(tradeID="synthetic-trade-a", ibCommission="-1")):
+        source = ledger(f"<Trades>{first}{other}</Trades>")
+        assert source["executions"]["diagnostic"]["reason"] == "execution_conflict"
+        assert source["executions"]["records"] is None
+        with pytest.raises(ValueError, match="source_unavailable"):
+            build_ibkr_executions(source, **CONFIG)
+
+
 @pytest.mark.parametrize("changes", [{"notes": "Ca"}, {"notes": "O;Co"}, {"origTradeID": "synthetic-original"},
                                       {"origExecID": "synthetic-original"}, {"origTradeDate": "20260122"}])
 def test_cancel_or_correct_requires_reconciliation_not_new_execution(changes):
