@@ -593,8 +593,8 @@ def test_nav_source_diagnostic_covers_public_components_without_private_values_o
     assert diagnostic["date_time_format_counts"] == {"fromDate": {"date_only": 1}, "toDate": {"date_only": 1}}
     assert diagnostic["coverage"] == diagnostic["nav_bridge"] == "not_evaluated"
     assert diagnostic["missing_fields_are_zero"] is False
-    # Even deliberately inconsistent components do not create or overwrite P/L.
-    assert ledger["native_returns"]["twr"] == "1.25" and "native_nav_change" not in ledger
+    # An explicitly model-scoped row without account information cannot produce account results.
+    assert ledger["native_returns"] == {} and "native_nav_change" not in ledger
     output = json.dumps(diagnostic)
     assert all(value not in output for value in (ACCOUNT, "76543.210987", "1.25", "EUR", "20260101", "20260131",
         "synthetic-private-alias", "synthetic-private-model", "synthetic-private-mode", "privateNavKey", "synthetic-private-value"))
