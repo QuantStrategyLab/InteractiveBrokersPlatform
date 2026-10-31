@@ -343,8 +343,9 @@ def test_suppressed_external_effect_attempt_still_fails_observation(monkeypatch)
 
 
 @pytest.mark.parametrize("conflicting_identity", (False, True))
-def test_refactored_fingerprint_remains_unsupported_with_conflicts_preserved(conflicting_identity):
-    """Reuse the committed synthetic envelope without changing its validator."""
+@pytest.mark.parametrize("fingerprint", (REFACTORED_MAIN_SHA256, "0" * 64), ids=("reviewed", "unknown"))
+def test_refactored_fingerprint_preserves_conflicts_and_unknown_rejection(conflicting_identity, fingerprint):
+    """Known source consistency does not authorize or authenticate execution."""
     fixture_path = ROOT / "tests" / "test_historical_source_evidence.py"
     spec = importlib.util.spec_from_file_location("synthetic_source_evidence_fixture", fixture_path)
     fixture_module = importlib.util.module_from_spec(spec)
@@ -354,9 +355,9 @@ def test_refactored_fingerprint_remains_unsupported_with_conflicts_preserved(con
     key = "InteractiveBrokersPlatform:main.py"
     assert historical_source_evidence._REPORT_FILES[key] == LEGACY_MAIN_SHA256
     actual_main_sha256 = hashlib.sha256((ROOT / "main.py").read_bytes()).hexdigest()
-    assert actual_main_sha256 != LEGACY_MAIN_SHA256
+    assert actual_main_sha256 == REFACTORED_MAIN_SHA256
     document = fixture_module.fixture()
-    document["source"]["producer"]["files"][key] = actual_main_sha256
+    document["source"]["producer"]["files"][key] = fingerprint
     if conflicting_identity:
         document["normalized"]["runtime_revision"] = "synthetic-conflicting-revision"
         fixture_module.reseal(document)
@@ -364,7 +365,9 @@ def test_refactored_fingerprint_remains_unsupported_with_conflicts_preserved(con
     result = historical_source_evidence.validate_source_evidence(document)
     assert document == before
     assert result["status"] == ("FAIL" if conflicting_identity else "BLOCKED")
-    assert "PRODUCER_VERSION_UNSUPPORTED" in {finding["code"] for finding in result["findings"]}
+    unsupported = fingerprint != REFACTORED_MAIN_SHA256
+    assert ("PRODUCER_VERSION_UNSUPPORTED" in {finding["code"] for finding in result["findings"]}) is unsupported
+    assert result["local_consistency"] == ("FAIL" if conflicting_identity else "BLOCKED" if unsupported else "CONSISTENT")
     if conflicting_identity:
         assert any(finding["status"] == "FAIL" for finding in result["findings"])
     for key in ("execution_authorized", "production_ready", "historical_parity_established"):

@@ -1,0 +1,604 @@
+{
+  "cases": {
+    "soxl_soxx_trend_income/core_failure": {
+      "http_status": 500,
+      "report_statuses": [
+        "error"
+      ],
+      "sha256": "648402f64ce8c1a4cf4f3a009038afef8c05cb794a4fcf661df6c815d38c428b",
+      "source_local_consistency": [
+        "BLOCKED"
+      ],
+      "source_validation": {
+        "legacy": [
+          "7b9be5586e81abdadb51d6f44a6d1b6246baf1a13bf09a1d858d2bdfe162f6ac"
+        ],
+        "refactored": [
+          "7b9be5586e81abdadb51d6f44a6d1b6246baf1a13bf09a1d858d2bdfe162f6ac"
+        ],
+        "unregistered": [
+          "e7f433c24f994d65e9c52cfb30de9b812f8e24259c5bcb0a14aef3e4395f791a"
+        ]
+      }
+    },
+    "soxl_soxx_trend_income/dry_run_get": {
+      "http_status": 200,
+      "report_statuses": [],
+      "sha256": "e139658e9c4701901219ab62cb5144413a75646530a8ad9da63c8bb72ae771af",
+      "source_local_consistency": [],
+      "source_validation": {
+        "legacy": [],
+        "refactored": [],
+        "unregistered": []
+      }
+    },
+    "soxl_soxx_trend_income/dry_run_post": {
+      "http_status": 200,
+      "report_statuses": [
+        "ok"
+      ],
+      "sha256": "cd8bfd923837f07509436a11eeed807f783b50d65442f7cbcf50c18de84b4985",
+      "source_local_consistency": [
+        "CONSISTENT"
+      ],
+      "source_validation": {
+        "legacy": [
+          "c06330388636cfe989922fae6038e390b5c541037e00b9aa606e896bee969089"
+        ],
+        "refactored": [
+          "c06330388636cfe989922fae6038e390b5c541037e00b9aa606e896bee969089"
+        ],
+        "unregistered": [
+          "9f6a9d71c56649166c82d0f301c03c61a3595aee6df5b8fe80d159063ca0ab3a"
+        ]
+      }
+    },
+    "soxl_soxx_trend_income/gateway_failure": {
+      "http_status": 503,
+      "report_statuses": [
+        "error"
+      ],
+      "sha256": "dd222fe24fa730909c90e7372d7f539e13207a6ea85f25d436297dabb6a1af30",
+      "source_local_consistency": [
+        "BLOCKED"
+      ],
+      "source_validation": {
+        "legacy": [
+          "7b9be5586e81abdadb51d6f44a6d1b6246baf1a13bf09a1d858d2bdfe162f6ac"
+        ],
+        "refactored": [
+          "7b9be5586e81abdadb51d6f44a6d1b6246baf1a13bf09a1d858d2bdfe162f6ac"
+        ],
+        "unregistered": [
+          "e7f433c24f994d65e9c52cfb30de9b812f8e24259c5bcb0a14aef3e4395f791a"
+        ]
+      }
+    },
+    "soxl_soxx_trend_income/lock_busy": {
+      "http_status": 200,
+      "report_statuses": [
+        "skipped"
+      ],
+      "sha256": "6720b75d5a478f8712fe31062b27b358109a58d29101e6146fdb719804e935a0",
+      "source_local_consistency": [
+        "BLOCKED"
+      ],
+      "source_validation": {
+        "legacy": [
+          "7b9be5586e81abdadb51d6f44a6d1b6246baf1a13bf09a1d858d2bdfe162f6ac"
+        ],
+        "refactored": [
+          "7b9be5586e81abdadb51d6f44a6d1b6246baf1a13bf09a1d858d2bdfe162f6ac"
+        ],
+        "unregistered": [
+          "e7f433c24f994d65e9c52cfb30de9b812f8e24259c5bcb0a14aef3e4395f791a"
+        ]
+      }
+    },
+    "soxl_soxx_trend_income/market_closed": {
+      "http_status": 200,
+      "report_statuses": [
+        "skipped"
+      ],
+      "sha256": "a0d4e84d87074613a940bd52f8d2995d85bf29ace4d901dd5d0d5782a835e0b9",
+      "source_local_consistency": [
+        "BLOCKED"
+      ],
+      "source_validation": {
+        "legacy": [
+          "7b9be5586e81abdadb51d6f44a6d1b6246baf1a13bf09a1d858d2bdfe162f6ac"
+        ],
+        "refactored": [
+          "7b9be5586e81abdadb51d6f44a6d1b6246baf1a13bf09a1d858d2bdfe162f6ac"
+        ],
+        "unregistered": [
+          "e7f433c24f994d65e9c52cfb30de9b812f8e24259c5bcb0a14aef3e4395f791a"
+        ]
+      }
+    },
+    "soxl_soxx_trend_income/method_rejected": {
+      "http_status": 405,
+      "report_statuses": [],
+      "sha256": "de6b1623f2b7cba33e7b922f4d3b463324bc9ef4ce751e11ef1c2f74497a6114",
+      "source_local_consistency": [],
+      "source_validation": {
+        "legacy": [],
+        "refactored": [],
+        "unregistered": []
+      }
+    },
+    "soxl_soxx_trend_income/pending": {
+      "http_status": 200,
+      "report_statuses": [
+        "ok"
+      ],
+      "sha256": "2cd6d3ba8bd0a6ecba6b17fe2039cb901b7988da5d789cc8a6540640951a4982",
+      "source_local_consistency": [
+        "CONSISTENT"
+      ],
+      "source_validation": {
+        "legacy": [
+          "c06330388636cfe989922fae6038e390b5c541037e00b9aa606e896bee969089"
+        ],
+        "refactored": [
+          "c06330388636cfe989922fae6038e390b5c541037e00b9aa606e896bee969089"
+        ],
+        "unregistered": [
+          "9f6a9d71c56649166c82d0f301c03c61a3595aee6df5b8fe80d159063ca0ab3a"
+        ]
+      }
+    },
+    "soxl_soxx_trend_income/permission_failure": {
+      "http_status": 503,
+      "report_statuses": [
+        "error"
+      ],
+      "sha256": "1352a9c5e20f74d2390de847ccd3fc9c46ff999d41063c957a8c623a50df4272",
+      "source_local_consistency": [
+        "BLOCKED"
+      ],
+      "source_validation": {
+        "legacy": [
+          "7b9be5586e81abdadb51d6f44a6d1b6246baf1a13bf09a1d858d2bdfe162f6ac"
+        ],
+        "refactored": [
+          "7b9be5586e81abdadb51d6f44a6d1b6246baf1a13bf09a1d858d2bdfe162f6ac"
+        ],
+        "unregistered": [
+          "e7f433c24f994d65e9c52cfb30de9b812f8e24259c5bcb0a14aef3e4395f791a"
+        ]
+      }
+    },
+    "soxl_soxx_trend_income/persistence_failure": {
+      "http_status": 200,
+      "report_statuses": [
+        "ok"
+      ],
+      "sha256": "28b05b198862a20f7f74a38ea8485c914c7f8cdc4863f6d6f2cb87c4a16572d5",
+      "source_local_consistency": [
+        "CONSISTENT"
+      ],
+      "source_validation": {
+        "legacy": [
+          "c06330388636cfe989922fae6038e390b5c541037e00b9aa606e896bee969089"
+        ],
+        "refactored": [
+          "c06330388636cfe989922fae6038e390b5c541037e00b9aa606e896bee969089"
+        ],
+        "unregistered": [
+          "9f6a9d71c56649166c82d0f301c03c61a3595aee6df5b8fe80d159063ca0ab3a"
+        ]
+      }
+    },
+    "soxl_soxx_trend_income/persistence_unconfirmed": {
+      "http_status": 200,
+      "report_statuses": [
+        "ok"
+      ],
+      "sha256": "2b09625297c70805ca0381f9627a6f5a1c83fdc9f76de33b59afd909013152b6",
+      "source_local_consistency": [
+        "CONSISTENT"
+      ],
+      "source_validation": {
+        "legacy": [
+          "c06330388636cfe989922fae6038e390b5c541037e00b9aa606e896bee969089"
+        ],
+        "refactored": [
+          "c06330388636cfe989922fae6038e390b5c541037e00b9aa606e896bee969089"
+        ],
+        "unregistered": [
+          "9f6a9d71c56649166c82d0f301c03c61a3595aee6df5b8fe80d159063ca0ab3a"
+        ]
+      }
+    },
+    "soxl_soxx_trend_income/receipt_conflict": {
+      "http_status": 500,
+      "report_statuses": [
+        "error"
+      ],
+      "sha256": "cb2df8e6abd0c9814649ce696c198a439840a9a73ede29bc85816c6380a83183",
+      "source_local_consistency": [
+        "BLOCKED"
+      ],
+      "source_validation": {
+        "legacy": [
+          "7b9be5586e81abdadb51d6f44a6d1b6246baf1a13bf09a1d858d2bdfe162f6ac"
+        ],
+        "refactored": [
+          "7b9be5586e81abdadb51d6f44a6d1b6246baf1a13bf09a1d858d2bdfe162f6ac"
+        ],
+        "unregistered": [
+          "e7f433c24f994d65e9c52cfb30de9b812f8e24259c5bcb0a14aef3e4395f791a"
+        ]
+      }
+    },
+    "soxl_soxx_trend_income/risk_blocked": {
+      "http_status": 200,
+      "report_statuses": [
+        "ok"
+      ],
+      "sha256": "fc9b8992ad8878303b756ae09ae878c582faf5b9b8129935f2106ed9fde38d48",
+      "source_local_consistency": [
+        "CONSISTENT"
+      ],
+      "source_validation": {
+        "legacy": [
+          "c06330388636cfe989922fae6038e390b5c541037e00b9aa606e896bee969089"
+        ],
+        "refactored": [
+          "c06330388636cfe989922fae6038e390b5c541037e00b9aa606e896bee969089"
+        ],
+        "unregistered": [
+          "9f6a9d71c56649166c82d0f301c03c61a3595aee6df5b8fe80d159063ca0ab3a"
+        ]
+      }
+    },
+    "soxl_soxx_trend_income/submitted": {
+      "http_status": 200,
+      "report_statuses": [
+        "ok"
+      ],
+      "sha256": "badccc12facbd6afb899d07804894a177ba5523ec9e1d43b88a49de7887f57d8",
+      "source_local_consistency": [
+        "CONSISTENT"
+      ],
+      "source_validation": {
+        "legacy": [
+          "c06330388636cfe989922fae6038e390b5c541037e00b9aa606e896bee969089"
+        ],
+        "refactored": [
+          "c06330388636cfe989922fae6038e390b5c541037e00b9aa606e896bee969089"
+        ],
+        "unregistered": [
+          "9f6a9d71c56649166c82d0f301c03c61a3595aee6df5b8fe80d159063ca0ab3a"
+        ]
+      }
+    },
+    "soxl_soxx_trend_income/target_disabled": {
+      "http_status": 200,
+      "report_statuses": [],
+      "sha256": "160f7ed7eae3a7163aa22bfa798e2fd9db67006c75c532793e4d1ad75f0f6dcb",
+      "source_local_consistency": [],
+      "source_validation": {
+        "legacy": [],
+        "refactored": [],
+        "unregistered": []
+      }
+    },
+    "tqqq_growth_income/core_failure": {
+      "http_status": 500,
+      "report_statuses": [
+        "error"
+      ],
+      "sha256": "419807e17e5d72d84b8b6d94cd8e40a5b0b1609e52eb1db81f0e6016e1919d9b",
+      "source_local_consistency": [
+        "BLOCKED"
+      ],
+      "source_validation": {
+        "legacy": [
+          "7b9be5586e81abdadb51d6f44a6d1b6246baf1a13bf09a1d858d2bdfe162f6ac"
+        ],
+        "refactored": [
+          "7b9be5586e81abdadb51d6f44a6d1b6246baf1a13bf09a1d858d2bdfe162f6ac"
+        ],
+        "unregistered": [
+          "e7f433c24f994d65e9c52cfb30de9b812f8e24259c5bcb0a14aef3e4395f791a"
+        ]
+      }
+    },
+    "tqqq_growth_income/dry_run_get": {
+      "http_status": 200,
+      "report_statuses": [],
+      "sha256": "e139658e9c4701901219ab62cb5144413a75646530a8ad9da63c8bb72ae771af",
+      "source_local_consistency": [],
+      "source_validation": {
+        "legacy": [],
+        "refactored": [],
+        "unregistered": []
+      }
+    },
+    "tqqq_growth_income/dry_run_post": {
+      "http_status": 200,
+      "report_statuses": [
+        "ok"
+      ],
+      "sha256": "c65f7c77b1fd474f06aeb1299994ffd2bae32e76d879efa43981a5b98baf38cd",
+      "source_local_consistency": [
+        "CONSISTENT"
+      ],
+      "source_validation": {
+        "legacy": [
+          "c06330388636cfe989922fae6038e390b5c541037e00b9aa606e896bee969089"
+        ],
+        "refactored": [
+          "c06330388636cfe989922fae6038e390b5c541037e00b9aa606e896bee969089"
+        ],
+        "unregistered": [
+          "9f6a9d71c56649166c82d0f301c03c61a3595aee6df5b8fe80d159063ca0ab3a"
+        ]
+      }
+    },
+    "tqqq_growth_income/gateway_failure": {
+      "http_status": 503,
+      "report_statuses": [
+        "error"
+      ],
+      "sha256": "4cf406bf32fa747a511d85f9c4ee919df58faaaadf395f26d86502b1f95e9553",
+      "source_local_consistency": [
+        "BLOCKED"
+      ],
+      "source_validation": {
+        "legacy": [
+          "7b9be5586e81abdadb51d6f44a6d1b6246baf1a13bf09a1d858d2bdfe162f6ac"
+        ],
+        "refactored": [
+          "7b9be5586e81abdadb51d6f44a6d1b6246baf1a13bf09a1d858d2bdfe162f6ac"
+        ],
+        "unregistered": [
+          "e7f433c24f994d65e9c52cfb30de9b812f8e24259c5bcb0a14aef3e4395f791a"
+        ]
+      }
+    },
+    "tqqq_growth_income/lock_busy": {
+      "http_status": 200,
+      "report_statuses": [
+        "skipped"
+      ],
+      "sha256": "0f3015b8ed7760afe5633dc8338a1eab6ba5e6dfc2df6dd9cc7fc291c07fd4f1",
+      "source_local_consistency": [
+        "BLOCKED"
+      ],
+      "source_validation": {
+        "legacy": [
+          "7b9be5586e81abdadb51d6f44a6d1b6246baf1a13bf09a1d858d2bdfe162f6ac"
+        ],
+        "refactored": [
+          "7b9be5586e81abdadb51d6f44a6d1b6246baf1a13bf09a1d858d2bdfe162f6ac"
+        ],
+        "unregistered": [
+          "e7f433c24f994d65e9c52cfb30de9b812f8e24259c5bcb0a14aef3e4395f791a"
+        ]
+      }
+    },
+    "tqqq_growth_income/market_closed": {
+      "http_status": 200,
+      "report_statuses": [
+        "skipped"
+      ],
+      "sha256": "feff0ba00bc595877827e7ff31716a764db779a387574509f9942ae5b3f97abf",
+      "source_local_consistency": [
+        "BLOCKED"
+      ],
+      "source_validation": {
+        "legacy": [
+          "7b9be5586e81abdadb51d6f44a6d1b6246baf1a13bf09a1d858d2bdfe162f6ac"
+        ],
+        "refactored": [
+          "7b9be5586e81abdadb51d6f44a6d1b6246baf1a13bf09a1d858d2bdfe162f6ac"
+        ],
+        "unregistered": [
+          "e7f433c24f994d65e9c52cfb30de9b812f8e24259c5bcb0a14aef3e4395f791a"
+        ]
+      }
+    },
+    "tqqq_growth_income/method_rejected": {
+      "http_status": 405,
+      "report_statuses": [],
+      "sha256": "de6b1623f2b7cba33e7b922f4d3b463324bc9ef4ce751e11ef1c2f74497a6114",
+      "source_local_consistency": [],
+      "source_validation": {
+        "legacy": [],
+        "refactored": [],
+        "unregistered": []
+      }
+    },
+    "tqqq_growth_income/pending": {
+      "http_status": 200,
+      "report_statuses": [
+        "ok"
+      ],
+      "sha256": "08c43d5e60ece8c7685b09b78bdbb38332678e3b092657adcdeac5edb87ebae6",
+      "source_local_consistency": [
+        "CONSISTENT"
+      ],
+      "source_validation": {
+        "legacy": [
+          "c06330388636cfe989922fae6038e390b5c541037e00b9aa606e896bee969089"
+        ],
+        "refactored": [
+          "c06330388636cfe989922fae6038e390b5c541037e00b9aa606e896bee969089"
+        ],
+        "unregistered": [
+          "9f6a9d71c56649166c82d0f301c03c61a3595aee6df5b8fe80d159063ca0ab3a"
+        ]
+      }
+    },
+    "tqqq_growth_income/permission_failure": {
+      "http_status": 503,
+      "report_statuses": [
+        "error"
+      ],
+      "sha256": "f48b9cd5ba20c1dd9389258c4c3089320ee416eb8c0d12fb5d0672af58454713",
+      "source_local_consistency": [
+        "BLOCKED"
+      ],
+      "source_validation": {
+        "legacy": [
+          "7b9be5586e81abdadb51d6f44a6d1b6246baf1a13bf09a1d858d2bdfe162f6ac"
+        ],
+        "refactored": [
+          "7b9be5586e81abdadb51d6f44a6d1b6246baf1a13bf09a1d858d2bdfe162f6ac"
+        ],
+        "unregistered": [
+          "e7f433c24f994d65e9c52cfb30de9b812f8e24259c5bcb0a14aef3e4395f791a"
+        ]
+      }
+    },
+    "tqqq_growth_income/persistence_failure": {
+      "http_status": 200,
+      "report_statuses": [
+        "ok"
+      ],
+      "sha256": "3e3887341ffa2b80cb8f62eb288ccc595471a2cca90fe550bb2c26173a878c9f",
+      "source_local_consistency": [
+        "CONSISTENT"
+      ],
+      "source_validation": {
+        "legacy": [
+          "c06330388636cfe989922fae6038e390b5c541037e00b9aa606e896bee969089"
+        ],
+        "refactored": [
+          "c06330388636cfe989922fae6038e390b5c541037e00b9aa606e896bee969089"
+        ],
+        "unregistered": [
+          "9f6a9d71c56649166c82d0f301c03c61a3595aee6df5b8fe80d159063ca0ab3a"
+        ]
+      }
+    },
+    "tqqq_growth_income/persistence_unconfirmed": {
+      "http_status": 200,
+      "report_statuses": [
+        "ok"
+      ],
+      "sha256": "72280f41352073e8b0ae85044e99f5c3011f0d01fff131574f972538d3a15582",
+      "source_local_consistency": [
+        "CONSISTENT"
+      ],
+      "source_validation": {
+        "legacy": [
+          "c06330388636cfe989922fae6038e390b5c541037e00b9aa606e896bee969089"
+        ],
+        "refactored": [
+          "c06330388636cfe989922fae6038e390b5c541037e00b9aa606e896bee969089"
+        ],
+        "unregistered": [
+          "9f6a9d71c56649166c82d0f301c03c61a3595aee6df5b8fe80d159063ca0ab3a"
+        ]
+      }
+    },
+    "tqqq_growth_income/receipt_conflict": {
+      "http_status": 500,
+      "report_statuses": [
+        "error"
+      ],
+      "sha256": "73a4e1f13b5db8165aab171d728ab9bd21b88a32b271392f692674d59a76d889",
+      "source_local_consistency": [
+        "BLOCKED"
+      ],
+      "source_validation": {
+        "legacy": [
+          "7b9be5586e81abdadb51d6f44a6d1b6246baf1a13bf09a1d858d2bdfe162f6ac"
+        ],
+        "refactored": [
+          "7b9be5586e81abdadb51d6f44a6d1b6246baf1a13bf09a1d858d2bdfe162f6ac"
+        ],
+        "unregistered": [
+          "e7f433c24f994d65e9c52cfb30de9b812f8e24259c5bcb0a14aef3e4395f791a"
+        ]
+      }
+    },
+    "tqqq_growth_income/risk_blocked": {
+      "http_status": 200,
+      "report_statuses": [
+        "ok"
+      ],
+      "sha256": "a263dc91f9f540c40f29505460c373a75bd1a88d929f4cba95f0256af3fda90e",
+      "source_local_consistency": [
+        "CONSISTENT"
+      ],
+      "source_validation": {
+        "legacy": [
+          "c06330388636cfe989922fae6038e390b5c541037e00b9aa606e896bee969089"
+        ],
+        "refactored": [
+          "c06330388636cfe989922fae6038e390b5c541037e00b9aa606e896bee969089"
+        ],
+        "unregistered": [
+          "9f6a9d71c56649166c82d0f301c03c61a3595aee6df5b8fe80d159063ca0ab3a"
+        ]
+      }
+    },
+    "tqqq_growth_income/submitted": {
+      "http_status": 200,
+      "report_statuses": [
+        "ok"
+      ],
+      "sha256": "8e8da25bdacc9843576f72060efb03313e4584aa426d4f6ae46b4706e136cc95",
+      "source_local_consistency": [
+        "CONSISTENT"
+      ],
+      "source_validation": {
+        "legacy": [
+          "c06330388636cfe989922fae6038e390b5c541037e00b9aa606e896bee969089"
+        ],
+        "refactored": [
+          "c06330388636cfe989922fae6038e390b5c541037e00b9aa606e896bee969089"
+        ],
+        "unregistered": [
+          "9f6a9d71c56649166c82d0f301c03c61a3595aee6df5b8fe80d159063ca0ab3a"
+        ]
+      }
+    },
+    "tqqq_growth_income/target_disabled": {
+      "http_status": 200,
+      "report_statuses": [],
+      "sha256": "160f7ed7eae3a7163aa22bfa798e2fd9db67006c75c532793e4d1ad75f0f6dcb",
+      "source_local_consistency": [],
+      "source_validation": {
+        "legacy": [],
+        "refactored": [],
+        "unregistered": []
+      }
+    }
+  },
+  "evidence_kind": "synthetic",
+  "provenance": {
+    "authority": "Synthetic endpoint consistency only; no historical authentication, producer registration or execution authority.",
+    "canonicalization": "Sort JSON object keys and HTTP headers/Allow tokens; preserve every field, value type and ordered event array.",
+    "hk_revision": "709e5e1cde7841aed538d94eb26b552b46cb7806",
+    "legacy_capture_sha256": "15a4e868488d5e05ab579add58dfd229875caea278f6ff2bc8aa64e1522feb71",
+    "legacy_main_sha256": "f13b55f501c404ef249bb3344bd69136beb8e0ead382e827d082217180b46637",
+    "legacy_revision": "d220b2dcc83decb0931aa0088dd3a9f9d119a383",
+    "loaded_pinned_dependency_files_sha256": "2d2798ce84e478e3792542d31cedea034fb70397c6943f93fd88e79fb42f7ffa",
+    "producer_files": {
+      "InteractiveBrokersPlatform:application/account_facts.py": "e4513e5ecc8f494c3a305007ebae21804b07ac1407d761c1af3c2ce9d53af4d1",
+      "InteractiveBrokersPlatform:application/decision_cycle.py": "ad938a55aa439764112e96ac7e80a4c661ee14823292e7cf99f1df2bcc863311",
+      "InteractiveBrokersPlatform:application/execution_receipt_adapter.py": "a2bd939380947374854cf373ef27c7266c7b97150f0742e6b90191d7e5a278c0",
+      "InteractiveBrokersPlatform:application/runtime_reporting_adapters.py": "d2394847474ef78c98cc51c3970fd539481bf13d60ac5cc941fd03d33850dace",
+      "InteractiveBrokersPlatform:main.py": "f13b55f501c404ef249bb3344bd69136beb8e0ead382e827d082217180b46637",
+      "QuantPlatformKit:src/quant_platform_kit/common/execution_receipts.py": "5b7f5b44c8aa4bda640e72cc5a58f04b617404afcf9f55ceb314a1721be6d93b",
+      "QuantPlatformKit:src/quant_platform_kit/common/runtime_reports.py": "7f5b33f84810d414cc665ce33d2741497b8f54fcb300488c51f54dbd08bdcf42",
+      "QuantPlatformKit:src/quant_platform_kit/common/runtime_target.py": "17fa7505e1c8e6e375699d44120526c8c9af8c586a274fd7d7dd03009131c5b3",
+      "QuantPlatformKit:src/quant_platform_kit/common/strategy_release.py": "773547422aa537eb03bf223a4d9038db457c514211b0387e4601afdcef9727b9"
+    },
+    "qpk_revision": "2b04882058666ebc81d1650d93fa2105ec4ba3d8",
+    "replay_test_sha256": "d03eba89e3dbec061d3a6799afa904ab892456b1c69fae02e7a7728882c404fe",
+    "ues_revision": "3f112f5352efe677a0c480c4ab621b8ea3e85336"
+  },
+  "registration": {
+    "basis": "Independent full-module endpoint comparison and exact reporting-statement preservation; no historical authentication or authority.",
+    "projection": "Same eight helper digests and exact reviewed refactored main; legacy and unregistered expectations preserved.",
+    "refactored_main_sha256": "ef3ab072868dcb3447b19d224c63879cfa11a3d3906db7d25ac51b77171feb04"
+  },
+  "schema_version": "qsl.ibkr_synthetic_endpoint_replay.v1"
+}
