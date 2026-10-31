@@ -117,3 +117,74 @@ def test_wrapper_and_unlinked_direct_layout_remain_distinct_without_raw_fields()
     assert unlinked["event_layouts"][0]["direct_explicit_revision_present"] is True
     assert unlinked["event_layouts"][0]["direct_revision_equals_serving"] is False
     assert PRIVATE not in json.dumps(unlinked)
+
+
+def operation_pair():
+    first = event()
+    first["operation"] = {"id": PRIVATE, "producer": PRIVATE + "-producer", "first": True}
+    # The request intentionally does not name the auto-generated serving revision.
+    first["protoPayload"]["request"]["service"]["spec"]["template"]["metadata"].pop("name")
+    last = {"operation": {"id": PRIVATE, "producer": PRIVATE + "-producer", "last": True},
+        "protoPayload": {"resourceName": first["protoPayload"]["resourceName"],
+            "methodName": first["protoPayload"]["methodName"],
+            "response": {"status": {"latestCreatedRevisionName": REVISION}}}}
+    return first, last
+
+
+def test_native_operation_links_unique_first_request_to_last_serving_response_without_exporting_key():
+    result, calls = run_case(list(operation_pair()))
+    native = result["native_operations"]
+    assert len(calls) == 1 and result["exact_revision_events_count"] == 0
+    assert result["audit_status"] == "no_exact_revision_event"
+    assert native["status"] == "linked" and native["linked_group_count"] == 1
+    assert native["links"][0] == {"method": "google.cloud.run.v1.Services.ReplaceService",
+        "native_operation_key_equal": True, "unique_first_request_last_serving_response": True,
+        "first_status_code": None, "last_status_code": None, "declared_source_sha": "b" * 40,
+        "declared_run_id": "123", "request_image_equals_serving_digest": True}
+    assert result["independent_release_approval"] == "unknown"
+    assert PRIVATE not in json.dumps(result) and IMAGE not in json.dumps(result)
+
+
+@pytest.mark.parametrize("change", ["id", "producer", "empty_key", "missing_first", "missing_last", "duplicate_first",
+    "duplicate_last", "method", "service", "response_revision", "request_conflicting_revision", "string_flag", "one_entry_both_flags"])
+def test_missing_mixed_or_ambiguous_native_operation_cannot_create_a_link(change):
+    first, last = operation_pair(); rows = [first, last]
+    if change in {"id", "producer"}: last["operation"][change] += "-different"
+    if change == "empty_key": last["operation"]["producer"] = ""
+    if change == "missing_first": first["operation"].pop("first")
+    if change == "missing_last": last["operation"].pop("last")
+    if change == "duplicate_first": rows.append(first)
+    if change == "duplicate_last": rows.append(last)
+    if change == "method": last["protoPayload"]["methodName"] = "google.cloud.run.v1.Services.CreateService"
+    if change == "service": last["protoPayload"]["resourceName"] = "projects/synthetic/locations/us-central1/services/synthetic-service"
+    if change == "response_revision": last["protoPayload"]["response"]["status"]["latestCreatedRevisionName"] = PRIVATE
+    if change == "request_conflicting_revision": first["protoPayload"]["request"]["service"]["spec"]["template"]["metadata"]["name"] = PRIVATE
+    if change == "string_flag": first["operation"]["first"] = "true"
+    if change == "one_entry_both_flags":
+        first["operation"]["last"] = True
+        first["protoPayload"]["response"] = last["protoPayload"]["response"]
+        rows = [first]
+    result, _ = run_case(rows)
+    assert result["native_operations"]["status"] == "unknown"
+    assert result["native_operations"]["links"] == [] and PRIVATE not in json.dumps(result)
+
+
+def test_failed_native_last_status_is_retained_without_qualifying_release():
+    first, last = operation_pair()
+    last["protoPayload"]["status"] = {"code": 7}
+    result, _ = run_case([first, last])
+    assert result["native_operations"]["links"][0]["last_status_code"] == 7
+    assert result["independent_release_approval"] == "unknown"
+
+
+@pytest.mark.parametrize("middle_flags", [{}, {"first": False, "last": False}])
+def test_middle_entries_with_missing_or_false_endpoint_flags_do_not_change_unique_native_endpoints(middle_flags):
+    first, last = operation_pair()
+    middle = {"operation": {"id": PRIVATE, "producer": PRIVATE + "-producer", **middle_flags},
+        "protoPayload": {"resourceName": first["protoPayload"]["resourceName"],
+            "methodName": first["protoPayload"]["methodName"]}}
+    result, calls = run_case([first, middle, last])
+    assert len(calls) == 1 and result["native_operations"]["linked_group_count"] == 1
+    assert result["native_operations"]["ambiguous_or_unmatched_group_count"] == 0
+    assert result["audit_status"] == "no_exact_revision_event" and result["events"] == []
+    assert result["independent_release_approval"] == "unknown" and PRIVATE not in json.dumps(result)
