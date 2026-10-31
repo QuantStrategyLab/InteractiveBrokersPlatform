@@ -12,7 +12,7 @@ REVISION = "synthetic-service-00001-test"
 
 
 def metadata():
-    target = dict(platform_id="interactive_brokers", service_name="synthetic-service",
+    target = dict(platform_id="ibkr", service_name="synthetic-service",
                   account_scope="synthetic-scope", account_selector=["U00000001"],
                   deployment_selector="synthetic-deployment")
     service = {"metadata": {"name": "synthetic-service"}, "status": {

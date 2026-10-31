@@ -46,7 +46,7 @@ def resolve(expected, env, read=read_metadata):
     if len(rows) != 1 or not isinstance(rows[0].get("value"), str):
         raise ServingRevisionError("serving_revision_metadata_invalid")
     target = json.loads(rows[0]["value"])
-    identity = {"platform_id": "interactive_brokers", "service_name": service,
+    identity = {"platform_id": "ibkr", "service_name": service,
                 "account_scope": expected["expected_account_scope"],
                 "account_selector": list(expected["expected_account_selector"]),
                 "deployment_selector": expected["expected_deployment_selector"]}
