@@ -12,7 +12,7 @@ NOW = datetime(2026, 10, 26, 16, tzinfo=timezone.utc)
 DAY = archive.archive_day("2026-09-30", now=NOW)
 EXPECTED = {key: value for key, value in _observability_publish_args().items()
             if key not in {"source_report_uri", "sync_url", "sync_token"}}
-URI = "gs://synthetic-runtime-reports/ibkr/2026-09/20260930T010000Z.json"
+URI = "gs://qsl-runtime-reports/ibkr/2026-09/20260930T010000Z.json"
 
 
 @pytest.mark.parametrize("value", ["2026-10-26", "2026-10-27", "2025-10-25", "2026-9-30", "secret-canary"])
