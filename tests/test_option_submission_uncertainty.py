@@ -120,9 +120,11 @@ def test_option_loop_with_real_journal_retains_unresolved_attempt_across_restart
 
     active = session("a" * 64)
     sent = []
+    grants = []
 
     def submit(_ib, intent):
         grant = active.reserve(intent)
+        grants.append(grant)
 
         def venue():
             sent.append(intent)
@@ -140,13 +142,13 @@ def test_option_loop_with_real_journal_retains_unresolved_attempt_across_restart
     else:
         summary, _logs, _remaining = run_option_loop(submit)
         assert summary["outcome_unknown"] is True
-    assert len(sent) == 1
+    assert len(sent) == len(grants) == 1
     restarted = session("b" * 64)
     attempts = restarted.read_state()["attempts"]
     assert len(attempts) == 1
     retained = next(iter(attempts.values()))
     assert retained["certainty"] == "UNKNOWN"
-    assert retained["order_sha256"] == restarted.order_binding_digest(sent[0])
+    assert retained["order_sha256"] == grants[0].order_sha256
     assert retained["quantity"] == sent[0].quantity
     with pytest.raises(AccountSubmissionError, match="unresolved UNKNOWN"):
         restarted.reserve(sent[0])
