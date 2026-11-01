@@ -6,6 +6,8 @@ InteractiveBrokersPlatform 是 QuantStrategyLab 的 Interactive Brokers 多市�
 
 > 投资有风险。本项目不构成投资建议，仅用于学习、研究和工程审阅。
 
+固定依赖中的港股策略政策已无可选策略。`hk_global_etf_tactical_rotation` 和 `hk_low_vol_dividend_quality_snapshot` 均拒绝新选择，包括 dry-run 切换计划；历史策略元数据和适配器仍保留。美股策略版本及现有部署配置不变。
+
 ## 运行边界
 
 - 只加载策略包暴露的 runtime-enabled profile。

@@ -1,4 +1,8 @@
+import os
+import subprocess
+import sys
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from scripts.daily_binding_protocol import digest
@@ -30,21 +34,22 @@ class DailyBindingComparisonTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 digest(binding, nonce)
 
-    def test_adapter_rejects_mismatched_period_source(self):
+    def test_adapter_rejects_mismatched_period_identity(self):
         expected = {"target_id": "synthetic-target", "expected_report_prefix": "gs://synthetic/tqqq_growth_income/",
                     "expected_project_id": "synthetic-project", "expected_service_name": "synthetic-service",
                     "expected_runtime_revision": "revision", "expected_account_scope": "live",
                     "expected_account_selector": ("U1234567",), "expected_deployment_selector": "synthetic-deployment"}
         env = {"DAILY_COMPARISON_NONCE": self.nonce, "IBKR_PERIOD_RETURN_ACCOUNT_KEY": "synthetic-key",
-               "IBKR_PERIOD_RETURN_ACCOUNT_SCOPE": "live", "IBKR_PERIOD_RETURN_SOURCE_BINDING_ID": "b" * 64,
-               "IBKR_PERIOD_RETURN_TARGET_ID": "synthetic-target"}
+               "IBKR_PERIOD_RETURN_ACCOUNT_SCOPE": "live", "IBKR_PERIOD_RETURN_TARGET_ID": "synthetic-target"}
         with patch.object(adapter.identity, "resolve_expected", return_value=expected), \
              patch.object(adapter.publisher, "_bound_source_id", return_value="b" * 64), \
              patch.dict(adapter.os.environ, env, clear=True):
             self.assertEqual(adapter.main(), digest(self.binding, self.nonce))
-            with patch.dict(adapter.os.environ, {"IBKR_PERIOD_RETURN_SOURCE_BINDING_ID": "c" * 64}):
-                with self.assertRaises(ValueError):
-                    adapter.main()
+            for name, value in (("IBKR_PERIOD_RETURN_TARGET_ID", "other-target"),
+                                ("IBKR_PERIOD_RETURN_ACCOUNT_SCOPE", "paper")):
+                with patch.dict(adapter.os.environ, {name: value}):
+                    with self.assertRaises(ValueError):
+                        adapter.main()
             with patch.object(adapter.identity, "resolve_expected", return_value={**expected, "expected_account_selector": ("U1234567", "U7654321")}):
                 with self.assertRaises(ValueError):
                     adapter.main()
@@ -91,3 +96,62 @@ def test_additional_comparison_reuses_primary_identity_for_duplicate_guard():
     section = workflow.split('  compare-additional-website-binding:', 1)[1].split('  inspect:', 1)[0]
     for name in ('IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON', 'IBKR_ACCOUNT_FACTS_TARGET_ID', 'IBKR_ACCOUNT_FACTS_REPORT_PREFIX'):
         assert f'{name}: ${{{{ secrets.{name} }}}}' in section
+
+
+_PRIMARY_ENV = {
+    "IBKR_ACCOUNT_FACTS_TARGET": "primary-live",
+    "IBKR_ACCOUNT_FACTS_TARGET_ID": "synthetic-target",
+    "IBKR_ACCOUNT_FACTS_REPORT_PREFIX": "gs://synthetic-bucket/tqqq_growth_income/",
+    "IBKR_ACCOUNT_FACTS_PROJECT_ID": "synthetic-project",
+    "IBKR_ACCOUNT_FACTS_SERVICE_NAME": "synthetic-service",
+    "IBKR_ACCOUNT_FACTS_RUNTIME_REVISION": "7",
+    "IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE": "live",
+    "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON": '["U1234567"]',
+    "IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR": "synthetic-deployment",
+    "IBKR_PERIOD_RETURN_TARGET_ID": "synthetic-target",
+    "IBKR_PERIOD_RETURN_ACCOUNT_SCOPE": "live",
+    "IBKR_PERIOD_RETURN_ACCOUNT_KEY": "synthetic-key",
+    "DAILY_COMPARISON_NONCE": "a" * 64,
+}
+
+
+def _run_primary_cli(overrides=None):
+    """Run the real command line, because the reason mapping lives in its entry point."""
+    env = {**_PRIMARY_ENV, **(overrides or {})}
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [sys.executable, "-m", "scripts.compare_website_daily_binding"],
+        capture_output=True, text=True, check=False, cwd=root,
+        env={**os.environ, "PYTHONPATH": str(root), **env},
+    )
+    return result.stdout.strip(), result.returncode, env
+
+
+def test_cli_publishes_comparison_from_the_derived_primary_binding():
+    out, code, _ = _run_primary_cli()
+    assert code == 0 and out.startswith("status=ok comparison=")
+
+
+def test_cli_ignores_the_retired_pinned_binding():
+    out, code, _ = _run_primary_cli({"IBKR_PERIOD_RETURN_SOURCE_BINDING_ID": "c" * 64})
+    assert code == 0 and out.startswith("status=ok comparison=")
+    assert "c" * 64 not in out
+
+
+def test_cli_names_a_wrong_period_return_target():
+    out, code, _ = _run_primary_cli({"IBKR_PERIOD_RETURN_TARGET_ID": "other-target"})
+    assert code == 1
+    assert out == "status=blocked stage=configuration reason=period_target_mismatch kind=ValueError"
+
+
+def test_cli_names_a_wrong_period_return_scope():
+    out, code, _ = _run_primary_cli({"IBKR_PERIOD_RETURN_ACCOUNT_SCOPE": "paper"})
+    assert code == 1
+    assert out == "status=blocked stage=configuration reason=period_scope_mismatch kind=ValueError"
+
+
+def test_cli_names_a_wrong_report_prefix():
+    out, code, env = _run_primary_cli({"IBKR_ACCOUNT_FACTS_REPORT_PREFIX": "gs://synthetic-bucket/other_profile/"})
+    assert code == 1
+    assert out == "status=blocked stage=configuration reason=scope_mismatch kind=ValueError"
+    assert not any(value in out for value in env.values())
