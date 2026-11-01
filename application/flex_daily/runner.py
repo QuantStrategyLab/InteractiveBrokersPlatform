@@ -15,6 +15,11 @@ from application.flex_daily.state import failed, seed, summary, target_day, wind
 from application.flex_daily.storage import Lease
 
 BLOCKING = {'1010', '1011', '1012', '1013', '1014', '1015', '1016', '1020'}
+# Provider says "not ready" (1001) or "too many requests" (1018). The window is
+# failed and later windows may continue, but repeated refusals still end the run.
+TRANSIENT = {'1001', '1018'}
+MAX_CONSECUTIVE_TRANSIENT = 3
+THROTTLE_BACKOFF = 60
 
 
 def utcnow():
@@ -25,8 +30,10 @@ class Fetcher:
     def __init__(self, token, query, deadline, clock=time.monotonic, sleep=time.sleep):
         self.token, self.query, self.deadline = token, query, deadline
         self.clock, self.sleep, self.last = clock, sleep, clock()
+        self.floor = 0
 
     def wait(self, delay=10):
+        delay = max(delay, self.floor)
         pause = max(0, (self.last + delay - self.clock()) if self.last is not None else 0)
         if self.clock() + pause + 25 >= self.deadline:
             raise TimeoutError('budget_exhausted')
@@ -34,6 +41,18 @@ class Fetcher:
         self.last = self.clock()
 
     def __call__(self, start, end):
+        try:
+            return self.fetch(start, end)
+        except FlexReportPending:
+            raise
+        except FlexSourceError as exc:
+            if exc.safe_diagnostic.get('provider_error_code') == '1018':
+                # Rate limited: every later request in this run waits at least
+                # THROTTLE_BACKOFF seconds after the previous one.
+                self.floor = THROTTLE_BACKOFF
+            raise
+
+    def fetch(self, start, end):
         self.wait()
         handle = request_activity_flex_report(token=self.token, query_id=self.query, from_date=start, to_date=end)
         for delay in (10, 20, 40, 80, 120, 120):
@@ -74,19 +93,32 @@ def collect(store, config, fetch, now=utcnow, clock=time.monotonic):
         status_generation = store.put('status/latest.json', safe, status_generation)
         return safe
 
+    # Codes and counts only: safe for status objects and container logs.
+    run = state['last_run'] = {'windows_planned': 0, 'reports_fetched': 0, 'windows_succeeded': 0,
+                               'windows_failed': 0, 'last_provider_error_code': None}
     try:
         if state.get('blocked'):
             return persist()
         state['backfill_start'] = config['backfill_start']
         seed(state, date.fromisoformat(config['backfill_start']) - timedelta(days=1), target_day(started), accounts.values())
         state['last_started_at'] = started.isoformat()
+        queue = windows(state, target_day(started), started)
+        run['windows_planned'] = len(queue)
         persist()
-        for kind, start, end in windows(state, target_day(started), started):
+        transient_streak = 0
+        for kind, start, end in queue:
             if clock() + 30 >= deadline:
                 break
             slot = state['days'][start] if kind == 'daily' else state['months'].setdefault(kind, {})
+
+            def fail(reason):
+                failed(slot, now(), reason)
+                run['windows_failed'] += 1
+
             try:
                 content = fetch(start, end)
+                run['reports_fetched'] += 1
+                transient_streak = 0
                 require_account_scope(content, accounts)
                 digest = hashlib.sha256(content).hexdigest()
                 # Immutable raw survives a crash before coverage commit. A retry
@@ -134,28 +166,35 @@ def collect(store, config, fetch, now=utcnow, clock=time.monotonic):
                     # Exact opening/closing controls still do not certify grants,
                     # settlement lineage or full financial reconciliation.
                 if any(v['status'] != 'complete' for v in checked.values()) or kind != 'daily' and not slot.get('done'):
-                    failed(slot, now(), 'incomplete_report_or_daily_control')
+                    fail('incomplete_report_or_daily_control')
                 else:
                     slot['attempts'] = 0
                     slot.pop('next_attempt_at', None)
+                    run['windows_succeeded'] += 1
             except FlexReportPending:
-                failed(slot, now(), 'pending')
+                fail('pending')
+                transient_streak = 0
             except FlexSourceError as exc:
-                code = exc.safe_diagnostic.get('provider_error_code', 'transport_or_format')
-                failed(slot, now(), code)
+                provider_code = exc.safe_diagnostic.get('provider_error_code')
+                code = provider_code or 'transport_or_format'
+                fail(code)
+                if provider_code:
+                    run['last_provider_error_code'] = provider_code
                 if code in BLOCKING:
                     state['blocked'] = 'ip_restricted' if code == '1013' else 'authorization_or_configuration'
                     state['blocked_code'] = code
-                if code in BLOCKING | {'1018', '1001'} or exc.safe_diagnostic.get('source_failure_kind') in {'http', 'transport'}:
+                transient_streak = transient_streak + 1 if code in TRANSIENT else 0
+                if code in BLOCKING or transient_streak >= MAX_CONSECUTIVE_TRANSIENT or (
+                        code not in TRANSIENT and exc.safe_diagnostic.get('source_failure_kind') in {'http', 'transport'}):
                     persist()
                     break
             except ReportScopeError:
-                failed(slot, now(), 'account_scope_mismatch')
+                fail('account_scope_mismatch')
                 state['blocked'] = 'account_scope'
                 persist()
                 break
             except ValueError:
-                failed(slot, now(), 'report_validation_failed')
+                fail('report_validation_failed')
             except TimeoutError:
                 break
             persist()

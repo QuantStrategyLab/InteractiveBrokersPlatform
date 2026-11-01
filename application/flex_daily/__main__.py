@@ -10,6 +10,17 @@ from application.flex_daily.storage import Store
 from application.flex_daily.watch import send, watch
 
 
+def pull_outcome(result):
+    """Map a collector summary to (status, exit code). A run that was due to fetch
+    reports but fetched none must not look like a success to Cloud Run."""
+    run = result.get('last_run') or {}
+    if result.get('blocked'):
+        return 'blocked', 2
+    if run.get('windows_planned', 0) > 0 and run.get('reports_fetched', 0) == 0:
+        return 'incomplete', 3
+    return 'finished', 0
+
+
 def main():
     logging.disable(logging.CRITICAL)
     store = Store(os.environ['FLEX_BUCKET'])
@@ -24,7 +35,13 @@ def main():
             return 2
         token = read_token('/secrets/flex/token')
         result = collect(store, config, Fetcher(token, config['query_id'], time.monotonic() + 1500))
-        print(json.dumps({'status': 'blocked' if result.get('blocked') else 'finished'}))
+        status, code = pull_outcome(result)
+        run = result.get('last_run') or {}
+        # Codes and counts only; never exception text, dates or account data.
+        print(json.dumps({'status': status, 'last_provider_error_code': run.get('last_provider_error_code'),
+                          'windows_planned': run.get('windows_planned', 0), 'reports_fetched': run.get('reports_fetched', 0),
+                          'windows_succeeded': run.get('windows_succeeded', 0), 'windows_failed': run.get('windows_failed', 0)}))
+        return code
     elif mode == 'watch':
         config, _ = store.json('status/notification-config.json')
         if not config or not config.get('chat_id') or config.get('chat_type') != 'private':

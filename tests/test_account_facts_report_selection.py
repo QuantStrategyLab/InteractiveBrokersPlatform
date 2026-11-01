@@ -240,3 +240,34 @@ def test_publisher_keeps_original_freshness_and_zero_http_when_stale(monkeypatch
         assert posted[0]["observed_finished_at"] == report["summary"]["account_facts"]["observed_at"]
         assert posted[0]["broker_reported_positions"] == [] and posted[0]["broker_reported_positions_complete"] is True
     assert PRIVATE not in text and "12345.6700" not in text and "U00000001" not in text
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_scheduled_serving_resolution_keeps_strict_report_identity(monkeypatch, configured, changed):
+    expected, report = configured
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_RESOLVE_SERVING_REVISION", "true")
+    report = deepcopy(report)
+    report["diagnostics"]["runtime_revision"] = "synthetic-service-00002-serving"
+    report["runtime_release_receipt"]["runtime_revision"] = "synthetic-service-00002-serving"
+    from unittest.mock import Mock
+    resolver = Mock(side_effect=["synthetic-service-00002-serving",
+                                "synthetic-service-00003-changed" if changed else "synthetic-service-00002-serving"])
+    monkeypatch.setattr(publisher, "_serving_runtime_revision", resolver)
+    selected = Mock(return_value=(expected["expected_report_prefix"] + "/2026-10/20261031T010000Z.json", report))
+    monkeypatch.setattr(publisher, "select_account_facts_report", selected)
+    posted = Mock(return_value={"status": "unchanged"})
+    monkeypatch.setattr(publisher, "publish_ibkr_account_facts_history", posted)
+    assert publisher.main() == (1 if changed else 0)
+    assert selected.call_args.kwargs["expected"]["expected_runtime_revision"] == "synthetic-service-00002-serving"
+    assert report["diagnostics"]["runtime_revision"] == "synthetic-service-00002-serving"
+    if changed:
+        posted.assert_not_called()
+    else:
+        assert posted.call_args.kwargs["expected_runtime_revision"] == "synthetic-service-00002-serving"
+
+
+def test_serving_resolution_cannot_relabel_named_history(monkeypatch, configured):
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_RESOLVE_SERVING_REVISION", "true")
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_REPORT_NAME", "20261031T010000Z.json")
+    monkeypatch.setattr(publisher, "_serving_runtime_revision", lambda *_: pytest.fail("named history must not resolve serving"))
+    assert publisher.main() == 1
