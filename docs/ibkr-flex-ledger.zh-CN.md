@@ -173,11 +173,17 @@ PYTHONPATH=. python -m scripts.publish_ibkr_flex_period_return
 | 环境变量 | 用途 |
 |---|---|
 | `IBKR_PERIOD_RETURN_PUBLISH_ENABLED` | 只有精确 `true` 才启用 |
-| `IBKR_PERIOD_RETURN_TARGET_ID` / `IBKR_PERIOD_RETURN_SOURCE_BINDING_ID` | 已批准 QRS 目标与来源绑定 |
+| `IBKR_PERIOD_RETURN_TARGET_ID` | 已批准 QRS 目标 |
 | `IBKR_PERIOD_RETURN_ACCOUNT_SCOPE` / `IBKR_PERIOD_RETURN_ACCOUNT_KEY` | 已批准私有 scope 与回执预期 key |
 | `IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON` | 仅含一个独立批准原生账户的 JSON 数组 |
 | `IBKR_FLEX_TOKEN` / `IBKR_FLEX_QUERY_ID` | 原生 XML Activity Flex 来源配置 |
+| `IBKR_ACCOUNT_FACTS_PROJECT_ID` / `_SERVICE_NAME` / `_RUNTIME_REVISION` / `_ACCOUNT_SCOPE` / `_DEPLOYMENT_SELECTOR` / `_ACCOUNT_SELECTOR_JSON` | 主账号来源绑定按这组实时身份派生，与每日 account-facts 发布同一算法 |
 | `IBKR_ACCOUNT_FACTS_SYNC_TOKEN` | 复用已有 IBKR 私有同步令牌；不得等同 Flex 或其他来源/控制令牌 |
+
+来源绑定不再固化为 `IBKR_PERIOD_RETURN_SOURCE_BINDING_ID`：该值是账户身份的哈希，
+Cloud Run revision 每次轮换都会让它过期，并使 period-return、executions、external-flow
+三条路由同时被接收端拒绝。派生时 `_ACCOUNT_SCOPE` 与批准账户必须和 period-return 的
+scope、账户完全一致，否则以 `primary_identity_mismatch` 失败关闭。
 
 目标、绑定、scope、账户与回执 key 必须来自独立受保护配置，不能从导入报表反推授权。
 全部配置有效后才调用已有 `import_activity_flex_ledger`：一次 SendRequest，普通路径一次

@@ -83,16 +83,14 @@ def main():
     source = publisher._bound_source_id(**{k: expected["expected_" + k] for k in (
         "project_id", "service_name", "runtime_revision", "account_scope", "account_selector", "deployment_selector")})
     period = {name: os.environ.get("IBKR_PERIOD_RETURN_" + name, "") for name in (
-        "ACCOUNT_KEY", "ACCOUNT_SCOPE", "SOURCE_BINDING_ID", "TARGET_ID")}
-    # One literal per field, in the order an operator can act on: a wrong target
-    # or scope is a mis-set secret, while a stale pin is the binding rotating
-    # under the owner. Reporting only "the config disagrees" hides that split.
+        "ACCOUNT_KEY", "ACCOUNT_SCOPE", "TARGET_ID")}
+    # The period-return publisher now derives its binding from the same identity as
+    # this comparison, so only the two secrets it still pins can disagree: a wrong
+    # target or scope is a mis-set secret, not a binding that rotated.
     if period["TARGET_ID"] != expected["target_id"]:
         raise ValueError("period_target_mismatch")
     if period["ACCOUNT_SCOPE"] != expected["expected_account_scope"]:
         raise ValueError("period_scope_mismatch")
-    if period["SOURCE_BINDING_ID"] != source:
-        raise ValueError("pinned_binding_stale")
     binding = dict(account_key=period["ACCOUNT_KEY"], account_scope=expected["expected_account_scope"],
                    account_selector=expected["expected_account_selector"][0],
                    deployment_selector=expected["expected_deployment_selector"], platform="ibkr",
@@ -112,14 +110,13 @@ if __name__ == "__main__":
     except Exception as exc:
         # The allowlist is the leak guard, so only fixed literals this module
         # raises itself may join it. Collapsing the primary identity causes into
-        # comparison_unavailable leaves an operator unable to tell a stale pinned
-        # binding apart from a wrong report prefix, which is the one distinction
-        # needed to unblock a refused publish.
+        # comparison_unavailable leaves an operator unable to tell a wrong report
+        # prefix apart from a wrong period-return target or scope, which is the
+        # distinction needed to unblock a refused publish.
         allowed = {"slot_invalid", "duplicate_key", "keys_invalid", "keys_conflict", "key_missing",
                    "inventory_invalid", "target_not_unique", "invalid_input", "target_disabled",
                    "target_config_unavailable", "target_config_invalid", "expected_target_invalid",
-                   "scope_mismatch", "period_target_mismatch", "period_scope_mismatch",
-                   "pinned_binding_stale"}
+                   "scope_mismatch", "period_target_mismatch", "period_scope_mismatch"}
         reason = getattr(exc, "reason", "")
         if not reason and exc.args and isinstance(exc.args[0], str):
             reason = exc.args[0]
