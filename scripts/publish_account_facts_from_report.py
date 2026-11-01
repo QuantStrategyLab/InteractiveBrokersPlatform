@@ -950,6 +950,17 @@ def select_account_facts_report(*, expected, now, activity, report_name=""):
     raise _ProjectionError("report_unavailable")
 
 
+def _serving_runtime_revision(expected: Mapping[str, Any]) -> str:
+    from scripts.account_facts_serving_revision import ServingRevisionError, resolve
+
+    try:
+        return resolve(expected, os.environ)
+    except ServingRevisionError as error:
+        raise _ProjectionError(str(error)) from None
+    except (KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError):
+        raise _ProjectionError("serving_revision_metadata_invalid") from None
+
+
 def main() -> int:
     """Workflow-only, explicitly enabled single-report publisher."""
     activity = {}
@@ -980,7 +991,14 @@ def main() -> int:
         }
         now = datetime.now(timezone.utc)
         report_name = os.environ.get("IBKR_ACCOUNT_FACTS_REPORT_NAME", "")
+        resolve_serving = os.environ.get("IBKR_ACCOUNT_FACTS_RESOLVE_SERVING_REVISION") == "true"
+        if resolve_serving:
+            if report_name:
+                raise _ProjectionError("serving_revision_named_report_forbidden")
+            expected["expected_runtime_revision"] = _serving_runtime_revision(expected)
         uri, report = select_account_facts_report(expected=expected, now=now, activity=activity, report_name=report_name)
+        if resolve_serving and _serving_runtime_revision(expected) != expected["expected_runtime_revision"]:
+            raise _ProjectionError("serving_revision_changed")
         result = publish_ibkr_account_facts_history(
             report,
             now=now,

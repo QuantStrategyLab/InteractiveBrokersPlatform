@@ -93,7 +93,7 @@ jobs:
       DIGEST_OPAQUE_ACCOUNT_UID: ${{ secrets.DIGEST_OPAQUE_ACCOUNT_UID }}
       DIGEST_TARGET_ID: ${{ secrets.DIGEST_TARGET_ID }}
       DIGEST_TARGET_BINDINGS_JSON: ${{ secrets.DIGEST_TARGET_BINDINGS_JSON }}
-      DIGEST_CANDIDATES_GCS_URI: ${{ secrets.DIGEST_CANDIDATES_GCS_URI }}
+      DIGEST_CANDIDATES_GCS_URI: ${{ vars.DIGEST_CANDIDATES_GCS_URI }}
 
   account-facts-publisher:
     name: Publish latest fresh IBKR account-facts report
@@ -113,6 +113,8 @@ jobs:
       GCP_WORKLOAD_IDENTITY_PROVIDER: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
       GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       IBKR_ACCOUNT_FACTS_TARGET: ${{ matrix.target }}
+      CLOUD_RUN_REGION: ${{ vars.CLOUD_RUN_REGION }}
+      IBKR_ACCOUNT_FACTS_RESOLVE_SERVING_REVISION: ${{ github.event_name == 'schedule' && 'true' || 'false' }}
       IBKR_ACCOUNT_FACTS_REPORT_NAME: ${{ inputs.account_facts_report_name }}
       IBKR_ACCOUNT_FACTS_INCLUDE_POSITIONS: ${{ (matrix.target == 'primary-live' || matrix.target == 'additional-1' || matrix.target == 'additional-2' || matrix.target == 'additional-3') && 'true' || 'false' }}
       IBKR_ACCOUNT_FACTS_REPORT_PREFIX: ${{ secrets.IBKR_ACCOUNT_FACTS_REPORT_PREFIX }}
