@@ -15,10 +15,14 @@ from application.ibkr_flex_source import (
 def configure(monkeypatch):
     values = {
         "IBKR_PERIOD_RETURN_PUBLISH_ENABLED": "true", "IBKR_PERIOD_RETURN_TARGET_ID": "synthetic-target",
-        "IBKR_PERIOD_RETURN_SOURCE_BINDING_ID": "a" * 64, "IBKR_PERIOD_RETURN_ACCOUNT_SCOPE": "synthetic-live",
+        "IBKR_PERIOD_RETURN_ACCOUNT_SCOPE": "synthetic-live",
         "IBKR_PERIOD_RETURN_ACCOUNT_KEY": "synthetic-account-key", "IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON": '["DU0000000"]',
         "IBKR_FLEX_TOKEN": "synthetic-flex-token", "IBKR_FLEX_QUERY_ID": "12345",
         "IBKR_ACCOUNT_FACTS_SYNC_TOKEN": "synthetic-sync-token",
+        "IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE": "synthetic-live", "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON": '["DU0000000"]',
+        "IBKR_ACCOUNT_FACTS_PROJECT_ID": "synthetic-project", "IBKR_ACCOUNT_FACTS_SERVICE_NAME": "synthetic-service",
+        "IBKR_ACCOUNT_FACTS_RUNTIME_REVISION": "synthetic-revision",
+        "IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR": "synthetic-deployment",
     }
     for name, value in values.items():
         monkeypatch.setenv(name, value)
@@ -138,7 +142,7 @@ def test_full_synthetic_flex_fetch_import_projection_one_post_ack(monkeypatch, c
 @pytest.mark.parametrize("bad_name,bad_value", [
     ("IBKR_PERIOD_RETURN_PUBLISH_ENABLED", "false"), ("IBKR_FLEX_TOKEN", ""),
     ("IBKR_FLEX_QUERY_ID", "invalid"), ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", '["DU0000000","DU0000004"]'),
-    ("IBKR_PERIOD_RETURN_SOURCE_BINDING_ID", "bad"), ("IBKR_PERIOD_RETURN_ACCOUNT_KEY", ""),
+    ("IBKR_ACCOUNT_FACTS_RUNTIME_REVISION", "bad\n"), ("IBKR_PERIOD_RETURN_ACCOUNT_KEY", ""),
     ("IBKR_ACCOUNT_FACTS_SYNC_TOKEN", "bad\n"), ("EXECUTION_EVIDENCE_SYNC_TOKEN", "synthetic-sync-token"),
     ("IBKR_ACCOUNT_FACTS_SYNC_TOKEN", "synthetic-flex-token"),
     ("CYCLE_HEALTH_PROVISIONER_TOKEN", "synthetic-sync-token"),
@@ -163,6 +167,26 @@ def test_enable_flag_absent_is_disabled_without_any_http(monkeypatch, capsys):
     monkeypatch.setattr(cli, "build_opener", forbidden)
     assert cli.main() == 2
     assert capsys.readouterr().out == '{"status": "disabled"}\n'
+
+
+def test_primary_binding_follows_the_runtime_revision_without_a_pin(monkeypatch):
+    configure(monkeypatch)
+    before = cli._config(os.environ)["source_binding_id"]
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_RUNTIME_REVISION", "synthetic-revision-2")
+    assert cli._config(os.environ)["source_binding_id"] != before
+
+
+@pytest.mark.parametrize("name,value", [
+    ("IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE", "synthetic-paper"),
+    ("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", '["DU0000004"]'),
+])
+def test_derived_binding_refuses_an_identity_that_is_not_the_publish_account(monkeypatch, name, value):
+    """A binding for another account would be accepted by no receiver route."""
+    configure(monkeypatch)
+    monkeypatch.setenv(name, value)
+    with pytest.raises(cli.PeriodReturnError) as raised:
+        cli._config(os.environ)
+    assert str(raised.value) == "primary_identity_mismatch"
 
 
 def test_flex_failure_has_safe_stdout_and_zero_post(monkeypatch, capsys):
@@ -260,6 +284,7 @@ def test_report_scope_preflight_uses_only_existing_protected_account_configurati
     configure(monkeypatch)
     settings, additional = _environment(monkeypatch)
     monkeypatch.setenv("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", settings["IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON"])
+    monkeypatch.setenv("IBKR_PERIOD_RETURN_ACCOUNT_SCOPE", settings["IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE"])
     config = cli._config(os.environ)
     approved = set(config["allowed_report_account_ids"])
     assert approved == set(json.loads(settings["IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON"])) | {
@@ -270,11 +295,10 @@ def test_report_scope_preflight_uses_only_existing_protected_account_configurati
     assert not any(account in output for account in approved)
 
 
-def test_partial_protected_report_scope_fails_before_broker_access(monkeypatch, capsys):
+def test_period_return_account_outside_the_protected_identity_fails_before_broker_access(monkeypatch, capsys):
     configure(monkeypatch)
-    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", '["DU0000000"]')
-    monkeypatch.delenv("IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON", raising=False)
-    monkeypatch.setattr(cli.requests, "Session", lambda: pytest.fail("invalid scope reached broker"))
+    monkeypatch.setenv("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", '["DU0000004"]')
+    monkeypatch.setattr(cli.requests, "Session", lambda: pytest.fail("unqualified identity reached broker"))
     assert cli.main() == 2
     assert json.loads(capsys.readouterr().out)["status"] == "configuration_incomplete"
 
@@ -289,6 +313,7 @@ def test_approved_multiaccount_source_publishes_only_target_and_keeps_one_reques
     settings, additional = _environment(monkeypatch)
     expected = json.loads(settings["IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON"])
     monkeypatch.setenv("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", json.dumps(expected))
+    monkeypatch.setenv("IBKR_PERIOD_RETURN_ACCOUNT_SCOPE", settings["IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE"])
     root = ElementTree.fromstring(xml(account=expected[0]))
     other = next(iter(additional.values()))["account_selector"][0]
     root.find("FlexStatements").insert(0, ElementTree.fromstring(xml(account=other, twr="80")).find("./FlexStatements/FlexStatement"))
@@ -369,10 +394,13 @@ def test_unchanged_ack_is_success_without_second_post(monkeypatch, capsys):
 
 
 _PREFLIGHT_FIELDS = (
-    "IBKR_PERIOD_RETURN_TARGET_ID", "IBKR_PERIOD_RETURN_SOURCE_BINDING_ID",
+    "IBKR_PERIOD_RETURN_TARGET_ID",
     "IBKR_PERIOD_RETURN_ACCOUNT_SCOPE", "IBKR_PERIOD_RETURN_ACCOUNT_KEY",
     "IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", "IBKR_FLEX_TOKEN", "IBKR_FLEX_QUERY_ID",
     "IBKR_ACCOUNT_FACTS_SYNC_TOKEN",
+    "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", "IBKR_ACCOUNT_FACTS_PROJECT_ID",
+    "IBKR_ACCOUNT_FACTS_SERVICE_NAME", "IBKR_ACCOUNT_FACTS_RUNTIME_REVISION",
+    "IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE", "IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR",
 )
 _PREFLIGHT_SOURCE_SHA = "e2ec696a9ba3ec64156804a701a556ad69d5b64b"
 
@@ -402,13 +430,17 @@ def test_preflight_reuses_original_config_without_flex_or_publish_even_when_enab
     assert cli.main(("--preflight",)) == 0
     output = capsys.readouterr()
     result = json.loads(output.out)
+    derived = cli._primary_source_binding_id(values, {
+        "account_scope": values["IBKR_PERIOD_RETURN_ACCOUNT_SCOPE"],
+        "expected_account_ids": json.loads(values["IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON"]),
+    })
     assert result == {
         "schema_version": "ibkr.flex_configuration_preflight.v1",
         "source_sha": _PREFLIGHT_SOURCE_SHA, "status": "configuration_shape_valid",
         "fields": dict.fromkeys(_PREFLIGHT_FIELDS, "configuration_shape_valid"),
         "binding_fingerprints": {
-            f"{name}_sha256": hashlib.sha256(values[f"IBKR_PERIOD_RETURN_{name.upper()}"].encode()).hexdigest()
-            for name in ("target_id", "source_binding_id")
+            "target_id_sha256": hashlib.sha256(values["IBKR_PERIOD_RETURN_TARGET_ID"].encode()).hexdigest(),
+            "source_binding_id_sha256": hashlib.sha256(derived.encode()).hexdigest(),
         },
     }
     assert calls == [True] and output.err == ""
@@ -435,7 +467,7 @@ def test_preflight_identifies_each_missing_field_without_values_or_io(monkeypatc
 
 @pytest.mark.parametrize("field,bad", [
     ("IBKR_PERIOD_RETURN_TARGET_ID", "BAD_private_target"),
-    ("IBKR_PERIOD_RETURN_SOURCE_BINDING_ID", "private-binding"),
+    ("IBKR_ACCOUNT_FACTS_SERVICE_NAME", "private\nservice"),
     ("IBKR_PERIOD_RETURN_ACCOUNT_SCOPE", "private scope"),
     ("IBKR_PERIOD_RETURN_ACCOUNT_KEY", "private/key"),
     ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", "private-not-json"),
@@ -448,6 +480,13 @@ def test_preflight_identifies_each_missing_field_without_values_or_io(monkeypatc
     ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", "[" + "1" * 5000 + "]"),
     ("IBKR_FLEX_TOKEN", " private-token"),
     ("IBKR_FLEX_TOKEN", "private\ntoken"),
+    ("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", "private-not-json"),
+    ("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", "[]"),
+    ("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", '"DU0000000"'),
+    ("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", "[1234567]"),
+    ("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", '[" DU0000000"]'),
+    ("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", "[" + "1" * 5000 + "]"),
+    ("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", "[" * 1100 + "]" * 1100),
     ("IBKR_FLEX_QUERY_ID", "private-query"),
     ("IBKR_FLEX_QUERY_ID", "١٢٣"),
     ("IBKR_ACCOUNT_FACTS_SYNC_TOKEN", "private token"),
@@ -464,6 +503,21 @@ def test_preflight_identifies_exact_invalid_shape_without_echo(monkeypatch, caps
     assert result["fields"][field] == "invalid"
     assert all(status == "configuration_shape_valid" for key, status in result["fields"].items() if key != field)
     assert bad not in output.out and output.err == ""
+
+
+def test_preflight_names_a_derived_binding_that_no_longer_matches_the_publish_account(monkeypatch, capsys):
+    """Both scopes are individually valid secrets, so only the derivation can say they disagree."""
+    values = configure(monkeypatch)
+    monkeypatch.setenv("IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE", "synthetic-paper")
+    _forbid_preflight_io(monkeypatch)
+    assert cli.main(("--preflight",)) == 2
+    output = capsys.readouterr()
+    result = json.loads(output.out)
+    assert result["status"] == "invalid"
+    assert result["fields"]["primary_binding_identity"] == "invalid"
+    assert all(status == "configuration_shape_valid"
+               for name, status in result["fields"].items() if name != "primary_binding_identity")
+    assert not any(value in output.out for value in values.values())
 
 
 @pytest.mark.parametrize("alias", ("IBKR_FLEX_TOKEN", *cli._TOKEN_ALIASES))

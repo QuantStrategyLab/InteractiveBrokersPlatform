@@ -121,6 +121,11 @@ def test_json_crosses_secret_boundary_before_any_execution(name: str) -> None:
             assert f"      {key}:\n        required: false" in declared
             gate = "publish_initial_run_id" if key.endswith("SYNC_TOKEN") else "verify_initial_source_run_id"
             assert f"      {key}: ${{{{ inputs.{gate} != '' && secrets.{key} || '' }}}}" in passed
+        elif name == "execution-report-heartbeat" and key == "DIGEST_CANDIDATES_GCS_URI":
+            # Read the existing variable, then register it as a callee secret
+            # before any runner step can display the destination.
+            assert f"      {key}:\n        required: false" in declared
+            assert f"      {key}: ${{{{ vars.{key} }}}}" in passed
         elif name == "notify-route-check" and key in NOTIFY_ROUTE_ADDITIONAL_SECRET_CONTRACTS:
             _assert_notify_route_additional_secret_contract(key, declared, passed)
         elif name == "collect-reconciliation-evidence" and key in RECONCILIATION_BINDING_SECRETS:

@@ -35,8 +35,6 @@ from quant_platform_kit.common.strategies import (
 
 IBKR_PLATFORM = "ibkr"
 HK_EQUITY_DOMAIN = "hk_equity"
-TECH_COMMUNICATION_PULLBACK_PROFILE = "tech_communication_pullback_enhancement"
-HK_DIVIDEND_GOLD_DEFENSIVE_ROTATION_PROFILE = "hk_dividend_gold_defensive_rotation"
 
 PLATFORM_SUPPORTED_DOMAINS: dict[str, frozenset[str]] = {
     IBKR_PLATFORM: frozenset({US_EQUITY_DOMAIN, HK_EQUITY_DOMAIN}),
@@ -97,15 +95,9 @@ HK_STRATEGY_CATALOG = get_hk_strategy_catalog()
 STRATEGY_CATALOG = _merge_strategy_catalogs(US_STRATEGY_CATALOG, HK_STRATEGY_CATALOG)
 US_STRATEGY_PROFILES = frozenset(US_STRATEGY_CATALOG.definitions)
 HK_STRATEGY_PROFILES = frozenset(HK_STRATEGY_CATALOG.definitions)
-IBKR_EXCLUDED_LIVE_PROFILES = frozenset(
-    {
-        HK_DIVIDEND_GOLD_DEFENSIVE_ROTATION_PROFILE,
-        TECH_COMMUNICATION_PULLBACK_PROFILE,
-    }
-)
 IBKR_ROLLOUT_ALLOWLIST = (
     get_us_runtime_enabled_profiles() | get_hk_runtime_enabled_profiles()
-) - IBKR_EXCLUDED_LIVE_PROFILES
+)
 PLATFORM_CAPABILITY_MATRIX = PlatformCapabilityMatrix(
     platform_id=IBKR_PLATFORM,
     supported_domains=PLATFORM_SUPPORTED_DOMAINS[IBKR_PLATFORM],
