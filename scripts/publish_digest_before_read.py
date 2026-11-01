@@ -1,6 +1,7 @@
 """Publish one completed-window candidate before the central read, without broker calls."""
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import signal
@@ -114,7 +115,9 @@ def publish(env, *, now=None, client=None, emit=None):
     return {"status": "published", "business_day": day, "readback_verified": True}
 
 
-def main():
+def main(argv=None):
+    argparse.ArgumentParser(description=__doc__).parse_args(argv)
+
     def timeout(signum, frame):
         raise DeadlineExceeded()
 
