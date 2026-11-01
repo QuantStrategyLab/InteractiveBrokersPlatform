@@ -169,7 +169,7 @@ def test_main_redacts_exception_and_clears_watchdog(monkeypatch, capsys):
     monkeypatch.setattr(publisher.signal, "signal", lambda *a: None)
     monkeypatch.setattr(publisher.signal, "alarm", alarms.append)
     monkeypatch.setattr(publisher, "publish", lambda *a: (_ for _ in ()).throw(RuntimeError("private-value")))
-    assert publisher.main() == 1
+    assert publisher.main([]) == 1
     output = capsys.readouterr().out
     assert "private-value" not in output
     assert json.loads(output)["status"] == "failed"
@@ -185,7 +185,7 @@ def test_watchdog_escapes_producer_exception_handlers(monkeypatch, capsys):
         except Exception:
             pytest.fail("deadline must escape producer catch-all")
     monkeypatch.setattr(publisher, "publish", emit)
-    assert publisher.main() == 1
+    assert publisher.main([]) == 1
     assert json.loads(capsys.readouterr().out)["status"] == "failed"
 
 
@@ -221,3 +221,17 @@ def test_invalid_runtime_identity_is_rejected_before_idle_projection(key, value)
     with pytest.raises(ValueError, match="target_invalid"):
         publisher.publish({**ENV, "RUNTIME_TARGET_JSON": json.dumps(target)}, now=lambda: NOW,
                           emit=lambda *a, **kw: pytest.fail("must not project an invalid target"))
+
+
+@pytest.mark.parametrize("args, exit_code", [(["--help"], 0), (["--unknown"], 2)])
+def test_cli_arguments_exit_before_publication_or_watchdog(args, exit_code, monkeypatch, capsys):
+    def unexpected(*a, **kw):
+        pytest.fail("CLI argument handling must not start publication or the watchdog")
+    monkeypatch.setattr(publisher, "publish", unexpected)
+    monkeypatch.setattr(publisher.signal, "signal", unexpected)
+    monkeypatch.setattr(publisher.signal, "alarm", unexpected)
+    with pytest.raises(SystemExit) as caught:
+        publisher.main(args)
+    assert caught.value.code == exit_code
+    output = capsys.readouterr()
+    assert "usage:" in (output.out if exit_code == 0 else output.err)
