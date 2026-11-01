@@ -31,7 +31,7 @@ recovery. The workflow link remains available for investigation. Guard alert
 criteria, target selection and deduplication are unchanged.
 
 Shared notification modules are imported directly from the pinned QPK package
-(`895bf782aeee75f1c008c22c91199c5192b4e3dc`): `display_names`,
+(`6136b1c667a60d484f500c6d6046c0585c75305d`): `display_names`,
 `digest_candidates`, `digest_routing` and `unified_contract`. The local
 `notifications/digest_snapshot/digest_archive.py` remains an IBKR-specific
 vendored copy because it adds IBKR archive persistence hooks. Strategy pins,
