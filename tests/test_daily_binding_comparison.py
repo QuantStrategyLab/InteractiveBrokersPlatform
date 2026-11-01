@@ -143,8 +143,20 @@ def test_cli_publishes_comparison_when_the_pinned_binding_is_current():
 def test_cli_names_a_stale_pinned_binding_without_printing_it():
     out, code, env = _run_primary_cli({"IBKR_PERIOD_RETURN_SOURCE_BINDING_ID": "c" * 64})
     assert code == 1
-    assert out == "status=blocked stage=configuration reason=configuration_mismatch kind=ValueError"
+    assert out == "status=blocked stage=configuration reason=pinned_binding_stale kind=ValueError"
     assert not any(value in out for value in env.values())
+
+
+def test_cli_names_a_wrong_period_return_target():
+    out, code, _ = _run_primary_cli({"IBKR_PERIOD_RETURN_TARGET_ID": "other-target"})
+    assert code == 1
+    assert out == "status=blocked stage=configuration reason=period_target_mismatch kind=ValueError"
+
+
+def test_cli_names_a_wrong_period_return_scope():
+    out, code, _ = _run_primary_cli({"IBKR_PERIOD_RETURN_ACCOUNT_SCOPE": "paper"})
+    assert code == 1
+    assert out == "status=blocked stage=configuration reason=period_scope_mismatch kind=ValueError"
 
 
 def test_cli_names_a_wrong_report_prefix():
