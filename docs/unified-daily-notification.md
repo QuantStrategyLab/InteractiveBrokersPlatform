@@ -91,6 +91,10 @@ monitoring checks, but run the archive-only publisher independently in an
 approved Cloud Run Job using the platform image and its frozen dependencies.
 
 Command: `/app/.venv/bin/python -m scripts.publish_digest_before_read`.
+Use `--help` for an offline CLI check; it exits before publication or the watchdog.
+The image keeps uv-managed Python under `/opt/python` so `appuser` can traverse
+its path. Build checks and runtime commands use `/app/.venv/bin/python` directly;
+the Docker build also checks publisher help after switching to `appuser`.
 The command imports the existing producer, never the service entrypoint. It does
 not run a drill, refresh a broker session, invoke a trading route, send Telegram,
 or access Secret Manager. Archive reads use the Storage SDK and the job's
