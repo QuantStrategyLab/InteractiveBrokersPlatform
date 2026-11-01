@@ -234,15 +234,22 @@ def _configuration_preflight(env: Mapping[str, str]) -> dict[str, Any]:
     for name, pattern in patterns.items():
         if fields[name] == "configuration_shape_valid" and not pattern.fullmatch(env[name]):
             fields[name] = "invalid"
-    name = "IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON"
-    if fields[name] == "configuration_shape_valid":
+    # The selector feeds the derived binding, so unparsable or empty input has to
+    # name its own field instead of leaving the failure unattributed.
+    for name in ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON"):
+        if fields[name] != "configuration_shape_valid":
+            continue
         try:
-            accounts = json.loads(env[name])
-            valid = (isinstance(accounts, list) and len(accounts) == 1
-                and isinstance(accounts[0], str) and _PERIOD_ACCOUNT.fullmatch(accounts[0]))
+            parsed = json.loads(env[name])
         except Exception:
             # Oversized integer/deep JSON failures must not emit a traceback.
-            valid = False
+            fields[name] = "invalid"
+            continue
+        if name == "IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON":
+            valid = (isinstance(parsed, list) and len(parsed) == 1
+                and isinstance(parsed[0], str) and _PERIOD_ACCOUNT.fullmatch(parsed[0]))
+        else:
+            valid = bool(_selector(parsed))
         if not valid:
             fields[name] = "invalid"
     name = "IBKR_ACCOUNT_FACTS_SYNC_TOKEN"

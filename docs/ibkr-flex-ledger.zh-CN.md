@@ -57,7 +57,8 @@ null；存在的 section 按已识别原生记录计数，可为 0。未知子�
 target、source binding 或同步令牌。无参数调用保持原来的一次生成、一次领取；默认
 `IBKR_FLEX_DIAGNOSTIC_ENABLED` 未精确设为 `true` 时仍不请求。
 
-- `--preflight` 只核本进程的三项 Flex 配置、唯一目标、可选的两项受保护范围配置及预期期间；不创建 HTTP
+- `--preflight` 只核本进程的三项 Flex 配置、唯一目标、派生主账号绑定所需的六项 account-facts
+  身份配置、可选的两项受保护范围配置及预期期间；不创建 HTTP
   session、不生成报表、不发布。成功只表示形状合格，不证明凭据、报表范围或金融事实有效。
 - `--read-once` 仍须显式开启上述诊断开关。只生成一次请求，若 GetStatement 返回1019，
   使用原 handle 每隔3秒最多再领取5次；其他错误立即结束。publisher 与诊断复用同一小收集
@@ -376,9 +377,11 @@ XML 元素/属性名与 `StmtFunds` 活动码（`DEP`/`WITH`/`MFEE`/`OFEE`/`FRTA
 默认关闭开关、身份校验、1019 停车和一次 POST 合同保持不变。
 
 stdout 为固定 `ibkr.flex_configuration_preflight.v1`，只含 `schema_version`、合法的
-workflow `source_sha`（缺失或不合格时为 null）、总 `status` 与按八个固定配置名列出的
+workflow `source_sha`（缺失或不合格时为 null）、总 `status` 与按十三个固定配置名列出的
 `fields`。每项状态仅为 `configuration_shape_valid`、`missing` 或 `invalid`；没有配置值、
-账户标识、令牌、收益、数量或异常正文。所有既有配置谓词通过时退出 0；缺项、坏形状或
+账户标识、令牌、收益、数量或异常正文。两项 `…_JSON` 名单（预期账号与账号选择器）会解析
+JSON 并按各自的列表形状判定，坏的 JSON 直接指出自己的字段，不会退化成"整体无效但没有
+字段可查"。所有既有配置谓词通过时退出 0；缺项、坏形状或
 原验证器未能完成时退出 2。未识别参数也退出 2，不打印参数内容或进入发布路径。
 
 形状合格不表示 Flex 凭据有效、Query 真正覆盖目标、两端同步令牌相同、受保护绑定已经
