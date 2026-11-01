@@ -16,6 +16,9 @@ import pandas as pd
 import requests
 from flask import Flask, request
 
+from quant_platform_kit.notifications import install_log_redaction
+install_log_redaction(wrap_streams=True)
+
 try:
     from quant_platform_kit.cloud import get_compute_discovery
 except ImportError:
