@@ -106,6 +106,27 @@ minutes for pull and five minutes for watch. Scheduler uses OAuth POST to the
 respective Run v2 `:run` API with `{}` body, UTC `17 10 * * *` and `47 * * * *`;
 delivery has at most three retries and at least 60 seconds backoff.
 
+## Run status and exit codes
+
+`pull` prints one JSON line with codes and counts only: `status`,
+`last_provider_error_code` (the last four-digit IBKR code seen in this run, or
+null), `windows_planned`, `reports_fetched`, `windows_succeeded` and
+`windows_failed`. The same counts are stored under `last_run` in
+`status/latest.json`. They never include dates, accounts, amounts or error text.
+
+- `finished` (exit 0): nothing was due, or at least one report was fetched.
+- `incomplete` (exit 3): windows were due but no report was fetched. Cloud Run
+  records the execution as failed, so a run that stored nothing no longer looks
+  like a success.
+- `blocked` (exit 2): a persisted or newly detected block. Resolve it before
+  clearing the block.
+
+IBKR codes 1001 (not ready) and 1018 (too many requests) fail only the current
+window; the collector continues with the next window. After a 1018 every later
+request in the run waits at least 60 seconds. Three consecutive 1001/1018 refusals
+end the run so that a throttled token is not hammered. The failed windows keep
+their normal retry spacing.
+
 ## Notifications and acceptance
 
 A watchdog execution reports missed completion after the daily schedule plus two
@@ -117,6 +138,13 @@ stored before sending. API success
 requires `ok=true` and a message ID; unknown/in-flight outcomes are not immediately
 resent, rate limits honor retry_after, and 401/403 persist a notification block.
 A Bot API receipt is separate from the owner's confirmation of receipt.
+
+A manual or scheduled `pull` is accepted only when its status line is `finished`,
+at least one report was fetched, and the bucket holds objects under both `raw/` and
+`derived/`. An exit code of zero, `state/` and `status/` objects, or a successful Run
+API call alone do not qualify. `scripts/check_flex_daily_acceptance.py` applies
+this rule to the status line and a list of object names; it never reads object
+contents.
 
 Run offline regression tests, lint, repository checks and a credential-free image
 smoke test. Then qualify a bounded real pull, missing-day recovery, private IAM and
