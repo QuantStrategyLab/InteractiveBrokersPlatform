@@ -1,9 +1,7 @@
 """Exercise scheduler enablement from the workflow without cloud access."""
 
-import json
 import shutil
 import subprocess
-import sys
 import textwrap
 from pathlib import Path
 
@@ -27,41 +25,36 @@ def test_schedule_sync_enablement(
         "synthetic-warmup": standard_execution_enabled,
         "synthetic-precheck": drill_precheck_enabled,
     }
-    state_path = tmp_path / "states.json"
-    actions_path = tmp_path / "actions.json"
-    state_path.write_text(json.dumps(dict.fromkeys(jobs, initial_state)))
-    actions_path.write_text("[]")
+    for job in jobs:
+        (tmp_path / job).write_text(initial_state + "\n")
+    actions_path = tmp_path / "actions.log"
+    actions_path.write_text("")
+    bash = shutil.which("bash")
     gcloud = tmp_path / "gcloud"
-    gcloud.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
-        import json
-        import os
-        import sys
-        from pathlib import Path
-
-        states_path = Path(os.environ["FAKE_STATES"])
-        actions_path = Path(os.environ["FAKE_ACTIONS"])
-        states = json.loads(states_path.read_text())
-        args = sys.argv[1:]
-        assert args[:2] == ["scheduler", "jobs"], args
-        action, job = args[2:4]
-        assert job in states, args
-        if action == "describe":
-            print(states[job])
-        elif action in ("resume", "pause"):
-            actions = json.loads(actions_path.read_text())
-            actions.append([action, job])
-            actions_path.write_text(json.dumps(actions))
-            states[job] = "ENABLED" if action == "resume" else "PAUSED"
-            states_path.write_text(json.dumps(states))
-        else:
-            raise AssertionError(args)
+    gcloud.write_text(f"#!{bash}\n" + textwrap.dedent("""\
+        set -euo pipefail
+        [[ "$1 $2" == "scheduler jobs" ]]
+        [[ -f "$FAKE_CLOUD/$4" ]]
+        case "$3" in
+          describe)
+            read -r state < "$FAKE_CLOUD/$4"
+            printf '%s\\n' "$state"
+            ;;
+          resume|pause)
+            printf '%s %s\\n' "$3" "$4" >> "$FAKE_ACTIONS"
+            state=PAUSED
+            if [[ "$3" == resume ]]; then state=ENABLED; fi
+            printf '%s\\n' "$state" > "$FAKE_CLOUD/$4"
+            ;;
+          *) exit 1 ;;
+        esac
         """))
     gcloud.chmod(0o755)
     result = subprocess.run(
-        [shutil.which("bash"), "--noprofile", "--norc", "-c", "set -euo pipefail\n" + source],
+        [bash, "--noprofile", "--norc", "-c", "set -euo pipefail\n" + source],
         env={
             "PATH": str(tmp_path),
-            "FAKE_STATES": str(state_path),
+            "FAKE_CLOUD": str(tmp_path),
             "FAKE_ACTIONS": str(actions_path),
             "job_name": "synthetic-main",
             "warmup_job_name": "synthetic-warmup",
@@ -77,9 +70,9 @@ def test_schedule_sync_enablement(
     )
     assert result.returncode == 0, result.stderr
     expected_states = {job: "ENABLED" if enabled else "PAUSED" for job, enabled in jobs.items()}
-    assert json.loads(state_path.read_text()) == expected_states
-    assert json.loads(actions_path.read_text()) == [
-        ["resume" if enabled else "pause", job]
+    assert {job: (tmp_path / job).read_text().strip() for job in jobs} == expected_states
+    assert actions_path.read_text().splitlines() == [
+        f"{'resume' if enabled else 'pause'} {job}"
         for job, enabled in jobs.items()
         if expected_states[job] != initial_state
     ]
