@@ -163,13 +163,13 @@ def test_collector_resume_and_raw_write_before_coverage(monkeypatch):
     c = config()
     c['backfill_start'] = state.target_day(datetime.now(timezone.utc)).isoformat()
     first = runner.collect(store, c, fetch)
-    assert first['missing_account_days'] == 1
+    assert first['missing_account_days'] == 2
     assert first['continuous_through']['account-1'] == c['backfill_start']
     assert first['continuous_through']['account-2'] is None
     raw = [key for key in store.values if key.startswith('raw/')]
-    assert len(raw) == 1
+    assert len(raw) == 2
     runner.collect(store, c, fetch)
-    assert len([key for key in store.values if key.startswith('raw/')]) == 1
+    assert len([key for key in store.values if key.startswith('raw/')]) == 2
 
 
 def test_watch_unknown_deduplicates_and_has_no_private_payload():

@@ -12,7 +12,8 @@ Coverage lives in `state/coverage.json`, separately from immutable content-addre
 `raw/` XML and `derived/` projections. Startup queues the last seven calendar days,
 missed monthly controls, and oldest incomplete dates, with a maximum of 30 windows
 and 25 minutes per execution. Dates use the previous complete New York calendar
-day, including weekends. Missing dates are never inferred to be zero. Monthly
+day, including weekends. One prior-day opening snapshot is queued before the
+configured backfill start. Missing dates are never inferred to be zero. Monthly
 controls due on days 3 and 10 remain queued after an outage. Monthly activity is
 compared as a multiset of source rows when every daily report is available; this
 does not certify balance or full accounting reconciliation.

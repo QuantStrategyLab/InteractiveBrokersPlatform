@@ -75,7 +75,7 @@ def collect(store, config, fetch, now=utcnow, clock=time.monotonic):
     try:
         if state.get('blocked'):
             return persist()
-        seed(state, date.fromisoformat(config['backfill_start']), target_day(started), accounts.values())
+        seed(state, date.fromisoformat(config['backfill_start']) - timedelta(days=1), target_day(started), accounts.values())
         state['last_started_at'] = started.isoformat()
         persist()
         for kind, start, end in windows(state, target_day(started), started):
