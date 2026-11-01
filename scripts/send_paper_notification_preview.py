@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""Send a bounded InteractiveBrokersPlatform PAPER Telegram notification preview pack.
+"""Render or send ONE InteractiveBrokersPlatform PAPER Telegram notification preview.
 
-Renders synthetic compact messages via existing notification renderers,
-translator, and Telegram sender. Does not trade, connect IB Gateway/TWS,
-read accounts/positions/quotes, import or call broker/order/Cloud Run
-production interfaces, or change production configuration.
+The preview renders a single consolidated synthetic message in the unified
+daily-digest format (the QuantSentinel daily digest contract) by reusing the
+pinned QRS digest renderer snapshot in ``tests/fixtures/qrs_notification_contract``.
+With ``--send`` the workflow delivers that one message through the existing
+Telegram sender; without ``--send`` it prints the rendered message to the job
+log and sends nothing.
+
+Does not trade, connect IB Gateway/TWS, read accounts/positions/quotes, import
+or call broker/order/Cloud Run production interfaces, or change production
+configuration.
 """
 
 from __future__ import annotations
@@ -13,28 +19,24 @@ import argparse
 import os
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from notifications.renderers import render_heartbeat_notification, render_trade_notification
-from notifications.telegram import (
-    build_strategy_display_name,
-    build_translator,
-    send_telegram_message,
-)
+from notifications.telegram import send_telegram_message  # noqa: E402
 
-_MAX_PREVIEW_MESSAGES = 6
+_QRS_SNAPSHOT = ROOT / "tests" / "fixtures" / "qrs_notification_contract"
+_PREVIEW_PLATFORM_ID = "ibkr"
 _PREVIEW_STRATEGY_PROFILE = "us_equity_combo"
 _PREVIEW_EXTRA_LINES = (
     "🧪 【PREVIEW】PAPER notification preview",
     "synthetic / 合成样例 · 不会下单 · No order will be placed",
 )
-_SYNTHETIC_SEPARATOR = "━━━━━━━━━━━━━━━━━━"
-_SYNTHETIC_SYMBOL = "PREVIEW"
-_SYNTHETIC_DASHBOARD = "📌 PAPER PREVIEW\n  - synthetic positions only"
+_SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
 def _resolve_locale(raw: str | None = None) -> str:
@@ -98,114 +100,45 @@ def resolve_telegram_chat_id() -> str:
     return chats[0] if chats else ""
 
 
-def _with_preview_markers(body: str) -> str:
+def _digest_renderer():
+    """Load the pinned QRS daily-digest renderer snapshot (a pure formatter)."""
+    snapshot = str(_QRS_SNAPSHOT)
+    if snapshot not in sys.path:
+        sys.path.insert(0, snapshot)
+    import daily_digest_notify
+
+    return daily_digest_notify
+
+
+def _default_business_day() -> str:
+    return datetime.now(_SHANGHAI).date().isoformat()
+
+
+def build_preview_message(*, locale: str | None = None, business_day: str | None = None) -> str:
+    """Render ONE synthetic message in the unified daily-digest format."""
+
+    resolved_locale = _resolve_locale(locale)
+    digest = _digest_renderer()
+    payload = digest.DailyDigestInput(
+        business_day=business_day or _default_business_day(),
+        locale=resolved_locale,
+        runs=(
+            digest.DigestRunEntry(
+                platform_id=_PREVIEW_PLATFORM_ID,
+                strategy_profile=_PREVIEW_STRATEGY_PROFILE,
+                status="ok",
+                order_count=0,
+                fill_count=0,
+                cycle_count=1,
+            ),
+        ),
+    )
+    body = digest.render_daily_digest(payload)
     return "\n".join(("[PAPER]", body, *_PREVIEW_EXTRA_LINES))
 
 
-def _synthetic_order(*, side: str = "buy", quantity: float = 1.0, status: str = "", reason: str = "") -> dict:
-    order = {
-        "symbol": _SYNTHETIC_SYMBOL,
-        "side": side,
-        "quantity": quantity,
-    }
-    if status:
-        order["status"] = status
-    if reason:
-        order["reason"] = reason
-    return order
-
-
-def build_preview_messages(*, locale: str | None = None) -> list[str]:
-    """Build at most six synthetic compact PAPER preview messages."""
-
-    resolved_locale = _resolve_locale(locale)
-    translator = build_translator(resolved_locale)
-    strategy_name = build_strategy_display_name(translator, resolved_locale)(
-        _PREVIEW_STRATEGY_PROFILE,
-        fallback_name="US Equity Combo",
-    )
-    common = dict(
-        dashboard="",
-        strategy_dashboard=_SYNTHETIC_DASHBOARD,
-        signal_desc="hold",
-        status_desc="hold",
-        status_icon="🐤",
-        translator=translator,
-        separator=_SYNTHETIC_SEPARATOR,
-        strategy_display_name=strategy_name,
-        extra_notification_lines=(),
-    )
-
-    heartbeat = render_heartbeat_notification(
-        no_op_text=translator("no_trades"),
-        **common,
-    ).compact_text
-
-    dry_run = render_trade_notification(
-        trade_logs=(),
-        execution_summary={
-            "mode": "dry_run",
-            "orders_submitted": [_synthetic_order()],
-            "target_vs_current": [{"symbol": _SYNTHETIC_SYMBOL, "delta_weight": 0.10}],
-        },
-        **common,
-    ).compact_text
-
-    pending = render_trade_notification(
-        trade_logs=(),
-        execution_summary={
-            "mode": "paper",
-            "orders_pending": [_synthetic_order()],
-        },
-        **common,
-    ).compact_text
-
-    filled = render_trade_notification(
-        trade_logs=(),
-        execution_summary={
-            "mode": "paper",
-            "orders_filled": [_synthetic_order()],
-        },
-        **common,
-    ).compact_text
-
-    rejected = render_trade_notification(
-        trade_logs=(),
-        execution_summary={
-            "mode": "paper",
-            "orders_skipped": [
-                _synthetic_order(status="Rejected", reason="rejected"),
-            ],
-        },
-        **common,
-    ).compact_text
-
-    unknown_status = "\n".join(
-        (
-            translator("error_title"),
-            strategy_name,
-            f"status={translator('strategy_plugin_route_unknown_route')}",
-            "synthetic PREVIEW unknown status / 未知状态",
-        )
-    )
-
-    messages = [
-        _with_preview_markers(heartbeat),
-        _with_preview_markers(dry_run),
-        _with_preview_markers(pending),
-        _with_preview_markers(filled),
-        _with_preview_markers(rejected),
-        _with_preview_markers(unknown_status),
-    ]
-    if len(messages) > _MAX_PREVIEW_MESSAGES:
-        raise RuntimeError(
-            f"preview message count {len(messages)} exceeds cap {_MAX_PREVIEW_MESSAGES}"
-        )
-    return messages
-
-
 def send_preview(*, locale: str | None = None, requests_module=None) -> bool:
-    messages = build_preview_messages(locale=locale)
+    message = build_preview_message(locale=locale)
     token = resolve_telegram_token()
     chat_id = resolve_telegram_chat_id()
     if not token or not chat_id:
@@ -218,29 +151,35 @@ def send_preview(*, locale: str | None = None, requests_module=None) -> bool:
     if requests_module is None:
         import requests as requests_module
 
-    for message in messages:
-        if not send_telegram_message(
-            message,
-            token=token,
-            chat_id=chat_id,
-            requests_module=requests_module,
-        ):
-            print("Notification preview delivery failed.", file=sys.stderr)
-            return False
+    if not send_telegram_message(
+        message,
+        token=token,
+        chat_id=chat_id,
+        requests_module=requests_module,
+    ):
+        print("Notification preview delivery failed.", file=sys.stderr)
+        return False
     return True
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Send a bounded InteractiveBrokersPlatform PAPER Telegram "
-            "notification preview pack."
+            "Render (or send with --send) one InteractiveBrokersPlatform PAPER "
+            "notification preview in the unified daily-digest format."
         )
     )
     parser.add_argument(
         "--locale",
         default=os.environ.get("NOTIFY_LANG"),
         help="Optional notification locale override (zh/en). Defaults to NOTIFY_LANG.",
+    )
+    parser.add_argument(
+        "--send",
+        action="store_true",
+        default=(os.environ.get("PREVIEW_SEND") or "").strip().lower()
+        in {"1", "true", "yes", "on"},
+        help="Send the rendered preview message to Telegram. Default: print only.",
     )
     args = parser.parse_args(argv)
 
@@ -258,12 +197,22 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
+    message = build_preview_message(locale=args.locale)
+    if not args.send:
+        print("Rendered PAPER notification preview (send=false; nothing sent):")
+        print(message)
+        print(
+            "Preview rendered only: one consolidated unified daily-digest "
+            "message; no Telegram delivery."
+        )
+        return 0
+
     delivered = send_preview(locale=args.locale)
     if not delivered:
         return 1
     print(
-        "Notification preview delivered bounded synthetic PAPER pack "
-        f"(at most {_MAX_PREVIEW_MESSAGES} messages; no orders)."
+        "Notification preview delivered: one consolidated synthetic unified "
+        "daily-digest message (no orders)."
     )
     return 0
 
