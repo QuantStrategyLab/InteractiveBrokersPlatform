@@ -2,6 +2,10 @@
 
 import hashlib
 import json
+
+from application.decision_cycle import (
+    attach_cycle_decision_receipt, capture_cycle_result_evidence, cycle_handler, current_cycle,
+)
 import importlib
 import os
 import re
@@ -1589,6 +1593,9 @@ def _handle_request(
 
     log_context = build_request_log_context()
     report = build_execution_report(log_context, dry_run_only_override=dry_run_only_override)
+    if current_cycle() is not None:
+        report["decision_at"] = current_cycle()["decision_time"].isoformat()
+        current_cycle()["report"] = report
     signal_provenance.reset()
     if report_collector is not None:
         # Register the mutable report before any deadline-bound setup work so a
@@ -1599,6 +1606,9 @@ def _handle_request(
     deadline_exceeded = False
     try:
         strategy_plugin_signals, strategy_plugin_error = load_strategy_plugin_signals()
+        if current_cycle() is not None:
+            current_cycle()["plugin_signals"] = strategy_plugin_signals
+            current_cycle()["plugin_error"] = strategy_plugin_error
         attach_strategy_plugin_report(
             report,
             signals=strategy_plugin_signals,
@@ -1704,6 +1714,11 @@ def _handle_request(
             )
         )
         execution_summary = dict(cycle_result.execution_summary or {})
+        # The account-wide brake can submit orders outside this strategy's
+        # collections; in that case those collections are not complete.
+        from application.reconciliation_service import account_brake_submission_status
+        if account_brake_submission_status(getattr(cycle_result, "signal_metadata", None)) is None:
+            capture_cycle_result_evidence(execution_summary, dry_run=bool(report.get("dry_run")))
         reconciliation_record = dict(cycle_result.reconciliation_record or {})
         signal_metadata = dict(cycle_result.signal_metadata or {})
         signal_snapshot = dict(signal_metadata.get("signal_snapshot") or {})
@@ -1927,6 +1942,7 @@ def _handle_request(
                 # A legacy runtime target remains visible as evidence-missing;
                 # reporting metadata must never change trading behavior.
                 pass
+        attach_cycle_decision_receipt(report)
         if not deadline_exceeded and persist_report:
             try:
                 if dry_run_only_override is None:
@@ -1949,6 +1965,9 @@ def _handle_request(
                             print("notification_report_coverage_alert_failed", flush=True)
                     except Exception:
                         print("notification_report_coverage_alert_failed", flush=True)
+
+
+_handle_request = cycle_handler(_handle_request)
 
 
 @app.route("/run", methods=["POST"])

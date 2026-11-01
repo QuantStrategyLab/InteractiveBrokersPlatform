@@ -284,4 +284,15 @@ def map_strategy_decision(
     if dashboard_text:
         metadata.setdefault("dashboard_text", dashboard_text)
 
+    if decision.diagnostics.get("joint_execution_required") is True:
+        from application.decision_cycle import current_cycle
+        from quant_platform_kit.common.execution_state import submission_binding_digest
+        cycle = current_cycle()
+        joint = cycle.get("joint_strategy_binding") if cycle is not None else None
+        if joint is None or decision is not joint.get("gated_decision"):
+            raise ValueError("joint gated decision binding unavailable")
+        allocation = metadata.get("allocation")
+        if not isinstance(allocation, dict):
+            raise ValueError("joint gated allocation unavailable")
+        joint["allocation_sha256"] = submission_binding_digest(allocation)
     return target_weights, signal_desc, is_emergency, status_desc, metadata

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from application.decision_cycle import plugin_load_options
+
 from dataclasses import dataclass
 from math import ceil
 import re
@@ -186,6 +188,7 @@ class IBKRRuntimeStrategyAdapters:
                 self.load_configured_strategy_plugin_signals_fn(
                     mounts,
                     strategy_profile=self.strategy_profile,
+                    **plugin_load_options(self.load_configured_strategy_plugin_signals_fn),
                 ),
                 None,
             )
