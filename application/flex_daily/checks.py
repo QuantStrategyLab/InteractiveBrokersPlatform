@@ -89,6 +89,9 @@ def inspect_report(content, start, end, accounts, configured_sections, previous_
                 if row.tag != tag or len(row) or not set(fields.split()) <= set(row.attrib):
                     issues.append('field_or_shape_missing:' + section)
                     continue
+                identity_fields = {'currency', 'conid', 'levelOfDetail', 'fromCurrency', 'toCurrency'} & set(fields.split())
+                if any(not row.get(field, '').strip() for field in identity_fields):
+                    issues.append('identity_field_empty:' + section)
                 for field in ('reportDate', 'fromDate', 'toDate'):
                     value = row.get(field)
                     if value is not None:
@@ -248,6 +251,44 @@ def compare_activity(monthly, daily_contents):
                             result[(statement.get('accountId'), section, row.tag, attrs)] += 1
         return result
     return rows([monthly]) == rows(daily_contents)
+
+
+def compare_month(monthly, daily_contents):
+    """Exact activity and opening/closing controls; never sum daily balances."""
+    if not daily_contents or not compare_activity(monthly, daily_contents):
+        return False
+    def endpoints(payload, opening):
+        root = _xml_root(payload, endpoint='GetStatement')
+        result = {}
+        for statement in root.findall('./FlexStatements/FlexStatement'):
+            account = statement.get('accountId')
+            nav = statement.find('ChangeInNAV')
+            if nav is None:
+                raise ValueError('month_nav_missing')
+            result[(account, 'nav')] = (nav.get('currency'), number(nav.attrib, 'startingValue' if opening else 'endingValue'))
+            for section, tag, identity, amount in (
+                    ('CashReport', 'CashReportCurrency', 'currency', 'startingCash' if opening else 'endingCash'),
+                    ('InterestAccruals', 'InterestAccrualsCurrency', 'currency', 'startingAccrualBalance' if opening else 'endingAccrualBalance')):
+                container = statement.find(section)
+                if container is None or not len(container):
+                    raise ValueError('month_balance_missing')
+                for row in container.findall(tag):
+                    key = (account, section, row.get(identity))
+                    if key in result or not row.get(identity):
+                        raise ValueError('month_balance_ambiguous')
+                    result[key] = number(row.attrib, amount)
+            if not opening:
+                container = statement.find('OpenPositions')
+                if container is None:
+                    raise ValueError('month_position_missing')
+                for row in container.findall('OpenPosition'):
+                    key = (account, 'position', row.get('conid'), row.get('currency'))
+                    if key in result or row.get('levelOfDetail') != 'SUMMARY':
+                        raise ValueError('month_position_ambiguous')
+                    result[key] = number(row.attrib, 'position')
+        return result
+    return (endpoints(monthly, True) == endpoints(daily_contents[0], True)
+            and endpoints(monthly, False) == endpoints(daily_contents[-1], False))
 
 
 def private_projection(content):

@@ -15,8 +15,10 @@ and 25 minutes per execution. Dates use the previous complete New York calendar
 day, including weekends. One prior-day opening snapshot is queued before the
 configured backfill start. Missing dates are never inferred to be zero. Monthly
 controls due on days 3 and 10 remain queued after an outage. Monthly activity is
-compared as a multiset of source rows when every daily report is available; this
-does not certify balance or full accounting reconciliation.
+compared as a multiset of source rows when every daily report is available,
+with exact cash, NAV, interest and closing-position controls. Pending daily
+coverage keeps the monthly control pending. These checks do not certify full
+accounting reconciliation.
 
 The collector serializes requests with at least ten seconds between them. Pending
 responses poll the same reference at bounded intervals. Authentication, query and

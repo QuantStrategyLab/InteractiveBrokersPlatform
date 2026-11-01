@@ -333,3 +333,20 @@ def test_unknown_account_stops_before_any_raw_upload():
     assert result['blocked'] == 'account_scope'
     assert len(calls) == 1
     assert not any(key.startswith('raw/') for key in store.values)
+
+
+def test_monthly_closing_balance_change_is_not_hidden_by_equal_activity():
+    daily = report()
+    monthly = ET.fromstring(daily)
+    monthly.find('.//ChangeInNAV').set('endingValue', '1.25')
+    assert checks.compare_activity(ET.tostring(monthly), [daily])
+    assert not checks.compare_month(ET.tostring(monthly), [daily])
+    assert checks.compare_month(daily, [daily])
+
+
+def test_empty_currency_does_not_qualify_as_complete():
+    root = ET.fromstring(report())
+    root.find('.//CashReportCurrency').set('currency', '')
+    c = config()
+    result = checks.inspect_report(ET.tostring(root), '2026-10-31', '2026-10-31', c['accounts'], c['configured_sections'])
+    assert result['account-1']['status'] == 'received'

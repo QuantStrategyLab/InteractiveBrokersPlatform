@@ -9,7 +9,7 @@ from application.ibkr_flex_source import (
     FlexReportPending, FlexSourceError, collect_activity_flex_xml, request_activity_flex_report,
 )
 from application.flex_daily.checks import (
-    ReportScopeError, compare_activity, inspect_report, private_projection, require_account_scope,
+    ReportScopeError, compare_month, inspect_report, private_projection, require_account_scope,
 )
 from application.flex_daily.state import failed, seed, summary, target_day, windows
 from application.flex_daily.storage import Lease
@@ -106,6 +106,7 @@ def collect(store, config, fetch, now=utcnow, clock=time.monotonic):
                 derived = json.dumps(projection, sort_keys=True).encode()
                 derived_hash = hashlib.sha256(derived).hexdigest()
                 store.immutable(f'derived/{derived_hash}.json', derived)
+                slot['reconciliation_status'] = 'difference' if any(v['reconciliation_status'] == 'difference' for v in checked.values()) else 'partial'
                 old_hash = slot.get('sha256')
                 slot.update(raw=raw_key, sha256=digest, derived=f'derived/{derived_hash}.json', checked_at=now().isoformat())
                 if kind == 'daily':
@@ -130,16 +131,16 @@ def collect(store, config, fetch, now=utcnow, clock=time.monotonic):
                     if eligible and clock() + 90 < deadline:
                         payloads = [store.read(v['raw'])[0] for v in daily_slots]
                         if all(payloads):
-                            same_activity = compare_activity(content, payloads)
-                            slot['comparison_status'] = 'activity_matched' if same_activity else 'difference'
+                            same_activity = compare_month(content, payloads)
+                            slot['comparison_status'] = 'controls_matched' if same_activity else 'difference'
                             slot['done'] = same_activity and schema_complete
                             if not same_activity:
                                 for daily in daily_slots:
                                     for value in daily['accounts'].values():
                                         value['status'] = 'pending'
                                 slot['done'] = False
-                    # Exact activity comparison is not balance, grant or full
-                    # reconciliation certification.
+                    # Exact opening/closing controls still do not certify grants,
+                    # settlement lineage or full financial reconciliation.
                 if any(v['status'] != 'complete' for v in checked.values()) or kind != 'daily' and not slot.get('done'):
                     failed(slot, now(), 'incomplete_report_or_daily_control')
                 else:
