@@ -27,8 +27,14 @@ def events(status, previous, now):
             or 'gap_queue_increased' in previous.get('reasons', [])
             and (status.get('missing_account_days') or 0) >= (previous.get('missing_account_days') or 0)):
         reasons.append('gap_queue_increased')
-    if status.get('token_expires_at'):
-        remaining = (datetime.fromisoformat(status['token_expires_at']) - now).total_seconds() / 86400
+    try:
+        expiry = datetime.fromisoformat(status.get('token_expires_at'))
+        if expiry.utcoffset() is None:
+            raise ValueError('timezone_required')
+        remaining = (expiry - now).total_seconds() / 86400
+    except (ValueError, TypeError):
+        reasons.append('token_expiry_unqualified')
+    else:
         for threshold in (1, 7, 30):
             if remaining <= threshold:
                 reasons.append('token_expiry_' + str(threshold))

@@ -107,20 +107,12 @@ def collect(store, config, fetch, now=utcnow, clock=time.monotonic):
                 derived_hash = hashlib.sha256(derived).hexdigest()
                 store.immutable(f'derived/{derived_hash}.json', derived)
                 slot['reconciliation_status'] = 'difference' if any(v['reconciliation_status'] == 'difference' for v in checked.values()) else 'partial'
-                old_hash = slot.get('sha256')
                 slot.update(raw=raw_key, sha256=digest, derived=f'derived/{derived_hash}.json', checked_at=now().isoformat())
                 if kind == 'daily':
                     slot['accounts'] = {key: {k: v for k, v in value.items() if k != 'residuals'} for key, value in checked.items()}
                 else:
-                    # Monthly changes invalidate only the corresponding daily
-                    # completeness; monthly files never fabricate daily snapshots.
-                    month_changed = any(v.get('sha256') and v['sha256'] != digest
-                                        for k, v in state['months'].items() if k[:7] == start[:7])
-                    if month_changed or old_hash and old_hash != digest:
-                        for day, daily in state['days'].items():
-                            if start <= day <= end:
-                                for value in daily['accounts'].values():
-                                    value['status'] = 'pending'
+                    # Raw metadata changes preserve daily completeness. Only a
+                    # semantic control difference below queues daily reports again.
                     schema_complete = all(v['status'] == 'complete' for v in checked.values())
                     slot['done'] = False
                     daily_slots = [v for day, v in sorted(state['days'].items()) if start <= day <= end]

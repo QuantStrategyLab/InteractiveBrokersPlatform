@@ -20,6 +20,10 @@ with exact cash, NAV, interest and closing-position controls. Pending daily
 coverage keeps the monthly control pending. These checks do not certify full
 accounting reconciliation.
 
+Monthly generation-time changes preserve completed daily coverage. Raw revisions
+remain immutable evidence; only differences in semantic monthly controls queue
+the corresponding daily reports again.
+
 The collector serializes requests with at least ten seconds between them. Pending
 responses poll the same reference at bounded intervals. Authentication, query and
 IP errors persist a block; operators must resolve the cause before explicitly
@@ -107,7 +111,9 @@ delivery has at most three retries and at least 60 seconds backoff.
 A watchdog execution reports missed completion after the daily schedule plus two
 hours, old gaps, increased gap count, field issues, observed residuals and token
 expiry thresholds at 30/7/1 days. Messages contain no amounts, securities, account
-IDs, source URLs or attachments. Claims are stored before sending. API success
+IDs, source URLs or attachments. Missing, invalid or timezone-free expiry values
+produce `token_expiry_unqualified` without suppressing other alerts. Claims are
+stored before sending. API success
 requires `ok=true` and a message ID; unknown/in-flight outcomes are not immediately
 resent, rate limits honor retry_after, and 401/403 persist a notification block.
 A Bot API receipt is separate from the owner's confirmation of receipt.

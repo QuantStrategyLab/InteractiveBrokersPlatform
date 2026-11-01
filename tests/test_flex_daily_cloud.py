@@ -1,4 +1,5 @@
 import copy
+import hashlib
 from datetime import date, datetime, timedelta, timezone
 from xml.etree import ElementTree as ET
 
@@ -350,3 +351,79 @@ def test_empty_currency_does_not_qualify_as_complete():
     c = config()
     result = checks.inspect_report(ET.tostring(root), '2026-10-31', '2026-10-31', c['accounts'], c['configured_sections'])
     assert result['account-1']['status'] == 'received'
+
+
+@pytest.mark.parametrize('checkpoint', ['2026-10-3', '2026-10-10'])
+@pytest.mark.parametrize('change', ['generation_time', 'activity', 'missing_daily'])
+def test_monthly_revision_uses_semantic_controls(monkeypatch, checkpoint, change):
+    store = Memory()
+    c = config()
+    c['accounts'] = {'U00001': 'account-1'}
+    now = datetime(2026, 11, 11, 13, tzinfo=timezone.utc)
+    coverage = {'schema': 1, 'days': {}, 'months': {}, 'backfill_start': c['backfill_start']}
+    state.seed(coverage, date(2026, 9, 30), state.target_day(now), ['account-1'])
+    for day, slot in coverage['days'].items():
+        content = report(day, day)
+        key = 'raw/' + hashlib.sha256(content).hexdigest() + '.xml'
+        store.immutable(key, content)
+        slot.update(raw=key, accounts={'account-1': {'status': 'complete'}})
+    old_month = report('2026-10-01', '2026-10-31')
+    old_key = 'raw/' + hashlib.sha256(old_month).hexdigest() + '.xml'
+    store.immutable(old_key, old_month)
+    coverage['months']['2026-10-3'] = {'done': True, 'raw': old_key, 'sha256': hashlib.sha256(old_month).hexdigest()}
+    if change == 'missing_daily':
+        coverage['days']['2026-10-01']['accounts']['account-1']['status'] = 'missing'
+        coverage['months'][checkpoint] = {'done': False, 'attempts': 2, 'sha256': hashlib.sha256(old_month).hexdigest()}
+    store.put('state/coverage.json', coverage)
+    monthly = ET.fromstring(old_month)
+    monthly.find('.//FlexStatement').set('whenGenerated', '20261111;101700')
+    if change == 'activity':
+        ET.SubElement(monthly.find('.//Trades'), 'Trade', tradeID='synthetic-correction', quantity='1')
+    new_month = ET.tostring(monthly)
+    assert hashlib.sha256(new_month).digest() != hashlib.sha256(old_month).digest()
+    monkeypatch.setattr(runner, 'windows', lambda *_: [(checkpoint, '2026-10-01', '2026-10-31')])
+    runner.collect(store, c, lambda *_: new_month, now=lambda: now)
+    after, _ = store.json('state/coverage.json')
+    month = after['months'][checkpoint]
+    october = [slot for day, slot in after['days'].items() if day.startswith('2026-10-')]
+    assert store.read(old_key)[0] == old_month
+    assert store.read(month['raw'])[0] == new_month
+    if change == 'generation_time':
+        assert all(state.complete(slot) for slot in october)
+        assert month['comparison_status'] == 'controls_matched'
+        assert month['done'] is True
+        assert month['attempts'] == 0
+        assert 'next_attempt_at' not in month
+    elif change == 'activity':
+        assert month['comparison_status'] == 'difference'
+        assert month['done'] is False
+        assert all(slot['accounts']['account-1']['status'] == 'pending' for slot in october)
+    else:
+        assert month['comparison_status'] == 'partial'
+        assert month['done'] is False
+        assert month['attempts'] == 3
+        assert not state.due(month, now + timedelta(hours=23))
+        assert state.due(month, now + timedelta(hours=24))
+        assert october[0]['accounts']['account-1']['status'] == 'missing'
+        assert all(state.complete(slot) for slot in october[1:])
+    assert state.complete(after['days']['2026-09-30'])
+    assert state.complete(after['days']['2026-11-01'])
+
+
+@pytest.mark.parametrize('expiry', ['not-a-date', '2026-12-01T00:00:00', None, '', 123, {}])
+def test_watch_unqualified_expiry_alerts_without_losing_other_events(expiry):
+    store = Memory()
+    now = datetime.now(timezone.utc)
+    store.put('status/latest.json', {'token_expires_at': expiry, 'residual_nonzero': True})
+    sent = []
+    def notify(text):
+        sent.append(text)
+        return {'delivery': 'sent', 'message_id': 1}
+    assert watch.watch(store, notify, now)['delivery'] == 'sent'
+    claim, _ = store.json('notifications/latest.json')
+    assert claim['reasons'] == ['missed_run', 'reconciliation_difference', 'token_expiry_unqualified']
+    assert len(sent) == 1
+    assert 'token_expiry_unqualified' in sent[0]
+    assert 'not-a-date' not in sent[0] and '2026-12-01T00:00:00' not in sent[0]
+    assert watch.watch(store, notify, now + timedelta(minutes=1))['delivery'] == 'deduplicated'
+    assert len(sent) == 1
