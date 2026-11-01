@@ -1,4 +1,8 @@
+import os
+import subprocess
+import sys
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from scripts.daily_binding_protocol import digest
@@ -91,3 +95,59 @@ def test_additional_comparison_reuses_primary_identity_for_duplicate_guard():
     section = workflow.split('  compare-additional-website-binding:', 1)[1].split('  inspect:', 1)[0]
     for name in ('IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON', 'IBKR_ACCOUNT_FACTS_TARGET_ID', 'IBKR_ACCOUNT_FACTS_REPORT_PREFIX'):
         assert f'{name}: ${{{{ secrets.{name} }}}}' in section
+
+
+_PRIMARY_ENV = {
+    "IBKR_ACCOUNT_FACTS_TARGET": "primary-live",
+    "IBKR_ACCOUNT_FACTS_TARGET_ID": "synthetic-target",
+    "IBKR_ACCOUNT_FACTS_REPORT_PREFIX": "gs://synthetic-bucket/tqqq_growth_income/",
+    "IBKR_ACCOUNT_FACTS_PROJECT_ID": "synthetic-project",
+    "IBKR_ACCOUNT_FACTS_SERVICE_NAME": "synthetic-service",
+    "IBKR_ACCOUNT_FACTS_RUNTIME_REVISION": "7",
+    "IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE": "live",
+    "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON": '["U1234567"]',
+    "IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR": "synthetic-deployment",
+    "IBKR_PERIOD_RETURN_TARGET_ID": "synthetic-target",
+    "IBKR_PERIOD_RETURN_ACCOUNT_SCOPE": "live",
+    "IBKR_PERIOD_RETURN_ACCOUNT_KEY": "synthetic-key",
+    "DAILY_COMPARISON_NONCE": "a" * 64,
+}
+
+
+def _run_primary_cli(overrides=None):
+    """Run the real command line, because the reason mapping lives in its entry point."""
+    current_binding = adapter.publisher._bound_source_id(
+        project_id=_PRIMARY_ENV["IBKR_ACCOUNT_FACTS_PROJECT_ID"],
+        service_name=_PRIMARY_ENV["IBKR_ACCOUNT_FACTS_SERVICE_NAME"],
+        runtime_revision=_PRIMARY_ENV["IBKR_ACCOUNT_FACTS_RUNTIME_REVISION"],
+        account_scope=_PRIMARY_ENV["IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE"],
+        account_selector=("U1234567",),
+        deployment_selector=_PRIMARY_ENV["IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR"],
+    )
+    env = {**_PRIMARY_ENV, "IBKR_PERIOD_RETURN_SOURCE_BINDING_ID": current_binding,
+           **(overrides or {})}
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [sys.executable, "-m", "scripts.compare_website_daily_binding"],
+        capture_output=True, text=True, check=False, cwd=root,
+        env={**os.environ, "PYTHONPATH": str(root), **env},
+    )
+    return result.stdout.strip(), result.returncode, env
+
+
+def test_cli_publishes_comparison_when_the_pinned_binding_is_current():
+    out, code, _ = _run_primary_cli()
+    assert code == 0 and out.startswith("status=ok comparison=")
+
+
+def test_cli_names_a_stale_pinned_binding_without_printing_it():
+    out, code, env = _run_primary_cli({"IBKR_PERIOD_RETURN_SOURCE_BINDING_ID": "c" * 64})
+    assert code == 1
+    assert out == "status=blocked stage=configuration reason=configuration_mismatch kind=ValueError"
+    assert not any(value in out for value in env.values())
+
+
+def test_cli_names_a_wrong_report_prefix():
+    out, code, _ = _run_primary_cli({"IBKR_ACCOUNT_FACTS_REPORT_PREFIX": "gs://synthetic-bucket/other_profile/"})
+    assert code == 1
+    assert out == "status=blocked stage=configuration reason=scope_mismatch kind=ValueError"
