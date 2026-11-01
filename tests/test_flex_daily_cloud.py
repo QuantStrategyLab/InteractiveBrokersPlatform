@@ -1,13 +1,17 @@
 import copy
 import hashlib
+import json
 from datetime import date, datetime, timedelta, timezone
 from xml.etree import ElementTree as ET
 
 import pytest
 
+from application.flex_daily import __main__ as flex_main
 from application.flex_daily import checks, runner, state, watch
+from application.flex_daily.__main__ import pull_outcome
 from application.flex_daily.storage import Conflict, Lease
 from application.ibkr_flex_source import FlexSourceError
+from scripts import check_flex_daily_acceptance as acceptance
 
 
 class Memory:
@@ -132,8 +136,8 @@ def test_lease_rejects_overlap_and_fences_stale_owner():
         first.check(now)
 
 
-@pytest.mark.parametrize('code', ['1012', '1013', '1015', '1018', '1001'])
-def test_provider_stop_persists_holes(code):
+@pytest.mark.parametrize('code', ['1012', '1013', '1015'])
+def test_blocking_provider_stop_persists_holes(code):
     store = Memory()
     calls = []
     def fetch(start, end):
@@ -142,10 +146,138 @@ def test_provider_stop_persists_holes(code):
     result = runner.collect(store, config(), fetch)
     assert len(calls) == 1
     assert result['missing_account_days'] > 0
-    assert bool(result['blocked']) == (code in runner.BLOCKING)
+    assert result['blocked']
+    assert result['last_run']['last_provider_error_code'] == code
+    assert result['last_run']['windows_failed'] == 1 and result['last_run']['reports_fetched'] == 0
     if code == '1013':
         runner.collect(store, config(), fetch)
         assert len(calls) == 1
+
+
+@pytest.mark.parametrize('code', ['1001', '1018'])
+def test_transient_provider_refusal_fails_window_and_continues(code):
+    store = Memory()
+    calls = []
+    def fetch(start, end):
+        calls.append(start)
+        if len(calls) == 1:
+            raise FlexSourceError('never log', endpoint='SendRequest', category='provider', code=code)
+        return report(start, end)
+    c = config()
+    result = runner.collect(store, c, fetch)
+    assert len(calls) > 1
+    assert not result['blocked']
+    run = result['last_run']
+    assert run['last_provider_error_code'] == code
+    assert run['windows_failed'] >= 1 and run['reports_fetched'] == len(calls) - 1
+    assert run['windows_planned'] >= len(calls)
+    coverage, _ = store.json('state/coverage.json')
+    assert coverage['days'][calls[0]]['last_error'] == code
+    assert not state.due(coverage['days'][calls[0]], datetime.now(timezone.utc))
+    assert any(key.startswith('raw/') for key in store.values)
+
+
+@pytest.mark.parametrize('code', ['1001', '1018'])
+def test_repeated_transient_refusals_end_the_run(code):
+    calls = []
+    def fetch(start, end):
+        calls.append(start)
+        raise FlexSourceError('never log', endpoint='SendRequest', category='provider', code=code)
+    result = runner.collect(Memory(), config(), fetch)
+    assert len(calls) == runner.MAX_CONSECUTIVE_TRANSIENT
+    assert result['last_run'] == {'windows_planned': 30, 'reports_fetched': 0, 'windows_succeeded': 0,
+                                  'windows_failed': 3, 'last_provider_error_code': code}
+    assert not result['blocked']
+
+
+def test_throttle_backs_off_at_least_sixty_seconds(monkeypatch):
+    current = [0]
+    requests_at = []
+    def sleep(seconds):
+        current[0] += seconds
+    def request(**kw):
+        requests_at.append(current[0])
+        if len(requests_at) == 1:
+            raise FlexSourceError('never log', endpoint='SendRequest', category='provider', code='1018')
+        return object()
+    monkeypatch.setattr(runner, 'request_activity_flex_report', request)
+    monkeypatch.setattr(runner, 'collect_activity_flex_xml', lambda handle: type('Report', (), {'content': b'x'})())
+    fetch = runner.Fetcher('synthetic', '123', 1500, clock=lambda: current[0], sleep=sleep)
+    with pytest.raises(FlexSourceError):
+        fetch('2026-10-30', '2026-10-30')
+    assert fetch('2026-10-31', '2026-10-31') == b'x'
+    assert requests_at[1] - requests_at[0] >= 60
+
+
+def test_unretryable_http_failure_still_ends_the_run():
+    calls = []
+    def fetch(start, end):
+        calls.append(start)
+        raise FlexSourceError('never log', endpoint='SendRequest', category='http', http_status=503)
+    result = runner.collect(Memory(), config(), fetch)
+    assert len(calls) == 1
+    assert result['last_run']['windows_failed'] == 1 and result['last_run']['last_provider_error_code'] is None
+
+
+def test_run_counts_hold_no_private_text():
+    store = Memory()
+    result = runner.collect(store, config(), lambda start, end: report(start, end))
+    run = result['last_run']
+    assert set(run) == {'windows_planned', 'reports_fetched', 'windows_succeeded', 'windows_failed', 'last_provider_error_code'}
+    assert run['reports_fetched'] > 0
+    assert run['windows_succeeded'] + run['windows_failed'] == run['reports_fetched']
+    assert all(type(run[k]) is int for k in run if k != 'last_provider_error_code')
+
+
+def test_nothing_due_is_not_incomplete():
+    assert pull_outcome({'last_run': {'windows_planned': 0, 'reports_fetched': 0}}) == ('finished', 0)
+
+
+def test_due_windows_without_any_report_is_incomplete_and_nonzero():
+    assert pull_outcome({'last_run': {'windows_planned': 5, 'reports_fetched': 0}}) == ('incomplete', 3)
+    assert pull_outcome({'last_run': {'windows_planned': 5, 'reports_fetched': 1}}) == ('finished', 0)
+    assert pull_outcome({'blocked': 'ip_restricted', 'last_run': {}}) == ('blocked', 2)
+
+
+def test_pull_prints_codes_and_counts_only(monkeypatch, capsys):
+    import sys
+    class Store:
+        def __init__(self, bucket):
+            pass
+        def json(self, key, default=None):
+            return {'schema': 1, 'ip_restriction': 'none', 'query_id': '123'}, 1
+    monkeypatch.setenv('FLEX_BUCKET', 'synthetic')
+    monkeypatch.setattr(flex_main, 'Store', Store)
+    monkeypatch.setattr(flex_main, 'read_token', lambda path: 'synthetic-token')
+    monkeypatch.setattr(flex_main, 'collect', lambda *a: {'last_run': {
+        'windows_planned': 4, 'reports_fetched': 0, 'windows_succeeded': 0, 'windows_failed': 3,
+        'last_provider_error_code': '1001'}})
+    monkeypatch.setattr(sys, 'argv', ['flex_daily', 'pull'])
+    assert flex_main.main() == 3
+    out = capsys.readouterr().out
+    assert json.loads(out) == {'status': 'incomplete', 'last_provider_error_code': '1001', 'windows_planned': 4,
+                               'reports_fetched': 0, 'windows_succeeded': 0, 'windows_failed': 3}
+    assert 'synthetic-token' not in out
+
+
+def test_acceptance_requires_raw_and_derived_objects(tmp_path):
+    ok = {'status': 'finished', 'reports_fetched': 2}
+    both = ['gs://b/state/coverage.json', 'gs://b/raw/abc.xml', 'gs://b/derived/def.json']
+    assert acceptance.problems(ok, both) == []
+    only_state = ['gs://b/state/coverage.json', 'gs://b/status/latest.json', 'gs://b/state/pull-lease.json']
+    assert acceptance.problems(ok, only_state) == ['no_raw_objects', 'no_derived_objects']
+    assert acceptance.problems(ok, ['gs://b/raw/', 'gs://b/derived/']) == ['no_raw_objects', 'no_derived_objects']
+    assert acceptance.problems(ok, ['raw/a.xml', 'derived/b.json']) == []
+    assert 'no_derived_objects' in acceptance.problems(ok, ['gs://b/raw/a.xml', 'gs://b/state/derived-notes.json'])
+    assert acceptance.problems({'status': 'incomplete', 'reports_fetched': 0}, both) == [
+        'status_not_finished:incomplete', 'no_report_fetched']
+    status, names = tmp_path / 'status.json', tmp_path / 'names.txt'
+    status.write_text('noise\n' + json.dumps(ok) + '\n')
+    names.write_text('\n'.join(both) + '\n')
+    assert acceptance.main(['--status', str(status), '--objects', str(names)]) == 0
+    names.write_text('gs://b/state/coverage.json\n')
+    assert acceptance.main(['--status', str(status), '--objects', str(names)]) == 1
+    assert acceptance.main(['--status', str(tmp_path / 'missing'), '--objects', str(names)]) == 2
 
 
 def test_ip_unknown_never_calls_provider():

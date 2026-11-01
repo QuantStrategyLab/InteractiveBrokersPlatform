@@ -83,5 +83,6 @@ def summary(state, now):
             'field_issue_count': sum(len(item.get('issues', [])) for slot in state['days'].values() for item in slot['accounts'].values()),
             'residual_nonzero': (any(item.get('reconciliation_status') == 'difference' for slot in state['days'].values() for item in slot['accounts'].values())
                                  or any(slot.get('reconciliation_status') == 'difference' or slot.get('comparison_status') == 'difference' for slot in state.get('months', {}).values())),
+            'last_run': state.get('last_run'),
             'blocked': state.get('blocked'), 'last_started_at': state.get('last_started_at'),
             'last_finished_at': state.get('last_finished_at')}
