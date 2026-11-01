@@ -57,7 +57,7 @@ def report(start='2026-10-31', end='2026-10-31', account='U00001'):
                     row.set(field, (start if field == 'fromDate' else end).replace('-', ''))
             if section == 'CashReport':
                 row.attrib.update({k: '0' for k in checks.CASH_FIELDS})
-    ET.SubElement(statement, 'ChangeInNAV', **{k: '0' for k in checks.NAV_FIELDS + ['startingValue', 'endingValue', 'realized', 'changeInUnrealized', 'forexCommissions']})
+    ET.SubElement(statement, 'ChangeInNAV', fromDate=start.replace('-', ''), toDate=end.replace('-', ''), currency='USD', **{k: '0' for k in checks.NAV_FIELDS + ['startingValue', 'endingValue', 'realized', 'changeInUnrealized', 'forexCommissions']})
     return ET.tostring(root)
 
 
@@ -291,3 +291,12 @@ def test_telegram_unknown_and_rate_limit(monkeypatch):
 def test_unknown_status_to_known_status_does_not_crash():
     now = datetime.now(timezone.utc)
     assert watch.events({'missing_account_days': 1}, {'missing_account_days': None}, now)
+
+
+def test_nav_period_mismatch_cannot_be_complete():
+    root = ET.fromstring(report())
+    root.find('.//ChangeInNAV').set('fromDate', '20260101')
+    c = config()
+    result = checks.inspect_report(ET.tostring(root), '2026-10-31', '2026-10-31', c['accounts'], c['configured_sections'])
+    assert result['account-1']['status'] == 'received'
+    assert 'nav_period_or_currency_unqualified' in result['account-1']['issues']

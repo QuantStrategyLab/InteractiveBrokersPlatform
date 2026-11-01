@@ -104,8 +104,11 @@ def inspect_report(content, start, end, accounts, configured_sections, previous_
                 if identity:
                     seen.add(identity)
         nav = statement.find('ChangeInNAV')
-        if nav is None or 'ChangeInNAV' not in configured_sections:
+        if len(statement.findall('ChangeInNAV')) != 1 or 'ChangeInNAV' not in configured_sections:
             issues.append('section_missing_or_unconfigured:ChangeInNAV')
+        elif (nav.get('fromDate', '').replace('-', '') != start.replace('-', '')
+              or nav.get('toDate', '').replace('-', '') != end.replace('-', '') or not nav.get('currency')):
+            issues.append('nav_period_or_currency_unqualified')
         residuals = {}
         try:
             with localcontext() as context:
