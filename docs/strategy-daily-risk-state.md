@@ -44,6 +44,12 @@ link remains partial provenance and does not prove end-to-end causality.
 
 The optional joint path requires an independently enrolled account journal and a previously established equity baseline. The caller supplies a canonical account snapshot and separately approved per-order risk facts keyed by the journal order digest. These inputs do not authenticate their own origin. The portfolio consumed by the strategy must match the account observation in account, source digest, currency, valuation time, equity, cash and complete position quantities. Missing or inconsistent evidence blocks submission. The context digest is checked against the authoritative strategy transition before planning and again before reservation. The mapped allocation is bound to the gated decision and checked at the submission boundary.
 
+Enrollment binds the exact legacy strategy-state head and a declared migration
+authorization to the account domain. Those recorded fields do not authenticate
+the authority or complete a cutover of other state writers. The caller must
+independently establish the authority and coordinate a single authoritative
+writer; the daily binding alone does not enroll or migrate an account.
+
 The journal serializes state changes and order admission; pending or unknown outcomes remain blocking across session reconstruction. It cannot make broker submission atomic or establish missing broker fills. Enrollment, account identity, source verification and policy approval are external prerequisites. If a subsequent account risk adjustment changes the mapped allocation, the current binding denies that submission and requires a new evaluation.
 
 Partial fills retain the unfilled order obligation. Unknown reports and
