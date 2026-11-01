@@ -34,8 +34,10 @@ def windows(state, target, now, limit=30):
         if slot and due(slot, now):
             selected.append(('daily', day, day))
     # Persist each month's two control runs: an outage must not skip day 3/10.
-    start = date.fromisoformat(min(state['days']))
+    start = date.fromisoformat(state.get('backfill_start', min(state['days'])))
     month = start.replace(day=1)
+    if month < start:
+        month = (month.replace(day=28) + timedelta(days=4)).replace(day=1)
     while month < target.replace(day=1):
         following = (month.replace(day=28) + timedelta(days=4)).replace(day=1)
         end = following - timedelta(days=1)

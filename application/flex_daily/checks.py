@@ -40,14 +40,27 @@ def number(row, field):
     return value
 
 
-def inspect_report(content, start, end, accounts, configured_sections, previous_content=None):
+class ReportScopeError(ValueError):
+    pass
+
+
+def require_account_scope(content, accounts):
     root = _xml_root(content, endpoint='GetStatement')
     if root.tag != 'FlexQueryResponse' or root.get('type') != 'AF':
-        raise ValueError('not_activity_report')
+        raise ReportScopeError('not_activity_report')
     statements = root.findall('./FlexStatements/FlexStatement')
     ids = [s.get('accountId') for s in statements]
     if not ids or len(ids) != len(set(ids)) or not set(ids) <= set(accounts):
-        raise ValueError('account_scope_mismatch')
+        raise ReportScopeError('account_scope_mismatch')
+    if any(row.get('accountId') not in (None, '') and row.get('accountId') not in accounts
+           for row in root.iter()):
+        raise ReportScopeError('unknown_nested_account')
+    return root
+
+
+def inspect_report(content, start, end, accounts, configured_sections, previous_content=None):
+    root = require_account_scope(content, accounts)
+    statements = root.findall('./FlexStatements/FlexStatement')
     results = {label: {'status': 'missing', 'issues': ['account_missing'], 'reconciliation_status': 'partial'}
                for label in accounts.values()}
     for statement in statements:

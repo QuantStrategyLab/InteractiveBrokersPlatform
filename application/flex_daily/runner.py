@@ -8,7 +8,9 @@ from pathlib import Path
 from application.ibkr_flex_source import (
     FlexReportPending, FlexSourceError, collect_activity_flex_xml, request_activity_flex_report,
 )
-from application.flex_daily.checks import compare_activity, inspect_report, private_projection
+from application.flex_daily.checks import (
+    ReportScopeError, compare_activity, inspect_report, private_projection, require_account_scope,
+)
 from application.flex_daily.state import failed, seed, summary, target_day, windows
 from application.flex_daily.storage import Lease
 
@@ -75,6 +77,7 @@ def collect(store, config, fetch, now=utcnow, clock=time.monotonic):
     try:
         if state.get('blocked'):
             return persist()
+        state['backfill_start'] = config['backfill_start']
         seed(state, date.fromisoformat(config['backfill_start']) - timedelta(days=1), target_day(started), accounts.values())
         state['last_started_at'] = started.isoformat()
         persist()
@@ -84,6 +87,7 @@ def collect(store, config, fetch, now=utcnow, clock=time.monotonic):
             slot = state['days'][start] if kind == 'daily' else state['months'].setdefault(kind, {})
             try:
                 content = fetch(start, end)
+                require_account_scope(content, accounts)
                 digest = hashlib.sha256(content).hexdigest()
                 # Immutable raw survives a crash before coverage commit. A retry
                 # reuses its content address; neither double counts nor replaces it.
@@ -116,7 +120,8 @@ def collect(store, config, fetch, now=utcnow, clock=time.monotonic):
                             if start <= day <= end:
                                 for value in daily['accounts'].values():
                                     value['status'] = 'pending'
-                    slot['done'] = all(v['status'] == 'complete' for v in checked.values())
+                    schema_complete = all(v['status'] == 'complete' for v in checked.values())
+                    slot['done'] = False
                     daily_slots = [v for day, v in sorted(state['days'].items()) if start <= day <= end]
                     expected_days = (date.fromisoformat(end) - date.fromisoformat(start)).days + 1
                     eligible = len(daily_slots) == expected_days and all(
@@ -127,6 +132,7 @@ def collect(store, config, fetch, now=utcnow, clock=time.monotonic):
                         if all(payloads):
                             same_activity = compare_activity(content, payloads)
                             slot['comparison_status'] = 'activity_matched' if same_activity else 'difference'
+                            slot['done'] = same_activity and schema_complete
                             if not same_activity:
                                 for daily in daily_slots:
                                     for value in daily['accounts'].values():
@@ -134,8 +140,8 @@ def collect(store, config, fetch, now=utcnow, clock=time.monotonic):
                                 slot['done'] = False
                     # Exact activity comparison is not balance, grant or full
                     # reconciliation certification.
-                if any(v['status'] != 'complete' for v in checked.values()):
-                    failed(slot, now(), 'incomplete_report')
+                if any(v['status'] != 'complete' for v in checked.values()) or kind != 'daily' and not slot.get('done'):
+                    failed(slot, now(), 'incomplete_report_or_daily_control')
                 else:
                     slot['attempts'] = 0
                     slot.pop('next_attempt_at', None)
@@ -150,6 +156,11 @@ def collect(store, config, fetch, now=utcnow, clock=time.monotonic):
                 if code in BLOCKING | {'1018', '1001'} or exc.safe_diagnostic.get('source_failure_kind') in {'http', 'transport'}:
                     persist()
                     break
+            except ReportScopeError:
+                failed(slot, now(), 'account_scope_mismatch')
+                state['blocked'] = 'account_scope'
+                persist()
+                break
             except ValueError:
                 failed(slot, now(), 'report_validation_failed')
             except TimeoutError:

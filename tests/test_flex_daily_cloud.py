@@ -300,3 +300,36 @@ def test_nav_period_mismatch_cannot_be_complete():
     result = checks.inspect_report(ET.tostring(root), '2026-10-31', '2026-10-31', c['accounts'], c['configured_sections'])
     assert result['account-1']['status'] == 'received'
     assert 'nav_period_or_currency_unqualified' in result['account-1']['issues']
+
+
+def test_opening_snapshot_does_not_expand_monthly_request_scope():
+    s = {'days': {}, 'months': {}, 'backfill_start': '2026-09-01'}
+    state.seed(s, date(2026, 8, 31), date(2026, 10, 31), ['account-1'])
+    items = state.windows(s, date(2026, 10, 31), datetime(2026, 11, 1, tzinfo=timezone.utc))
+    assert ('2026-09-3', '2026-09-01', '2026-09-30') in items
+    assert not any(kind != 'daily' and start < '2026-09-01' for kind, start, end in items)
+
+
+def test_month_control_remains_pending_until_all_daily_activity_available():
+    store = Memory()
+    c = config()
+    c['backfill_start'] = '2026-09-01'
+    c['accounts'] = {'U00001': 'account-1'}
+    now = datetime(2026, 11, 1, 12, tzinfo=timezone.utc)
+    runner.collect(store, c, lambda start, end: report(start, end), now=lambda: now)
+    coverage, _ = store.json('state/coverage.json')
+    assert coverage['months']['2026-09-3']['comparison_status'] == 'partial'
+    assert coverage['months']['2026-09-3']['done'] is False
+    assert coverage['months']['2026-09-10']['done'] is False
+
+
+def test_unknown_account_stops_before_any_raw_upload():
+    store = Memory()
+    calls = []
+    def fetch(start, end):
+        calls.append(start)
+        return report(start, end, account='U99999')
+    result = runner.collect(store, config(), fetch)
+    assert result['blocked'] == 'account_scope'
+    assert len(calls) == 1
+    assert not any(key.startswith('raw/') for key in store.values)
