@@ -1,0 +1,8 @@
+*
+!containers/
+!containers/flex-daily/
+!containers/flex-daily/requirements.txt
+!application/
+!application/ibkr_flex_source.py
+!application/flex_daily/
+!application/flex_daily/*.py

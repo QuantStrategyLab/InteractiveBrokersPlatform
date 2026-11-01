@@ -1,5 +1,7 @@
 # InteractiveBrokersPlatform
 
+The pinned HK strategy policy has no selectable profiles. New selection of `hk_global_etf_tactical_rotation` and `hk_low_vol_dividend_quality_snapshot` is rejected, including dry-run switch plans. Historical catalog metadata and adapters remain available. US strategy pins and existing deployment configuration are unchanged.
+
 ## Account risk facts in runtime reports
 
 When account facts pass the existing physical-account selector check, the report
