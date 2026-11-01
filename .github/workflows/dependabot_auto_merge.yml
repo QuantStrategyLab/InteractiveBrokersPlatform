@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 concurrency:
-  # One evaluation per Dependabot branch; a newer pending run replaces an older pending one.
-  group: dependabot-auto-merge-${{ github.event.workflow_run.head_branch }}
+  # One evaluation per repository and Dependabot branch; a fork cannot reuse a same-repository key and displace a pending run.
+  group: dependabot-auto-merge-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
   cancel-in-progress: false
 
 jobs:
