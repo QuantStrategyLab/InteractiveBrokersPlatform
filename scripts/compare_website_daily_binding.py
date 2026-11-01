@@ -104,9 +104,15 @@ if __name__ == "__main__":
         else:
             print("status=ok slot=" + slot + " comparison=" + value)
     except Exception as exc:
+        # The allowlist is the leak guard, so only fixed literals this module
+        # raises itself may join it. Collapsing these two causes into
+        # comparison_unavailable makes a stale pinned binding indistinguishable
+        # from a wrong report prefix, which is the one thing an operator needs
+        # to tell apart.
         allowed = {"slot_invalid", "duplicate_key", "keys_invalid", "keys_conflict", "key_missing",
                    "inventory_invalid", "target_not_unique", "invalid_input", "target_disabled",
-                   "target_config_unavailable", "target_config_invalid", "expected_target_invalid"}
+                   "target_config_unavailable", "target_config_invalid", "expected_target_invalid",
+                   "scope_mismatch", "configuration_mismatch"}
         reason = getattr(exc, "reason", "")
         if not reason and exc.args and isinstance(exc.args[0], str):
             reason = exc.args[0]
