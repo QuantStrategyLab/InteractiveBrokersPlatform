@@ -1991,8 +1991,8 @@ jobs:
                 --location="${scheduler_location}" \
                 --format='value(state)')"
               job_enabled="${standard_execution_enabled}"
-              if [ "${managed_job_name}" = "${precheck_job_name}" ] && [ "${drill_precheck_enabled}" = "true" ]; then
-                job_enabled=true
+              if [ "${managed_job_name}" = "${precheck_job_name}" ]; then
+                job_enabled="${drill_precheck_enabled}"
               fi
               case "${job_enabled}" in
                 1|true|yes|on)
