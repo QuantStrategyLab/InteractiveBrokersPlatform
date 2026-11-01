@@ -21,6 +21,7 @@ updates:
     prefix: chore
     include: scope
   ignore:
+  - dependency-name: QuantStrategyLab/QuantRuntimeSettings/actions/publish-runtime-execution-evidence
   - dependency-name: '*'
     update-types:
     - version-update:semver-major
