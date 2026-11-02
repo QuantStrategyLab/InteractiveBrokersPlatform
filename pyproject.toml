@@ -21,7 +21,7 @@ dependencies = [
     "google-cloud-secret-manager",
     "google-cloud-storage",
     "yfinance",
-    "quant-platform-kit @ git+https://github.com/QuantStrategyLab/QuantPlatformKit.git@4bcd28ff60990931a2b0031529203b306d5e2e7c",
+    "quant-platform-kit @ git+https://github.com/QuantStrategyLab/QuantPlatformKit.git@dcbd9c601fc8f1ddb9be9679a38e9f748dd03da6",
     "us-equity-strategies @ git+https://github.com/QuantStrategyLab/UsEquityStrategies.git@3f112f5352efe677a0c480c4ab621b8ea3e85336",
     "hk-equity-strategies @ git+https://github.com/QuantStrategyLab/HkEquityStrategies.git@fe0c32e09d454ca4388c3372bf3874097b1bbaf0",
 ]
@@ -64,6 +64,6 @@ include = [
 
 [tool.uv]
 override-dependencies = [
-  "quant-platform-kit @ git+https://github.com/QuantStrategyLab/QuantPlatformKit.git@4bcd28ff60990931a2b0031529203b306d5e2e7c",
+  "quant-platform-kit @ git+https://github.com/QuantStrategyLab/QuantPlatformKit.git@dcbd9c601fc8f1ddb9be9679a38e9f748dd03da6",
 ]
 
