@@ -824,6 +824,9 @@ def _resolve_physical_account_id(*, config: IBKRRebalanceConfig, snapshot) -> st
 def _build_execution_marker_key(*, config: IBKRRebalanceConfig, signal_metadata: dict) -> str:
     if not getattr(config, "execution_dedup_enabled", False):
         return ""
+    if signal_metadata.get("protective_exit") is not None:
+        from application.protective_exit import stop_submission_identity
+        signal_metadata = stop_submission_identity(signal_metadata)
     execution_mode = "paper" if bool(getattr(config, "dry_run_only", False)) else "live"
     return build_execution_marker_key(
         platform="ibkr",
@@ -1229,7 +1232,8 @@ def run_strategy_core(
                     f"Execution marker read failed\nMarker: {execution_marker_key}\n{type(exc).__name__}: {exc}",
                     flush=True,
                 )
-            if not execution_already_recorded and hasattr(execution_state_store, "has_prior_execution_report"):
+            if (not execution_already_recorded and not signal_metadata.get("protective_exit")
+                    and hasattr(execution_state_store, "has_prior_execution_report")):
                 try:
                     execution_already_recorded = bool(
                         execution_state_store.has_prior_execution_report(
@@ -1252,6 +1256,17 @@ def run_strategy_core(
                     )
 
         if execution_already_recorded:
+            dedup_summary = {"action_done": False, "no_op_reason": "execution_already_recorded"}
+            if signal_metadata.get("protective_exit"):
+                # A prior claim is not proof of liquidation. Preserve unknown
+                # quantities until a separate reconciliation supplies fills.
+                dedup_summary.update(
+                    execution_status="blocked", outcome_unknown=True,
+                    stop_event_id=signal_metadata["stop_event_id"],
+                    protective_exits=[{"symbol": s, "stop_event_id": signal_metadata["stop_event_id"],
+                                       "remaining_quantity": None, "final_fill_outcome": "UNKNOWN"}
+                                      for s in strategy_symbols],
+                )
             message = _execution_already_recorded_message(config=config, signal_metadata=signal_metadata)
             print(message, flush=True)
             record = build_reconciliation_record(
@@ -1261,7 +1276,7 @@ def run_strategy_core(
                 snapshot_as_of=signal_metadata.get("snapshot_as_of"),
                 signal_metadata=signal_metadata,
                 target_weights=resolved_target_weights,
-                execution_summary={"action_done": False, "no_op_reason": "execution_already_recorded"},
+                execution_summary=dedup_summary,
                 no_op_reason="execution_already_recorded",
             )
             record_path = write_reconciliation_record(record, output_path=config.reconciliation_output_path)
@@ -1305,10 +1320,11 @@ def run_strategy_core(
                 {"action_done": False, "no_op_reason": "execution_already_recorded"},
             )
             return StrategyCycleResult(
-                result="OK - no-op" if notification_suppressed else "OK - heartbeat",
+                result=("Blocked - stop_event_reconciliation_required" if signal_metadata.get("protective_exit")
+                        else "OK - no-op" if notification_suppressed else "OK - heartbeat"),
                 signal_metadata=dict(signal_metadata or {}),
                 target_weights=dict(resolved_target_weights or {}),
-                execution_summary={"action_done": False, "no_op_reason": "execution_already_recorded"},
+                execution_summary=dedup_summary,
                 reconciliation_record=dict(record),
                 reconciliation_record_path=str(record_path),
                 account_facts=build_ibkr_account_facts(snapshot),
@@ -1381,11 +1397,15 @@ def run_strategy_core(
                     and getattr(session_type, "contract_version", None) == "account_submission.v1"):
                 try:
                     profile = str(signal_metadata.get("strategy_profile") or config.strategy_profile or "")
+                    identity_metadata = signal_metadata
+                    if signal_metadata.get("protective_exit") is not None:
+                        from application.protective_exit import stop_submission_identity
+                        identity_metadata = stop_submission_identity(signal_metadata)
                     account_execution_session = session_type(
                         execution_state_store, broker="ibkr",
                         account_id=_resolve_physical_account_id(config=config, snapshot=snapshot),
                         owner_id=profile, profile=profile,
-                        intent_id=contract.submission_intent_digest(signal_metadata, profile),
+                        intent_id=contract.submission_intent_digest(identity_metadata, profile),
                         release_id=contract.submission_release_digest(config.runtime_release_receipt),
                     )
                 except (RuntimeError, ValueError, TypeError):
