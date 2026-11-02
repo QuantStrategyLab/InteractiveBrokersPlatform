@@ -166,6 +166,15 @@ def map_strategy_decision(
         strategy_profile,
         platform_id=IBKR_PLATFORM,
     ).profile
+    from application.protective_exit import stop_exit_projection
+
+    protective = stop_exit_projection(
+        decision, profile=canonical_profile, runtime_metadata=runtime_metadata,
+    )
+    if protective is not None:
+        targets, metadata = protective
+        return (targets, _derive_signal_description(decision, runtime_metadata), True,
+                _derive_status_description(decision, runtime_metadata), metadata)
     diagnostics = dict(decision.diagnostics)
     # Platform-computed risk inputs for QPK apply_risk_gate / stop-loss checks.
     if runtime_metadata.get("unrealized_pnl_pct") is not None:

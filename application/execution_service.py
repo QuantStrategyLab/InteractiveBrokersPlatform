@@ -1243,10 +1243,14 @@ def execute_rebalance(
             if (not isinstance(account_execution_session, session_type)
                     or account_execution_session.contract_version != "account_submission.v1"):
                 raise RuntimeError("IBKR account submission session/contract required")
+            identity_metadata = signal_metadata
+            if signal_metadata.get("protective_exit") is not None:
+                from application.protective_exit import stop_submission_identity
+                identity_metadata = stop_submission_identity(signal_metadata)
             if (
                 account_execution_session.broker != "ibkr"
                 or account_execution_session.release_id != contract.submission_release_digest(runtime_release_receipt)
-                or account_execution_session.intent_id != contract.submission_intent_digest(signal_metadata, strategy_profile)
+                or account_execution_session.intent_id != contract.submission_intent_digest(identity_metadata, strategy_profile)
                 or account_execution_session.profile != strategy_profile
             ):
                 raise RuntimeError("IBKR account session intent/release binding mismatch")
@@ -1264,6 +1268,28 @@ def execute_rebalance(
 
         submit_order_intent = submit_claimed_order
     signal_metadata = signal_metadata or {}
+    if signal_metadata.get("protective_exit") is not None:
+        from application.protective_exit import execute_stop_exit
+
+        def admit_stop_exit():
+            symbols = set(signal_metadata["allocation"]["targets"])
+            return evaluate_ibkr_paper_execution_admission(
+                signal_metadata=signal_metadata, strategy_profile=strategy_profile,
+                account_scope=account_group, positions=positions,
+                prices=get_market_prices(ib, symbols, fetch_quote_snapshots=fetch_quote_snapshots),
+                target_market_values=dict.fromkeys(symbols, 0.), option_order_intents=(),
+                runtime_release_receipt=runtime_release_receipt,
+                expected_strategy_release=expected_strategy_release,
+            )
+
+        logs, summary = execute_stop_exit(
+            ib, metadata=signal_metadata, allocation=_resolve_weight_allocation(signal_metadata),
+            positions=positions, profile=strategy_profile, account_ids=account_ids,
+            session=account_execution_session, submit=submit_order_intent,
+            order_intent_cls=order_intent_cls, observe_pending=_observe_pending_orders,
+            dry_run=dry_run_only, admit=admit_stop_exit if paper_execution_admission_enabled else None,
+        )
+        return _finalize_result(logs, summary, return_summary=return_summary)
     _require_tqqq_effective_date(signal_metadata, strategy_profile=strategy_profile)
     allocation = _resolve_weight_allocation(signal_metadata)
     target_weights = dict(allocation["targets"])

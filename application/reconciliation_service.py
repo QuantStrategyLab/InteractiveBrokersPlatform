@@ -112,6 +112,10 @@ def build_reconciliation_record(
         "status_icon": signal_metadata.get("status_icon"),
     }
     brake_status = account_brake_submission_status(signal_metadata)
+    if execution_summary.get("stop_event_id"):
+        record["stop_event_id"] = execution_summary["stop_event_id"]
+        record["protective_exits"] = execution_summary.get("protective_exits") or []
+        record["outcome_unknown"] = execution_summary.get("outcome_unknown", True)
     if brake_status is not None:
         record["account_brake_submission_status"] = brake_status
         record["orders_submitted_coverage"] = "strategy_only_account_brake_details_unavailable"
