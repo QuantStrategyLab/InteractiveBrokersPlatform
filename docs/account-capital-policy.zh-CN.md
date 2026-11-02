@@ -145,3 +145,36 @@
 设计参考：[QuantConnect 的仓位计算与现金缓冲](https://www.quantconnect.com/docs/v2/writing-algorithms/trading-and-orders/position-sizing)、
 [Investor.gov 的投资期限与风险承受能力说明](https://www.investor.gov/introduction-investing/getting-started/asset-allocation)。
 参考资料提供设计背景，不把其他系统的默认数字作为本项目用户政策。
+
+## 7. 回撤熔断的新增风险边界
+
+原生快照中的 `drawdown_from_peak` 和 `peak_equity_usd` 传到新增风险门；策略子组合
+使用独立的 `equity` 计算配置，账户回撤继续使用 `account_equity_usd`，不把子组合权益
+误当作账户净值。快照事实优先于策略元数据中的旧投影，非法值保留为错误输入。
+
+原生快照转换只在 `total_equity_source` 为 `broker_net_liquidation` 时，
+将已核 `broker_net_liquidation` 传为 `account_equity_usd`；缺失或未核的值明确
+标记不可用，无效值由风险门拒绝，不用 `total_equity` 或策略缓存补齐。
+转换同时保留显式的 `realized_vol`、`observation_status`、`reconciliation_status`、
+`circuit_breaker_state` 和 `production_drift_status`，确保这些当前事实到达风险门。
+
+账户回撤触线后，复用 `AccountSubmissionSession` 的物理账户追加日志写入
+`CIRCUIT_BREAKER_OPEN`，包括没有策略目标而提前返回的周期。后续周期、其他策略及
+新进程读取同一账户日志；净值恢复、显式 CLOSED 或调用方的 reset 标记都不能清除 OPEN。
+本次不提供复位入口。缺少日志能力、读写失败、冲突或读回失败均禁止新增风险。
+
+`PORTFOLIO_LOSS_STOPLOSS_ENABLED` 为 OFF 时，回撤熔断只阻止新建仓和加仓，目标缩放
+排除回撤分量，不因半阈值或全阈值回撤缩减持仓或产生额外卖单；无目标周期也不启动回撤减仓。
+capital 和 volatility 分量继续按原有规则缩放目标。
+ON 时继续使用原有缩放及减仓路径，原账户、订单、授权与 UNKNOWN 保护继续生效。
+开关默认值、风险参数和配置保持原样。当前分支的 QPK 固定版本为
+`cee53965b3d6b368445193b580aa94f2bbb9537c`，由 `pyproject.toml`、`qsl.toml`、
+`uv.lock` 及 CI 预期版本共同确认。
+
+IBKR 的真实买单将 `new_risk=True` 绑定到日志中的 PREPARED，最终 dispatch 再检查 OPEN。
+普通已表达的减仓仍走原有证明及订单保护，持久化 OPEN 本身不授予卖出权限。
+没有账户会话的内部 dry-run 仅提供计划预览，标记持久性 `NOT_PROVEN`；原生周期会在
+执行前尝试恢复账户日志。旧依赖没有所需能力时，真实新增风险被阻止，不能将预览当成
+持久化或运行验收。当前分支已采用上述 QPK 版本；生产采用和部署仍需另行审核。
+
+当前账户读取中的未知挂单、过期或未知观察状态、未核对状态和无效风险数值必须阻止新增风险；策略缓存中的健康值不能覆盖这些事实。当前账户净值缺失时，不使用策略缓存净值恢复准入。此规则不授予止损退出权限。

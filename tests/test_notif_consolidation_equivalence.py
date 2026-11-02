@@ -233,6 +233,8 @@ def test_flags_off_entrypoints_match_main_call_recorders(monkeypatch, kind, case
     for call in expected.get("calls", []):
         if call[0] == "execute":
             call[-1]["account_execution_session"] = None
+            # This legacy fixture has strategy equity but no qualified account NAV.
+            call[3]["account_equity_usd"] = None
     if routine:
         if "calls" in expected:
             expected["calls"] = [call for call in expected["calls"] if call[0] != "send"]
@@ -243,5 +245,6 @@ def test_flags_off_entrypoints_match_main_call_recorders(monkeypatch, kind, case
         for call in expected.get("calls", []):
             if call[0] == "execute":
                 call[-1]["account_execution_session"] = None
+                call[3]["account_equity_usd"] = None
     assert observed == expected
 

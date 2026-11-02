@@ -706,9 +706,19 @@ def _snapshot_to_portfolio_view(snapshot) -> tuple[dict[str, dict[str, float | i
     }
     # Carry explicit snapshot evidence to the existing account new-risk gate.
     # Missing fields stay absent; this projection does not read or reset state.
-    for key in ("unknown_pending_orders", "durable_circuit_breaker_state"):
+    for key in ("unknown_pending_orders", "durable_circuit_breaker_state", "peak_equity_usd", "drawdown_from_peak",
+                "realized_vol", "observation_status", "reconciliation_status", "circuit_breaker_state",
+                "production_drift_status", "daily_loss_usd"):
         if key in metadata:
             account_values[key] = metadata[key]
+    # Strategy equity is for sizing, not physical-account risk admission.
+    # Keep an explicit unavailable value so neither sizing equity nor an older
+    # healthy strategy projection can substitute for unqualified account NAV.
+    account_values["account_equity_usd"] = (
+        metadata.get("broker_net_liquidation")
+        if metadata.get("total_equity_source") == "broker_net_liquidation"
+        else None
+    )
     return positions, account_values
 
 
@@ -733,6 +743,7 @@ def _strategy_portfolio_view(positions, account_values, strategy_symbols):
     buying_power = float(dict(account_values or {}).get("buying_power") or 0.0)
     filtered_account_values = {
         **dict(account_values or {}),
+        "account_equity_usd": dict(account_values or {}).get("account_equity_usd", dict(account_values or {}).get("equity")),
         "equity": buying_power + strategy_market_value,
     }
     return filtered_positions, filtered_account_values
@@ -990,16 +1001,55 @@ def run_strategy_core(
         else:
             target_weights, signal_desc, _is_emergency, status_desc = signal_result
             signal_metadata = {}
+        account_execution_session = None
+        if getattr(config, "execution_state_store", None) is not None:
+            from quant_platform_kit.common import execution_state as contract
+
+            session_type = getattr(contract, "AccountSubmissionSession", None)
+            if (session_type is not None and getattr(config, "execution_state_store", None) is not None
+                    and getattr(session_type, "contract_version", None) == "account_submission.v1"):
+                try:
+                    profile = str(signal_metadata.get("strategy_profile") or config.strategy_profile or "")
+                    # A no-target cycle has no approved order intent. Its
+                    # observation-only identity cannot pass the executor's
+                    # allocation/intent binding, but can record account OPEN.
+                    intent_id = (
+                        contract.submission_intent_digest(signal_metadata, profile)
+                        if target_weights is not None else contract.submission_binding_digest(
+                            {"purpose": "account_breaker_observation", "profile": profile}
+                        )
+                    )
+                    account_execution_session = session_type(
+                        config.execution_state_store, broker="ibkr",
+                        account_id=_resolve_physical_account_id(config=config, snapshot=snapshot),
+                        owner_id=profile, profile=profile,
+                        intent_id=intent_id,
+                        release_id=contract.submission_release_digest(config.runtime_release_receipt),
+                    )
+                except (RuntimeError, ValueError, TypeError):
+                    # Never fabricate a healthy account root or legacy grant.
+                    account_execution_session = None
+
+        from application.account_new_risk_gate_support import (
+            evaluate_persistent_account_new_risk_admission,
+            is_account_new_risk_gate_enabled,
+            is_portfolio_loss_stoploss_enabled,
+        )
+        signal_metadata = dict(signal_metadata or {})
+        admission = evaluate_persistent_account_new_risk_admission(
+            account_values, signal_metadata=signal_metadata, session=account_execution_session,
+        )
+        if is_account_new_risk_gate_enabled():
+            if "CIRCUIT_BREAKER_OPEN" in admission.reason_codes:
+                account_values["durable_circuit_breaker_state"] = "OPEN"
         if target_weights is None:
-            from application.account_new_risk_gate_support import evaluate_account_values_new_risk_admission
-            admission = evaluate_account_values_new_risk_admission(account_values, signal_metadata=signal_metadata)
             signal_metadata = dict(signal_metadata or {})
             signal_metadata["account_brake_observation"] = {
                 "hard_brake_triggered": bool(getattr(admission, "hard_brake_triggered", False)),
                 "reason_codes": list(admission.reason_codes),
             }
             if signal_metadata["account_brake_observation"]["hard_brake_triggered"]:
-                if (getattr(config, "dry_run_only", False) or signal_metadata.get("dry_run_only") is True or account_brake_session is None
+                if (not is_portfolio_loss_stoploss_enabled() or getattr(config, "dry_run_only", False) or signal_metadata.get("dry_run_only") is True or account_brake_session is None
                         or account_brake_submit is None or account_brake_order_intent_cls is None):
                     signal_metadata["execution_blocked_reason"] = "account_brake_source_or_submit_unavailable"
                 else:
@@ -1367,30 +1417,6 @@ def run_strategy_core(
                     except Exception:
                         raise RuntimeError("IBKR execution claim unavailable; refusing broker submission") from None
             return execution_claim_acquired
-
-        # New QPK APIs are optional at import time because the declared pin is
-        # unchanged. Missing capability/identity leaves session=None: only a
-        # real submit is rejected by the executor, while no-order/dry-run stays
-        # free of account reservations.
-        account_execution_session = None
-        if not config.dry_run_only:
-            from quant_platform_kit.common import execution_state as contract
-
-            session_type = getattr(contract, "AccountSubmissionSession", None)
-            if (session_type is not None and execution_state_store is not None
-                    and getattr(session_type, "contract_version", None) == "account_submission.v1"):
-                try:
-                    profile = str(signal_metadata.get("strategy_profile") or config.strategy_profile or "")
-                    account_execution_session = session_type(
-                        execution_state_store, broker="ibkr",
-                        account_id=_resolve_physical_account_id(config=config, snapshot=snapshot),
-                        owner_id=profile, profile=profile,
-                        intent_id=contract.submission_intent_digest(signal_metadata, profile),
-                        release_id=contract.submission_release_digest(config.runtime_release_receipt),
-                    )
-                except (RuntimeError, ValueError, TypeError):
-                    # Never fabricate a healthy account root or legacy grant.
-                    account_execution_session = None
 
         execution_result = runtime.execute_rebalance(
             ib,

@@ -617,7 +617,7 @@ def submit_market_order_intent(
                 raw_payload={"detail": "settled_cash_changed_before_reservation"},
             )
         order_intent = prepared
-        execution_grant = account_execution_session.reserve(order_intent)
+        execution_grant = account_execution_session.reserve(order_intent, new_risk=True)
     return account_execution_session.dispatch(
         execution_grant, order_intent,
         lambda: submit_order_intent(
