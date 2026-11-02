@@ -673,3 +673,81 @@ def test_conflicting_same_event_counts_remain_unknown_after_later_duplicates(rou
     assert row[field] is None and row["field_status"][field] == "unknown"
     assert row["status"] == "alert" and row["cycle_count"] == 1
 
+
+
+@pytest.mark.parametrize("flag", ["false", "true"])
+@pytest.mark.parametrize("locale", ["zh", "en"])
+@pytest.mark.parametrize("failure", [
+    {"fail_reason": "feature snapshot failed: synthetic private detail"},
+    {"execution_blocked_reason": "empty_position_decision"},
+])
+def test_failed_heartbeat_uses_shared_attention_body(routing, monkeypatch, flag, locale, failure):
+    monkeypatch.setenv(adapter.FLAG, flag)
+    monkeypatch.setenv("QSL_NOTIFY_LANG", locale)
+    sent, logs = [], []
+    publisher = NotificationPublisher(log_message=logs.append, send_message=lambda text: sent.append(text) or True)
+    source = report()
+    source["strategy_profile"] = "russell_top50_leader_rotation"
+    summary = {"execution_status": "no_action", "snapshot_guard_decision": "proceed", **failure}
+    original = deepcopy(summary)
+    def invoke():
+        return adapter.with_run(source, adapter.publish_cycle, publisher,
+            notification=RenderedNotification("synthetic private diagnostic", "💓 心跳检测 synthetic private diagnostic"),
+            execution=summary, heartbeat=True)
+    invoke()
+    assert len(sent) == 1
+    for body in [*sent, *logs]:
+        assert "心跳" not in body and "Heartbeat" not in body
+        assert "synthetic private" not in body
+        assert "运行时间" in body if locale == "zh" else "Run time" in body
+        assert "运行详情" in body if locale == "zh" else "Run details" in body
+        assert "下一步" in body if locale == "zh" else "Next:" in body
+    assert summary == original
+    if flag == "true":
+        # The store fixture creates fresh client instances over persisted state.
+        # An uncertain boolean receipt cannot authorize a second send on restart.
+        invoke()
+        assert len(sent) == 1
+
+
+def test_healthy_empty_account_cycle_only_enters_daily_digest(routing):
+    summary = {"execution_status": "no_action", "no_op_reason": "no_signal",
+               "positions": [], "equity": 10.0, "orders_submitted": []}
+    result, sent = cycle(summary)
+    assert result and sent == []
+    assert routing[1].writes
+
+
+@pytest.mark.parametrize("flag", ["false", "true"])
+@pytest.mark.parametrize("locale", ["zh", "en"])
+def test_heartbeat_preserves_redacted_diagnostics_and_original_block(routing, monkeypatch, flag, locale):
+    monkeypatch.setenv(adapter.FLAG, flag)
+    monkeypatch.setenv("QSL_NOTIFY_LANG", locale)
+    sent, logs = [], []
+    publisher = NotificationPublisher(log_message=logs.append, send_message=lambda text: sent.append(text) or True)
+    details = (
+        "TypeError: synthetic snapshot failed; pre-existing status; rejected:too_many_positions; "
+        "account_id=U00000001 account_alias=synthetic-owner project_id=synthetic-project "
+        "synthetic@example.invalid https://synthetic-account.example.invalid/run?token=synthetic-secret "
+        "api_key=synthetic-key"
+    )
+    summary = {"execution_status": "no_action", "snapshot_guard_decision": "proceed",
+               "execution_blocked_reason": "rejected:too_many_positions"}
+    original = deepcopy(summary)
+    def invoke():
+        return adapter.with_run(report(), adapter.publish_cycle, publisher,
+            notification=RenderedNotification("untrusted legacy body", "💓 Heartbeat untrusted legacy body"),
+            execution=summary, heartbeat=True, heartbeat_diagnostics=details)
+    invoke()
+    assert len(sent) == 1
+    for text in [*logs, *sent]:
+        assert "TypeError: synthetic snapshot failed" in text
+        assert "pre-existing status" in text and "rejected:too_many_positions" in text
+        for private in ("U00000001", "synthetic-owner", "synthetic-project", "synthetic@example.invalid",
+                        "synthetic-account.example.invalid", "synthetic-secret", "synthetic-key", "untrusted legacy body"):
+            assert private not in text
+        assert "Next:" in text if locale == "en" else "下一步" in text
+    assert summary == original
+    if flag == "true":
+        invoke()
+        assert len(sent) == 1
