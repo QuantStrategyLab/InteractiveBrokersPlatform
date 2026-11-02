@@ -16,10 +16,11 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 from application.account_new_risk_gate_support import (
-    apply_combined_scale_to_target_weights,
+    scale_targets_for_admission,
     build_portfolio_from_account_values,
     build_snapshot_from_portfolio,
     evaluate_account_values_new_risk_admission,
+    evaluate_persistent_account_new_risk_admission,
     is_account_new_risk_gate_enabled,
     maybe_publish_attention_for_admission,
     new_risk_buy_prohibited,
@@ -1256,7 +1257,16 @@ def execute_rebalance(
                 raise RuntimeError("IBKR execution claim required; refusing broker submission")
             # Shadow consult after successful claim; deny must not block submit.
             consult_t1_live_submit(identity_held=True, dry_run_bypass=False)
-            grant = account_execution_session.reserve(order_intent)
+            new_risk = str(order_intent.side).strip().lower() == "buy"
+            if new_risk and is_account_new_risk_gate_enabled():
+                latest = evaluate_persistent_account_new_risk_admission(
+                    account_values, signal_metadata=signal_metadata, session=account_execution_session,
+                )
+                if new_risk_buy_prohibited(latest):
+                    raise RuntimeError("IBKR persistent account breaker prohibits new risk")
+                grant = account_execution_session.reserve(order_intent, new_risk=True)
+            else:
+                grant = account_execution_session.reserve(order_intent)
             return delegate_submit(
                 ib, order_intent, account_execution_session=account_execution_session,
                 execution_grant=grant, **kwargs,
@@ -1373,10 +1383,16 @@ def execute_rebalance(
     account_new_risk_buy_blocked = False
     account_new_risk_reason_codes: tuple[str, ...] = ()
     if is_account_new_risk_gate_enabled():
-        admission = evaluate_account_values_new_risk_admission(
-            account_values,
-            signal_metadata=signal_metadata,
-        )
+        # Inner dry-run previews without a session retain their diagnostic
+        # purpose; they make no persistence claim. Native cycles always restore
+        # the journal, including no-target and dry-run cycles with a store.
+        admission = evaluate_account_values_new_risk_admission(account_values, signal_metadata=signal_metadata)
+        if dry_run_only and account_execution_session is None:
+            execution_summary["persistent_breaker_status"] = "NOT_PROVEN"
+        else:
+            admission = evaluate_persistent_account_new_risk_admission(
+                account_values, signal_metadata=signal_metadata, session=account_execution_session,
+            )
         account_new_risk_buy_blocked = new_risk_buy_prohibited(admission)
         account_new_risk_reason_codes = tuple(admission.reason_codes)
         portfolio = build_portfolio_from_account_values(account_values, signal_metadata=signal_metadata)
@@ -1394,14 +1410,11 @@ def execute_rebalance(
             f"failed={attention_counts.get('failed', 0)}",
             flush=True,
         )
-        target_weights = apply_combined_scale_to_target_weights(
-            target_weights,
-            admission.combined_scale,
-        )
+        target_weights = scale_targets_for_admission(target_weights, admission)
         if admission.combined_scale is not None:
             print(
                 f"[Envelope scale] combined_scale={admission.combined_scale} "
-                "applied_to_target_weights",
+                "subject_to_stoploss_exit_authority",
                 flush=True,
             )
     else:
@@ -1805,6 +1818,10 @@ def execute_rebalance(
             has_buy_plan = True
             break
         quantity_zero_symbols.append(symbol)
+
+    if (has_buy_plan and not dry_run_only
+            and "PERSISTENT_BREAKER_UNAVAILABLE" in account_new_risk_reason_codes):
+        raise RuntimeError("IBKR persistent breaker session/contract unavailable; refusing new risk")
 
     if pending_observation.cash_risk_unknown and has_buy_plan and not has_sell_plan:
         # No qualified reduction will be submitted. Reject before taking the

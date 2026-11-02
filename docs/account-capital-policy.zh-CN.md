@@ -145,3 +145,25 @@
 设计参考：[QuantConnect 的仓位计算与现金缓冲](https://www.quantconnect.com/docs/v2/writing-algorithms/trading-and-orders/position-sizing)、
 [Investor.gov 的投资期限与风险承受能力说明](https://www.investor.gov/introduction-investing/getting-started/asset-allocation)。
 参考资料提供设计背景，不把其他系统的默认数字作为本项目用户政策。
+
+## 7. 回撤熔断的新增风险边界
+
+原生快照中的 `drawdown_from_peak` 和 `peak_equity_usd` 传到新增风险门；策略子组合
+使用独立的 `equity` 计算配置，账户回撤继续使用 `account_equity_usd`，不把子组合权益
+误当作账户净值。快照事实优先于策略元数据中的旧投影，非法值保留为错误输入。
+
+账户回撤触线后，复用 `AccountSubmissionSession` 的物理账户追加日志写入
+`CIRCUIT_BREAKER_OPEN`，包括没有策略目标而提前返回的周期。后续周期、其他策略及
+新进程读取同一账户日志；净值恢复、显式 CLOSED 或调用方的 reset 标记都不能清除 OPEN。
+本次不提供复位入口。缺少日志能力、读写失败、冲突或读回失败均禁止新增风险。
+
+`PORTFOLIO_LOSS_STOPLOSS_ENABLED` 为 OFF 时，回撤熔断只阻止新建仓和加仓，保留输入
+目标，不把熔断比例转换为零目标或额外卖单；无目标周期也不启动回撤减仓。
+ON 时继续使用原有缩放及减仓路径，原账户、订单、授权与 UNKNOWN 保护继续生效。
+开关默认值、风险参数、配置和依赖固定版本均不在此修改。
+
+IBKR 的真实买单将 `new_risk=True` 绑定到日志中的 PREPARED，最终 dispatch 再检查 OPEN。
+普通已表达的减仓仍走原有证明及订单保护，持久化 OPEN 本身不授予卖出权限。
+没有账户会话的内部 dry-run 仅提供计划预览，标记持久性 `NOT_PROVEN`；原生周期会在
+执行前尝试恢复账户日志。旧依赖没有所需能力时，真实新增风险被阻止，不能将预览当成
+持久化或运行验收。升级依赖及部署需要另行审核，本次不修改固定版本。
