@@ -794,7 +794,8 @@ def persistent_real_caller(tmp_path, monkeypatch, strategy_module_factory):
         reqAllOpenOrders = openTrades
         def fills(self): return []
         def accountValues(self):
-            return [SimpleNamespace(tag="CashBalance", currency="USD", value="1500", account=account)]
+            return [SimpleNamespace(tag="CashBalance", currency="USD", value="1500", account=account),
+                    SimpleNamespace(tag="SettledCash", currency="USD", value="1500", account=account)]
         def qualifyContracts(self, value): return [value]
         def placeOrder(self, instrument, order):
             state.submitted.append((instrument, order))

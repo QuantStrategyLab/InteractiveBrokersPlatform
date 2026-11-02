@@ -112,7 +112,7 @@ def native(monkeypatch, tmp_path):
                 broker='ibkr', account_id=ACCOUNT, owner_id=profile, profile=profile,
                 intent_id=submission_intent_digest(metadata, profile),
                 release_id=submission_release_digest(receipt))
-        def run(ib, *, positions=None, prices=None, reserve=0., step=1., minimum=0., cash_only=True):
+        def run(ib, *, positions=None, prices=None, reserve=0., step=1., minimum=0., cash_only=True, dry_run=False):
             return service.execute_rebalance(ib, weights, positions or {},
                 {'equity': 2000., 'buying_power': cash},
                 fetch_quote_snapshots=lambda _ib, symbols: {s: NS(last_price=(prices or {}).get(s, 100.)) for s in symbols},
@@ -121,7 +121,7 @@ def native(monkeypatch, tmp_path):
                 translator=lambda key, **kw: key, account_execution_session=session(),
                 runtime_release_receipt=receipt, acquire_execution_claim=lambda: True,
                 strategy_profile=profile, account_ids=(ACCOUNT,), signal_metadata=metadata,
-                cash_only_execution=cash_only, dry_run_only=False, execution_mode='paper', cash_reserve_ratio=0.,
+                cash_only_execution=cash_only, dry_run_only=dry_run, execution_mode='paper', cash_reserve_ratio=0.,
                 cash_reserve_floor_usd=reserve, rebalance_threshold_ratio=0.,
                 limit_buy_premium=1., sell_settle_delay_sec=0., quantity_step=step,
                 min_order_notional=minimum, execution_lock_dir=tmp_path/'locks', return_summary=True)
@@ -136,6 +136,9 @@ def native(monkeypatch, tmp_path):
 def test_unverified_cash_ledger_cannot_admit_equity_buy(native, settled, symbol, profile):
     plan = native({symbol: 400.}, cash=500., profile=profile)
     ib = FakeIB(cash=500., settled=settled)
+    # Amounts without an explicit settlement tag remain unknown.
+    original = ib.accountValues
+    ib.accountValues = lambda: [r for r in original() if r.tag != "SettledCash"]
     _, summary = plan.run(ib, prices={symbol: 25.})
     assert not ib.orders
     assert summary["execution_status"] == "blocked"
@@ -169,3 +172,107 @@ def test_margin_path_is_not_changed_by_cash_containment(native):
     ib = FakeIB(cash=500., settled=0.)
     plan.run(ib, prices={"SOXL": 25.}, cash_only=False)
     assert [(o["side"], o["quantity"]) for o in ib.orders] == [("buy", 16)]
+
+
+@pytest.mark.parametrize("symbol,profile", [("TQQQ", "tqqq_growth_income"), ("SOXL", PROFILE)])
+@pytest.mark.parametrize("settled,expected", [(500., 16), (100., 3), (0., 0), (-1., 0)])
+def test_explicit_settled_cash_controls_buy_budget(native, symbol, profile, settled, expected):
+    plan = native({symbol: 400.}, cash=500., profile=profile)
+    ib = FakeIB(cash=500., settled=settled)
+    plan.run(ib, prices={symbol: 25.})
+    assert [(o["side"], o["quantity"]) for o in ib.orders] == ([("buy", expected)] if expected else [])
+    assert sum(o["quantity"] * o["limit_price"] for o in ib.orders) <= max(0., settled)
+
+
+@pytest.mark.parametrize("mode", ["missing", "error", "null", "nan", "infinity", "invalid",
+                                  "conflict", "wrong_account", "wrong_currency", "anonymous"])
+def test_unknown_settlement_fails_closed_before_lock(native, mode):
+    plan = native({"SOXL": 400.}, cash=500.)
+    ib = FakeIB(cash=500., settled=500.)
+    rows = ib.accountValues()
+    settled = next(r for r in rows if r.tag == "SettledCash")
+    if mode == "missing":
+        rows.remove(settled)
+    elif mode == "null":
+        rows = None
+    elif mode in {"nan", "infinity", "invalid"}:
+        settled.value = {"nan": "nan", "infinity": "inf", "invalid": "unknown"}[mode]
+    elif mode == "conflict":
+        rows.append(NS(account=ACCOUNT, currency="USD", tag="SettledCash", value="0"))
+    elif mode == "wrong_account":
+        settled.account = "synthetic-other-account"
+    elif mode == "wrong_currency":
+        settled.currency = "HKD"
+    elif mode == "anonymous":
+        settled.account = None
+    def read():
+        if mode == "error":
+            raise RuntimeError("synthetic settlement read failure")
+        return rows
+    ib.accountValues = read
+    _, summary = plan.run(ib, prices={"SOXL": 25.})
+    assert ib.orders == []
+    assert summary["execution_status"] == "blocked"
+    assert summary["lock_path"] is None
+    assert "SETTLED_CASH_LEDGER_UNVERIFIED" in summary["account_new_risk_reason_codes"]
+    assert plan.session().read_state()["attempts"] == {}
+
+
+def test_settled_budget_is_shared_by_symbols_and_reserve(native):
+    plan = native({"TQQQ": 400., "SOXL": 400.}, cash=1000.)
+    ib = FakeIB(cash=1000., settled=500.)
+    plan.run(ib, prices={"TQQQ": 25., "SOXL": 25.}, reserve=100.)
+    assert ib.orders
+    assert all(o["side"] == "buy" for o in ib.orders)
+    assert sum(o["quantity"] * o["limit_price"] for o in ib.orders) <= 400.
+
+
+@pytest.mark.parametrize("settled", [0., 500., float("nan")])
+def test_switch_off_cash_gate_does_not_create_reduction_targets(native, monkeypatch, settled):
+    monkeypatch.setenv("PORTFOLIO_LOSS_STOPLOSS_ENABLED", "false")
+    plan = native({"TQQQ": 250., "SOXL": 250.}, cash=500.)
+    ib = FakeIB(cash=500., settled=settled)
+    original_weights = dict(plan.weights)
+    plan.run(ib, positions={"TQQQ": {"quantity": 10.}, "SOXL": {"quantity": 10.}},
+             prices={"TQQQ": 25., "SOXL": 25.})
+    assert ib.orders == []
+    assert plan.weights == original_weights
+
+
+@pytest.mark.parametrize("status", ["Filled", "Submitted"])
+def test_sale_proceeds_do_not_increase_positive_settled_budget(native, status):
+    plan = native({"TQQQ": 0., "SOXL": 400.}, cash=500.)
+    ib = FakeIB(cash=500., settled=100.)
+    ib.status = status
+    plan.run(ib, positions={"TQQQ": {"quantity": 10.}},
+             prices={"TQQQ": 80., "SOXL": 25.})
+    buys = [o for o in ib.orders if o["side"] == "buy"]
+    assert buys
+    assert sum(o["quantity"] * o["limit_price"] for o in buys) <= 100.
+
+
+def test_duplicate_settled_rows_do_not_double_budget(native):
+    plan = native({"SOXL": 400.}, cash=500.)
+    ib = FakeIB(cash=500., settled=100.)
+    rows = ib.accountValues()
+    rows.append(NS(account=ACCOUNT, currency="USD", tag="SettledCash", value="100"))
+    ib.accountValues = lambda: rows
+    plan.run(ib, prices={"SOXL": 25.})
+    assert [(o["side"], o["quantity"]) for o in ib.orders] == [("buy", 3)]
+
+
+@pytest.mark.parametrize("settled,expected", [(0., 0), (100., 3)])
+def test_dry_run_sale_does_not_supply_settled_cash(native, settled, expected):
+    plan = native({"TQQQ": 0., "SOXL": 400.}, cash=500.)
+    ib = FakeIB(cash=500., settled=settled)
+    _, summary = plan.run(ib, positions={"TQQQ": {"quantity": 10.}},
+                          prices={"TQQQ": 80., "SOXL": 25.}, dry_run=True)
+    assert ib.orders == []
+    buys = [o for o in summary["orders_submitted"] if o["side"] == "buy"]
+    assert [o["quantity"] for o in buys] == ([expected] if expected else [])
+
+
+def test_every_selected_account_requires_settlement_evidence():
+    ib = FakeIB(settled=500.)
+    assert service._settled_cash_for_currency(
+        ib, currency="USD", account_ids=(ACCOUNT, "synthetic-other-account")) is None

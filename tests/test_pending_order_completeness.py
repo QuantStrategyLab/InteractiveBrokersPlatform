@@ -38,7 +38,7 @@ class FakeIB:
         return []
 
     def accountValues(self):
-        return [NS(account="DU00000003", tag="CashBalance", currency="USD", value="1000")]
+        return [NS(account="DU00000003", tag="CashBalance", currency="USD", value="1000"), NS(account="DU00000003", tag="SettledCash", currency="USD", value="1000")]
 
 
 @pytest.fixture

@@ -1,23 +1,29 @@
 # IBKR PAPER execution admission
 
-## Cash-only equity containment
+## Cash-only equity settlement gate
 
-The ordinary rebalance executor blocks cash-only equity buys with
-`SETTLED_CASH_LEDGER_UNVERIFIED`, independently of the opt-in PAPER guard
-below. This applies to paper and live execution and dry-run equity previews.
-The current native path has no verified, timestamped settled-cash ledger that
-accounts for shared reservations, open-order obligations and actual commissions.
-Neither a positive `CashBalance` or `SettledCash` tag nor projected sale proceeds
-authorizes a new equity buy. Otherwise-qualified position reductions retain
-their existing claim, account journal and unknown-outcome checks. A buy-only
-cycle blocked here does not take the daily execution lock.
+Cash-only equity buys use explicit finite `SettledCash` observations in the market
+currency for every selected account. Missing, anonymous, unreadable, malformed,
+non-finite or conflicting settlement rows block new buys with
+`SETTLED_CASH_LEDGER_UNVERIFIED` before taking a buy-only daily execution lock.
+Zero and negative settled cash provide no buy budget. `CashBalance`,
+`AvailableFunds` and fallback buying power cannot establish settlement.
 
-This is containment, not a working settled-cash allocator. It blocks positive
-cash-only equity allocations too. Margin-mode behavior and the separate option
-intent path are outside this containment; neither is certified by it. No new
-configuration switch or production setting is introduced. Do not change an
-account to margin mode to bypass a cash-only block. Cash lifecycle, commission
-reconciliation and cross-cycle cash allocation remain unproved.
+Positive settled cash goes through the existing reserve subtraction, buffered
+buy sizing, quantity rules, account journal and pending-order checks. Symbols
+share the remaining budget within a cycle. After a sale, only a new explicit
+settled-cash observation supplies spending authority; projected sale proceeds
+remain telemetry. Dry-run previews do not credit sales as settled cash.
+Otherwise-qualified reductions retain their existing protections. The gate does
+not change target weights or generate protective-exit targets.
+
+These are offline component guarantees, not proof of broker-cache freshness,
+cross-cycle cash conservation, commission reconciliation or runtime acceptance.
+`OBSERVED` means a settlement tag was read, not an authenticated cash ledger.
+The existing account journal and incomplete pending-order blocks are preserved;
+there is no new allocation engine or durable principal-reservation ledger.
+Margin mode and separate option intents keep their existing behavior and remain
+outside this equity settlement claim. No production switch is changed.
 
 ## Opt-in PAPER command guard
 

@@ -247,6 +247,39 @@ def _cash_value_for_currency(account_values, *, currency: str, account_ids=None)
     return total if matched else None
 
 
+def _settled_cash_for_currency(ib, *, currency, account_ids=None) -> float | None:
+    """Read explicit settlement evidence; never infer it from cash or credit."""
+    selected = _normalize_account_ids(account_ids)
+    try:
+        rows = ib.accountValues()
+        if rows is None:
+            return None
+        amounts = {}
+        for row in rows:
+            if str(getattr(row, "currency", "")).strip().upper() != currency.upper():
+                continue
+            account = str(getattr(row, "account", "") or "").strip() or None
+            if not _matches_account(account, selected):
+                continue
+            if str(getattr(row, "tag", "")).strip() != "SettledCash":
+                continue
+            if account is None or (selected and account not in selected):
+                return None
+            value = _coerce_float(getattr(row, "value", None))
+            if value is None or not math.isfinite(value):
+                return None
+            if account in amounts and amounts[account] != value:
+                return None
+            amounts[account] = value
+        if not amounts or (selected and set(amounts) != set(selected)):
+            return None
+        total = sum(amounts.values())
+        return total if math.isfinite(total) else None
+    except Exception:
+        # Missing API and broker read errors are unknown settlement evidence.
+        return None
+
+
 def _available_funds_for_currency(account_values, *, currency: str, account_ids=None) -> float | None:
     selected_account_ids = _normalize_account_ids(account_ids)
     market_currency = str(currency or "USD").strip().upper()
@@ -1644,11 +1677,11 @@ def execute_rebalance(
         )
         execution_summary["pending_order_cash_risk_unknown"] = True
 
-    # accountValues is a tag cache, not a verified settled-cash ledger. It
-    # carries no cash cutoff, shared cash reservations or reconciled fill fees.
-    # Until that native contract exists, contain cash-only equity buys rather
-    # than treating CashBalance, SettledCash or projected sales as authority.
-    settled_cash_ledger_unverified = bool(cash_only_execution)
+    settled_cash = (
+        _settled_cash_for_currency(ib, currency=market_currency, account_ids=normalized_account_ids)
+        if cash_only_execution else None
+    )
+    settled_cash_ledger_unverified = cash_only_execution and settled_cash is None
     if settled_cash_ledger_unverified:
         account_new_risk_buy_blocked = True
         account_new_risk_reason_codes = (
@@ -1656,6 +1689,8 @@ def execute_rebalance(
             "SETTLED_CASH_LEDGER_UNVERIFIED",
         )
         execution_summary["settled_cash_ledger_status"] = "UNKNOWN"
+    elif cash_only_execution:
+        execution_summary["settled_cash_ledger_status"] = "OBSERVED"
 
     trade_logs.append(
         " | ".join(
@@ -1705,12 +1740,12 @@ def execute_rebalance(
     insufficient_buying_power_symbols: list[str] = []
     min_notional_symbols: list[str] = []
     quantity_zero_symbols: list[str] = []
-    anticipated_buying_power = get_available_buying_power(
-        ib,
-        account_values.get("buying_power", 0),
-        account_ids=normalized_account_ids,
-        currency=market_currency,
-        cash_only_execution=cash_only_execution,
+    anticipated_buying_power = (
+        max(0.0, settled_cash or 0.0) if cash_only_execution
+        else get_available_buying_power(
+            ib, account_values.get("buying_power", 0), account_ids=normalized_account_ids,
+            currency=market_currency, cash_only_execution=False,
+        )
     )
     investable_anticipated_buying_power = _investable_buying_power(anticipated_buying_power, reserved)
     cash_sweep_quantity = 0
@@ -1819,7 +1854,11 @@ def execute_rebalance(
             break
         quantity_zero_symbols.append(symbol)
 
-    if (pending_observation.cash_risk_unknown or settled_cash_ledger_unverified) and has_buy_plan and not has_sell_plan:
+    if (
+        (pending_observation.cash_risk_unknown or settled_cash_ledger_unverified)
+        and any(target_mv[s] > current_mv.get(s, 0.0) + threshold for s in target_mv)
+        and not has_sell_plan
+    ):
         # No qualified reduction will be submitted. Reject before taking the
         # daily execution lock, so a later complete observation can be checked
         # normally without clearing any execution or reconciliation marker.
@@ -2046,23 +2085,25 @@ def execute_rebalance(
                 fallback_quantity=qty,
             )
 
-    if dry_run_only:
+    if cash_only_execution:
+        # A sale fill or ACK does not establish settlement. A fresh observation
+        # supplies the budget; projected proceeds never supply spending authority.
+        observed = (
+            _settled_cash_for_currency(ib, currency=market_currency, account_ids=normalized_account_ids)
+            if sell_executed else settled_cash
+        )
+        buying_power = max(0.0, observed or 0.0)
+        if observed is None:
+            execution_summary["settled_cash_ledger_status"] = "UNKNOWN"
+    elif dry_run_only:
         buying_power = max(0.0, anticipated_buying_power + dry_run_sale_proceeds)
     else:
         if sell_executed:
             time.sleep(sell_settle_delay_sec)
             buying_power = get_available_buying_power(
-                ib,
-                account_values.get("buying_power", 0),
-                account_ids=normalized_account_ids,
-                currency=market_currency,
-                cash_only_execution=cash_only_execution,
+                ib, account_values.get("buying_power", 0), account_ids=normalized_account_ids,
+                currency=market_currency, cash_only_execution=False,
             )
-            if cash_only_execution and projected_sell_release_value > 0.0:
-                buying_power = max(
-                    float(buying_power or 0.0),
-                    float(anticipated_buying_power or 0.0) + float(projected_sell_release_value),
-                )
         else:
             buying_power = anticipated_buying_power
     investable_buying_power = _investable_buying_power(buying_power, reserved)

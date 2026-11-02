@@ -319,7 +319,7 @@ def test_execute_rebalance_never_expands_approved_buy_budget(
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="CashBalance", currency="USD", value=str(buying_power))]
+            return [SimpleNamespace(tag="CashBalance", currency="USD", value=str(buying_power)), SimpleNamespace(tag="SettledCash", currency="USD", value=str(buying_power), account="DU00000003")]
 
     submitted = []
     claims = []
@@ -384,7 +384,7 @@ def test_execute_rebalance_reductions_follow_approved_target_without_retention_l
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="CashBalance", currency="USD", value="1000")]
+            return [SimpleNamespace(tag="CashBalance", currency="USD", value="1000"), SimpleNamespace(tag="SettledCash", currency="USD", value="1000", account="DU00000003")]
 
     submitted = []
     claims = []
@@ -434,7 +434,7 @@ def test_execute_rebalance_submits_limit_buy_for_underweight_position(monkeypatc
         reqAllOpenOrders = openTrades
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="5000")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="5000"), SimpleNamespace(tag="SettledCash", currency="USD", value="5000", account="DU00000003")]
 
     submitted = []
 
@@ -490,7 +490,7 @@ def test_execute_rebalance_cannot_submit_without_successful_claim_callback(tmp_p
     submitted = []
     ib = SimpleNamespace(
         openTrades=lambda: [], reqAllOpenOrders=lambda: [],
-        accountValues=lambda: [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1000")],
+        accountValues=lambda: [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1000"), SimpleNamespace(tag="SettledCash", currency="USD", value="1000", account="DU00000003")],
     )
     with pytest.raises(RuntimeError, match="execution claim required"):
         execute_rebalance(
@@ -516,7 +516,7 @@ def test_execute_rebalance_paper_admission_blocks_before_calling_the_broker(tmp_
         reqAllOpenOrders = openTrades
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="5000")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="5000"), SimpleNamespace(tag="SettledCash", currency="USD", value="5000", account="DU00000003")]
 
     release = {
         "release_id": "soxl-p2-v3.20260824",
@@ -581,7 +581,7 @@ def test_execute_rebalance_blocks_when_all_order_submissions_are_rejected(tmp_pa
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="CashBalance", currency="USD", value="1000")]
+            return [SimpleNamespace(tag="CashBalance", currency="USD", value="1000"), SimpleNamespace(tag="SettledCash", currency="USD", value="1000", account="DU00000003")]
 
     trade_logs, summary = execute_rebalance(
         FakeIB(),
@@ -629,7 +629,7 @@ def test_execute_rebalance_uses_symbol_specific_limit_buy_premium(monkeypatch, t
         reqAllOpenOrders = openTrades
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="5000")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="5000"), SimpleNamespace(tag="SettledCash", currency="USD", value="5000", account="DU00000003")]
 
     submitted = []
 
@@ -678,7 +678,7 @@ def test_execute_rebalance_blocks_option_intent_without_final_risk_limits(tmp_pa
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="300000")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="300000"), SimpleNamespace(tag="SettledCash", currency="USD", value="300000", account="DU00000003")]
 
     def fake_fetch_quote_snapshots(_ib, symbols):
         return {symbol: SimpleNamespace(last_price=100.0) for symbol in symbols}
@@ -736,7 +736,7 @@ def test_execute_rebalance_blocks_multi_leg_option_without_final_risk_limits(tmp
         reqAllOpenOrders = openTrades
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1000000")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1000000"), SimpleNamespace(tag="SettledCash", currency="USD", value="1000000", account="DU00000003")]
 
     error = pytest.raises(RuntimeError, execute_rebalance,
         FakeIB(),
@@ -789,7 +789,7 @@ def test_execute_rebalance_hk_profile_dry_run_keeps_whole_share_orders_off_broke
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="HKD", value="200000")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="HKD", value="200000"), SimpleNamespace(tag="SettledCash", currency="HKD", value="200000", account="DU00000003")]
 
     submitted = []
     prices = {"02834": 12.0, "03110": 18.0}
@@ -808,6 +808,7 @@ def test_execute_rebalance_hk_profile_dry_run_keeps_whole_share_orders_off_broke
         strategy_symbols=["02834", "03110"],
         strategy_profile="hk_global_etf_tactical_rotation",
         account_group="paper-hk",
+        market_currency="HKD",
         service_name="ibkr-hk-paper",
         signal_metadata=_signal_metadata(
             {"02834": 0.45, "03110": 0.35},
@@ -847,7 +848,7 @@ def test_execute_rebalance_uses_reserved_cash_floor_when_higher(tmp_path):
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1000")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1000"), SimpleNamespace(tag="SettledCash", currency="USD", value="1000", account="DU00000003")]
 
     trade_logs, summary = execute_rebalance(
         FakeIB(),
@@ -883,7 +884,7 @@ def test_execute_rebalance_caps_buy_budget_by_reserved_cash_after_sell(tmp_path,
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1412.12")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1412.12"), SimpleNamespace(tag="SettledCash", currency="USD", value="1412.12", account="DU00000003")]
 
     prices = {"SOXL": 225.19, "SOXX": 600.71}
     monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
@@ -932,7 +933,7 @@ def test_execute_rebalance_caps_buy_budget_by_reserved_cash_after_sell(tmp_path,
 
 
 @pytest.mark.parametrize("target_weight,buy_expected", [(0.90, False), (0.95, True)])
-def test_execute_rebalance_live_cash_only_reuses_projected_sell_proceeds_when_cash_snapshot_is_stale(
+def test_execute_rebalance_live_cash_only_uses_initial_settled_cash_when_cash_balance_is_stale(
     tmp_path, monkeypatch, target_weight, buy_expected,
 ):
     class FakeIB:
@@ -944,7 +945,7 @@ def test_execute_rebalance_live_cash_only_reuses_projected_sell_proceeds_when_ca
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="CashBalance", currency="USD", value="112.38")]
+            return [SimpleNamespace(tag="CashBalance", currency="USD", value="112.38"), SimpleNamespace(tag="SettledCash", currency="USD", value="689.88", account="DU00000003")]
 
     prices = {"SOXL": 192.50, "SOXX": 582.25}
     submitted = []
@@ -1024,7 +1025,7 @@ def test_execute_rebalance_live_cash_only_does_not_bridge_unfilled_sell_submissi
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="CashBalance", currency="USD", value="112.38")]
+            return [SimpleNamespace(tag="CashBalance", currency="USD", value="112.38"), SimpleNamespace(tag="SettledCash", currency="USD", value="112.38", account="DU00000003")]
 
     prices = {"SOXL": 192.50, "SOXX": 582.25}
     submitted = []
@@ -1078,7 +1079,7 @@ def test_execute_rebalance_live_cash_only_uses_partial_fill_proceeds_and_fill_pr
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="CashBalance", currency="USD", value="100.00")]
+            return [SimpleNamespace(tag="CashBalance", currency="USD", value="100.00"), SimpleNamespace(tag="SettledCash", currency="USD", value="100.00", account="DU00000003")]
 
     prices = {"SOXL": 200.0, "SOXX": 300.0}
     submitted = []
@@ -1133,7 +1134,7 @@ def test_execute_rebalance_live_cash_only_uses_partial_fill_proceeds_and_fill_pr
     assert {"symbol": "SOXX", "side": "buy", "reason": "quantity_zero"} in summary["orders_skipped"]
 
 
-def test_execute_rebalance_projects_unbuyable_weight_target_to_zero(tmp_path, monkeypatch):
+def test_execute_rebalance_projects_unbuyable_weight_target_to_zero_with_settled_funds(tmp_path, monkeypatch):
     class FakeIB:
         def openTrades(self):
             return []
@@ -1143,7 +1144,7 @@ def test_execute_rebalance_projects_unbuyable_weight_target_to_zero(tmp_path, mo
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="236.81")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="236.81"), SimpleNamespace(tag="SettledCash", currency="USD", value="773.69", account="DU00000003")]
 
     prices = {"SOXL": 191.15, "SOXX": 536.88, "BOXX": 100.0}
     monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
@@ -1202,7 +1203,7 @@ def test_execute_rebalance_keeps_safe_haven_cash_when_only_risk_target_is_unbuya
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1294.00")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1294.00"), SimpleNamespace(tag="SettledCash", currency="USD", value="1294.00", account="DU00000003")]
 
     prices = {"SOXL": 175.0, "SOXX": 525.0, "BOXX": 116.83}
     submitted = []
@@ -1265,7 +1266,7 @@ def test_execute_rebalance_blocks_small_account_buy_but_keeps_strategy_reduction
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="500.00")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="500.00"), SimpleNamespace(tag="SettledCash", currency="USD", value="500.00", account="DU00000003")]
 
     submitted = []
     monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
@@ -1321,7 +1322,7 @@ def test_execute_rebalance_routes_order_to_single_account_id(monkeypatch, tmp_pa
 
         def accountValues(self):
             return [
-                SimpleNamespace(account="U00000003", tag="AvailableFunds", currency="USD", value="5000"),
+                SimpleNamespace(account="U00000003", tag="AvailableFunds", currency="USD", value="5000"), SimpleNamespace(account="U00000003", tag="SettledCash", currency="USD", value="5000"),
                 SimpleNamespace(account="U00000009", tag="AvailableFunds", currency="USD", value="100"),
             ]
 
@@ -1405,7 +1406,7 @@ def test_execute_rebalance_zero_target_sell_uses_position_quantity(monkeypatch, 
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1000")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1000"), SimpleNamespace(tag="SettledCash", currency="USD", value="1000", account="DU00000003")]
 
     submitted = []
 
@@ -1455,7 +1456,7 @@ def test_execute_rebalance_sells_existing_whole_shares_when_target_projects_to_c
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="500")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="500"), SimpleNamespace(tag="SettledCash", currency="USD", value="500", account="DU00000003")]
 
     submitted = []
 
@@ -1512,7 +1513,7 @@ def test_execute_rebalance_projects_unbuyable_soxx_target_to_cash(monkeypatch, t
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="519.54")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="519.54"), SimpleNamespace(tag="SettledCash", currency="USD", value="519.54", account="DU00000003")]
 
     prices = {"SOXL": 232.99, "SOXX": 605.17, "BOXX": 117.06}
     monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
@@ -1581,7 +1582,7 @@ def test_execute_rebalance_caps_buy_to_cash_when_overweight_sell_rounds_to_zero(
         def accountValues(self):
             return [
                 SimpleNamespace(tag="AvailableFunds", currency="USD", value="2000.00"),
-                SimpleNamespace(tag="CashBalance", currency="USD", value="400.00"),
+                SimpleNamespace(tag="CashBalance", currency="USD", value="400.00"), SimpleNamespace(tag="SettledCash", currency="USD", value="400.00", account="DU00000003"),
             ]
 
     prices = {"SOXL": 219.80, "SOXX": 611.00, "BOXX": 100.0}
@@ -1639,7 +1640,7 @@ def test_execute_rebalance_does_not_bootstrap_unbuyable_core_target(monkeypatch,
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="623.39")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="623.39"), SimpleNamespace(tag="SettledCash", currency="USD", value="623.39", account="DU00000003")]
 
     prices = {"SOXL": 229.73, "SOXX": 603.00, "BOXX": 100.0}
     monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
@@ -1701,7 +1702,7 @@ def test_execute_rebalance_skips_existing_top_up_smaller_than_one_share(monkeypa
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="700.00")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="700.00"), SimpleNamespace(tag="SettledCash", currency="USD", value="700.00", account="DU00000003")]
 
     prices = {"SOXX": 605.0}
     monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
@@ -1756,7 +1757,7 @@ def test_execute_rebalance_skips_when_pending_orders_exist():
         reqAllOpenOrders = openTrades
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="5000")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="5000"), SimpleNamespace(tag="SettledCash", currency="USD", value="5000", account="DU00000003")]
 
     trade_logs = execute_rebalance(
         FakeIB(),
@@ -1790,7 +1791,7 @@ def test_execute_rebalance_blocks_same_day_repeat_via_execution_lock(tmp_path, m
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="5000")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="5000"), SimpleNamespace(tag="SettledCash", currency="USD", value="5000", account="DU123")]
 
     def fake_fetch_quote_snapshots(_ib, symbols):
         return {symbol: SimpleNamespace(last_price=100.0) for symbol in symbols}
@@ -1871,7 +1872,7 @@ def test_execute_rebalance_skips_when_same_day_fills_detected():
             ]
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="5000")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="5000"), SimpleNamespace(tag="SettledCash", currency="USD", value="5000", account="DU123")]
 
     trade_logs = execute_rebalance(
         FakeIB(),
@@ -1908,7 +1909,7 @@ def test_execute_rebalance_returns_structured_summary_when_requested(monkeypatch
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="5000")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="5000"), SimpleNamespace(tag="SettledCash", currency="USD", value="5000", account="DU123")]
 
     def fake_fetch_quote_snapshots(_ib, symbols):
         return {symbol: SimpleNamespace(last_price=100.0) for symbol in symbols}
@@ -1970,7 +1971,7 @@ def test_execute_rebalance_keeps_small_safe_haven_target_as_cash(monkeypatch, tm
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1500")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1500"), SimpleNamespace(tag="SettledCash", currency="USD", value="1500", account="DU00000003")]
 
     monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
 
@@ -2031,6 +2032,11 @@ def test_execute_rebalance_sells_cash_sweep_symbol_when_buying_power_is_short(mo
                 SimpleNamespace(
                     account="DU123",
                     tag="CashBalance",
+                    currency="USD",
+                    value=buying_power,
+                ), SimpleNamespace(
+                    account="DU123",
+                    tag="SettledCash",
                     currency="USD",
                     value=buying_power,
                 )
@@ -2101,7 +2107,7 @@ def test_execute_rebalance_blocks_when_material_target_has_missing_prices():
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="5000")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="5000"), SimpleNamespace(tag="SettledCash", currency="USD", value="5000", account="DU00000003")]
 
     trade_logs, summary = execute_rebalance(
         FakeIB(),
@@ -2144,7 +2150,7 @@ def test_execute_rebalance_blocks_when_material_target_has_no_buying_power():
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="0")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="0"), SimpleNamespace(tag="SettledCash", currency="USD", value="0", account="DU00000003")]
 
     trade_logs, summary = execute_rebalance(
         FakeIB(),
@@ -2187,7 +2193,7 @@ def test_execute_rebalance_uses_snapshot_prices_for_dry_run_when_quotes_missing(
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="5000")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="5000"), SimpleNamespace(tag="SettledCash", currency="USD", value="5000", account="DU00000003")]
 
     trade_logs, summary = execute_rebalance(
         FakeIB(),
@@ -2238,7 +2244,7 @@ def test_execute_rebalance_uses_price_fallbacks_for_live_when_quotes_missing(mon
             return []
 
         def accountValues(self):
-            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="5000")]
+            return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="5000"), SimpleNamespace(tag="SettledCash", currency="USD", value="5000", account="DU00000003")]
 
     submitted = []
 
@@ -2310,6 +2316,8 @@ def uncertain_cycle(tmp_path, monkeypatch):
         def accountValues(self):
             return [SimpleNamespace(
                 tag="CashBalance", currency="USD", value="1500", account="DU00000003",
+            ), SimpleNamespace(
+                tag="SettledCash", currency="USD", value="1500", account="DU00000003",
             )]
 
     def run(first_report, *, multiple=False, first_side="sell", claim_error=False):
@@ -2583,7 +2591,8 @@ def test_invalid_vol_does_not_create_liquidation(monkeypatch, tmp_path):
     class FakeIB:
         def openTrades(self): return []
         def fills(self): return []
-        def accountValues(self): return [SimpleNamespace(tag="CashBalance", currency="USD", value="1000")]
+        def accountValues(self): return [SimpleNamespace(tag="CashBalance", currency="USD", value="1000"),
+                    SimpleNamespace(account="DU00000003", tag="SettledCash", currency="USD", value="1000")]
 
     submitted = []
     from application.account_new_risk_gate_support import evaluate_account_values_new_risk_admission
