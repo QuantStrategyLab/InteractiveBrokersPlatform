@@ -33,6 +33,10 @@ _REPORT_FILES = {
     "InteractiveBrokersPlatform:application/decision_cycle.py": "ad938a55aa439764112e96ac7e80a4c661ee14823292e7cf99f1df2bcc863311",
     "InteractiveBrokersPlatform:main.py": "f13b55f501c404ef249bb3344bd69136beb8e0ead382e827d082217180b46637",
 }
+_REFACTORED_REPORT_FILES = {
+    **_REPORT_FILES,
+    "InteractiveBrokersPlatform:main.py": "ef3ab072868dcb3447b19d224c63879cfa11a3d3906db7d25ac51b77171feb04",
+}
 _DAILY_FILES = {
     "InteractiveBrokersPlatform:scripts/project_ibkr_runtime_daily.py": "d5cb50eabc838c9c47064c746f3f15dbdb427e17c95ce1a70f7ff0ee580afb03",
 }
@@ -167,6 +171,16 @@ def _producer(source, reviewed):
     files = _need(producer, "files")
     for path, expected in reviewed.items():
         _require(_digest(_need(files, path)) == expected, "PRODUCER_VERSION_UNSUPPORTED", blocked=True)
+
+
+def _report_producer(source):
+    files = _peek(_peek(source, "producer"), "files")
+    refactored = type(files) is dict and all(
+        type(files.get(path)) is str and files[path] == expected
+        for path, expected in _REFACTORED_REPORT_FILES.items()
+    )
+    # Select only a complete reviewed projection; retain legacy validation order.
+    _producer(source, _REFACTORED_REPORT_FILES if refactored else _REPORT_FILES)
 
 
 def _header(document):
@@ -431,7 +445,7 @@ def validate_source_evidence(document) -> dict:
     check("source_envelope", _envelope, source)
     check("account_binding_envelope", _envelope, binding)
     check("source_locations", _source_locations, document)
-    check("producer", _producer, source, _REPORT_FILES)
+    check("producer", _report_producer, source)
     check("normalization", _normalization, document, source, binding, normalized)
     check("source_identity", _source_identity, report, normalized)
     check("account_binding", _account_binding, source, binding, report, normalized)

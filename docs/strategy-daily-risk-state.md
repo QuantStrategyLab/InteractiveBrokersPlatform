@@ -94,6 +94,16 @@ Neither value authenticates the observations.
 | `normalized` | The report and binding digests, profile, run alias, logical account scope, deployment revision, complete release identity, clocks, execution lane, record kind and unchanged execution receipt. `field_sources` must match the fixed source pointers; the document also carries `normalized_sha256`. |
 | Optional `daily_projection` | A separately located source from the reviewed daily producer, with a source reference in `normalized.daily_projection`. Coverage and individual fills remain `UNKNOWN`. |
 
+The report-producer registry retains the legacy nine-file identity and adds the
+reviewed request-report extraction as a second complete identity. Only `main.py`
+differs; the other eight required source digests remain identical. Extra file
+metadata does not replace a required file or authenticate declared source
+revisions. Unknown or incomplete identities remain blocked, and the daily
+producer registration is unchanged. The
+[synthetic endpoint replay](request-endpoint-replay.md) documents the exact
+source comparison and its limits. Registration changes local source consistency
+only; it never grants execution authority or authenticates historical inputs.
+
 Physical account identity has five dimensions: `platform`,
 `execution_environment`, `server`, `lifecycle_id` and `account_alias`. The alias
 namespace includes the broker, physical execution environment, server and
