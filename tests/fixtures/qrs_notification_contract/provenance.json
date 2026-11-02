@@ -34,6 +34,11 @@
       "source_sha256": "20e26298cf48c77431257a4d73d2c9ef5ce0eda2a88323a23852d0119bdacf8f",
       "sha256": "20e26298cf48c77431257a4d73d2c9ef5ce0eda2a88323a23852d0119bdacf8f"
     },
+    "display_names.json": {
+      "source_path": "python/scripts/display_names.json",
+      "source_sha256": "b453f762fff0186342c4eb2b60e95a24cce56bf988d6cfaeea47afe8b8077b54",
+      "sha256": "b453f762fff0186342c4eb2b60e95a24cce56bf988d6cfaeea47afe8b8077b54"
+    },
     "notification_snapshot/__init__.py": {
       "source_path": "python/scripts/notification_snapshot/__init__.py",
       "source_sha256": "67dfde39f061966cdde08f51663d0e7e413a88abab8a82a9b29825cb6f7dfa10",

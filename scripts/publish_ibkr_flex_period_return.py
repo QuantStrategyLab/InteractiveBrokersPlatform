@@ -25,7 +25,6 @@ from application.ibkr_flex_source import (
 from application.ibkr_flex_ledger import build_flex_ledger
 from application.ibkr_period_return import (
     _ACCOUNT as _PERIOD_ACCOUNT,
-    _BINDING as _PERIOD_BINDING,
     _SCOPE as _PERIOD_SCOPE,
     _TARGET as _PERIOD_TARGET,
     PeriodReturnError, build_ibkr_period_return, validate_period_return_scope,
@@ -51,10 +50,15 @@ _TOKEN_ALIASES = (
     "CYCLE_HEALTH_PROVISIONER_TOKEN",
 )
 _PREFLIGHT_FIELDS = (
-    "IBKR_PERIOD_RETURN_TARGET_ID", "IBKR_PERIOD_RETURN_SOURCE_BINDING_ID",
+    "IBKR_PERIOD_RETURN_TARGET_ID",
     "IBKR_PERIOD_RETURN_ACCOUNT_SCOPE", "IBKR_PERIOD_RETURN_ACCOUNT_KEY",
     "IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", "IBKR_FLEX_TOKEN", "IBKR_FLEX_QUERY_ID",
     "IBKR_ACCOUNT_FACTS_SYNC_TOKEN",
+    # The primary binding is derived from these, so a missing one is the new
+    # way the period-return identity can be incomplete.
+    "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", "IBKR_ACCOUNT_FACTS_PROJECT_ID",
+    "IBKR_ACCOUNT_FACTS_SERVICE_NAME", "IBKR_ACCOUNT_FACTS_RUNTIME_REVISION",
+    "IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE", "IBKR_ACCOUNT_FACTS_DEPLOYMENT_SELECTOR",
 )
 
 
@@ -68,13 +72,33 @@ def _required(env: Mapping[str, str], name: str) -> str:
     return value
 
 
+_PRIMARY_IDENTITY_FIELDS = ("project_id", "service_name", "runtime_revision", "account_scope", "deployment_selector")
+
+
+def _primary_source_binding_id(env: Mapping[str, str], config: Mapping[str, Any]) -> str:
+    """Derive the primary binding from the account-facts identity, as the additional slots already do.
+
+    A pinned binding id is a hash of the live Cloud Run revision, so every revision
+    rotation silently strands period-return, executions and external flow together.
+    """
+    try:
+        fields = {name: _required(env, f"IBKR_ACCOUNT_FACTS_{name.upper()}") for name in _PRIMARY_IDENTITY_FIELDS}
+        selector = _selector(json.loads(_required(env, "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON")))
+    except Exception:
+        raise PeriodReturnError("configuration_invalid") from None
+    if fields["account_scope"] != config["account_scope"] or selector != tuple(config["expected_account_ids"]):
+        raise PeriodReturnError("primary_identity_mismatch")
+    return _bound_source_id(account_selector=selector, **fields)
+
+
 def _config(env: Mapping[str, str]) -> dict[str, Any]:
     config = {key: _required(env, f"IBKR_PERIOD_RETURN_{key.upper()}") for key in (
-        "target_id", "source_binding_id", "account_scope", "account_key",
+        "target_id", "account_scope", "account_key",
     )}
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", config["account_key"], re.ASCII):
         raise PeriodReturnError("configuration_invalid")
     config["expected_account_ids"] = json.loads(_required(env, "IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON"))
+    config["source_binding_id"] = _primary_source_binding_id(env, config)
     validate_period_return_scope(**{key: config[key] for key in (
         "target_id", "source_binding_id", "account_scope", "expected_account_ids",
     )})
@@ -152,11 +176,9 @@ def _additional_returns(env, primary):
 def _configured_report_accounts(env, expected):
     raw = env.get("IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON")
     primary = env.get("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON")
-    if not raw and not primary:
-        return None  # Standalone callers retain exact single-account scope.
     try:
         primary_ids = _selector(json.loads(primary))
-        configs = _additional_target_configs(raw)
+        configs = _additional_target_configs(raw) if raw else {}
         allowed = (*primary_ids, *(c["account_selector"][0] for c in configs.values()))
         if (len(primary_ids) != 1 or len(allowed) != len(configs) + 1 or len(set(allowed)) != len(allowed)
                 or any(not _PERIOD_ACCOUNT.fullmatch(a) for a in allowed) or not set(expected) <= set(allowed)):
@@ -166,7 +188,8 @@ def _configured_report_accounts(env, expected):
     return allowed
 
 
-def _preflight_result(env: Mapping[str, str], *, status: str, fields: Mapping[str, str]) -> dict[str, Any]:
+def _preflight_result(env: Mapping[str, str], *, status: str, fields: Mapping[str, str],
+                      config: Mapping[str, Any] | None = None) -> dict[str, Any]:
     source_sha = env.get("GITHUB_SHA")
     result = {
         "schema_version": "ibkr.flex_configuration_preflight.v1",
@@ -175,7 +198,7 @@ def _preflight_result(env: Mapping[str, str], *, status: str, fields: Mapping[st
     }
     if status == "configuration_shape_valid":
         result["binding_fingerprints"] = {
-            f"{name}_sha256": hashlib.sha256(env[f"IBKR_PERIOD_RETURN_{name.upper()}"].encode()).hexdigest()
+            f"{name}_sha256": hashlib.sha256(config[name].encode()).hexdigest()
             for name in ("target_id", "source_binding_id")
         }
         if env.get("IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON"):
@@ -184,7 +207,7 @@ def _preflight_result(env: Mapping[str, str], *, status: str, fields: Mapping[st
             result["additional_return_fingerprints"] = {slot: {
                 f"{name}_sha256": hashlib.sha256(target[name].encode()).hexdigest()
                 for name in ("account_key", "target_id", "source_binding_id")}
-                for slot, target in _config(env)["additional_returns"].items()}
+                for slot, target in config["additional_returns"].items()}
     return result
 
 
@@ -204,7 +227,6 @@ def _configuration_preflight(env: Mapping[str, str]) -> dict[str, Any]:
 
     patterns = {
         "IBKR_PERIOD_RETURN_TARGET_ID": _PERIOD_TARGET,
-        "IBKR_PERIOD_RETURN_SOURCE_BINDING_ID": _PERIOD_BINDING,
         "IBKR_PERIOD_RETURN_ACCOUNT_SCOPE": _PERIOD_SCOPE,
         "IBKR_PERIOD_RETURN_ACCOUNT_KEY": re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", re.ASCII),
         "IBKR_FLEX_QUERY_ID": re.compile(r"[0-9]+", re.ASCII),
@@ -212,15 +234,22 @@ def _configuration_preflight(env: Mapping[str, str]) -> dict[str, Any]:
     for name, pattern in patterns.items():
         if fields[name] == "configuration_shape_valid" and not pattern.fullmatch(env[name]):
             fields[name] = "invalid"
-    name = "IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON"
-    if fields[name] == "configuration_shape_valid":
+    # The selector feeds the derived binding, so unparsable or empty input has to
+    # name its own field instead of leaving the failure unattributed.
+    for name in ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", "IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON"):
+        if fields[name] != "configuration_shape_valid":
+            continue
         try:
-            accounts = json.loads(env[name])
-            valid = (isinstance(accounts, list) and len(accounts) == 1
-                and isinstance(accounts[0], str) and _PERIOD_ACCOUNT.fullmatch(accounts[0]))
+            parsed = json.loads(env[name])
         except Exception:
             # Oversized integer/deep JSON failures must not emit a traceback.
-            valid = False
+            fields[name] = "invalid"
+            continue
+        if name == "IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON":
+            valid = (isinstance(parsed, list) and len(parsed) == 1
+                and isinstance(parsed[0], str) and _PERIOD_ACCOUNT.fullmatch(parsed[0]))
+        else:
+            valid = bool(_selector(parsed))
         if not valid:
             fields[name] = "invalid"
     name = "IBKR_ACCOUNT_FACTS_SYNC_TOKEN"
@@ -231,14 +260,20 @@ def _configuration_preflight(env: Mapping[str, str]) -> dict[str, Any]:
     ):
         fields[name] = "invalid"
     try:
-        _config(env)
+        config = _config(env)
     except Exception as exc:
+        config = None
         status = "missing" if "missing" in fields.values() else "invalid"
         if isinstance(exc, PeriodReturnError) and str(exc) == "report_account_scope_invalid":
             fields["approved_report_account_scope"] = "invalid"
+        # Only name the identity disagreement when nothing else already explains
+        # the failure, so a preflight line keeps pointing at one cause.
+        if (isinstance(exc, PeriodReturnError) and str(exc) == "primary_identity_mismatch"
+                and set(fields.values()) == {"configuration_shape_valid"}):
+            fields["primary_binding_identity"] = "invalid"
     else:
         status = "configuration_shape_valid"
-    return _preflight_result(env, status=status, fields=fields)
+    return _preflight_result(env, status=status, fields=fields, config=config)
 
 
 def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

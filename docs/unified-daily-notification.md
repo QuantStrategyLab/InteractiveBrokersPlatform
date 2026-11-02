@@ -31,7 +31,7 @@ recovery. The workflow link remains available for investigation. Guard alert
 criteria, target selection and deduplication are unchanged.
 
 Shared notification modules are imported directly from the pinned QPK package
-(`2b04882058666ebc81d1650d93fa2105ec4ba3d8`): `display_names`,
+(`6136b1c667a60d484f500c6d6046c0585c75305d`): `display_names`,
 `digest_candidates`, `digest_routing` and `unified_contract`. The local
 `notifications/digest_snapshot/digest_archive.py` remains an IBKR-specific
 vendored copy because it adds IBKR archive persistence hooks. Strategy pins,
@@ -82,3 +82,73 @@ pinned to an older shared package. Guard detection, deduplication and failure
 exit codes are unchanged.
 
 
+
+## Publication before the central daily read
+
+GitHub schedule events can start late. A heartbeat workflow is therefore not a
+reliable deadline trigger for the 07:00 Asia/Shanghai read. Keep its existing
+monitoring checks, but run the archive-only publisher independently in an
+approved Cloud Run Job using the platform image and its frozen dependencies.
+
+Command: `/app/.venv/bin/python -m scripts.publish_digest_before_read`.
+Use `--help` for an offline CLI check; it exits before publication or the watchdog.
+The image keeps uv-managed Python under `/opt/python` so `appuser` can traverse
+its path. Build checks and runtime commands use `/app/.venv/bin/python` directly;
+the Docker build also checks publisher help after switching to `appuser`.
+The command imports the existing producer, never the service entrypoint. It does
+not run a drill, refresh a broker session, invoke a trading route, send Telegram,
+or access Secret Manager. Archive reads use the Storage SDK and the job's
+attached identity; the image does not need gcloud. Existing candidate writes,
+merge semantics and identity checks remain authoritative.
+
+Use one job per existing central target, with its exact protected runtime JSON,
+archive prefix, opaque UID, target ID, destination and slot. No identifiers can
+be inferred from a display label. Supply the existing notification schedule so
+an idle candidate is only produced when the completed window was not due.
+Multi-target binding JSON is rejected by this entrypoint: one successful target
+cannot mask another missing target.
+
+The job requires `DIGEST_PUBLISH_ENABLED=true`,
+`QSL_ROUTINE_NOTIFICATION_MODE=daily_digest`, and the existing
+`RUNTIME_TARGET_ENABLED=true`. These are publisher-job settings, not changes to
+the trading service. Preserve the platform's existing unified-notification flag
+and any notification marker prefix needed by its existing producer. Do not
+inject broker credentials or Telegram token secrets into this job.
+
+The deployment proposal is:
+
+| Setting | Proposed value |
+| --- | --- |
+| Cloud Scheduler | `10 6 * * *`, timezone `Asia/Shanghai` |
+| Scheduler target | OAuth-authenticated Cloud Run Jobs `:run` API for this job |
+| Scheduler retries | 0; do not blindly retry an uncertain execution request |
+| Job tasks / parallelism | 1 / 1 |
+| Job retries | 0; an uncertain write is not proof of failure |
+| Job task timeout | 600 seconds |
+| Image | Reviewed immutable platform image containing this entrypoint |
+| Publication window | Start at or after 06:00 and before 06:40 |
+| In-process watchdog | 600 seconds, including projection and readback |
+| Readback deadline | Before 06:55, leaving five minutes before the reader |
+
+The business day is the day before the job's Shanghai date, for the completed
+[06:00, 06:00) window. A normal run starts at 06:10 and finishes by 06:20. A late
+start, disabled/missing binding, due-but-absent report, unconfirmed write, wrong
+business day or identity, failed readback, or expired deadline exits nonzero.
+An interrupted write remains unknown and must be inspected before any retry.
+The success record contains only the business day and a verified-readback flag.
+
+Deployment, Scheduler creation and IAM are separate operations requiring their
+own authorization. The Scheduler identity needs permission to execute only the
+job; the job identity needs the existing archive-read and candidate-store
+permissions (including notification state used by the existing producer).
+Do not substitute a project-wide role or copy the trading runtime's credentials.
+A merged change or a successful unit test does not prove the job is deployed.
+
+After a separately authorized rollout, verify a natural job execution and the
+exact candidate object generation created before 07:00, then check the central
+reader's date, slot, identity and coverage. A Scheduler API acceptance alone is
+not publication success. Keep missing/invalid coverage visible; do not substitute
+old candidates, zeros, or an artificial `not_due` result.
+
+References: [GitHub schedule timing](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)
+and [Cloud Run scheduled jobs](https://docs.cloud.google.com/run/docs/execute/jobs-on-schedule).

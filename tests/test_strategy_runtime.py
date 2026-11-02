@@ -41,9 +41,9 @@ class _FakeStrategyPluginSignal:
 
 
 def _build_runtime_settings(
-    profile: str = "tech_communication_pullback_enhancement",
+    profile: str = "synthetic_snapshot",
     *,
-    display_name: str = "Tech/Communication Pullback Enhancement",
+    display_name: str = "Synthetic Snapshot",
     target_mode: str = "weight",
     income_layer_enabled: bool | None = None,
     income_layer_start_usd: float | None = None,
@@ -311,7 +311,7 @@ def test_main_compute_signals_passes_strategy_plugin_signals_to_runtime(strategy
 def test_strategy_scope_projection_and_weights_use_the_observed_market_value():
     class FakeEntrypoint:
         manifest = StrategyManifest(
-            profile="tech_communication_pullback_enhancement",
+            profile="synthetic_snapshot",
             domain="us_equity",
             display_name="Test",
             description="test",
@@ -473,9 +473,9 @@ def test_loaded_strategy_runtime_attaches_strategy_plugin_metadata_to_portfolio(
 def test_load_strategy_runtime_uses_entrypoint_defaults_and_runtime_adapter(monkeypatch):
     class FakeEntrypoint:
         manifest = StrategyManifest(
-            profile="tech_communication_pullback_enhancement",
+            profile="synthetic_snapshot",
             domain="us_equity",
-            display_name="Tech/Communication Pullback Enhancement",
+            display_name="Synthetic Snapshot",
             description="test",
             required_inputs=frozenset({"feature_snapshot"}),
             default_config={
@@ -491,7 +491,7 @@ def test_load_strategy_runtime_uses_entrypoint_defaults_and_runtime_adapter(monk
     monkeypatch.setattr(
         strategy_runtime_module,
         "load_strategy_definition",
-        lambda raw_profile: SimpleNamespace(profile="tech_communication_pullback_enhancement"),
+        lambda raw_profile: SimpleNamespace(profile="synthetic_snapshot"),
     )
     monkeypatch.setattr(
         strategy_runtime_module,
@@ -511,7 +511,7 @@ def test_load_strategy_runtime_uses_entrypoint_defaults_and_runtime_adapter(monk
     )
 
     runtime = strategy_runtime_module.load_strategy_runtime(
-        "tech_communication_pullback_enhancement",
+        "synthetic_snapshot",
         runtime_settings=_build_runtime_settings(
             income_layer_enabled=False,
             income_layer_start_usd=250000.0,
@@ -520,7 +520,7 @@ def test_load_strategy_runtime_uses_entrypoint_defaults_and_runtime_adapter(monk
         logger=lambda _message: None,
     )
 
-    assert runtime.entrypoint.manifest.profile == "tech_communication_pullback_enhancement"
+    assert runtime.entrypoint.manifest.profile == "synthetic_snapshot"
     assert runtime.runtime_config["benchmark_symbol"] == "SPY"
     assert runtime.runtime_config["income_layer_enabled"] is False
     assert runtime.runtime_config["income_layer_start_usd"] == 250000.0
@@ -813,9 +813,9 @@ def test_feature_snapshot_runtime_prefers_unified_runtime_adapter_metadata(monke
 
     class FakeEntrypoint:
         manifest = StrategyManifest(
-            profile="tech_communication_pullback_enhancement",
+            profile="synthetic_snapshot",
             domain="us_equity",
-            display_name="Tech/Communication Pullback Enhancement",
+            display_name="Synthetic Snapshot",
             description="test",
             required_inputs=frozenset({"feature_snapshot"}),
             default_config={"safe_haven": "BOXX", "benchmark_symbol": "QQQ"},
@@ -1290,9 +1290,9 @@ def test_non_nasdaq_dca_profile_skips_prefetch(monkeypatch):
 def test_feature_snapshot_runtime_fail_closes_on_entrypoint_exception(monkeypatch):
     class ExplodingEntrypoint:
         manifest = StrategyManifest(
-            profile="tech_communication_pullback_enhancement",
+            profile="synthetic_snapshot",
             domain="us_equity",
-            display_name="Tech/Communication Pullback Enhancement",
+            display_name="Synthetic Snapshot",
             description="test",
             required_inputs=frozenset({"feature_snapshot"}),
             default_config={"safe_haven": "BOXX"},
@@ -1561,9 +1561,9 @@ def test_enrich_portfolio_metadata_includes_unrealized_pnl():
 
     class FakeEntrypoint:
         manifest = StrategyManifest(
-            profile="tech_communication_pullback_enhancement",
+            profile="synthetic_snapshot",
             domain="us_equity",
-            display_name="Tech Pullback",
+            display_name="Synthetic Snapshot",
             description="test",
             required_inputs=frozenset(),
         )

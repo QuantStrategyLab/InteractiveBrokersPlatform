@@ -73,12 +73,12 @@ EXPECTED_IBKR_ENABLED_PROFILES = frozenset(
         "russell_top50_leader_rotation",
         "soxl_soxx_trend_income",
         "tqqq_growth_income",
-        "hk_global_etf_tactical_rotation",
-        "hk_low_vol_dividend_quality_snapshot",
     }
 )
 HK_DISABLED_PROFILES = frozenset(
     {
+        "hk_global_etf_tactical_rotation",
+        "hk_low_vol_dividend_quality_snapshot",
         "hk_blue_chip_leader_rotation",
         "hk_index_mean_reversion",
         "hk_etf_regime_rotation",
@@ -772,23 +772,13 @@ def test_load_platform_runtime_settings_rejects_disabled_hk_profiles(monkeypatch
         load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
 
-def test_load_platform_runtime_settings_accepts_runtime_enabled_hk_global_etf_rotation(monkeypatch):
+def test_load_platform_runtime_settings_rejects_retired_hk_global_etf_rotation(monkeypatch):
     monkeypatch.setenv("RUNTIME_TARGET_JSON", runtime_target_json("hk_global_etf_tactical_rotation"))
     monkeypatch.setenv("ACCOUNT_GROUP", "hk-live")
     monkeypatch.setenv("IB_ACCOUNT_GROUP_CONFIG_JSON", MINIMAL_HK_GROUP_JSON)
 
-    settings = load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
-
-    assert settings.strategy_profile == "hk_global_etf_tactical_rotation"
-    assert settings.strategy_display_name == "HK Global ETF Tactical Rotation"
-    assert settings.strategy_domain == "hk_equity"
-    assert settings.strategy_target_mode == "weight"
-    assert settings.market == HK_MARKET
-    assert settings.market_calendar == HK_MARKET_CALENDAR
-    assert settings.market_currency == HK_MARKET_CURRENCY
-    assert settings.market_data_symbol_suffix == HK_MARKET_DATA_SYMBOL_SUFFIX
-    assert settings.market_exchange == HK_MARKET_EXCHANGE
-    assert settings.market_timezone == HK_MARKET_TIMEZONE
+    with pytest.raises(ValueError, match="Unsupported STRATEGY_PROFILE"):
+        load_platform_runtime_settings(project_id_resolver=lambda: "project-1")
 
 
 @pytest.mark.parametrize(
@@ -883,15 +873,6 @@ def test_platform_profile_status_matrix_matches_current_ibkr_rollout():
     assert "ibit_smart_dca" in by_profile
     for profile in ("us_equity_combo", "us_equity_combo_core", "us_equity_combo_leveraged"):
         assert profile not in by_profile
-    assert by_profile["hk_global_etf_tactical_rotation"] == {
-        "canonical_profile": "hk_global_etf_tactical_rotation",
-        "display_name": "HK Global ETF Tactical Rotation",
-        "display_name_zh": "港股ETF战术轮动",
-        "domain": "hk_equity",
-        "eligible": True,
-        "enabled": True,
-        "platform": "ibkr",
-    }
     for profile in HK_DISABLED_PROFILES:
         assert profile not in by_profile
 
@@ -939,12 +920,8 @@ def test_print_strategy_profile_status_json_matches_registry():
     assert by_profile["russell_top50_leader_rotation"]["requires_strategy_config_path"] is False
     for profile in ("hk_blue_chip_leader_rotation", "hk_index_mean_reversion", "hk_etf_regime_rotation"):
         assert profile not in by_profile
-    for profile in ("hk_global_etf_tactical_rotation",):
-        assert by_profile[profile]["profile_group"] == "direct_runtime_inputs"
-        assert by_profile[profile]["input_mode"] == "market_history"
-        assert by_profile[profile]["requires_snapshot_artifacts"] is False
-        assert by_profile[profile]["requires_snapshot_manifest_path"] is False
-        assert by_profile[profile]["requires_strategy_config_path"] is False
+    for profile in HK_DISABLED_PROFILES:
+        assert profile not in by_profile
 
 
 def test_print_strategy_profile_status_table_contains_expected_headers():
@@ -962,11 +939,11 @@ def test_print_strategy_profile_status_table_contains_expected_headers():
     assert "input_mode" in result.stdout
     assert "requires_snapshot_artifacts" in result.stdout
     assert "global_etf_rotation" in result.stdout
-    assert "hk_global_etf_tactical_rotation" in result.stdout
+    assert "hk_global_etf_tactical_rotation" not in result.stdout
     assert "Russell Top50 Leader Rotation" in result.stdout
     assert "罗素Top50领涨" in result.stdout
     assert "Tech/Communication Pullback Enhancement" not in result.stdout
-    assert "HK Global ETF Tactical Rotation" in result.stdout
+    assert "HK Global ETF Tactical Rotation" not in result.stdout
     assert "TQQQ Growth Income" in result.stdout
     assert "hk_blue_chip_leader_rotation" not in result.stdout
     assert "hk_index_mean_reversion" not in result.stdout
@@ -1036,71 +1013,14 @@ def test_print_strategy_switch_env_plan_rejects_leveraged_combo_shadow():
     assert "Unsupported STRATEGY_PROFILE='us_equity_combo_leveraged'" in result.stderr
 
 
-def test_print_strategy_switch_env_plan_for_hk_global_etf_dry_run():
+def test_print_strategy_switch_env_plan_rejects_retired_hk_global_etf_dry_run():
     result = subprocess.run(
-        [
-            sys.executable,
-            str(SWITCH_PLAN_SCRIPT_PATH),
-            "--profile",
-            "hk_global_etf_tactical_rotation",
-            "--dry-run-only",
-            "--deployment-selector",
-            "hk-verify",
-            "--account-scope",
-            "hk-verify",
-            "--account-group",
-            "hk-verify",
-            "--service-name",
-            "interactive-brokers-hk-verify-service",
-            "--json",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
+        [sys.executable, str(SWITCH_PLAN_SCRIPT_PATH), "--profile",
+         "hk_global_etf_tactical_rotation", "--dry-run-only", "--json"],
+        check=False, capture_output=True, text=True,
     )
-
-    plan = json.loads(result.stdout)
-    assert plan["platform"] == "ibkr"
-    assert plan["canonical_profile"] == "hk_global_etf_tactical_rotation"
-    assert plan["domain"] == HK_EQUITY_DOMAIN
-    assert plan["runtime_target"]["dry_run_only"] is True
-    assert plan["runtime_target"]["execution_mode"] == "paper"
-    assert plan["runtime_target"]["deployment_selector"] == "hk-verify"
-    assert plan["runtime_target"]["account_scope"] == "hk-verify"
-    assert plan["runtime_target"]["service_name"] == "interactive-brokers-hk-verify-service"
-    runtime_target_env = json.loads(plan["set_env"]["RUNTIME_TARGET_JSON"])
-    assert runtime_target_env["dry_run_only"] is True
-    assert runtime_target_env["execution_mode"] == "paper"
-    assert plan["set_env"]["ACCOUNT_GROUP"] == "hk-verify"
-    assert plan["set_env"]["IBKR_DRY_RUN_ONLY"] == "true"
-    assert plan["set_env"]["IBKR_MARKET"] == HK_MARKET
-    assert plan["set_env"]["IBKR_MARKET_CALENDAR"] == HK_MARKET_CALENDAR
-    assert plan["set_env"]["IBKR_MARKET_CURRENCY"] == HK_MARKET_CURRENCY
-    assert plan["set_env"]["IBKR_MARKET_DATA_SYMBOL_SUFFIX"] == HK_MARKET_DATA_SYMBOL_SUFFIX
-    assert plan["set_env"]["IBKR_MARKET_EXCHANGE"] == HK_MARKET_EXCHANGE
-    assert plan["set_env"]["IBKR_MARKET_TIMEZONE"] == HK_MARKET_TIMEZONE
-    assert plan["profile_group"] == "direct_runtime_inputs"
-    assert plan["input_mode"] == "market_history"
-    assert plan["requires_snapshot_artifacts"] is False
-    assert "IBKR_FEATURE_SNAPSHOT_PATH" in plan["remove_if_present"]
-    assert plan["dry_run_plan"]["dry_run_only"] is True
-    assert plan["dry_run_plan"]["verify_only"] is True
-    assert plan["dry_run_plan"]["workflow_dispatch"] == {
-        "workflow": "sync-cloud-run-env.yml",
-        "target": "hk-verify",
-        "cloud_run_service": "interactive-brokers-hk-verify-service",
-        "deploy_image": True,
-        "sync_env": True,
-    }
-    assert any("lot-size" in check for check in plan["dry_run_plan"]["checks"])
-    assert not any(
-        "Cloud Run" in action and "deploy" in action
-        for action in plan["dry_run_plan"]["blocked_actions"]
-    )
-    assert any(
-        "live" in action and "orders" in action
-        for action in plan["dry_run_plan"]["blocked_actions"]
-    )
+    assert result.returncode != 0
+    assert "Unsupported STRATEGY_PROFILE" in result.stderr
 
 
 def test_build_cloud_run_env_sync_plan_supports_per_service_targets():
@@ -1407,7 +1327,12 @@ def test_build_cloud_run_env_sync_plan_does_not_enable_live_dedup_implicitly() -
         assert "IBKR_EXECUTION_DEDUP_ENABLED" in target["remove_env_vars"]
 
 
-def test_build_cloud_run_env_sync_plan_preserves_disabled_legacy_strategy_outside_active_registry() -> None:
+@pytest.mark.parametrize("profile", [
+    "us_equity_combo_leveraged",
+    "hk_global_etf_tactical_rotation",
+    "hk_low_vol_dividend_quality_snapshot",
+])
+def test_build_cloud_run_env_sync_plan_preserves_disabled_legacy_strategy_outside_active_registry(profile) -> None:
     payload = {
         "defaults": {
             "GLOBAL_TELEGRAM_CHAT_ID": "test-chat",
@@ -1421,7 +1346,7 @@ def test_build_cloud_run_env_sync_plan_preserves_disabled_legacy_strategy_outsid
                 "runtime_target_enabled": False,
                 "runtime_target": {
                     "platform_id": "ibkr",
-                    "strategy_profile": "us_equity_combo_leveraged",
+                    "strategy_profile": profile,
                     "execution_mode": "paper",
                     "dry_run_only": True,
                     "deployment_selector": "us-combo-shadow",
@@ -1442,7 +1367,7 @@ def test_build_cloud_run_env_sync_plan_preserves_disabled_legacy_strategy_outsid
 
     target = json.loads(result.stdout)["targets"][0]
     assert target["env"]["RUNTIME_TARGET_ENABLED"] == "false"
-    assert target["env"]["STRATEGY_PROFILE"] == "us_equity_combo_leveraged"
+    assert target["env"]["STRATEGY_PROFILE"] == profile
 
     payload["targets"][0]["runtime_target_enabled"] = True
     rejected = subprocess.run(
@@ -1908,40 +1833,14 @@ def test_print_strategy_switch_env_plan_for_mega_cap_top50_balanced_profile():
     assert plan["hints"]["feature_snapshot_filename"] == "russell_top50_leader_rotation_feature_snapshot_latest.csv"
 
 
-def test_print_strategy_switch_env_plan_for_hk_low_vol_dividend_quality_snapshot_profile():
+def test_print_strategy_switch_env_plan_rejects_retired_hk_low_vol_dividend_quality_snapshot_profile():
     result = subprocess.run(
-        [
-            sys.executable,
-            str(SWITCH_PLAN_SCRIPT_PATH),
-            "--profile",
-            "hk_low_vol_dividend_quality_snapshot",
-            "--dry-run-only",
-            "--deployment-selector",
-            "hk-verify",
-            "--account-scope",
-            "HK",
-            "--service-name",
-            "interactive-brokers-hk-verify-service",
-            "--json",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
+        [sys.executable, str(SWITCH_PLAN_SCRIPT_PATH), "--profile",
+         "hk_low_vol_dividend_quality_snapshot", "--dry-run-only", "--json"],
+        check=False, capture_output=True, text=True,
     )
-
-    plan = json.loads(result.stdout)
-    assert plan["canonical_profile"] == "hk_low_vol_dividend_quality_snapshot"
-    assert plan["enabled"] is True
-    assert plan["profile_group"] == "snapshot_backed"
-    assert plan["input_mode"] == "feature_snapshot"
-    assert plan["snapshot_contract_version"] == "hk_low_vol_dividend_quality_snapshot.factor_snapshot.v1"
-    assert plan["set_env"]["IBKR_DRY_RUN_ONLY"] == "true"
-    assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_PATH"] == "<required>"
-    assert plan["set_env"]["IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH"] == "<required>"
-    assert plan["hints"]["feature_snapshot_filename"] == "hk_low_vol_dividend_quality_snapshot_factor_snapshot_latest.csv"
-    assert plan["hints"]["feature_snapshot_manifest_filename"] == (
-        "hk_low_vol_dividend_quality_snapshot_factor_snapshot_latest.csv.manifest.json"
-    )
+    assert result.returncode != 0
+    assert "Unsupported STRATEGY_PROFILE" in result.stderr
 
 
 @pytest.mark.parametrize("profile", sorted(HK_DISABLED_PROFILES))
