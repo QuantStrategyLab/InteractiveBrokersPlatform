@@ -1430,6 +1430,7 @@ def test_account_brake_reduction_uses_journal_grant_and_guarded_wrapper():
 
 
 def test_no_target_brake_through_real_session_and_guarded_wrapper(tmp_path, monkeypatch, strategy_module_factory):
+    monkeypatch.setenv("PORTFOLIO_LOSS_STOPLOSS_ENABLED", "true")
     import pytest
     platform = strategy_module_factory()
     from types import SimpleNamespace
