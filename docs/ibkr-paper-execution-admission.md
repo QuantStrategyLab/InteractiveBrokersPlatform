@@ -22,7 +22,12 @@ share the remaining budget within a cycle. Settlement is refreshed before the
 buy phase even when no sale occurred, and again before sizing each buy. A lower
 valid balance reduces the remaining budget; zero, negative or unknown settlement
 blocks the buy. General cash tags cannot override that result. Observations that
-expire during sizing block submission. After a sale, only a completed fresh
+expire during sizing block submission. The same deadline is checked again
+immediately before `placeOrder`, after claim acquisition, journal reservation
+and contract qualification. Expiry at that boundary raises without calling
+the broker; the existing journal retains the consumed attempt as `UNKNOWN`
+and requires reconciliation rather than retrying or assuming rejection.
+After a sale, only a completed fresh
 settled-cash observation supplies spending authority; projected sale proceeds
 remain telemetry. Dry-run previews do not credit sales as settled cash.
 Otherwise-qualified reductions retain their existing protections. The gate does

@@ -475,3 +475,54 @@ def test_pinned_sdk_account_refresh_requires_updated_settlement_and_completion(m
     assert ib.RequestTimeout == .01
     assert ib.RaiseRequestErrors is False
     assert len(ib.accountValueEvent) == 0
+
+
+@pytest.mark.parametrize('stage', ['claim', 'reserve', 'qualify', 'combined'])
+def test_settlement_deadline_blocks_delayed_place_order(native, monkeypatch, stage):
+    plan = native({'SOXL': 400.}, cash=500.)
+    ib = FakeIB(cash=500., settled=500.)
+    offset = [0.]
+    monotonic = service.time.monotonic
+    monkeypatch.setattr(service.time, 'monotonic', lambda: monotonic() + offset[0])
+    reserve = AccountSubmissionSession.reserve
+    qualify = ib.qualifyContracts
+    consult = service.consult_t1_live_submit
+
+    def delay(at):
+        if stage == at:
+            offset[0] += 31.
+        elif stage == 'combined':
+            offset[0] += 11.
+
+    def slow_claim(**kwargs):
+        result = consult(**kwargs)
+        delay('claim')
+        return result
+
+    def slow_reserve(session, *args, **kwargs):
+        result = reserve(session, *args, **kwargs)
+        delay('reserve')
+        return result
+
+    def slow_qualify(contract):
+        result = qualify(contract)
+        delay('qualify')
+        return result
+
+    monkeypatch.setattr(service, 'consult_t1_live_submit', slow_claim)
+    monkeypatch.setattr(AccountSubmissionSession, 'reserve', slow_reserve)
+    monkeypatch.setattr(ib, 'qualifyContracts', slow_qualify)
+    with pytest.raises(RuntimeError, match='settled_cash_stale'):
+        plan.run(ib, prices={'SOXL': 25.})
+    assert ib.orders == []
+    attempts = plan.session().read_state()['attempts']
+    assert len(attempts) == 1
+    attempt = next(iter(attempts.values()))
+    assert attempt['certainty'] == 'UNKNOWN'
+    assert attempt['filled_quantity'] in (None, 0.)
+    # An expired attempt keeps its original identity and cannot be retried.
+    with pytest.raises(RuntimeError):
+        plan.session().reserve(OrderIntent(symbol='SOXL', side='buy', quantity=16,
+            order_type='limit', limit_price=25., time_in_force='DAY', account_id=ACCOUNT))
+    assert plan.session().read_state()['attempts'] == attempts
+    assert ib.orders == []

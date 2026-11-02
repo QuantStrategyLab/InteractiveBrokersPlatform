@@ -251,6 +251,24 @@ SETTLED_CASH_MAX_AGE_SECONDS = 30.0
 SETTLED_CASH_REFRESH_TIMEOUT_SECONDS = 10.0
 
 
+class _SettledCashDeadlineIB:
+    """Check this buy's settlement deadline at the SDK's final write boundary."""
+
+    def __init__(self, ib, *, refresh_started):
+        self._ib = ib
+        self._refresh_started = refresh_started
+
+    def __getattr__(self, name):
+        return getattr(self._ib, name)
+
+    def placeOrder(self, contract, order):
+        if not 0 <= time.monotonic() - self._refresh_started <= SETTLED_CASH_MAX_AGE_SECONDS:
+            # Raise inside session.dispatch: retain its consumed grant and
+            # conservative UNKNOWN outcome instead of fabricating a rejection.
+            raise RuntimeError("settled_cash_stale: refusing IBKR placeOrder")
+        return self._ib.placeOrder(contract, order)
+
+
 def _settled_cash_for_currency(ib, *, currency, account_ids=None) -> float | None:
     """Require settlement updates received during a completed, bounded refresh.
 
@@ -2334,7 +2352,7 @@ def execute_rebalance(
                 investable_buying_power -= qty * limit_price
                 continue
             report = submit_order_intent(
-                ib,
+                _SettledCashDeadlineIB(ib, refresh_started=refresh_started) if cash_only_execution else ib,
                 order_intent_cls(
                     symbol=symbol,
                     side="buy",
