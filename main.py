@@ -617,7 +617,7 @@ def submit_market_order_intent(
                 raw_payload={"detail": "settled_cash_changed_before_reservation"},
             )
         order_intent = prepared
-        execution_grant = account_execution_session.reserve(order_intent)
+        execution_grant = account_execution_session.reserve(order_intent, new_risk=True)
     def submit_with_observation():
         from application.settlement_reporting import settlement_enabled
         def submit(broker):

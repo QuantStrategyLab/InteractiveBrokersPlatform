@@ -31,6 +31,31 @@ from notifications.renderers import (
 from notifications.telegram import build_translator
 
 
+def _run_with_synthetic_account_nlv(*, account_nlv, **kwargs):
+    """Exercise runtime ports with explicitly qualified synthetic account NAV."""
+    from application.rebalance_service import _legacy_portfolio_snapshot
+    from application.runtime_dependencies import IBKRRebalanceRuntime
+    from quant_platform_kit.common.port_adapters import CallableNotificationPort, CallablePortfolioPort
+
+    read_portfolio = kwargs.pop("get_current_portfolio")
+
+    def read_snapshot(ib):
+        snapshot = _legacy_portfolio_snapshot(ib, get_current_portfolio=read_portfolio)
+        return replace(snapshot, metadata={
+            "broker_net_liquidation": account_nlv,
+            "total_equity_source": "broker_net_liquidation",
+        })
+
+    runtime = IBKRRebalanceRuntime(
+        connect_ib=kwargs.pop("connect_ib"),
+        portfolio_port_factory=lambda ib: CallablePortfolioPort(lambda: read_snapshot(ib)),
+        compute_signals=kwargs.pop("compute_signals"),
+        execute_rebalance=kwargs.pop("execute_rebalance"),
+        notifications=CallableNotificationPort(kwargs.pop("send_tg_message")),
+    )
+    return run_strategy_core(runtime=runtime, **kwargs)
+
+
 def test_heartbeat_uses_broker_total_without_changing_strategy_equity():
     from datetime import datetime, timezone
 
@@ -956,7 +981,7 @@ def test_no_target_preserves_independent_account_brake(tmp_path):
 
     output_root = tmp_path / "tech_communication_pullback_enhancement" / "reconciliation"
 
-    result = run_strategy_core(
+    result = _run_with_synthetic_account_nlv(account_nlv=800.0,
         connect_ib=lambda: FakeIB(),
         get_current_portfolio=lambda _ib: ({}, {"equity": 800.0, "buying_power": 500.0}),
         compute_signals=lambda _ib, _holdings: (
@@ -1152,7 +1177,7 @@ def claim_cycle(tmp_path, monkeypatch, strategy_module):
     monkeypatch.setattr(strategy_module, "build_broker_adapters", lambda **_kwargs: state.adapters)
 
     def run(**overrides):
-        return run_strategy_core(
+        return _run_with_synthetic_account_nlv(account_nlv=1000.0,
             connect_ib=lambda: ib,
             get_current_portfolio=lambda _ib: (state.positions, {"equity": 1000.0, "buying_power": 1000.0}),
             compute_signals=lambda *_args: (state.target_weights, "synthetic", False, "", state.metadata),
@@ -1430,6 +1455,7 @@ def test_account_brake_reduction_uses_journal_grant_and_guarded_wrapper():
 
 
 def test_no_target_brake_through_real_session_and_guarded_wrapper(tmp_path, monkeypatch, strategy_module_factory):
+    monkeypatch.setenv("PORTFOLIO_LOSS_STOPLOSS_ENABLED", "true")
     import pytest
     platform = strategy_module_factory()
     from types import SimpleNamespace
@@ -1460,7 +1486,7 @@ def test_no_target_brake_through_real_session_and_guarded_wrapper(tmp_path, monk
         def disconnect(self): return None
     messages = []
     monkeypatch.delenv("IBKR_UNIFIED_NOTIFICATION_ENABLED", raising=False)
-    result = run_strategy_core(config=config, connect_ib=lambda: FakeIB(), get_current_portfolio=lambda _ib: ({"VOO": {"quantity": 2}}, {"equity": 8000, "buying_power": 0}), compute_signals=lambda _ib, _holdings: (None, "signal", False, "no target", {"strategy_profile": "synthetic", "peak_equity_usd": 9500, "realized_vol": float("nan")}), execute_rebalance=lambda *_a, **_kw: [], send_tg_message=messages.append, translator=_build_test_translator(), separator="---", reconciliation_output_path=tmp_path / "reconciliation", account_brake_session=session, account_brake_submit=platform.submit_market_order_intent, account_brake_order_intent_cls=OrderIntent)
+    result = _run_with_synthetic_account_nlv(account_nlv=8000.0, config=config, connect_ib=lambda: FakeIB(), get_current_portfolio=lambda _ib: ({"VOO": {"quantity": 2}}, {"equity": 8000, "buying_power": 0}), compute_signals=lambda _ib, _holdings: (None, "signal", False, "no target", {"strategy_profile": "synthetic", "peak_equity_usd": 9500, "realized_vol": float("nan")}), execute_rebalance=lambda *_a, **_kw: [], send_tg_message=messages.append, translator=_build_test_translator(), separator="---", reconciliation_output_path=tmp_path / "reconciliation", account_brake_session=session, account_brake_submit=platform.submit_market_order_intent, account_brake_order_intent_cls=OrderIntent)
     assert result.signal_metadata["account_brake_observation"]["hard_brake_triggered"]
     assert len(submitted) == 1 and submitted[0].side == "sell" and submitted[0].quantity == 2
     assert messages and "strategy rebalance decision unavailable" in messages[0]

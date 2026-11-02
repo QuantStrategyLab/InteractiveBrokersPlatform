@@ -7,6 +7,7 @@ import math
 import os
 from collections.abc import Mapping
 from contextlib import contextmanager
+from dataclasses import replace
 from typing import Any
 
 from quant_platform_kit.risk.account_new_risk_gate import (
@@ -42,6 +43,14 @@ def is_account_new_risk_gate_enabled() -> bool:
     return str(os.environ.get(ACCOUNT_NEW_RISK_GATE_ENV, "") or "").strip() != "0"
 
 
+def is_portfolio_loss_stoploss_enabled() -> bool:
+    """Read the existing switch; absent or malformed values confer no exit authority."""
+    try:
+        return str(os.environ.get("PORTFOLIO_LOSS_STOPLOSS_ENABLED", "")).strip().lower() in {"1", "true", "yes", "on"}
+    except Exception:
+        return False
+
+
 def _coerce_optional_float(value: object) -> float | None:
     if value is None or isinstance(value, bool):
         return None
@@ -75,10 +84,10 @@ def _mapping_or_empty(value: object) -> Mapping[str, Any]:
 
 
 def _resolve_equity_usd(portfolio: Mapping[str, Any], execution: Mapping[str, Any] | None) -> float | None:
-    for key in ("total_equity", "total_strategy_equity", "equity"):
-        equity = _coerce_optional_float(portfolio.get(key))
-        if equity is not None and equity > 0.0:
-            return equity
+    for key in ("account_equity_usd", "total_equity", "total_strategy_equity", "equity"):
+        if key in portfolio:
+            equity = _coerce_optional_float(portfolio[key])
+            return equity if equity is not None and equity > 0.0 else None
     if execution is not None:
         equity = _coerce_optional_float(execution.get("portfolio_total_equity"))
         if equity is not None and equity > 0.0:
@@ -92,20 +101,22 @@ def _portfolio_metadata(portfolio: Mapping[str, Any]) -> Mapping[str, Any]:
 
 
 def _resolve_unknown_pending(portfolio: Mapping[str, Any], projection: Mapping[str, Any]) -> bool:
-    """Only an explicit unknown-pending signal counts; absence is never treated as pending."""
-    if "unknown_pending_orders" in projection:
-        return bool(projection.get("unknown_pending_orders"))
-    if portfolio.get("unknown_pending_orders") is not None:
-        return bool(portfolio.get("unknown_pending_orders"))
-    return bool(_portfolio_metadata(portfolio).get("unknown_pending_orders"))
+    """Any explicit unsafe or unknown signal blocks, regardless of its source."""
+    return any(
+        source["unknown_pending_orders"] is not False
+        for source in (portfolio, _portfolio_metadata(portfolio), projection)
+        if "unknown_pending_orders" in source
+    )
 
 
 def _resolve_durable_breaker_open(portfolio: Mapping[str, Any], projection: Mapping[str, Any]) -> bool:
     """Only an explicit durable OPEN state trips the breaker; absence is never OPEN."""
     for source in (projection, portfolio, _portfolio_metadata(portfolio)):
-        value = source.get("durable_circuit_breaker_state")
-        if value is not None:
-            return str(value).strip().upper() == "OPEN"
+        if "durable_circuit_breaker_state" not in source:
+            continue
+        value = source["durable_circuit_breaker_state"]
+        if not isinstance(value, str) or value.strip().upper() != "CLOSED":
+            return True
     return False
 
 
@@ -116,30 +127,46 @@ def build_account_new_risk_snapshot(
 ) -> dict[str, Any]:
     """Build a cycle-health projection from evidence available this cycle.
 
-    ``observation_ok`` reflects whether equity resolved this cycle;
-    ``unknown_pending`` and ``durable_breaker_open`` only trip on an explicit
-    signal from the portfolio or its ``metadata`` -- their absence is never
-    mistaken for a durable OPEN breaker or pending reconciliation. Explicit
-    keys already present on an injected ``account_new_risk_snapshot`` always
-    win over the projected axes (tests / HITL overrides).
+    Explicit unsafe native facts and failed cycle evidence cannot be overridden
+    by a strategy projection. Missing optional axes remain optional; supplied
+    invalid values remain invalid for the downstream fail-closed validator.
     """
     projection = dict(portfolio.get("account_new_risk_snapshot") or {})
-    equity_usd = _coerce_optional_float(projection.get("equity_usd"))
-    if equity_usd is None:
+    native_equity = next((key for key in (
+        "account_equity_usd", "total_equity", "total_strategy_equity", "equity",
+    ) if key in portfolio), None)
+    equity_usd = (_coerce_optional_float(portfolio[native_equity]) if native_equity
+                  else _coerce_optional_float(projection.get("equity_usd")))
+    if native_equity is None and "equity_usd" not in projection:
         equity_usd = _resolve_equity_usd(portfolio, execution)
 
+    if equity_usd is not None and equity_usd <= 0:
+        equity_usd = None
     evidence = CycleNewRiskHealthEvidence(
         observation_ok=equity_usd is not None,
         unknown_pending=_resolve_unknown_pending(portfolio, projection),
         durable_breaker_open=_resolve_durable_breaker_open(portfolio, projection),
     )
     projection = apply_cycle_new_risk_health_axes(projection, evidence)
+    if not evidence.observation_ok:
+        projection["observation_status"] = "UNAVAILABLE"
+    if evidence.unknown_pending:
+        projection["reconciliation_status"] = "UNVERIFIED"
+    if evidence.durable_breaker_open or evidence.unknown_pending:
+        projection["circuit_breaker_state"] = "OPEN"
+    for key, healthy in (("observation_status", "COMPLETE"),
+                         ("reconciliation_status", "VERIFIED"),
+                         ("circuit_breaker_state", "CLOSED")):
+        if key in portfolio and portfolio[key] != healthy:
+            projection[key] = portfolio[key]
     projection["equity_usd"] = equity_usd
+    if "peak_equity_usd" in portfolio and "drawdown_from_peak" not in portfolio:
+        projection.pop("drawdown_from_peak", None)
     for key in ("peak_equity_usd", "drawdown_from_peak", "realized_vol"):
-        if key in projection:
+        if key in portfolio:
+            projection[key] = _risk_input(portfolio[key]) if portfolio[key] is not None else "INVALID_RISK_INPUT"
+        elif key in projection:
             projection[key] = _risk_input(projection[key])
-        elif key in portfolio:
-            projection[key] = _risk_input(portfolio[key])
     return projection
 
 
@@ -151,21 +178,33 @@ def build_portfolio_from_account_values(
     """Project a portfolio dict from an existing IBKR account_values read."""
     metadata = dict(signal_metadata or {})
     portfolio: dict[str, Any] = {
-        "total_equity": _coerce_optional_float(account_values.get("equity")),
+        "total_equity": _coerce_optional_float(account_values.get("account_equity_usd", account_values.get("equity"))),
     }
-    for key in ("unknown_pending_orders", "durable_circuit_breaker_state"):
+    for key in ("unknown_pending_orders", "durable_circuit_breaker_state",
+                "observation_status", "reconciliation_status", "circuit_breaker_state", "production_drift_status", "daily_loss_usd"):
         if key in account_values:
             portfolio[key] = account_values[key]
         elif key in metadata:
             portfolio[key] = metadata[key]
+    for key in ("peak_equity_usd", "drawdown_from_peak", "realized_vol"):
+        if key in account_values:
+            portfolio[key] = account_values[key]
+    projection = dict(metadata.get("account_new_risk_snapshot") or {})
+    # Facts from the native account read outrank a strategy's older projection.
+    projection["equity_usd"] = portfolio["total_equity"]
+    if "peak_equity_usd" in account_values and "drawdown_from_peak" not in account_values:
+        projection.pop("drawdown_from_peak", None)
+    for key in ("peak_equity_usd", "drawdown_from_peak"):
+        if key in account_values:
+            projection[key] = account_values[key]
     portfolio["account_new_risk_snapshot"] = build_account_new_risk_snapshot(
         {
             **portfolio,
-            "account_new_risk_snapshot": metadata.get("account_new_risk_snapshot"),
+            "account_new_risk_snapshot": projection,
         }
     )
     for key in ("peak_equity_usd", "drawdown_from_peak", "realized_vol"):
-        if key in metadata:
+        if key not in portfolio and key in metadata:
             portfolio[key] = metadata[key]
     return portfolio
 
@@ -192,7 +231,7 @@ def _resolve_production_drift_status(
     portfolio: Mapping[str, Any], projection: Mapping[str, Any]
 ) -> str | None:
     """Prefer explicit inject; else read-only PerformanceStore (Policy A). Fail-soft on store errors."""
-    for source in (projection, portfolio, _portfolio_metadata(portfolio)):
+    for source in (portfolio, projection, _portfolio_metadata(portfolio)):
         raw = source.get("production_drift_status")
         if raw is not None and raw != "":
             return str(raw).strip()
@@ -221,7 +260,7 @@ def _resolve_explicit_daily_loss_usd(
     execution: Mapping[str, Any] | None,
 ) -> float | None:
     """Pass through an explicit daily_loss_usd fact only; never invent one."""
-    for source in (projection, portfolio, _mapping_or_empty(execution)):
+    for source in (portfolio, projection, _mapping_or_empty(execution)):
         if "daily_loss_usd" in source:
             return _coerce_optional_float(source.get("daily_loss_usd"))
     return None
@@ -300,8 +339,6 @@ def build_snapshot_from_portfolio(
     """Project an injected reconciliation snapshot from an existing portfolio read."""
     projection = build_account_new_risk_snapshot(portfolio, execution=execution)
     equity_usd = _coerce_optional_float(projection.get("equity_usd"))
-    if equity_usd is None:
-        equity_usd = _resolve_equity_usd(portfolio, execution)
     peak_equity_usd = _risk_input(projection.get("peak_equity_usd"))
     explicit_dd = _risk_input(projection.get("drawdown_from_peak"))
     return InjectedReconciliationSnapshot(
@@ -344,6 +381,55 @@ def evaluate_account_values_new_risk_admission(
 
 def new_risk_buy_prohibited(result: NewRiskAdmissionResult) -> bool:
     return result.disposition == NewRiskDisposition.NEW_RISK_PROHIBITED
+
+
+def evaluate_persistent_account_new_risk_admission(
+    account_values: Mapping[str, Any], *, signal_metadata=None, session=None,
+) -> NewRiskAdmissionResult:
+    """Restore OPEN before admission and record a breach before any cycle return.
+
+    The existing physical-account journal is the authority. Missing capability,
+    corruption, conflicting creates and failed readbacks prohibit new risk.
+    There is deliberately no reset consumer or recovery-based clear.
+    """
+    portfolio = build_portfolio_from_account_values(account_values, signal_metadata=signal_metadata)
+    admission = evaluate_portfolio_new_risk_admission(portfolio)
+    try:
+        from quant_platform_kit.common.execution_state import AccountSubmissionSession
+        if not isinstance(session, AccountSubmissionSession) or not callable(getattr(session, "record_circuit_breaker_open", None)):
+            raise RuntimeError("persistent breaker capability unavailable")
+        if admission.hard_brake_triggered:
+            session.record_circuit_breaker_open(snapshot=build_snapshot_from_portfolio(portfolio))
+        state = session.read_state()
+        if type(state.get("circuit_breaker_open")) is not bool:
+            raise RuntimeError("persistent breaker readback unavailable")
+        if not state["circuit_breaker_open"]:
+            return admission
+        reason = "CIRCUIT_BREAKER_OPEN"
+    except Exception:
+        reason = "PERSISTENT_BREAKER_UNAVAILABLE"
+    return replace(
+        admission, disposition=NewRiskDisposition.NEW_RISK_PROHIBITED,
+        reason_codes=tuple(dict.fromkeys((*admission.reason_codes, reason))),
+    )
+
+
+def scale_targets_for_admission(target_weights, admission, *, snapshot=None):
+    """Exclude drawdown sizing without exit authority; retain capital/vol sizing."""
+    scale = admission.combined_scale
+    if not is_portfolio_loss_stoploss_enabled():
+        # Keep the original admission and persisted OPEN authoritative for buys.
+        # Reuse the same cycle facts, omitting only the drawdown axis for targets.
+        scale = None
+        if snapshot is not None:
+            try:
+                sizing = evaluate_new_risk_admission(replace(
+                    snapshot, peak_equity_usd=None, drawdown_from_peak=None,
+                ))
+                scale = sizing.combined_scale
+            except AccountNewRiskGateError:
+                pass  # Unknown sizing cannot confer exit authority.
+    return apply_combined_scale_to_target_weights(target_weights, scale)
 
 
 def apply_combined_scale_to_target_weights(

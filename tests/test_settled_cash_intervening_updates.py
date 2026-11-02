@@ -186,8 +186,8 @@ def test_post_reservation_update_blocks_final_write_and_retains_unknown(native, 
     plan = native({'SOXL': 400.}, cash=500.)
     ib = FakeIB(cash=500., settled=500.)
     reserve = AccountSubmissionSession.reserve
-    def reserve_then_update(session, order):
-        grant = reserve(session, order)
+    def reserve_then_update(session, order, **kwargs):
+        grant = reserve(session, order, **kwargs)
         emit_settlement(ib, latest)
         return grant
     monkeypatch.setattr(AccountSubmissionSession, 'reserve', reserve_then_update)
