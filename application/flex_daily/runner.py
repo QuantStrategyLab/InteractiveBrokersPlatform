@@ -11,8 +11,9 @@ from application.ibkr_flex_source import (
 from application.flex_daily.checks import (
     ReportScopeError, compare_month, inspect_report, private_projection, require_account_scope,
 )
-from application.flex_daily.state import failed, seed, summary, target_day, windows
+from application.flex_daily.state import complete, failed, seed, summary, target_day, windows
 from application.flex_daily.storage import Lease
+from application.flex_daily.forward import qualify, validate_config
 
 BLOCKING = {'1010', '1011', '1012', '1013', '1014', '1015', '1016', '1020'}
 # Provider says "not ready" (1001) or "too many requests" (1018). The window is
@@ -66,6 +67,9 @@ class Fetcher:
 
 def collect(store, config, fetch, now=utcnow, clock=time.monotonic):
     started = now()
+    forward = 'forward_start' in config
+    if forward:
+        validate_config(config)
     # Unknown is not an assertion of unrestricted IP. Operator must attest the
     # actual token setting without exposing its value, before any broker request.
     if config.get('ip_restriction') != 'none':
@@ -80,6 +84,9 @@ def collect(store, config, fetch, now=utcnow, clock=time.monotonic):
     lease = Lease(store, 'state/pull-lease.json', started)
     state, generation = store.json('state/coverage.json', {'schema': 1, 'days': {}, 'months': {}})
     status, status_generation = store.json('status/latest.json', {})
+    if state.get('forward_start') and not forward:
+        lease.release()
+        raise ValueError('forward_configuration_required')
     deadline = clock() + 25 * 60
 
     def persist(finished=False):
@@ -89,6 +96,17 @@ def collect(store, config, fetch, now=utcnow, clock=time.monotonic):
             state['last_finished_at'] = now().isoformat()
         generation = store.put('state/coverage.json', state, generation)
         safe = summary(state, now())
+        if forward:
+            safe['forward_start'] = config['forward_start']
+            safe['reconciliation_status'] = 'UNRECONCILED'
+            planned = run['windows_planned']
+            safe['forward_validation'] = (
+                'NOT_DUE' if target_day(started).isoformat() < config['forward_start'] else
+                'VALIDATED' if planned > 0 and run['windows_succeeded'] == planned and not run['windows_failed'] and all(
+                    (state['days'][a].get('validated_at') and complete(state['days'][a])) if kind == 'daily'
+                    else (state['months'][kind].get('validated_at') and state['months'][kind].get('done'))
+                    for kind, a, b in queue) else
+                'UNRECONCILED')
         safe['token_expires_at'] = config.get('token_expires_at')
         status_generation = store.put('status/latest.json', safe, status_generation)
         return safe
@@ -96,11 +114,17 @@ def collect(store, config, fetch, now=utcnow, clock=time.monotonic):
     # Codes and counts only: safe for status objects and container logs.
     run = state['last_run'] = {'windows_planned': 0, 'reports_fetched': 0, 'windows_succeeded': 0,
                                'windows_failed': 0, 'last_provider_error_code': None}
+    queue = []
     try:
         if state.get('blocked'):
             return persist()
-        state['backfill_start'] = config['backfill_start']
-        seed(state, date.fromisoformat(config['backfill_start']) - timedelta(days=1), target_day(started), accounts.values())
+        if forward:
+            state['forward_start'] = config['forward_start']
+            state['forward_target'] = target_day(started).isoformat()
+        else:
+            state['backfill_start'] = config['backfill_start']
+        seed_start = config['forward_start'] if forward else config['backfill_start']
+        seed(state, date.fromisoformat(seed_start) - timedelta(days=0 if forward else 1), target_day(started), accounts.values())
         state['last_started_at'] = started.isoformat()
         queue = windows(state, target_day(started), started)
         run['windows_planned'] = len(queue)
@@ -111,12 +135,44 @@ def collect(store, config, fetch, now=utcnow, clock=time.monotonic):
                 break
             slot = state['days'][start] if kind == 'daily' else state['months'].setdefault(kind, {})
 
+            old_raw = slot.get('raw')
+
+            def invalidate_following():
+                # Later intervals were qualified against this earlier evidence.
+                # Keep their immutable objects, but require fresh validation.
+                for day, later in state['days'].items():
+                    if start < day and config['forward_start'] <= day <= state['forward_target']:
+                        later.pop('validated_at', None)
+                        later.pop('forward', None)
+                        for item in later['accounts'].values():
+                            item.update(status='pending', issues=['previous_anchor_revised'])
+                for key, month in state.get('months', {}).items():
+                    if key[:7] + '-01' >= config['forward_start']:
+                        month['done'] = False
+                        month.pop('validated_at', None)
+
+            if forward:
+                slot.pop('validated_at', None)
+                slot.pop('forward', None)
+                if kind == 'daily':
+                    slot['accounts'] = {label: {'status': 'missing', 'issues': ['validation_pending'],
+                                                       'forward_checked': True} for label in accounts.values()}
+                else:
+                    slot['done'] = False
+                persist()
+
             def fail(reason):
+                if forward and old_raw and not slot.get('forward'):
+                    invalidate_following()
                 failed(slot, now(), reason)
                 run['windows_failed'] += 1
 
             try:
+                capture_start = now()
                 content = fetch(start, end)
+                capture_end = now()
+                if forward:
+                    lease.check(capture_end)
                 run['reports_fetched'] += 1
                 transient_streak = 0
                 require_account_scope(content, accounts)
@@ -127,7 +183,7 @@ def collect(store, config, fetch, now=utcnow, clock=time.monotonic):
                 store.immutable(raw_key, content)
                 try:
                     previous_day = (date.fromisoformat(start) - timedelta(days=1)).isoformat()
-                    previous_slot = state['days'].get(previous_day, {})
+                    previous_slot = {} if forward else state['days'].get(previous_day, {})
                     previous_content = store.read(previous_slot['raw'])[0] if previous_slot.get('raw') else None
                     checked = inspect_report(content, start, end, accounts, config['configured_sections'], previous_content)
                 except ValueError:
@@ -135,6 +191,25 @@ def collect(store, config, fetch, now=utcnow, clock=time.monotonic):
                     raise
                 projection = {'schema': 1, 'start': start, 'end': end, 'checks': checked,
                               'source_sha256': digest, 'rows': private_projection(content)}
+                if forward:
+                    previous = {}
+                    for day, previous_slot in sorted(state['days'].items()):
+                        if config['forward_start'] <= day < start:
+                            for label, ev in previous_slot.get('forward', {}).items():
+                                if ev.get('anchor_qualified'):
+                                    previous[label] = ev
+                    evidence = qualify(content, config, checked, previous, capture_start, capture_end)
+                    projection['forward'] = evidence
+                    slot['forward'] = evidence
+                    if old_raw and old_raw != raw_key:
+                        invalidate_following()
+                    for label, value in checked.items():
+                        value['forward_checked'] = True
+                        ev = evidence.get(label)
+                        if ev and ev['issues']:
+                            value['issues'] = sorted(set(value['issues'] + ev['issues']))
+                        if value['status'] == 'complete' and (not ev or ev['issues'] or value['reconciliation_status'] == 'difference'):
+                            value['status'] = 'received'
                 derived = json.dumps(projection, sort_keys=True).encode()
                 derived_hash = hashlib.sha256(derived).hexdigest()
                 store.immutable(f'derived/{derived_hash}.json', derived)
@@ -150,7 +225,7 @@ def collect(store, config, fetch, now=utcnow, clock=time.monotonic):
                     daily_slots = [v for day, v in sorted(state['days'].items()) if start <= day <= end]
                     expected_days = (date.fromisoformat(end) - date.fromisoformat(start)).days + 1
                     eligible = len(daily_slots) == expected_days and all(
-                        v.get('raw') and all(a.get('status') == 'complete' for a in v['accounts'].values()) for v in daily_slots)
+                        v.get('raw') and all((not forward or a.get('forward_checked')) and a.get('status') == 'complete' for a in v['accounts'].values()) for v in daily_slots)
                     slot['comparison_status'] = 'partial'
                     if eligible and clock() + 90 < deadline:
                         payloads = [store.read(v['raw'])[0] for v in daily_slots]
@@ -162,6 +237,8 @@ def collect(store, config, fetch, now=utcnow, clock=time.monotonic):
                                 for daily in daily_slots:
                                     for value in daily['accounts'].values():
                                         value['status'] = 'pending'
+                                    if forward:
+                                        daily.pop('validated_at', None)
                                 slot['done'] = False
                     # Exact opening/closing controls still do not certify grants,
                     # settlement lineage or full financial reconciliation.
@@ -171,6 +248,8 @@ def collect(store, config, fetch, now=utcnow, clock=time.monotonic):
                     slot['attempts'] = 0
                     slot.pop('next_attempt_at', None)
                     run['windows_succeeded'] += 1
+                    if forward:
+                        slot['validated_at'] = now().isoformat()
             except FlexReportPending:
                 fail('pending')
                 transient_streak = 0

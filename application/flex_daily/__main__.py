@@ -16,6 +16,8 @@ def pull_outcome(result):
     run = result.get('last_run') or {}
     if result.get('blocked'):
         return 'blocked', 2
+    if result.get('forward_start') and result.get('forward_validation') not in {'VALIDATED', 'NOT_DUE'}:
+        return 'incomplete', 3
     if run.get('windows_planned', 0) > 0 and run.get('reports_fetched', 0) == 0:
         return 'incomplete', 3
     return 'finished', 0
@@ -38,9 +40,13 @@ def main():
         status, code = pull_outcome(result)
         run = result.get('last_run') or {}
         # Codes and counts only; never exception text, dates or account data.
-        print(json.dumps({'status': status, 'last_provider_error_code': run.get('last_provider_error_code'),
+        output = {'status': status, 'last_provider_error_code': run.get('last_provider_error_code'),
                           'windows_planned': run.get('windows_planned', 0), 'reports_fetched': run.get('reports_fetched', 0),
-                          'windows_succeeded': run.get('windows_succeeded', 0), 'windows_failed': run.get('windows_failed', 0)}))
+                          'windows_succeeded': run.get('windows_succeeded', 0), 'windows_failed': run.get('windows_failed', 0)}
+        if result.get('forward_start'):
+            output.update(forward_start=result['forward_start'], forward_validation=result.get('forward_validation'),
+                          reconciliation_status='UNRECONCILED')
+        print(json.dumps(output))
         return code
     elif mode == 'watch':
         config, _ = store.json('status/notification-config.json')
