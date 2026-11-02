@@ -1644,6 +1644,19 @@ def execute_rebalance(
         )
         execution_summary["pending_order_cash_risk_unknown"] = True
 
+    # accountValues is a tag cache, not a verified settled-cash ledger. It
+    # carries no cash cutoff, shared cash reservations or reconciled fill fees.
+    # Until that native contract exists, contain cash-only equity buys rather
+    # than treating CashBalance, SettledCash or projected sales as authority.
+    settled_cash_ledger_unverified = bool(cash_only_execution)
+    if settled_cash_ledger_unverified:
+        account_new_risk_buy_blocked = True
+        account_new_risk_reason_codes = (
+            *account_new_risk_reason_codes,
+            "SETTLED_CASH_LEDGER_UNVERIFIED",
+        )
+        execution_summary["settled_cash_ledger_status"] = "UNKNOWN"
+
     trade_logs.append(
         " | ".join(
             [
@@ -1806,7 +1819,7 @@ def execute_rebalance(
             break
         quantity_zero_symbols.append(symbol)
 
-    if pending_observation.cash_risk_unknown and has_buy_plan and not has_sell_plan:
+    if (pending_observation.cash_risk_unknown or settled_cash_ledger_unverified) and has_buy_plan and not has_sell_plan:
         # No qualified reduction will be submitted. Reject before taking the
         # daily execution lock, so a later complete observation can be checked
         # normally without clearing any execution or reconciliation marker.
@@ -1817,7 +1830,7 @@ def execute_rebalance(
         execution_summary["account_new_risk_block_reason"] = reason
         execution_summary["account_new_risk_reason_codes"] = list(account_new_risk_reason_codes)
         execution_summary["skipped_reasons"].append(reason)
-        trade_logs.append(translator("buy_deferred", detail="[Account new-risk gate] PENDING_ORDER_CASH_RISK_UNKNOWN"))
+        trade_logs.append(translator("buy_deferred", detail="[Account new-risk gate] " + ", ".join(account_new_risk_reason_codes)))
         return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
 
     if not has_sell_plan and not has_buy_plan:

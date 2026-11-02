@@ -1,5 +1,26 @@
 # IBKR PAPER execution admission
 
+## Cash-only equity containment
+
+The ordinary rebalance executor blocks cash-only equity buys with
+`SETTLED_CASH_LEDGER_UNVERIFIED`, independently of the opt-in PAPER guard
+below. This applies to paper and live execution and dry-run equity previews.
+The current native path has no verified, timestamped settled-cash ledger that
+accounts for shared reservations, open-order obligations and actual commissions.
+Neither a positive `CashBalance` or `SettledCash` tag nor projected sale proceeds
+authorizes a new equity buy. Otherwise-qualified position reductions retain
+their existing claim, account journal and unknown-outcome checks. A buy-only
+cycle blocked here does not take the daily execution lock.
+
+This is containment, not a working settled-cash allocator. It blocks positive
+cash-only equity allocations too. Margin-mode behavior and the separate option
+intent path are outside this containment; neither is certified by it. No new
+configuration switch or production setting is introduced. Do not change an
+account to margin mode to bypass a cash-only block. Cash lifecycle, commission
+reconciliation and cross-cycle cash allocation remain unproved.
+
+## Opt-in PAPER command guard
+
 `IBKR_PAPER_EXECUTION_ADMISSION_ENABLED` is an opt-in guard for the ordinary
 IBKR `execution_mode=paper` rebalance path. Its default is disabled. It
 requires the shared runtime target to explicitly declare
