@@ -45,6 +45,60 @@ balances and settlement/accrual lineage remain explicit manual evidence needs;
 no full `matched` conclusion is manufactured. XML tag and date formats must be
 qualified against the dedicated query before real-data acceptance.
 
+## Forward reporting from November 3
+
+The existing collector supports an explicit `forward_start: "2026-11-03"` in
+private configuration. This mode does not seed a prior day or request pre-start
+reports. Persisted history remains intact, but the reporting view excludes it
+from the queue, continuity, issue counts, residual flags and monthly controls.
+November is a partial month and is ineligible for a whole-month comparison;
+December is the first eligible full month. A restart retains this boundary and
+rejects a configuration that silently returns the same state to legacy mode.
+Without this setting, an existing legacy installation retains its collection
+behaviour. This code change does not activate the mode or deploy it.
+
+Forward derived projections retain each report's collection start/end, original
+native attributes, snapshot time with explicit offset, timezone and UTC equivalent,
+closing native cash and separately named optional settled cash. Configure
+`snapshot_time_field` and `snapshot_timezone_field` only after independently
+qualifying the corresponding native statement attributes and their semantics.
+Configure `event_time_fields` as a section-to-native-attribute map only after
+qualifying effective-time semantics for each section. These names are mappings,
+not new Flex fields or proof that the query exports them. There are no default
+snapshot fields or effective-time mappings. `whenGenerated`, `fromDate` and
+`toDate` cannot substitute for financial as-of. A standard date-only report may
+therefore remain unqualified. No acquisition costs are required.
+
+The first qualified observation anchors its actual time and retains
+`opening_snapshot_missing`; it does not invent midnight holdings or erase an
+initial gap. Subsequent evidence uses the latest qualified in-scope anchor for
+each account. The selector retains events in
+`(previous_actual_cutoff, current_actual_cutoff]`, excludes pre-start-effective
+late postings, and preserves trade, settlement, posting and correction fields
+separately. An in-window native cash settlement may refer to a pre-start trade.
+CashTransactions and StmtFunds remain separate overlapping observations, never
+summed as two independent cash feeds. Empty or date-only timestamps, unqualified
+effective-time semantics, missing currencies/identities, unsupported instruments
+and corrections or changed revisions without proven linkage remain unknown.
+Stable native identities and fingerprints survive through prior private evidence;
+repeated observations never become additional movements. The current supported
+quantity-event instrument is explicitly identified stock; other classes require
+separate qualification. No financial MATCHED conclusion is emitted.
+
+Forward validation is separate from collection. Every due window must validate;
+a fetched XML or existing raw/derived object cannot certify it. Missing accounts,
+invalid fields, unqualified intervals, residual differences, unfinished monthly
+controls or an unprocessed window return `incomplete`/3 for that attempt. Valid
+accounts remain recorded independently, and later windows continue under the
+existing provider protection and request budget. Revalidation first revokes the
+old completion/watermark with the existing lease and generation preconditions.
+The private `validated_at` timestamp is written only for a successful window;
+`last_finished_at` records execution completion only. Forward summaries and stdout
+add `forward_start`, `forward_validation` (`VALIDATED`, `NOT_DUE` or
+`UNRECONCILED`) and keep financial `reconciliation_status` as `UNRECONCILED`.
+`NOT_DUE` applies before the first complete forward calendar day. Missing evidence
+is a report failure, with no trading, admission, halt or go-live connection.
+
 ## Private configuration
 
 `state/config.json` is readable only by the collector and approved operators:
@@ -114,7 +168,7 @@ null), `windows_planned`, `reports_fetched`, `windows_succeeded` and
 `windows_failed`. The same counts are stored under `last_run` in
 `status/latest.json`. They never include dates, accounts, amounts or error text.
 
-- `finished` (exit 0): nothing was due, or at least one report was fetched.
+- `finished` (exit 0), legacy collection mode: nothing was due, or at least one report was fetched. Forward mode uses the validation rule above.
 - `incomplete` (exit 3): windows were due but no report was fetched. Cloud Run
   records the execution as failed, so a run that stored nothing no longer looks
   like a success.
@@ -139,12 +193,13 @@ requires `ok=true` and a message ID; unknown/in-flight outcomes are not immediat
 resent, rate limits honor retry_after, and 401/403 persist a notification block.
 A Bot API receipt is separate from the owner's confirmation of receipt.
 
-A manual or scheduled `pull` is accepted only when its status line is `finished`,
+The legacy collection receipt accepts a manual or scheduled `pull` only when its status line is `finished`,
 at least one report was fetched, and the bucket holds objects under both `raw/` and
 `derived/`. An exit code of zero, `state/` and `status/` objects, or a successful Run
 API call alone do not qualify. `scripts/check_flex_daily_acceptance.py` applies
 this rule to the status line and a list of object names; it never reads object
-contents.
+contents. This is a collection receipt, not forward validation or financial
+acceptance; use the forward validation outcome for the scoped reporting attempt.
 
 Run offline regression tests, lint, repository checks and a credential-free image
 smoke test. Then qualify a bounded real pull, missing-day recovery, private IAM and

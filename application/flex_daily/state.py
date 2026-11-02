@@ -14,6 +14,8 @@ def days(start, end):
 
 
 def seed(state, start, target, accounts):
+    if state.get('forward_start'):
+        start = max(start, date.fromisoformat(state['forward_start']))
     for day in days(start, target):
         slot = state.setdefault('days', {}).setdefault(day, {'accounts': {}, 'attempts': 0})
         for account in accounts:
@@ -27,6 +29,7 @@ def complete(slot):
 
 def windows(state, target, now, limit=30):
     """Recent revisions first, durable monthly controls, then oldest holes."""
+    state = reporting_view(state)
     selected = []
     recent = [(target - timedelta(days=n)).isoformat() for n in range(7)]
     for day in recent:
@@ -34,7 +37,7 @@ def windows(state, target, now, limit=30):
         if slot and due(slot, now):
             selected.append(('daily', day, day))
     # Persist each month's two control runs: an outage must not skip day 3/10.
-    start = date.fromisoformat(state.get('backfill_start', min(state['days'])))
+    start = date.fromisoformat(state.get('forward_start') or state.get('backfill_start') or min(state['days'], default=target.isoformat()))
     month = start.replace(day=1)
     if month < start:
         month = (month.replace(day=28) + timedelta(days=4)).replace(day=1)
@@ -66,6 +69,7 @@ def failed(slot, now, reason):
 
 
 def summary(state, now):
+    state = reporting_view(state)
     missing = [(day, account) for day, slot in sorted(state['days'].items())
                for account, item in slot['accounts'].items() if item.get('status') != 'complete']
     continuous = {}
@@ -73,7 +77,7 @@ def summary(state, now):
     for account in accounts:
         last = None
         for day, slot in sorted(state['days'].items()):
-            if slot['accounts'][account]['status'] != 'complete':
+            if slot['accounts'].get(account, {}).get('status') != 'complete':
                 break
             last = day
         continuous[account] = last
@@ -86,3 +90,21 @@ def summary(state, now):
             'last_run': state.get('last_run'),
             'blocked': state.get('blocked'), 'last_started_at': state.get('last_started_at'),
             'last_finished_at': state.get('last_finished_at')}
+
+
+def reporting_view(state):
+    """Exclude legacy evidence without deleting or rewriting persisted history."""
+    start = state.get('forward_start')
+    if not start:
+        return state
+    upper = state.get('forward_target', '9999-12-31')
+    view = dict(state)
+    view['days'] = {}
+    for day, slot in state['days'].items():
+        if start <= day <= upper:
+            view['days'][day] = dict(slot, accounts={
+                account: item if item.get('forward_checked') else dict(item, status='missing')
+                for account, item in slot['accounts'].items()})
+    view['months'] = {key: slot for key, slot in state.get('months', {}).items()
+                      if start <= key[:7] + '-01' <= upper}
+    return view
