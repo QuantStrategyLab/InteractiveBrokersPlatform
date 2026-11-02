@@ -35,6 +35,10 @@ def synthetic_account_submission(venue, *, local_dir, metadata, profile, account
     def submit(ib, intent, *, account_execution_session, execution_grant,
                reduction_position=None, reduction_pending_quantity=None):
         assert account_execution_session is session
+        # This fake venue has no blocking preparation. The real main wrapper
+        # reserves deferred cash-buy grants after preparing the final intent.
+        if execution_grant is None:
+            execution_grant = session.reserve(intent)
         return session.dispatch(execution_grant, intent, lambda: venue(ib, intent))
 
     return session, submit, receipt
@@ -42,6 +46,8 @@ def synthetic_account_submission(venue, *, local_dir, metadata, profile, account
 
 @pytest.fixture
 def strategy_module_factory(monkeypatch):
+    from ib_insync import Stock as SDKStock
+
     def load_strategy_module(**env_overrides):
         defaults = {
             "IB_GATEWAY_INSTANCE_NAME": "127.0.0.1",
@@ -168,7 +174,7 @@ def strategy_module_factory(monkeypatch):
                 raise AssertionError("test should patch IB before use")
 
         ib_insync_module.IB = PlaceholderIB
-        ib_insync_module.Stock = type("Stock", (), {})
+        ib_insync_module.Stock = SDKStock
         ib_insync_module.MarketOrder = type("MarketOrder", (), {})
         ib_insync_module.LimitOrder = type("LimitOrder", (), {})
         monkeypatch.setitem(sys.modules, "ib_insync", ib_insync_module)

@@ -8,7 +8,7 @@ import math
 import tempfile
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -245,6 +245,202 @@ def _cash_value_for_currency(account_values, *, currency: str, account_ids=None)
                 matched = True
                 break
     return total if matched else None
+
+
+SETTLED_CASH_MAX_AGE_SECONDS = 30.0
+SETTLED_CASH_REFRESH_TIMEOUT_SECONDS = 10.0
+
+
+class _SettledCashDeadlineIB:
+    """Keep settlement restrictions through preparation and the final write."""
+
+    def __init__(self, ib, *, refresh_started, account_id, currency,
+                 buying_power, reserved, quantity_step, minimum_order_notional):
+        self._ib = ib
+        self._refresh_started = refresh_started
+        self._account_id = account_id
+        self._currency = currency.upper()
+        self.remaining_buying_power = buying_power
+        self._reserved = reserved
+        self._quantity_step = quantity_step
+        self._minimum_order_notional = minimum_order_notional
+        self._invalid = False
+        self._contract = None
+        self.prepared_quantity = None
+
+    def __enter__(self):
+        self._ib.accountValueEvent.connect(self._observe)
+        return self
+
+    def __exit__(self, *_exc):
+        self._ib.accountValueEvent.disconnect(self._observe)
+
+    def _observe(self, row):
+        if (
+            str(getattr(row, "account", "") or "").strip() != self._account_id
+            or str(getattr(row, "currency", "") or "").strip().upper() != self._currency
+            or str(getattr(row, "tag", "") or "").strip() != "SettledCash"
+        ):
+            return
+        # Copy the restriction now: SDK/cache objects can be replaced or mutated.
+        value = _coerce_float(getattr(row, "value", None))
+        now = datetime.now(timezone.utc)
+        invalid = value is None or not math.isfinite(value) or value <= 0
+        invalid = invalid or bool(getattr(row, "stale", False))
+        for field in ("as_of", "observed_at"):
+            stamp = getattr(row, field, None)
+            if stamp is not None and (
+                not isinstance(stamp, datetime) or stamp.tzinfo is None
+                or not 0 <= (now - stamp).total_seconds() <= SETTLED_CASH_MAX_AGE_SECONDS
+            ):
+                invalid = True
+        self._invalid = self._invalid or invalid
+        if not invalid:
+            # Increases never replenish this cycle's shared remaining budget.
+            self.remaining_buying_power = min(
+                self.remaining_buying_power, _investable_buying_power(value, self._reserved),
+            )
+
+    def prepare_intent(self, intent, *, exchange, currency):
+        """Finish blocking qualification, then bind the resized journal intent."""
+        from ib_insync import Stock
+
+        if (not self._account_id or currency.upper() != self._currency
+                or intent.account_id != self._account_id):
+            raise RuntimeError("settled_cash_scope_mismatch")
+        contract = Stock(intent.symbol, exchange, currency)
+        self._ib.qualifyContracts(contract)
+        self._contract = contract
+        quantity = min(intent.quantity, _floor_order_quantity(
+            self.remaining_buying_power * 0.95 / intent.limit_price,
+            quantity_step=self._quantity_step,
+        ))
+        if quantity <= 0 or quantity * intent.limit_price < self._minimum_order_notional:
+            self._invalid = True
+        # No grant exists yet: an invalid update can reject admission locally.
+        if self._invalid:
+            return None
+        self.prepared_quantity = quantity
+        return replace(intent, quantity=quantity)
+
+    def qualifyContracts(self, contract):
+        # The pinned executor qualifies once more. Reuse the prepared contract
+        # without pumping another request after the final intent was reserved.
+        if self._contract is None or any(
+            getattr(contract, field) != getattr(self._contract, field)
+            for field in ("symbol", "secType", "currency", "exchange")
+        ):
+            raise RuntimeError("settled_cash_unprepared_contract")
+        contract.update(self._contract)
+        return [contract]
+
+    def __getattr__(self, name):
+        return getattr(self._ib, name)
+
+    def placeOrder(self, contract, order):
+        if (
+            self._invalid or order.account != self._account_id
+            or order.totalQuantity != self.prepared_quantity
+            or contract.currency.upper() != self._currency
+            or order.action != "BUY" or order.orderType != "LMT"
+            or not math.isfinite(order.totalQuantity) or order.totalQuantity <= 0
+            or not math.isfinite(order.lmtPrice) or order.lmtPrice <= 0
+            or order.totalQuantity * order.lmtPrice > self.remaining_buying_power
+        ):
+            raise RuntimeError("settled_cash_changed: refusing IBKR placeOrder")
+        if not 0 <= time.monotonic() - self._refresh_started <= SETTLED_CASH_MAX_AGE_SECONDS:
+            # Raise inside session.dispatch: retain its consumed grant and
+            # conservative UNKNOWN outcome instead of fabricating a rejection.
+            raise RuntimeError("settled_cash_stale: refusing IBKR placeOrder")
+        return self._ib.placeOrder(contract, order)
+
+
+def _settled_cash_for_currency(ib, *, currency, account_ids=None) -> float | None:
+    """Require settlement updates received during a completed, bounded refresh.
+
+    accountValues() is only a cache. Its contents, and a refresh completion
+    without a matching SettledCash update, cannot establish spending authority.
+    """
+    selected = _normalize_account_ids(account_ids)
+    event = getattr(ib, "accountValueEvent", None)
+    refresh = getattr(ib, "reqAccountUpdates", None)
+    if (
+        not callable(refresh) or not callable(getattr(event, "connect", None))
+        or not callable(getattr(event, "disconnect", None))
+    ):
+        return None
+    original_timeout = getattr(ib, "RequestTimeout", 0)
+    original_raise_errors = getattr(ib, "RaiseRequestErrors", False)
+    rows = []
+
+    def observe(row):
+        rows.append((row, time.monotonic()))
+
+    try:
+        # Preview callers may omit routing. Cache rows can identify the one
+        # account to refresh, but their amounts never provide the buy budget.
+        if not selected:
+            selected = tuple(dict.fromkeys(
+                str(getattr(row, "account", "") or "").strip()
+                for row in ib.accountValues() or ()
+                if str(getattr(row, "account", "") or "").strip()
+            ))
+        if len(selected) != 1:
+            return None
+        timeout = _coerce_float(original_timeout)
+        ib.RequestTimeout = (
+            min(timeout, SETTLED_CASH_REFRESH_TIMEOUT_SECONDS)
+            if timeout is not None and math.isfinite(timeout) and timeout > 0
+            else SETTLED_CASH_REFRESH_TIMEOUT_SECONDS
+        )
+        ib.RaiseRequestErrors = True
+        event.connect(observe)
+        started = time.monotonic()
+        # Pinned ib_insync blocks until accountDownloadEnd or raises on timeout.
+        refresh(selected[0])
+        completed = time.monotonic()
+        if not 0 <= completed - started <= SETTLED_CASH_MAX_AGE_SECONDS:
+            return None
+        now = datetime.now(timezone.utc)
+        amounts = {}
+        for row, received in rows:
+            if str(getattr(row, "currency", "")).strip().upper() != currency.upper():
+                continue
+            account = str(getattr(row, "account", "") or "").strip() or None
+            if not _matches_account(account, selected):
+                continue
+            if str(getattr(row, "tag", "")).strip() != "SettledCash":
+                continue
+            if account is None or (selected and account not in selected):
+                return None
+            if not 0 <= completed - received <= SETTLED_CASH_MAX_AGE_SECONDS:
+                return None
+            if getattr(row, "stale", False):
+                return None
+            for field in ("as_of", "observed_at"):
+                stamp = getattr(row, field, None)
+                if stamp is not None and (
+                    not isinstance(stamp, datetime) or stamp.tzinfo is None
+                    or not 0 <= (now - stamp).total_seconds() <= SETTLED_CASH_MAX_AGE_SECONDS
+                ):
+                    return None
+            value = _coerce_float(getattr(row, "value", None))
+            if value is None or not math.isfinite(value):
+                return None
+            if account in amounts and amounts[account] != value:
+                return None
+            amounts[account] = value
+        if not amounts or (selected and set(amounts) != set(selected)):
+            return None
+        total = sum(amounts.values())
+        return total if math.isfinite(total) else None
+    except Exception:
+        # Missing API, incomplete refresh and broker read errors stay unknown.
+        return None
+    finally:
+        event.disconnect(observe)
+        ib.RequestTimeout = original_timeout
+        ib.RaiseRequestErrors = original_raise_errors
 
 
 def _available_funds_for_currency(account_values, *, currency: str, account_ids=None) -> float | None:
@@ -1256,7 +1452,10 @@ def execute_rebalance(
                 raise RuntimeError("IBKR execution claim required; refusing broker submission")
             # Shadow consult after successful claim; deny must not block submit.
             consult_t1_live_submit(identity_held=True, dry_run_bypass=False)
-            grant = account_execution_session.reserve(order_intent)
+            # The venue wrapper finishes blocking preparation and resizing before
+            # reserving the exact cash-buy intent. Other paths keep their grant.
+            grant = (None if isinstance(ib, _SettledCashDeadlineIB)
+                     else account_execution_session.reserve(order_intent))
             return delegate_submit(
                 ib, order_intent, account_execution_session=account_execution_session,
                 execution_grant=grant, **kwargs,
@@ -1644,6 +1843,21 @@ def execute_rebalance(
         )
         execution_summary["pending_order_cash_risk_unknown"] = True
 
+    settled_cash = (
+        _settled_cash_for_currency(ib, currency=market_currency, account_ids=normalized_account_ids)
+        if cash_only_execution else None
+    )
+    settled_cash_ledger_unverified = cash_only_execution and settled_cash is None
+    if settled_cash_ledger_unverified:
+        account_new_risk_buy_blocked = True
+        account_new_risk_reason_codes = (
+            *account_new_risk_reason_codes,
+            "SETTLED_CASH_LEDGER_UNVERIFIED",
+        )
+        execution_summary["settled_cash_ledger_status"] = "UNKNOWN"
+    elif cash_only_execution:
+        execution_summary["settled_cash_ledger_status"] = "OBSERVED"
+
     trade_logs.append(
         " | ".join(
             [
@@ -1692,12 +1906,12 @@ def execute_rebalance(
     insufficient_buying_power_symbols: list[str] = []
     min_notional_symbols: list[str] = []
     quantity_zero_symbols: list[str] = []
-    anticipated_buying_power = get_available_buying_power(
-        ib,
-        account_values.get("buying_power", 0),
-        account_ids=normalized_account_ids,
-        currency=market_currency,
-        cash_only_execution=cash_only_execution,
+    anticipated_buying_power = (
+        max(0.0, settled_cash or 0.0) if cash_only_execution
+        else get_available_buying_power(
+            ib, account_values.get("buying_power", 0), account_ids=normalized_account_ids,
+            currency=market_currency, cash_only_execution=False,
+        )
     )
     investable_anticipated_buying_power = _investable_buying_power(anticipated_buying_power, reserved)
     cash_sweep_quantity = 0
@@ -1806,7 +2020,11 @@ def execute_rebalance(
             break
         quantity_zero_symbols.append(symbol)
 
-    if pending_observation.cash_risk_unknown and has_buy_plan and not has_sell_plan:
+    if (
+        (pending_observation.cash_risk_unknown or settled_cash_ledger_unverified)
+        and any(target_mv[s] > current_mv.get(s, 0.0) + threshold for s in target_mv)
+        and not has_sell_plan
+    ):
         # No qualified reduction will be submitted. Reject before taking the
         # daily execution lock, so a later complete observation can be checked
         # normally without clearing any execution or reconciliation marker.
@@ -1817,7 +2035,7 @@ def execute_rebalance(
         execution_summary["account_new_risk_block_reason"] = reason
         execution_summary["account_new_risk_reason_codes"] = list(account_new_risk_reason_codes)
         execution_summary["skipped_reasons"].append(reason)
-        trade_logs.append(translator("buy_deferred", detail="[Account new-risk gate] PENDING_ORDER_CASH_RISK_UNKNOWN"))
+        trade_logs.append(translator("buy_deferred", detail="[Account new-risk gate] " + ", ".join(account_new_risk_reason_codes)))
         return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
 
     if not has_sell_plan and not has_buy_plan:
@@ -2033,23 +2251,24 @@ def execute_rebalance(
                 fallback_quantity=qty,
             )
 
-    if dry_run_only:
+    if cash_only_execution:
+        # A sale fill or ACK does not establish settlement. A fresh observation
+        # supplies the budget; projected proceeds never supply spending authority.
+        observed = _settled_cash_for_currency(
+            ib, currency=market_currency, account_ids=normalized_account_ids,
+        )
+        buying_power = max(0.0, observed or 0.0)
+        if observed is None:
+            execution_summary["settled_cash_ledger_status"] = "UNKNOWN"
+    elif dry_run_only:
         buying_power = max(0.0, anticipated_buying_power + dry_run_sale_proceeds)
     else:
         if sell_executed:
             time.sleep(sell_settle_delay_sec)
             buying_power = get_available_buying_power(
-                ib,
-                account_values.get("buying_power", 0),
-                account_ids=normalized_account_ids,
-                currency=market_currency,
-                cash_only_execution=cash_only_execution,
+                ib, account_values.get("buying_power", 0), account_ids=normalized_account_ids,
+                currency=market_currency, cash_only_execution=False,
             )
-            if cash_only_execution and projected_sell_release_value > 0.0:
-                buying_power = max(
-                    float(buying_power or 0.0),
-                    float(anticipated_buying_power or 0.0) + float(projected_sell_release_value),
-                )
         else:
             buying_power = anticipated_buying_power
     investable_buying_power = _investable_buying_power(buying_power, reserved)
@@ -2137,6 +2356,24 @@ def execute_rebalance(
             continue
         current = current_mv.get(symbol, 0)
         if current < target - threshold:
+            if cash_only_execution:
+                refresh_started = time.monotonic()
+                # A previous order may take longer than the freshness bound.
+                # Refresh each candidate without resetting the shared budget.
+                observed = _settled_cash_for_currency(
+                    ib, currency=market_currency, account_ids=normalized_account_ids,
+                )
+                investable_buying_power = min(
+                    investable_buying_power,
+                    _investable_buying_power(max(0.0, observed or 0.0), reserved),
+                )
+                if observed is None or observed <= 0:
+                    reason = "settled_cash_ledger_unverified" if observed is None else "insufficient_settled_cash"
+                    if observed is None:
+                        execution_summary["settled_cash_ledger_status"] = "UNKNOWN"
+                    execution_summary["orders_skipped"].append({"symbol": symbol, "side": "buy", "reason": reason})
+                    execution_summary["skipped_reasons"].append(f"{reason}:{symbol}")
+                    continue
             buy_value = min(target - current, investable_buying_power * 0.95)
             price = prices.get(symbol)
             if not price:
@@ -2185,6 +2422,11 @@ def execute_rebalance(
                 or order_cost > remaining_approved + 1e-6
             ):
                 raise RuntimeError("IBKR live buy exceeds the approved RiskEngine order limit")
+            if cash_only_execution and not 0 <= time.monotonic() - refresh_started <= SETTLED_CASH_MAX_AGE_SECONDS:
+                execution_summary["settled_cash_ledger_status"] = "UNKNOWN"
+                execution_summary["orders_skipped"].append({"symbol": symbol, "side": "buy", "reason": "settled_cash_stale"})
+                execution_summary["skipped_reasons"].append(f"settled_cash_stale:{symbol}")
+                continue
             if dry_run_only:
                 execution_summary["orders_submitted"].append(
                     {
@@ -2198,18 +2440,28 @@ def execute_rebalance(
                 trade_logs.append(f"DRY_RUN buy {symbol} {format_quantity(qty)} @{limit_price:.2f}")
                 investable_buying_power -= qty * limit_price
                 continue
-            report = submit_order_intent(
-                ib,
-                order_intent_cls(
-                    symbol=symbol,
-                    side="buy",
-                    quantity=qty,
-                    order_type="limit",
-                    limit_price=limit_price,
-                    time_in_force="DAY",
-                    account_id=order_account_id,
-                ),
+            intent = order_intent_cls(
+                symbol=symbol,
+                side="buy",
+                quantity=qty,
+                order_type="limit",
+                limit_price=limit_price,
+                time_in_force="DAY",
+                account_id=order_account_id,
             )
+            if cash_only_execution:
+                with _SettledCashDeadlineIB(
+                    ib, refresh_started=refresh_started, account_id=order_account_id,
+                    currency=market_currency, buying_power=investable_buying_power,
+                    reserved=reserved, quantity_step=order_quantity_step,
+                    minimum_order_notional=minimum_order_notional,
+                ) as settled_ib:
+                    report = submit_order_intent(settled_ib, intent)
+                    investable_buying_power = min(investable_buying_power, settled_ib.remaining_buying_power)
+                    if settled_ib.prepared_quantity is not None:
+                        qty = settled_ib.prepared_quantity
+            else:
+                report = submit_order_intent(ib, intent)
             status = str(getattr(report, "status", "") or "")
             order_payload = {
                 "symbol": symbol,

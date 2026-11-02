@@ -1,3 +1,4 @@
+from tests.synthetic_account_refresh import SyntheticAccountRefresh
 from types import SimpleNamespace
 
 import pytest
@@ -769,6 +770,8 @@ def persistent_real_caller(tmp_path, monkeypatch, strategy_module_factory):
     from quant_platform_kit.common import execution_state as contract
     from quant_platform_kit.common.models import OrderIntent
     from notifications.telegram import build_translator
+    from ib_insync.contract import Stock
+    from ib_insync.order import LimitOrder, MarketOrder
 
     module = strategy_module_factory()
     account = "U00000003"
@@ -789,12 +792,13 @@ def persistent_real_caller(tmp_path, monkeypatch, strategy_module_factory):
     state = SimpleNamespace(submitted=[], status="Submitted", filled=0, fill_price=0,
                             metadata=metadata, receipt=receipt, executor_calls=[], claim_calls=[])
 
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self): return []
         reqAllOpenOrders = openTrades
         def fills(self): return []
         def accountValues(self):
-            return [SimpleNamespace(tag="CashBalance", currency="USD", value="1500", account=account)]
+            return [SimpleNamespace(tag="CashBalance", currency="USD", value="1500", account=account),
+                    SimpleNamespace(tag="SettledCash", currency="USD", value="1500", account=account)]
         def qualifyContracts(self, value): return [value]
         def placeOrder(self, instrument, order):
             state.submitted.append((instrument, order))
@@ -808,9 +812,9 @@ def persistent_real_caller(tmp_path, monkeypatch, strategy_module_factory):
     monkeypatch.setattr("application.account_new_risk_gate_support.resolve_production_drift_status_from_store", lambda **_kw: None)
     monkeypatch.setattr(module, "submit_order_intent", lambda _ib, intent, **kwargs: platform_submit(
         _ib, intent, wait_seconds=0,
-        stock_factory=lambda symbol, _ex, _cur: SimpleNamespace(symbol=symbol),
-        market_order_factory=lambda side, qty: SimpleNamespace(action=side, totalQuantity=qty),
-        limit_order_factory=lambda side, qty, price: SimpleNamespace(action=side, totalQuantity=qty, lmtPrice=price),
+        stock_factory=Stock,
+        market_order_factory=MarketOrder,
+        limit_order_factory=LimitOrder,
         **kwargs,
     ))
     # A partial binds the real executor; no fake final executor in this chain.

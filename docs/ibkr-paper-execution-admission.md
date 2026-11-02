@@ -1,5 +1,61 @@
 # IBKR PAPER execution admission
 
+## Cash-only equity settlement gate
+
+Cash-only equity buys use explicit finite `SettledCash` observations in the market
+currency for every selected account. The reader uses the blocking ib_insync
+`reqAccountUpdates(account)` API and captures matching `accountValueEvent` rows
+received during that refresh. It requires completion (`accountDownloadEnd`), a
+10-second request timeout (or the existing shorter timeout) and observations no
+older than 30 seconds. Timeout and request-error settings are restored afterward.
+Cached rows, missing refresh support, completion without a matching settlement
+update, stale timestamps and incomplete refreshes cannot authorize buys.
+Missing, anonymous, unreadable, malformed,
+non-finite or conflicting settlement rows block new buys with
+`SETTLED_CASH_LEDGER_UNVERIFIED` before taking a buy-only daily execution lock.
+Zero and negative settled cash provide no buy budget. `CashBalance`,
+`AvailableFunds` and fallback buying power cannot establish settlement.
+
+Positive settled cash goes through the existing reserve subtraction, buffered
+buy sizing, quantity rules, account journal and pending-order checks. Symbols
+share the remaining budget within a cycle. Settlement is refreshed before the
+buy phase even when no sale occurred, and again before sizing each buy. A lower
+valid balance reduces the remaining budget; zero, negative or unknown settlement
+blocks the buy. General cash tags cannot override that result. Observations that
+expire during sizing block submission. The same deadline is checked again
+immediately before `placeOrder`, after claim acquisition, journal reservation
+and contract qualification. Expiry at that boundary raises without calling
+the broker; the existing journal retains the consumed attempt as `UNKNOWN`
+and requires reconciliation rather than retrying or assuming rejection.
+The buy observes matching account/currency `SettledCash` callbacks throughout
+blocking preparation and submission. Qualification finishes before reserving the
+final intent. A lower positive update reduces sizing using the existing reserve,
+buffer and quantity step; the journal and execution summary use that exact
+quantity. Invalid or non-positive updates during preparation reject local
+admission without reserving or placing an order. The prepared contract is reused
+without another blocking qualification after reservation. Any later update that
+invalidates settlement or leaves insufficient funds rejects the final write
+inside dispatch, retaining the consumed attempt as `UNKNOWN`. Later increases
+cannot restore the budget or erase an invalid observation for that buy. Callbacks
+never extend the original deadline or replenish the shared spent budget, and
+temporary observers are removed on success and failure.
+After a sale, only a completed fresh
+settled-cash observation supplies spending authority; projected sale proceeds
+remain telemetry. Dry-run previews do not credit sales as settled cash.
+Otherwise-qualified reductions retain their existing protections. The gate does
+not change target weights or generate protective-exit targets.
+
+These freshness and submission rules are verified with synthetic refreshes and
+offline SDK callbacks. Runtime broker-refresh reliability, cross-cycle cash
+conservation, commission reconciliation and full acceptance remain unproven.
+`OBSERVED` describes this completed-refresh evidence, not an authenticated cash ledger.
+The existing account journal and incomplete pending-order blocks are preserved;
+there is no new allocation engine or durable principal-reservation ledger.
+Margin mode and separate option intents keep their existing behavior and remain
+outside this equity settlement claim. No production switch is changed.
+
+## Opt-in PAPER command guard
+
 `IBKR_PAPER_EXECUTION_ADMISSION_ENABLED` is an opt-in guard for the ordinary
 IBKR `execution_mode=paper` rebalance path. Its default is disabled. It
 requires the shared runtime target to explicitly declare
