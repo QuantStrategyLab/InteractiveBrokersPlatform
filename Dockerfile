@@ -17,7 +17,7 @@ RUN apt-get update \
 COPY . .
 RUN python -m pip install --upgrade pip uv \
     && uv sync --frozen --no-dev \
-    && /app/.venv/bin/python -c 'from importlib import metadata as m; import json; from pathlib import Path; payload=json.loads(m.distribution("us-equity-strategies").read_text("direct_url.json") or "{}"); rev=(payload.get("vcs_info") or {}).get("commit_id"); assert isinstance(rev, str) and rev.strip(); Path("/app/UES_REVISION").write_text(rev.strip() + "\n", encoding="utf-8")' \
+    && /app/.venv/bin/python scripts/verify_installed_ues_pin.py \
     && /app/.venv/bin/python scripts/validate_cloud_run_startup.py \
     && apt-get purge -y git \
     && apt-get autoremove -y --purge \

@@ -5,6 +5,13 @@ image against `uv.lock` and the revisions present in planned runtime targets.
 It still runs after build and before push/deploy, with the same blocking rules.
 This is build-time evidence, **not proof of the live deployed revision**.
 
+During `docker build`, `scripts/verify_installed_ues_pin.py` first requires
+`pyproject.toml`, the resolved UES Git source in `uv.lock`, and the installed
+PEP 610 `direct_url.json` repository and commit to agree. Missing, malformed or
+conflicting metadata fails the build. An existing `UES_REVISION` must also agree;
+the verified revision is then written to that file. This build check uses no
+runtime target or credentials and does not authorize deployment.
+
 `--report-json PATH` optionally writes a schema-version-1 JSON report. The report
 is an observation of the existing validation, not a new configuration source or
 validation policy. Failure to write this optional report warns without changing
