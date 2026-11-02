@@ -291,7 +291,7 @@ def test_opted_in_cycle_keeps_all_broker_and_persistence_calls(routing, monkeypa
     for call in expected["calls"]:
         if call[0] == "execute":
             call[-1]["account_execution_session"] = None
-            call[3]["account_equity_usd"] = 1000.0
+            call[3]["account_equity_usd"] = None
     assert keep(observed) == keep(expected)
     assert observed["result"] == baseline[f"cycle:{case}:en"]["result"]
 

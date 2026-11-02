@@ -40,7 +40,8 @@ def snapshot_for(symbol):
         total_equity=40_000, buying_power=39_000,
         as_of=datetime(2026, 11, 2, tzinfo=timezone.utc),
         positions=(NS(symbol=symbol, quantity=10, average_cost=100),),
-        metadata={"peak_equity_usd": 50_000, "drawdown_from_peak": .2},
+        metadata={"peak_equity_usd": 50_000, "drawdown_from_peak": .2,
+                  "broker_net_liquidation": 40_000, "total_equity_source": "broker_net_liquidation"},
     )
 
 

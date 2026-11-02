@@ -706,10 +706,19 @@ def _snapshot_to_portfolio_view(snapshot) -> tuple[dict[str, dict[str, float | i
     }
     # Carry explicit snapshot evidence to the existing account new-risk gate.
     # Missing fields stay absent; this projection does not read or reset state.
-    for key in ("unknown_pending_orders", "durable_circuit_breaker_state", "peak_equity_usd", "drawdown_from_peak"):
+    for key in ("unknown_pending_orders", "durable_circuit_breaker_state", "peak_equity_usd", "drawdown_from_peak",
+                "realized_vol", "observation_status", "reconciliation_status", "circuit_breaker_state",
+                "production_drift_status"):
         if key in metadata:
             account_values[key] = metadata[key]
-    account_values["account_equity_usd"] = snapshot.total_equity
+    # Strategy equity is for sizing, not physical-account risk admission.
+    # Keep an explicit unavailable value so neither sizing equity nor an older
+    # healthy strategy projection can substitute for unqualified account NAV.
+    account_values["account_equity_usd"] = (
+        metadata.get("broker_net_liquidation")
+        if metadata.get("total_equity_source") == "broker_net_liquidation"
+        else None
+    )
     return positions, account_values
 
 

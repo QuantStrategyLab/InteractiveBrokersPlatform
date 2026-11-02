@@ -152,6 +152,12 @@
 使用独立的 `equity` 计算配置，账户回撤继续使用 `account_equity_usd`，不把子组合权益
 误当作账户净值。快照事实优先于策略元数据中的旧投影，非法值保留为错误输入。
 
+原生快照转换只在 `total_equity_source` 为 `broker_net_liquidation` 时，
+将已核 `broker_net_liquidation` 传为 `account_equity_usd`；缺失或未核的值明确
+标记不可用，无效值由风险门拒绝，不用 `total_equity` 或策略缓存补齐。
+转换同时保留显式的 `realized_vol`、`observation_status`、`reconciliation_status`、
+`circuit_breaker_state` 和 `production_drift_status`，确保这些当前事实到达风险门。
+
 账户回撤触线后，复用 `AccountSubmissionSession` 的物理账户追加日志写入
 `CIRCUIT_BREAKER_OPEN`，包括没有策略目标而提前返回的周期。后续周期、其他策略及
 新进程读取同一账户日志；净值恢复、显式 CLOSED 或调用方的 reset 标记都不能清除 OPEN。
