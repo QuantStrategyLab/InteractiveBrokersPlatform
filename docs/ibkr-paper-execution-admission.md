@@ -3,7 +3,14 @@
 ## Cash-only equity settlement gate
 
 Cash-only equity buys use explicit finite `SettledCash` observations in the market
-currency for every selected account. Missing, anonymous, unreadable, malformed,
+currency for every selected account. The reader uses the blocking ib_insync
+`reqAccountUpdates(account)` API and captures matching `accountValueEvent` rows
+received during that refresh. It requires completion (`accountDownloadEnd`), a
+10-second request timeout (or the existing shorter timeout) and observations no
+older than 30 seconds. Timeout and request-error settings are restored afterward.
+Cached rows, missing refresh support, completion without a matching settlement
+update, stale timestamps and incomplete refreshes cannot authorize buys.
+Missing, anonymous, unreadable, malformed,
 non-finite or conflicting settlement rows block new buys with
 `SETTLED_CASH_LEDGER_UNVERIFIED` before taking a buy-only daily execution lock.
 Zero and negative settled cash provide no buy budget. `CashBalance`,
@@ -11,15 +18,20 @@ Zero and negative settled cash provide no buy budget. `CashBalance`,
 
 Positive settled cash goes through the existing reserve subtraction, buffered
 buy sizing, quantity rules, account journal and pending-order checks. Symbols
-share the remaining budget within a cycle. After a sale, only a new explicit
+share the remaining budget within a cycle. Settlement is refreshed before the
+buy phase even when no sale occurred, and again before sizing each buy. A lower
+valid balance reduces the remaining budget; zero, negative or unknown settlement
+blocks the buy. General cash tags cannot override that result. Observations that
+expire during sizing block submission. After a sale, only a completed fresh
 settled-cash observation supplies spending authority; projected sale proceeds
 remain telemetry. Dry-run previews do not credit sales as settled cash.
 Otherwise-qualified reductions retain their existing protections. The gate does
 not change target weights or generate protective-exit targets.
 
-These are offline component guarantees, not proof of broker-cache freshness,
-cross-cycle cash conservation, commission reconciliation or runtime acceptance.
-`OBSERVED` means a settlement tag was read, not an authenticated cash ledger.
+These freshness and submission rules are verified with synthetic refreshes and
+offline SDK callbacks. Runtime broker-refresh reliability, cross-cycle cash
+conservation, commission reconciliation and full acceptance remain unproven.
+`OBSERVED` describes this completed-refresh evidence, not an authenticated cash ledger.
 The existing account journal and incomplete pending-order blocks are preserved;
 there is no new allocation engine or durable principal-reservation ledger.
 Margin mode and separate option intents keep their existing behavior and remain

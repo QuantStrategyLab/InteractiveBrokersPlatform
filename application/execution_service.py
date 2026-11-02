@@ -247,15 +247,59 @@ def _cash_value_for_currency(account_values, *, currency: str, account_ids=None)
     return total if matched else None
 
 
+SETTLED_CASH_MAX_AGE_SECONDS = 30.0
+SETTLED_CASH_REFRESH_TIMEOUT_SECONDS = 10.0
+
+
 def _settled_cash_for_currency(ib, *, currency, account_ids=None) -> float | None:
-    """Read explicit settlement evidence; never infer it from cash or credit."""
+    """Require settlement updates received during a completed, bounded refresh.
+
+    accountValues() is only a cache. Its contents, and a refresh completion
+    without a matching SettledCash update, cannot establish spending authority.
+    """
     selected = _normalize_account_ids(account_ids)
+    event = getattr(ib, "accountValueEvent", None)
+    refresh = getattr(ib, "reqAccountUpdates", None)
+    if (
+        not callable(refresh) or not callable(getattr(event, "connect", None))
+        or not callable(getattr(event, "disconnect", None))
+    ):
+        return None
+    original_timeout = getattr(ib, "RequestTimeout", 0)
+    original_raise_errors = getattr(ib, "RaiseRequestErrors", False)
+    rows = []
+
+    def observe(row):
+        rows.append((row, time.monotonic()))
+
     try:
-        rows = ib.accountValues()
-        if rows is None:
+        # Preview callers may omit routing. Cache rows can identify the one
+        # account to refresh, but their amounts never provide the buy budget.
+        if not selected:
+            selected = tuple(dict.fromkeys(
+                str(getattr(row, "account", "") or "").strip()
+                for row in ib.accountValues() or ()
+                if str(getattr(row, "account", "") or "").strip()
+            ))
+        if len(selected) != 1:
             return None
+        timeout = _coerce_float(original_timeout)
+        ib.RequestTimeout = (
+            min(timeout, SETTLED_CASH_REFRESH_TIMEOUT_SECONDS)
+            if timeout is not None and math.isfinite(timeout) and timeout > 0
+            else SETTLED_CASH_REFRESH_TIMEOUT_SECONDS
+        )
+        ib.RaiseRequestErrors = True
+        event.connect(observe)
+        started = time.monotonic()
+        # Pinned ib_insync blocks until accountDownloadEnd or raises on timeout.
+        refresh(selected[0])
+        completed = time.monotonic()
+        if not 0 <= completed - started <= SETTLED_CASH_MAX_AGE_SECONDS:
+            return None
+        now = datetime.now(timezone.utc)
         amounts = {}
-        for row in rows:
+        for row, received in rows:
             if str(getattr(row, "currency", "")).strip().upper() != currency.upper():
                 continue
             account = str(getattr(row, "account", "") or "").strip() or None
@@ -265,6 +309,17 @@ def _settled_cash_for_currency(ib, *, currency, account_ids=None) -> float | Non
                 continue
             if account is None or (selected and account not in selected):
                 return None
+            if not 0 <= completed - received <= SETTLED_CASH_MAX_AGE_SECONDS:
+                return None
+            if getattr(row, "stale", False):
+                return None
+            for field in ("as_of", "observed_at"):
+                stamp = getattr(row, field, None)
+                if stamp is not None and (
+                    not isinstance(stamp, datetime) or stamp.tzinfo is None
+                    or not 0 <= (now - stamp).total_seconds() <= SETTLED_CASH_MAX_AGE_SECONDS
+                ):
+                    return None
             value = _coerce_float(getattr(row, "value", None))
             if value is None or not math.isfinite(value):
                 return None
@@ -276,8 +331,12 @@ def _settled_cash_for_currency(ib, *, currency, account_ids=None) -> float | Non
         total = sum(amounts.values())
         return total if math.isfinite(total) else None
     except Exception:
-        # Missing API and broker read errors are unknown settlement evidence.
+        # Missing API, incomplete refresh and broker read errors stay unknown.
         return None
+    finally:
+        event.disconnect(observe)
+        ib.RequestTimeout = original_timeout
+        ib.RaiseRequestErrors = original_raise_errors
 
 
 def _available_funds_for_currency(account_values, *, currency: str, account_ids=None) -> float | None:
@@ -2088,9 +2147,8 @@ def execute_rebalance(
     if cash_only_execution:
         # A sale fill or ACK does not establish settlement. A fresh observation
         # supplies the budget; projected proceeds never supply spending authority.
-        observed = (
-            _settled_cash_for_currency(ib, currency=market_currency, account_ids=normalized_account_ids)
-            if sell_executed else settled_cash
+        observed = _settled_cash_for_currency(
+            ib, currency=market_currency, account_ids=normalized_account_ids,
         )
         buying_power = max(0.0, observed or 0.0)
         if observed is None:
@@ -2191,6 +2249,24 @@ def execute_rebalance(
             continue
         current = current_mv.get(symbol, 0)
         if current < target - threshold:
+            if cash_only_execution:
+                refresh_started = time.monotonic()
+                # A previous order may take longer than the freshness bound.
+                # Refresh each candidate without resetting the shared budget.
+                observed = _settled_cash_for_currency(
+                    ib, currency=market_currency, account_ids=normalized_account_ids,
+                )
+                investable_buying_power = min(
+                    investable_buying_power,
+                    _investable_buying_power(max(0.0, observed or 0.0), reserved),
+                )
+                if observed is None or observed <= 0:
+                    reason = "settled_cash_ledger_unverified" if observed is None else "insufficient_settled_cash"
+                    if observed is None:
+                        execution_summary["settled_cash_ledger_status"] = "UNKNOWN"
+                    execution_summary["orders_skipped"].append({"symbol": symbol, "side": "buy", "reason": reason})
+                    execution_summary["skipped_reasons"].append(f"{reason}:{symbol}")
+                    continue
             buy_value = min(target - current, investable_buying_power * 0.95)
             price = prices.get(symbol)
             if not price:
@@ -2239,6 +2315,11 @@ def execute_rebalance(
                 or order_cost > remaining_approved + 1e-6
             ):
                 raise RuntimeError("IBKR live buy exceeds the approved RiskEngine order limit")
+            if cash_only_execution and not 0 <= time.monotonic() - refresh_started <= SETTLED_CASH_MAX_AGE_SECONDS:
+                execution_summary["settled_cash_ledger_status"] = "UNKNOWN"
+                execution_summary["orders_skipped"].append({"symbol": symbol, "side": "buy", "reason": "settled_cash_stale"})
+                execution_summary["skipped_reasons"].append(f"settled_cash_stale:{symbol}")
+                continue
             if dry_run_only:
                 execution_summary["orders_submitted"].append(
                     {

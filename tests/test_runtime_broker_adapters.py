@@ -1,3 +1,4 @@
+from tests.synthetic_account_refresh import SyntheticAccountRefresh
 from types import SimpleNamespace
 
 import pytest
@@ -789,7 +790,7 @@ def persistent_real_caller(tmp_path, monkeypatch, strategy_module_factory):
     state = SimpleNamespace(submitted=[], status="Submitted", filled=0, fill_price=0,
                             metadata=metadata, receipt=receipt, executor_calls=[], claim_calls=[])
 
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self): return []
         reqAllOpenOrders = openTrades
         def fills(self): return []

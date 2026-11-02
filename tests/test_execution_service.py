@@ -1,3 +1,4 @@
+from tests.synthetic_account_refresh import SyntheticAccountRefresh, with_synthetic_account_refresh
 from types import SimpleNamespace
 from tempfile import TemporaryDirectory
 from pathlib import Path
@@ -183,7 +184,7 @@ def test_check_order_submitted_accepts_pending_submit_status():
 
 
 def test_get_available_buying_power_prefers_usd_cash_balance_over_aggregate_available_funds():
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def accountValues(self):
             return [
                 SimpleNamespace(tag="AvailableFunds", currency="USD", value="885.99"),
@@ -195,7 +196,7 @@ def test_get_available_buying_power_prefers_usd_cash_balance_over_aggregate_avai
 
 
 def test_get_available_buying_power_supports_ibkr_ledger_cash_balance():
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def accountValues(self):
             return [
                 SimpleNamespace(tag="AvailableFunds", currency="USD", value="885.99"),
@@ -206,7 +207,7 @@ def test_get_available_buying_power_supports_ibkr_ledger_cash_balance():
 
 
 def test_get_available_buying_power_does_not_treat_total_cash_value_as_currency_cash():
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def accountValues(self):
             return [
                 SimpleNamespace(tag="TotalCashValue", currency="USD", value="500.00"),
@@ -310,7 +311,7 @@ def test_execute_rebalance_never_expands_approved_buy_budget(
     tmp_path, symbol, held, target_value, step, premium, buying_power, reserve,
     expected_quantity,
 ):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -375,7 +376,7 @@ def test_execute_rebalance_never_expands_approved_buy_budget(
 def test_execute_rebalance_reductions_follow_approved_target_without_retention_lift(
     monkeypatch, tmp_path, symbol, held, target_value, expected_quantity,
 ):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -428,7 +429,7 @@ def test_execute_rebalance_reductions_follow_approved_target_without_retention_l
 
 
 def test_execute_rebalance_submits_limit_buy_for_underweight_position(monkeypatch, tmp_path):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -488,10 +489,10 @@ def test_execute_rebalance_submits_limit_buy_for_underweight_position(monkeypatc
 @pytest.mark.parametrize("claim", [None, lambda: False])
 def test_execute_rebalance_cannot_submit_without_successful_claim_callback(tmp_path, claim):
     submitted = []
-    ib = SimpleNamespace(
+    ib = with_synthetic_account_refresh(SimpleNamespace(
         openTrades=lambda: [], reqAllOpenOrders=lambda: [],
         accountValues=lambda: [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1000"), SimpleNamespace(tag="SettledCash", currency="USD", value="1000", account="DU00000003")],
-    )
+    ))
     with pytest.raises(RuntimeError, match="execution claim required"):
         execute_rebalance(
             ib, {"VOO": 0.5}, {}, {"equity": 1000.0, "buying_power": 1000.0},
@@ -510,7 +511,7 @@ def test_execute_rebalance_cannot_submit_without_successful_claim_callback(tmp_p
 
 
 def test_execute_rebalance_paper_admission_blocks_before_calling_the_broker(tmp_path):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -572,7 +573,7 @@ def test_execute_rebalance_paper_admission_blocks_before_calling_the_broker(tmp_
 
 
 def test_execute_rebalance_blocks_when_all_order_submissions_are_rejected(tmp_path):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -623,7 +624,7 @@ def test_execute_rebalance_blocks_when_all_order_submissions_are_rejected(tmp_pa
 
 
 def test_execute_rebalance_uses_symbol_specific_limit_buy_premium(monkeypatch, tmp_path):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -669,7 +670,7 @@ def test_execute_rebalance_uses_symbol_specific_limit_buy_premium(monkeypatch, t
 
 
 def test_execute_rebalance_blocks_option_intent_without_final_risk_limits(tmp_path):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -730,7 +731,7 @@ def test_execute_rebalance_blocks_option_intent_without_final_risk_limits(tmp_pa
 
 
 def test_execute_rebalance_blocks_multi_leg_option_without_final_risk_limits(tmp_path):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -780,7 +781,7 @@ def test_execute_rebalance_blocks_multi_leg_option_without_final_risk_limits(tmp
 
 
 def test_execute_rebalance_hk_profile_dry_run_keeps_whole_share_orders_off_broker(tmp_path):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -839,7 +840,7 @@ def test_execute_rebalance_hk_profile_dry_run_keeps_whole_share_orders_off_broke
 
 
 def test_execute_rebalance_uses_reserved_cash_floor_when_higher(tmp_path):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -875,7 +876,7 @@ def test_execute_rebalance_uses_reserved_cash_floor_when_higher(tmp_path):
 
 
 def test_execute_rebalance_caps_buy_budget_by_reserved_cash_after_sell(tmp_path, monkeypatch):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -936,7 +937,7 @@ def test_execute_rebalance_caps_buy_budget_by_reserved_cash_after_sell(tmp_path,
 def test_execute_rebalance_live_cash_only_uses_initial_settled_cash_when_cash_balance_is_stale(
     tmp_path, monkeypatch, target_weight, buy_expected,
 ):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -1016,7 +1017,7 @@ def test_execute_rebalance_live_cash_only_uses_initial_settled_cash_when_cash_ba
 
 
 def test_execute_rebalance_live_cash_only_does_not_bridge_unfilled_sell_submissions(tmp_path, monkeypatch):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -1070,7 +1071,7 @@ def test_execute_rebalance_live_cash_only_does_not_bridge_unfilled_sell_submissi
 
 
 def test_execute_rebalance_live_cash_only_uses_partial_fill_proceeds_and_fill_price(tmp_path, monkeypatch):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -1135,7 +1136,7 @@ def test_execute_rebalance_live_cash_only_uses_partial_fill_proceeds_and_fill_pr
 
 
 def test_execute_rebalance_projects_unbuyable_weight_target_to_zero_with_settled_funds(tmp_path, monkeypatch):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -1194,7 +1195,7 @@ def test_execute_rebalance_projects_unbuyable_weight_target_to_zero_with_settled
 
 
 def test_execute_rebalance_keeps_safe_haven_cash_when_only_risk_target_is_unbuyable(tmp_path, monkeypatch):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -1257,7 +1258,7 @@ def test_execute_rebalance_keeps_safe_haven_cash_when_only_risk_target_is_unbuya
 
 
 def test_execute_rebalance_blocks_small_account_buy_but_keeps_strategy_reductions_available(monkeypatch, tmp_path):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -1312,7 +1313,7 @@ def test_execute_rebalance_blocks_small_account_buy_but_keeps_strategy_reduction
 
 
 def test_execute_rebalance_routes_order_to_single_account_id(monkeypatch, tmp_path):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -1367,7 +1368,7 @@ def test_execute_rebalance_routes_order_to_single_account_id(monkeypatch, tmp_pa
 
 
 def test_execute_rebalance_rejects_multiple_order_account_ids():
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def accountValues(self):
             return []
 
@@ -1397,7 +1398,7 @@ def test_execute_rebalance_rejects_multiple_order_account_ids():
 
 
 def test_execute_rebalance_zero_target_sell_uses_position_quantity(monkeypatch, tmp_path):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -1447,7 +1448,7 @@ def test_execute_rebalance_zero_target_sell_uses_position_quantity(monkeypatch, 
 
 
 def test_execute_rebalance_sells_existing_whole_shares_when_target_projects_to_cash(monkeypatch, tmp_path):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -1504,7 +1505,7 @@ def test_execute_rebalance_sells_existing_whole_shares_when_target_projects_to_c
 
 
 def test_execute_rebalance_projects_unbuyable_soxx_target_to_cash(monkeypatch, tmp_path):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -1571,7 +1572,7 @@ def test_execute_rebalance_caps_buy_to_cash_when_overweight_sell_rounds_to_zero(
     monkeypatch, tmp_path
 ):
     """Reproduce SOXL/SOXX rotation: SOXX trim rounds to 0 shares; buys must not exceed cash."""
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -1631,7 +1632,7 @@ def test_execute_rebalance_caps_buy_to_cash_when_overweight_sell_rounds_to_zero(
 
 
 def test_execute_rebalance_does_not_bootstrap_unbuyable_core_target(monkeypatch, tmp_path):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -1693,7 +1694,7 @@ def test_execute_rebalance_does_not_bootstrap_unbuyable_core_target(monkeypatch,
 
 
 def test_execute_rebalance_skips_existing_top_up_smaller_than_one_share(monkeypatch, tmp_path):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -1745,7 +1746,7 @@ def test_execute_rebalance_skips_existing_top_up_smaller_than_one_share(monkeypa
 
 
 def test_execute_rebalance_skips_when_pending_orders_exist():
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return [
                 SimpleNamespace(
@@ -1782,7 +1783,7 @@ def test_execute_rebalance_skips_when_pending_orders_exist():
 
 
 def test_execute_rebalance_blocks_same_day_repeat_via_execution_lock(tmp_path, monkeypatch):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -1858,7 +1859,7 @@ def test_execute_rebalance_blocks_same_day_repeat_via_execution_lock(tmp_path, m
 
 
 def test_execute_rebalance_skips_when_same_day_fills_detected():
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -1900,7 +1901,7 @@ def test_execute_rebalance_skips_when_same_day_fills_detected():
 
 
 def test_execute_rebalance_returns_structured_summary_when_requested(monkeypatch, tmp_path):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -1962,7 +1963,7 @@ def test_execute_rebalance_returns_structured_summary_when_requested(monkeypatch
 
 
 def test_execute_rebalance_keeps_small_safe_haven_target_as_cash(monkeypatch, tmp_path):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -2014,7 +2015,7 @@ def test_execute_rebalance_keeps_small_safe_haven_target_as_cash(monkeypatch, tm
 
 
 def test_execute_rebalance_sells_cash_sweep_symbol_when_buying_power_is_short(monkeypatch, tmp_path):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def __init__(self):
             self._account_values_calls = 0
 
@@ -2098,7 +2099,7 @@ def test_execute_rebalance_sells_cash_sweep_symbol_when_buying_power_is_short(mo
 
 
 def test_execute_rebalance_blocks_when_material_target_has_missing_prices():
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -2141,7 +2142,7 @@ def test_execute_rebalance_blocks_when_material_target_has_missing_prices():
 
 
 def test_execute_rebalance_blocks_when_material_target_has_no_buying_power():
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -2184,7 +2185,7 @@ def test_execute_rebalance_blocks_when_material_target_has_no_buying_power():
 
 
 def test_execute_rebalance_uses_snapshot_prices_for_dry_run_when_quotes_missing(tmp_path):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -2235,7 +2236,7 @@ def test_execute_rebalance_uses_snapshot_prices_for_dry_run_when_quotes_missing(
 
 
 def test_execute_rebalance_uses_price_fallbacks_for_live_when_quotes_missing(monkeypatch, tmp_path):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -2305,7 +2306,7 @@ def uncertain_cycle(tmp_path, monkeypatch):
     )
     state = SimpleNamespace(submitted=[], claims=[], receipt=None)
 
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
         reqAllOpenOrders = openTrades
@@ -2588,7 +2589,7 @@ def test_persistent_executor_missing_session_never_calls_submit(tmp_path, no_ord
 
 
 def test_invalid_vol_does_not_create_liquidation(monkeypatch, tmp_path):
-    class FakeIB:
+    class FakeIB(SyntheticAccountRefresh):
         def openTrades(self): return []
         def fills(self): return []
         def accountValues(self): return [SimpleNamespace(tag="CashBalance", currency="USD", value="1000"),

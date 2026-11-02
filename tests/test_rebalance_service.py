@@ -1,3 +1,4 @@
+from tests.synthetic_account_refresh import SyntheticAccountRefresh, with_synthetic_account_refresh
 import json
 from dataclasses import replace
 from types import SimpleNamespace
@@ -1068,12 +1069,12 @@ def claim_cycle(tmp_path, monkeypatch, strategy_module):
         },
         "allocation": _weight_allocation({"VOO": 0.5}, risk_symbols=("VOO",)),
     }
-    ib = SimpleNamespace(
+    ib = with_synthetic_account_refresh(SimpleNamespace(
         isConnected=lambda: True, disconnect=lambda: None,
         openTrades=lambda: [], reqAllOpenOrders=lambda: [], fills=lambda: [],
         accountValues=lambda: [SimpleNamespace(tag="CashBalance", currency="USD", value="1000", account="DU00000003"),
                                SimpleNamespace(tag="SettledCash", currency="USD", value="1000", account="DU00000003")],
-    )
+    ))
     config = IBKRRebalanceConfig(
         translator=_build_test_translator(), separator="---",
         strategy_profile="global_etf_rotation", execution_state_account_scope="PAPER",
