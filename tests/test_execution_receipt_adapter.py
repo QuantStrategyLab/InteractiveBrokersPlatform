@@ -31,7 +31,8 @@ class ExecutionReceiptAdapterTest(unittest.TestCase):
 
         attach_cycle_execution_receipt(
             report,
-            {"orders_filled": [{"symbol": "SOXL"}]},
+            {"orders_filled": [{"symbol": "SOXL", "status": "Filled", "broker_order_id": "73",
+                                "quantity": 3, "filled_quantity": 3, "average_fill_price": 52}]},
             {},
             execution_failed=False,
         )

@@ -106,7 +106,7 @@ def _state_store(env=None):
     return GCSMarkerStore(values.get("IBKR_NOTIFICATION_MARKER_GCS_URI", ""))
 
 
-def persist_candidate(fact, *, actually_ran=True, dry_run=False, state_store=None, candidate_store=None, env=None, block_reason=None):
+def persist_candidate(fact, *, actually_ran=True, dry_run=False, state_store=None, candidate_store=None, env=None, block_reason=None, settlement=None):
     """Persist event/run identity and bridge the existing candidate producer."""
     from scripts.project_digest_candidates import merge_routine_observation_counts, project_notification_events
     if actually_ran is not True:
@@ -124,6 +124,8 @@ def persist_candidate(fact, *, actually_ran=True, dry_run=False, state_store=Non
     parts = [fact[k] for k in ("platform_id", "opaque_account_uid", "target_id", "strategy_profile", "business_day")]
     key = "candidate-state/" + hashlib.sha256(json.dumps(parts).encode()).hexdigest()
     record = {"event": fact, "actually_ran": actually_ran, "dry_run": dry_run}
+    if settlement is not None:
+        record["settlement"] = settlement
     if block_reason:
         record["block_reason"] = block_reason
     for _ in range(8):
@@ -131,7 +133,10 @@ def persist_candidate(fact, *, actually_ran=True, dry_run=False, state_store=Non
         old = old or {"revision": 0, "events": {}}
         events = dict(old["events"])
         prior = events.get(fact["dedupe_key"])
-        if prior is not None:
+        if prior is not None and settlement is not None:
+            from application.settlement_reporting import merge_settlement_record
+            record = merge_settlement_record(prior, record)
+        elif prior is not None:
             # Observation time may change across monitors; never replace facts
             # from the same run or lose an earlier abnormal observation.
             count_fields = ("order_count", "fill_count")

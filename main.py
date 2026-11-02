@@ -618,13 +618,31 @@ def submit_market_order_intent(
             )
         order_intent = prepared
         execution_grant = account_execution_session.reserve(order_intent)
-    return account_execution_session.dispatch(
-        execution_grant, order_intent,
-        lambda: submit_order_intent(
-            ib, order_intent, stock_exchange=MARKET_EXCHANGE,
-            stock_currency=MARKET_CURRENCY, **kwargs,
-        ),
-    )
+    def submit_with_observation():
+        from application.settlement_reporting import settlement_enabled
+        def submit(broker):
+            return submit_order_intent(
+                broker, order_intent, stock_exchange=MARKET_EXCHANGE,
+                stock_currency=MARKET_CURRENCY, **kwargs,
+            )
+        if not settlement_enabled():
+            return submit(ib)
+        from application.order_settlement import SettlementStore, track_submission
+        from notifications.unified_adapter import _RUN
+        source = _RUN.get() or {}
+        wait = float(os.getenv("IBKR_ORDER_SETTLEMENT_WAIT_SECONDS", "5"))
+        if not 0 <= wait <= 30:
+            raise ValueError("settlement_wait_invalid")
+        return track_submission(
+            ib, order_intent, submit=submit,
+            store=SettlementStore(account_execution_session.store,
+                account_id=account_execution_session.account_id, profile=account_execution_session.profile),
+            attempt_id=execution_grant.attempt_id, source_run_id=source.get("run_id"), wait_seconds=wait,
+            observation_ib=ib._ib if isinstance(ib, _SettledCashDeadlineIB) else ib,
+            source_started_at=source.get("started_at"),
+        )
+
+    return account_execution_session.dispatch(execution_grant, order_intent, submit_with_observation)
 
 
 def probe_market_order_write_access(ib):
@@ -1749,12 +1767,36 @@ def _handle_request(
                 execution_window=execution_window,
                 **signal_snapshot,
             )
+        from application.settlement_reporting import settlement_enabled
+        settlement_observation = None
+        if not report.get("dry_run") and settlement_enabled():
+            from application.settlement_route import runtime_settlement_store
+            from application.order_settlement import settlement_summary
+            from application.settlement_reporting import publish_settlement_notices, settlement_candidate
+            from notifications.unified_adapter import event_for, persist_candidate
+            import sys
+            settlement_store = runtime_settlement_store(sys.modules[__name__])
+            settlement_observation = settlement_summary(settlement_store)
+            publish_settlement_notices(settlement_store, settlement_observation,
+                send=send_tg_message, locale=NOTIFY_LANG,
+                publish_candidate=lambda row: settlement_candidate(row, event_factory=event_for, persist=persist_candidate))
         report_summary = _build_cycle_report_summary(
             cycle_result,
             execution_summary,
             reconciliation_record,
             dry_run=bool(report.get("dry_run")),
         )
+        if settlement_observation is not None:
+            current = [row for row in settlement_observation["orders_submitted"]
+                       if row["source_run_id"] == report.get("run_id")]
+            report_summary["settlement_outcomes"] = current
+            # The original execution state remains unchanged. The receipt can
+            # consume this separate, broker-confirmed reporting observation.
+            receipt_summary = {key: [row for row in value if row["source_run_id"] == report.get("run_id")]
+                               for key, value in settlement_observation.items() if isinstance(value, list)}
+            receipt_summary["execution_status"] = ("pending_reconciliation" if receipt_summary["orders_pending"] else "completed")
+        else:
+            receipt_summary = execution_summary
         notification_delivery_log = _build_notification_delivery_log_for_report(
             platform="interactive_brokers",
             strategy_profile=STRATEGY_PROFILE,
@@ -1798,7 +1840,7 @@ def _handle_request(
             report_diagnostics["failure_category"] = "strategy_execution_blocked"
         attach_cycle_execution_receipt(
             report,
-            execution_summary,
+            receipt_summary,
             reconciliation_record,
             execution_failed=execution_failed,
         )
@@ -2081,6 +2123,13 @@ def handle_probe():
     if request.method != "POST":
         return "Method Not Allowed", 405
     return _route_with_runtime_error_fallback(_handle_probe)
+
+
+@app.route("/settle", methods=["POST"])
+def handle_order_settlement():
+    from application.settlement_route import handle_settle
+    import sys
+    return handle_settle(sys.modules[__name__])
 
 
 @app.route("/reconcile", methods=["POST"])

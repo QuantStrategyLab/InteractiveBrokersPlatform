@@ -1056,6 +1056,9 @@ def project_notification_events(records: Sequence[Mapping[str, Any]]) -> dict[st
                                        "executed" if "fill" in kinds else "no_action")
         if business and all(item.get("dry_run") is True for item in business):
             row["execution_mode"] = "dry_run"
+        if any("settlement" in item for item in items):
+            from application.settlement_reporting import project_settlement_rows
+            project_settlement_rows(row, items)
         rows.append(row)
     return {"schema_version": SCHEMA_VERSION, "producer_status": "projected", "runs": rows}
 
