@@ -45,7 +45,10 @@ def is_account_new_risk_gate_enabled() -> bool:
 
 def is_portfolio_loss_stoploss_enabled() -> bool:
     """Read the existing switch; absent or malformed values confer no exit authority."""
-    return str(os.environ.get("PORTFOLIO_LOSS_STOPLOSS_ENABLED", "")).strip().lower() in {"1", "true", "yes", "on"}
+    try:
+        return str(os.environ.get("PORTFOLIO_LOSS_STOPLOSS_ENABLED", "")).strip().lower() in {"1", "true", "yes", "on"}
+    except Exception:
+        return False
 
 
 def _coerce_optional_float(value: object) -> float | None:
@@ -397,12 +400,22 @@ def evaluate_persistent_account_new_risk_admission(
     )
 
 
-def scale_targets_for_admission(target_weights, admission):
-    """A drawdown brake blocks adds; only the enabled stop-loss may scale exits."""
-    breaker_open = admission.hard_brake_triggered or "CIRCUIT_BREAKER_OPEN" in admission.reason_codes
-    if breaker_open and not is_portfolio_loss_stoploss_enabled():
-        return dict(target_weights or {})
-    return apply_combined_scale_to_target_weights(target_weights, admission.combined_scale)
+def scale_targets_for_admission(target_weights, admission, *, snapshot=None):
+    """Exclude drawdown sizing without exit authority; retain capital/vol sizing."""
+    scale = admission.combined_scale
+    if not is_portfolio_loss_stoploss_enabled():
+        # Keep the original admission and persisted OPEN authoritative for buys.
+        # Reuse the same cycle facts, omitting only the drawdown axis for targets.
+        scale = None
+        if snapshot is not None:
+            try:
+                sizing = evaluate_new_risk_admission(replace(
+                    snapshot, peak_equity_usd=None, drawdown_from_peak=None,
+                ))
+                scale = sizing.combined_scale
+            except AccountNewRiskGateError:
+                pass  # Unknown sizing cannot confer exit authority.
+    return apply_combined_scale_to_target_weights(target_weights, scale)
 
 
 def apply_combined_scale_to_target_weights(

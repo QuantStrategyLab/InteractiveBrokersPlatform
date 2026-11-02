@@ -1606,7 +1606,7 @@ def execute_rebalance(
             f"failed={attention_counts.get('failed', 0)}",
             flush=True,
         )
-        target_weights = scale_targets_for_admission(target_weights, admission)
+        target_weights = scale_targets_for_admission(target_weights, admission, snapshot=cycle_snapshot)
         if admission.combined_scale is not None:
             print(
                 f"[Envelope scale] combined_scale={admission.combined_scale} "
