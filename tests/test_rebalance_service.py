@@ -1162,6 +1162,7 @@ def claim_cycle(tmp_path, monkeypatch, strategy_module):
         )
 
     state.run = run
+    state.ib = ib
     return state
 
 
@@ -1341,6 +1342,7 @@ def test_successful_dry_run_orders_are_not_real_trade_notifications():
 @pytest.fixture
 def persistent_runner(claim_cycle, strategy_module, monkeypatch):
     state = claim_cycle
+    monkeypatch.setattr(state.ib, "qualifyContracts", lambda contract: [contract], raising=False)
     state.use_runner_session = True
     receipt = {"attestation_state": "self_attested", "release_id": "synthetic-release",
                "strategy_release": {"strategy_revision": "a" * 40}}

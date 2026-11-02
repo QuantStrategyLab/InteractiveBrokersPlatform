@@ -27,6 +27,18 @@ immediately before `placeOrder`, after claim acquisition, journal reservation
 and contract qualification. Expiry at that boundary raises without calling
 the broker; the existing journal retains the consumed attempt as `UNKNOWN`
 and requires reconciliation rather than retrying or assuming rejection.
+The buy observes matching account/currency `SettledCash` callbacks throughout
+blocking preparation and submission. Qualification finishes before reserving the
+final intent. A lower positive update reduces sizing using the existing reserve,
+buffer and quantity step; the journal and execution summary use that exact
+quantity. Invalid or non-positive updates during preparation reject local
+admission without reserving or placing an order. The prepared contract is reused
+without another blocking qualification after reservation. Any later update that
+invalidates settlement or leaves insufficient funds rejects the final write
+inside dispatch, retaining the consumed attempt as `UNKNOWN`. Later increases
+cannot restore the budget or erase an invalid observation for that buy. Callbacks
+never extend the original deadline or replenish the shared spent budget, and
+temporary observers are removed on success and failure.
 After a sale, only a completed fresh
 settled-cash observation supplies spending authority; projected sale proceeds
 remain telemetry. Dry-run previews do not credit sales as settled cash.

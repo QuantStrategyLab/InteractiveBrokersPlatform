@@ -8,7 +8,7 @@ import math
 import tempfile
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -252,16 +252,102 @@ SETTLED_CASH_REFRESH_TIMEOUT_SECONDS = 10.0
 
 
 class _SettledCashDeadlineIB:
-    """Check this buy's settlement deadline at the SDK's final write boundary."""
+    """Keep settlement restrictions through preparation and the final write."""
 
-    def __init__(self, ib, *, refresh_started):
+    def __init__(self, ib, *, refresh_started, account_id, currency,
+                 buying_power, reserved, quantity_step, minimum_order_notional):
         self._ib = ib
         self._refresh_started = refresh_started
+        self._account_id = account_id
+        self._currency = currency.upper()
+        self.remaining_buying_power = buying_power
+        self._reserved = reserved
+        self._quantity_step = quantity_step
+        self._minimum_order_notional = minimum_order_notional
+        self._invalid = False
+        self._contract = None
+        self.prepared_quantity = None
+
+    def __enter__(self):
+        self._ib.accountValueEvent.connect(self._observe)
+        return self
+
+    def __exit__(self, *_exc):
+        self._ib.accountValueEvent.disconnect(self._observe)
+
+    def _observe(self, row):
+        if (
+            str(getattr(row, "account", "") or "").strip() != self._account_id
+            or str(getattr(row, "currency", "") or "").strip().upper() != self._currency
+            or str(getattr(row, "tag", "") or "").strip() != "SettledCash"
+        ):
+            return
+        # Copy the restriction now: SDK/cache objects can be replaced or mutated.
+        value = _coerce_float(getattr(row, "value", None))
+        now = datetime.now(timezone.utc)
+        invalid = value is None or not math.isfinite(value) or value <= 0
+        invalid = invalid or bool(getattr(row, "stale", False))
+        for field in ("as_of", "observed_at"):
+            stamp = getattr(row, field, None)
+            if stamp is not None and (
+                not isinstance(stamp, datetime) or stamp.tzinfo is None
+                or not 0 <= (now - stamp).total_seconds() <= SETTLED_CASH_MAX_AGE_SECONDS
+            ):
+                invalid = True
+        self._invalid = self._invalid or invalid
+        if not invalid:
+            # Increases never replenish this cycle's shared remaining budget.
+            self.remaining_buying_power = min(
+                self.remaining_buying_power, _investable_buying_power(value, self._reserved),
+            )
+
+    def prepare_intent(self, intent, *, exchange, currency):
+        """Finish blocking qualification, then bind the resized journal intent."""
+        from ib_insync import Stock
+
+        if (not self._account_id or currency.upper() != self._currency
+                or intent.account_id != self._account_id):
+            raise RuntimeError("settled_cash_scope_mismatch")
+        contract = Stock(intent.symbol, exchange, currency)
+        self._ib.qualifyContracts(contract)
+        self._contract = contract
+        quantity = min(intent.quantity, _floor_order_quantity(
+            self.remaining_buying_power * 0.95 / intent.limit_price,
+            quantity_step=self._quantity_step,
+        ))
+        if quantity <= 0 or quantity * intent.limit_price < self._minimum_order_notional:
+            self._invalid = True
+        # No grant exists yet: an invalid update can reject admission locally.
+        if self._invalid:
+            return None
+        self.prepared_quantity = quantity
+        return replace(intent, quantity=quantity)
+
+    def qualifyContracts(self, contract):
+        # The pinned executor qualifies once more. Reuse the prepared contract
+        # without pumping another request after the final intent was reserved.
+        if self._contract is None or any(
+            getattr(contract, field) != getattr(self._contract, field)
+            for field in ("symbol", "secType", "currency", "exchange")
+        ):
+            raise RuntimeError("settled_cash_unprepared_contract")
+        contract.update(self._contract)
+        return [contract]
 
     def __getattr__(self, name):
         return getattr(self._ib, name)
 
     def placeOrder(self, contract, order):
+        if (
+            self._invalid or order.account != self._account_id
+            or order.totalQuantity != self.prepared_quantity
+            or contract.currency.upper() != self._currency
+            or order.action != "BUY" or order.orderType != "LMT"
+            or not math.isfinite(order.totalQuantity) or order.totalQuantity <= 0
+            or not math.isfinite(order.lmtPrice) or order.lmtPrice <= 0
+            or order.totalQuantity * order.lmtPrice > self.remaining_buying_power
+        ):
+            raise RuntimeError("settled_cash_changed: refusing IBKR placeOrder")
         if not 0 <= time.monotonic() - self._refresh_started <= SETTLED_CASH_MAX_AGE_SECONDS:
             # Raise inside session.dispatch: retain its consumed grant and
             # conservative UNKNOWN outcome instead of fabricating a rejection.
@@ -1366,7 +1452,10 @@ def execute_rebalance(
                 raise RuntimeError("IBKR execution claim required; refusing broker submission")
             # Shadow consult after successful claim; deny must not block submit.
             consult_t1_live_submit(identity_held=True, dry_run_bypass=False)
-            grant = account_execution_session.reserve(order_intent)
+            # The venue wrapper finishes blocking preparation and resizing before
+            # reserving the exact cash-buy intent. Other paths keep their grant.
+            grant = (None if isinstance(ib, _SettledCashDeadlineIB)
+                     else account_execution_session.reserve(order_intent))
             return delegate_submit(
                 ib, order_intent, account_execution_session=account_execution_session,
                 execution_grant=grant, **kwargs,
@@ -2351,18 +2440,28 @@ def execute_rebalance(
                 trade_logs.append(f"DRY_RUN buy {symbol} {format_quantity(qty)} @{limit_price:.2f}")
                 investable_buying_power -= qty * limit_price
                 continue
-            report = submit_order_intent(
-                _SettledCashDeadlineIB(ib, refresh_started=refresh_started) if cash_only_execution else ib,
-                order_intent_cls(
-                    symbol=symbol,
-                    side="buy",
-                    quantity=qty,
-                    order_type="limit",
-                    limit_price=limit_price,
-                    time_in_force="DAY",
-                    account_id=order_account_id,
-                ),
+            intent = order_intent_cls(
+                symbol=symbol,
+                side="buy",
+                quantity=qty,
+                order_type="limit",
+                limit_price=limit_price,
+                time_in_force="DAY",
+                account_id=order_account_id,
             )
+            if cash_only_execution:
+                with _SettledCashDeadlineIB(
+                    ib, refresh_started=refresh_started, account_id=order_account_id,
+                    currency=market_currency, buying_power=investable_buying_power,
+                    reserved=reserved, quantity_step=order_quantity_step,
+                    minimum_order_notional=minimum_order_notional,
+                ) as settled_ib:
+                    report = submit_order_intent(settled_ib, intent)
+                    investable_buying_power = min(investable_buying_power, settled_ib.remaining_buying_power)
+                    if settled_ib.prepared_quantity is not None:
+                        qty = settled_ib.prepared_quantity
+            else:
+                report = submit_order_intent(ib, intent)
             status = str(getattr(report, "status", "") or "")
             order_payload = {
                 "symbol": symbol,
