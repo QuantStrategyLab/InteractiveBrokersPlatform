@@ -1,4 +1,5 @@
 """Full execution entrypoint with synthetic authority and in-memory order IO."""
+from tests.synthetic_account_refresh import SyntheticAccountRefresh
 from datetime import datetime
 from types import SimpleNamespace as NS
 from zoneinfo import ZoneInfo
@@ -10,7 +11,7 @@ from quant_platform_kit.common.models import OrderIntent
 from tests.conftest import synthetic_account_submission
 
 
-class FakeIB:
+class FakeIB(SyntheticAccountRefresh):
     """No SDK, connections, secrets or real broker implementation."""
     def __init__(self, mode, symbol):
         self.symbol = symbol
@@ -38,7 +39,7 @@ class FakeIB:
         return []
 
     def accountValues(self):
-        return [NS(account="DU00000003", tag="CashBalance", currency="USD", value="1000")]
+        return [NS(account="DU00000003", tag="CashBalance", currency="USD", value="1000"), NS(account="DU00000003", tag="SettledCash", currency="USD", value="1000")]
 
 
 @pytest.fixture

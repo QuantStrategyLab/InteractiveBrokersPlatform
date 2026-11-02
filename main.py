@@ -105,6 +105,7 @@ from application.ibkr_portfolio import (
     fetch_portfolio_snapshot,
 )
 from application.execution_service import (
+    _SettledCashDeadlineIB,
     check_order_submitted as application_check_order_submitted,
     execute_rebalance as application_execute_rebalance,
     get_market_prices as application_get_market_prices,
@@ -603,6 +604,20 @@ def submit_market_order_intent(
             or account_execution_session.broker != "ibkr"
             or account_execution_session.contract_version != "account_submission.v1"):
         raise RuntimeError("IBKR account submission session/contract required")
+    if isinstance(ib, _SettledCashDeadlineIB) and execution_grant is None:
+        prepared = ib.prepare_intent(
+            order_intent, exchange=MARKET_EXCHANGE, currency=MARKET_CURRENCY,
+        )
+        if prepared is None:
+            from quant_platform_kit.common.models import ExecutionReport
+
+            return ExecutionReport(
+                symbol=order_intent.symbol, side=order_intent.side,
+                quantity=order_intent.quantity, status="rejected",
+                raw_payload={"detail": "settled_cash_changed_before_reservation"},
+            )
+        order_intent = prepared
+        execution_grant = account_execution_session.reserve(order_intent)
     return account_execution_session.dispatch(
         execution_grant, order_intent,
         lambda: submit_order_intent(

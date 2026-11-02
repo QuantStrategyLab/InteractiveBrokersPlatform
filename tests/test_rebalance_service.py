@@ -1,3 +1,4 @@
+from tests.synthetic_account_refresh import SyntheticAccountRefresh, with_synthetic_account_refresh
 import json
 from dataclasses import replace
 from types import SimpleNamespace
@@ -1068,11 +1069,12 @@ def claim_cycle(tmp_path, monkeypatch, strategy_module):
         },
         "allocation": _weight_allocation({"VOO": 0.5}, risk_symbols=("VOO",)),
     }
-    ib = SimpleNamespace(
+    ib = with_synthetic_account_refresh(SimpleNamespace(
         isConnected=lambda: True, disconnect=lambda: None,
         openTrades=lambda: [], reqAllOpenOrders=lambda: [], fills=lambda: [],
-        accountValues=lambda: [SimpleNamespace(tag="CashBalance", currency="USD", value="1000", account="DU00000003")],
-    )
+        accountValues=lambda: [SimpleNamespace(tag="CashBalance", currency="USD", value="1000", account="DU00000003"),
+                               SimpleNamespace(tag="SettledCash", currency="USD", value="1000", account="DU00000003")],
+    ))
     config = IBKRRebalanceConfig(
         translator=_build_test_translator(), separator="---",
         strategy_profile="global_etf_rotation", execution_state_account_scope="PAPER",
@@ -1160,6 +1162,7 @@ def claim_cycle(tmp_path, monkeypatch, strategy_module):
         )
 
     state.run = run
+    state.ib = ib
     return state
 
 
@@ -1339,6 +1342,7 @@ def test_successful_dry_run_orders_are_not_real_trade_notifications():
 @pytest.fixture
 def persistent_runner(claim_cycle, strategy_module, monkeypatch):
     state = claim_cycle
+    monkeypatch.setattr(state.ib, "qualifyContracts", lambda contract: [contract], raising=False)
     state.use_runner_session = True
     receipt = {"attestation_state": "self_attested", "release_id": "synthetic-release",
                "strategy_release": {"strategy_revision": "a" * 40}}
