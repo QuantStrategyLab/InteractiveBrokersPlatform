@@ -1,0 +1,82 @@
+name: Artifact Registry maintenance
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Inspect the repository or apply the reviewed six-policy repair
+        type: choice
+        required: true
+        default: inspect
+        options: [inspect, repair]
+      dry_run:
+        description: Validate the repair without writing policies
+        type: boolean
+        required: true
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: artifact-registry-maintenance
+  cancel-in-progress: false
+
+jobs:
+  maintain:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    environment: ibkr-live
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Validate and mask protected configuration
+        env:
+          IBKR_GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          CLOUD_RUN_REGION: ${{ secrets.CLOUD_RUN_REGION }}
+          IBKR_AR_CANDIDATE_DIGEST: ${{ secrets.IBKR_AR_CANDIDATE_DIGEST }}
+        run: |
+          python3 - <<'PYCONFIG'
+          import os
+          import re
+          import sys
+          names = ("IBKR_GCP_PROJECT_ID", "IBKR_DEPLOY_SERVICE_ACCOUNT",
+                   "GCP_WORKLOAD_IDENTITY_PROVIDER", "CLOUD_RUN_REGION", "IBKR_AR_CANDIDATE_DIGEST")
+          values = {name: os.environ.get(name, "") for name in names}
+          if any(not value or "\n" in value or "\r" in value for value in values.values()):
+              sys.exit("Protected maintenance configuration is missing or invalid")
+          for value in values.values():
+              print("::add-mask::" + value)
+          # Register project numbers and service-account components before auth logs.
+          provider = values["GCP_WORKLOAD_IDENTITY_PROVIDER"]
+          account = values["IBKR_DEPLOY_SERVICE_ACCOUNT"]
+          match = re.fullmatch(r"projects/(\d+)/locations/global/workloadIdentityPools/[^/]+/providers/[^/]+", provider)
+          if not match or not re.fullmatch(r"[a-z][a-z0-9-]*@[a-z][a-z0-9-]*\.iam\.gserviceaccount\.com", account):
+              sys.exit("Protected WIF binding is malformed")
+          for value in (match[1], *provider.split("/")[5::2], account.split("@")[0], account.split("@")[1].split(".")[0], values["IBKR_AR_CANDIDATE_DIGEST"].removeprefix("sha256:")):
+              print("::add-mask::" + value)
+          if not re.fullmatch(r"sha256:[0-9a-f]{64}", values["IBKR_AR_CANDIDATE_DIGEST"]):
+              sys.exit("Protected candidate digest is malformed")
+          with open(os.environ["GITHUB_ENV"], "a") as handle:
+              for name, value in values.items():
+                  handle.write(name + "=" + value + "\n")
+          PYCONFIG
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          project_id: ${{ secrets.IBKR_GCP_PROJECT_ID }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Inspect or repair with verified readback
+        env:
+          MAINTENANCE_MODE: ${{ inputs.mode }}
+          MAINTENANCE_DRY_RUN: ${{ inputs.dry_run }}
+        run: python3 -m scripts.artifact_registry_maintenance --mode "$MAINTENANCE_MODE" --dry-run "$MAINTENANCE_DRY_RUN"

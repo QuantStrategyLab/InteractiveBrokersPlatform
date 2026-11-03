@@ -1,0 +1,62 @@
+[
+  {
+    "name": "keep-current-pending-two-rollback",
+    "action": {
+      "type": "Keep"
+    },
+    "condition": {
+      "tagState": "any",
+      "versionNamePrefixes": [
+        "sha256:"
+      ]
+    }
+  },
+  {
+    "name": "keep-newest-ten-per-package",
+    "action": {
+      "type": "Keep"
+    },
+    "mostRecentVersions": {
+      "keepCount": 10
+    }
+  },
+  {
+    "name": "keep-recent-2-per-package",
+    "action": {
+      "type": "Keep"
+    },
+    "mostRecentVersions": {
+      "keepCount": 2
+    }
+  },
+  {
+    "name": "delete-aged-tagged",
+    "action": {
+      "type": "Delete"
+    },
+    "condition": {
+      "tagState": "tagged",
+      "olderThan": "2592000s"
+    }
+  },
+  {
+    "name": "delete-aged-untagged",
+    "action": {
+      "type": "Delete"
+    },
+    "condition": {
+      "tagState": "untagged",
+      "olderThan": "604800s"
+    }
+  },
+  {
+    "name": "delete-untagged-after-14d",
+    "action": {
+      "type": "Delete"
+    },
+    "condition": {
+      "tagState": "untagged",
+      "olderThan": "1209600s"
+    }
+  }
+]
