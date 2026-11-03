@@ -63,10 +63,35 @@ def test_workflow_variables_are_checked_before_cloud_actions():
             assert names and names <= variable_names
             code = guard.split("        run: |\n", 1)[1]
             code = "\n".join(line[10:] for line in code.splitlines())
-            configured = {name: "synthetic" for name in names}
+            global_env = text.split("\nenv:\n", 1)[1].split("\njobs:\n", 1)[0] if "\nenv:\n" in text else ""
+            inherited = set(re.findall(r"^  ([A-Z_]+): \$\{\{ vars\.[A-Z_]+ \}\}$", global_env, re.MULTILINE))
+            configured = {name: "synthetic" for name in names | inherited}
             result = subprocess.run(["/bin/bash", "-c", code], env=configured, capture_output=True, text=True)
             assert result.returncode == 0
             for name in names:
                 result = subprocess.run(["/bin/bash", "-c", code], env={k: v for k, v in configured.items() if k != name}, capture_output=True, text=True)
                 assert result.returncode == 2
                 assert f"{name} is required" in result.stderr
+
+
+@pytest.mark.parametrize("missing_alias", [
+    "GCP_PROJECT_ID", "GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT",
+    "GCP_RUNTIME_SERVICE_ACCOUNT", "GCP_SCHEDULER_SERVICE_ACCOUNT",
+])
+def test_deploy_preflight_checks_consumed_infrastructure_aliases(missing_alias):
+    root = Path(__file__).resolve().parents[1]
+    text = (root / ".github/workflows/sync-cloud-run-env-protected.yml").read_text()
+    global_env = text.split("\nenv:\n", 1)[1].split("\njobs:\n", 1)[0]
+    guard = text.split("      - name: Require infrastructure variables\n", 1)[1].split("\n      - ", 1)[0]
+    # Resolve the workflow and step bindings together, as the runner does.
+    bindings = dict(re.findall(r"^\s+([A-Z_]+): \$\{\{ vars\.([A-Z_]+) \}\}$", global_env + guard, re.MULTILINE))
+    configured = {name: "synthetic" for name in bindings}
+    assert missing_alias in configured
+    code = guard.split("        run: |\n", 1)[1]
+    code = "\n".join(line[10:] for line in code.splitlines())
+    result = subprocess.run(["/bin/bash", "-c", code], env=configured, capture_output=True, text=True)
+    assert result.returncode == 0
+    configured[missing_alias] = ""
+    result = subprocess.run(["/bin/bash", "-c", code], env=configured, capture_output=True, text=True)
+    assert result.returncode == 2
+    assert f"{missing_alias} is required" in result.stderr

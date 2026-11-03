@@ -345,7 +345,7 @@ gcloud run services logs read interactive-brokers-quant-service \
 
 ## Configuration
 
-Set these non-secret repository variables before running the affected workflows. For standalone Python commands, export the same names as environment variables. Workflows reject missing values before cloud access.
+Set these non-secret repository variables before running the affected workflows. For standalone Python commands, export the same names as environment variables. Workflows reject missing values before cloud access. The Cloud Run deploy preflight also checks the resolved `GCP_*` aliases used by authentication and deployment, in addition to the `IBKR_*` inputs. The signal-prefix allowlist is deployment validation configuration; setting it does not require syncing the service environment.
 
 | Variable | Purpose | Required | Default |
 |---|---|---|---|
