@@ -24,7 +24,7 @@ def verify_target_continuity(target: Mapping[str, Any]) -> str:
 
 def verify_traffic_revision(
     revision: Mapping[str, Any], *, expected_revision: str, expected_commit: str | None,
-    allow_cold_enabled: bool = False,
+    allow_cold_enabled: bool = False, require_startup_health: bool = False,
 ) -> None:
     """Validate revision health and narrowly admit eligible cold retired candidates.
 
@@ -35,6 +35,11 @@ def verify_traffic_revision(
     if metadata.get("name") != expected_revision or (metadata.get("labels") or {}).get("commit-sha") != expected_commit:
         raise ValueError("traffic candidate revision identity does not match")
     rows = revision.get("status", {}).get("conditions", [])
+    if require_startup_health:
+        critical = [row for row in rows if row.get("type") in {"Ready", "ContainerHealthy", "ContainerReady"}]
+        if (len({row.get("type") for row in critical}) != len(critical)
+                or any(row.get("status") == "False" for row in critical)):
+            raise ValueError("traffic candidate startup probe conditions are failed or ambiguous")
     conditions = {
         item.get("type"): item.get("status")
         for item in rows
@@ -59,7 +64,7 @@ def verify_traffic_revision(
                 for kind in ("Ready", "Active"))
     )
     if conditions.get("Ready") != "True" or not (
-        conditions.get("ContainerHealthy") == "True" or retired_disabled
+        conditions.get("ContainerHealthy") == "True" or (retired_disabled and not require_startup_health)
     ):
         raise ValueError("traffic candidate has not passed its application startup probe")
     probe = container.get("startupProbe") or {}

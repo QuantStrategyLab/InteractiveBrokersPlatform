@@ -323,13 +323,15 @@ def load_targets(*, env: Mapping[str, str]) -> list[RuntimeTarget]:
     return _dedupe_targets(targets)
 
 
-def _run(args: Sequence[str], *, json_output: bool = False, dry_run: bool = False) -> Any:
+def _run(args: Sequence[str], *, json_output: bool = False, dry_run: bool = False,
+         timeout: float | None = None) -> Any:
     printable = " ".join(args)
     if dry_run:
         print(f"DRY-RUN {printable}")
         return {} if json_output else ""
     completed = subprocess.run(
         list(args),
+        timeout=timeout,
         check=False,
         text=True,
         stdout=subprocess.PIPE,
@@ -500,6 +502,85 @@ def _verify_switch_candidate_with_wait(candidate: Mapping[str, Any], *, project:
                              json_output=True, dry_run=False)
 
 
+def _verify_deploy_candidate_with_wait(candidate: Mapping[str, Any], *, project: str, region: str,
+                                       service_name: str, service: Mapping[str, Any],
+                                       revision: str, commit: str | None) -> None:
+    """Read only: qualify a warmed revision within 300s, keeping old traffic fixed.
+
+    Each invocation starts from fresh cloud state; no persisted success is trusted.
+    This observation guard is not a Cloud Run compare-and-set traffic lock.
+    """
+    from scripts.runtime_target_continuity import verify_traffic_revision
+
+    def identity(value: Mapping[str, Any]) -> str:
+        if not isinstance(value, Mapping):
+            raise ReconcileError("candidate health readback is invalid")
+        meta = value.get("metadata") or {}
+        return json.dumps({"metadata": {key: meta.get(key) for key in
+                           ("name", "uid", "creationTimestamp", "labels", "annotations")},
+                           "spec": value.get("spec"),
+                           "imageDigest": value.get("status", {}).get("imageDigest")}, sort_keys=True)
+
+    original = identity(candidate)
+    warmed = (candidate.get("metadata", {}).get("annotations") or {}).get("autoscaling.knative.dev/minScale") == "1"
+    if not warmed or _traffic_on_revision(service, revision):
+        verify_traffic_revision(candidate, expected_revision=revision, expected_commit=commit,
+                                require_startup_health=True)
+        return
+    baseline = json.dumps({"spec": service.get("spec", {}).get("traffic"),
+                           "status": service.get("status", {}).get("traffic")}, sort_keys=True)
+    traffic = service.get("status", {}).get("traffic")
+    if (not isinstance(traffic, list) or not traffic
+            or any(type(row.get("percent", 0)) is not int or row.get("percent", 0) < 0
+                   or not row.get("revisionName") for row in traffic)
+            or sum(row.get("percent", 0) for row in traffic) != 100
+            or any(row.get("revisionName") == revision and row.get("percent", 0) != 0 for row in traffic)):
+        raise ReconcileError("candidate warmup requires known old traffic and zero candidate traffic")
+    deadline = time.monotonic() + 300
+
+    def read(kind: str, name: str) -> Mapping[str, Any]:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ReconcileError("candidate startup health timed out after 300 seconds")
+        try:
+            value = _run(["gcloud", "run", kind, "describe", name,
+                          f"--project={project}", f"--region={region}", "--format=json"],
+                         json_output=True, dry_run=False, timeout=min(30, remaining))
+        except (ReconcileError, subprocess.TimeoutExpired, OSError):
+            raise ReconcileError("candidate warmup cloud read failed") from None
+        if not isinstance(value, Mapping):
+            raise ReconcileError("candidate warmup cloud readback is invalid")
+        return value
+
+    while True:
+        if identity(candidate) != original:
+            raise ReconcileError("candidate identity or configuration changed during warmup")
+        current = read("services", service_name)
+        current_traffic = json.dumps({"spec": current.get("spec", {}).get("traffic"),
+                                     "status": current.get("status", {}).get("traffic")}, sort_keys=True)
+        if (current_traffic != baseline
+                or current.get("status", {}).get("latestCreatedRevisionName") != revision):
+            raise ReconcileError("service traffic or latest candidate changed during warmup")
+        try:
+            verify_traffic_revision(candidate, expected_revision=revision, expected_commit=commit,
+                                    require_startup_health=True)
+            if time.monotonic() >= deadline:
+                raise ReconcileError("candidate startup health timed out after 300 seconds")
+            return
+        except ValueError as exc:
+            if str(exc) != "traffic candidate has not passed its application startup probe":
+                raise
+            conditions = candidate.get("status", {}).get("conditions") or []
+            if any(row.get("type") in {"Ready", "ContainerReady", "ContainerHealthy"}
+                   and row.get("status") == "False" for row in conditions):
+                raise ReconcileError("candidate application startup health explicitly failed") from exc
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ReconcileError("candidate startup health timed out after 300 seconds")
+        time.sleep(min(5, remaining))
+        candidate = read("revisions", revision)
+
+
 def ensure_latest_traffic(
     *,
     project: str,
@@ -513,10 +594,14 @@ def ensure_latest_traffic(
     switch_only: bool = False,
     initial_state_only: bool = False,
     env_sync_service: Mapping[str, Any] | None = None,
+    health_only: bool = False,
+    expected_image_digest: str | None = None,
 ) -> None:
     if env_sync_baseline is not None and (len(targets) != 1 or not env_sync_revision
                                           or not isinstance(env_sync_expected, Mapping) or dry_run):
         raise ReconcileError("env-only traffic requires one target and exact revision evidence")
+    if health_only and (dry_run or env_sync_baseline is not None or not expected_commit):
+        raise ReconcileError("candidate health verification requires exact deployment evidence")
     for target in targets:
         target_region = target.region or region
         if not target_region:
@@ -535,10 +620,17 @@ def ensure_latest_traffic(
             json_output=True,
             dry_run=dry_run,
         )
-        target_revision = env_sync_revision if env_sync_baseline is not None else _resolve_revision_for_commit(
-            project=project, region=target_region, service_name=target.service_name,
-            expected_commit=expected_commit, dry_run=dry_run,
-        )
+        if env_sync_baseline is not None:
+            target_revision = env_sync_revision
+        elif not health_only:
+            target_revision = _resolve_revision_for_commit(
+                project=project, region=target_region, service_name=target.service_name,
+                expected_commit=expected_commit, dry_run=dry_run,
+            )
+        if health_only:
+            target_revision = (service.get("status") or {}).get("latestCreatedRevisionName")
+            if not isinstance(target_revision, str) or not target_revision.startswith(target.service_name + "-"):
+                raise ReconcileError("candidate health verification requires latest revision identity")
         if env_sync_baseline is not None:
             baseline_name = (env_sync_baseline.get("metadata") or {}).get("name")
             if (not isinstance(target_revision, str) or not target_revision.startswith(target.service_name + "-")
@@ -553,6 +645,13 @@ def ensure_latest_traffic(
                 "gcloud", "run", "revisions", "describe", target_revision,
                 f"--project={project}", f"--region={target_region}", "--format=json",
             ], json_output=True, dry_run=False)
+            if expected_image_digest is not None:
+                digest = str((candidate.get("status") or {}).get("imageDigest") or "").split("@")[-1]
+                if digest != expected_image_digest:
+                    raise ReconcileError("candidate image digest does not match deployment evidence")
+            if health_only and any(row.get("revisionName") == target_revision and row.get("percent", 0) != 0
+                                   for row in service.get("status", {}).get("traffic", [])):
+                raise ReconcileError("health-only verification requires zero candidate traffic")
             candidate_commit = expected_commit
             if env_sync_baseline is not None:
                 candidate_commit = (env_sync_baseline.get("metadata") or {}).get("labels", {}).get("commit-sha")
@@ -607,9 +706,16 @@ def ensure_latest_traffic(
                 if switch_only and env_sync_expected.get("RUNTIME_TARGET_ENABLED") == "true":
                     _verify_switch_candidate_with_wait(candidate, project=project, region=target_region,
                                                        revision=target_revision, commit=candidate_commit)
+                elif env_sync_baseline is None:
+                    _verify_deploy_candidate_with_wait(candidate, project=project, region=target_region,
+                                                       service_name=target.service_name, service=service,
+                                                       revision=target_revision, commit=candidate_commit)
                 else:
                     verify_traffic_revision(candidate, expected_revision=target_revision, expected_commit=candidate_commit)
 
+        if health_only:
+            print("No-traffic candidate Ready and ContainerHealthy verified; traffic unchanged.")
+            continue
         if not _traffic_on_revision(service if isinstance(service, Mapping) else {}, target_revision):
             if initial_state_only:
                 _adopt_initial_candidate(service, project=project, region=target_region, candidate_revision=target_revision)
@@ -754,6 +860,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--scheduler-location", default=os.environ.get("CLOUD_SCHEDULER_LOCATION", ""))
     parser.add_argument("--expected-commit", default=os.environ.get("GITHUB_SHA", ""))
     parser.add_argument("--ensure-latest-traffic", action="store_true")
+    parser.add_argument("--verify-candidate-health-only", action="store_true")
+    parser.add_argument("--expected-image-digest", default=None)
     parser.add_argument("--env-sync-evidence-dir", default="")
     parser.add_argument("--runtime-switch-only", action="store_true")
     parser.add_argument("--initial-state-only", action="store_true")
@@ -764,6 +872,9 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
+    if args.verify_candidate_health_only and (args.ensure_latest_traffic or args.delete_legacy_schedulers
+            or args.env_sync_evidence_dir or args.runtime_switch_only or args.initial_state_only or args.dry_run):
+        raise ReconcileError("candidate health-only mode cannot perform mutations or use env-sync evidence")
     if args.initial_state_only and (args.runtime_switch_only or not args.env_sync_evidence_dir):
         raise ReconcileError("initial state requires exclusive exact revision evidence")
     if not args.project:
@@ -771,8 +882,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     targets = load_targets(env=os.environ)
     if not targets:
         raise ReconcileError("No Cloud Run targets resolved from SYNC_PLAN_JSON, CLOUD_RUN_SERVICE_TARGETS_JSON, or CLOUD_RUN_SERVICE")
-    if args.ensure_latest_traffic:
+    if args.ensure_latest_traffic or args.verify_candidate_health_only:
         extra = {}
+        if args.verify_candidate_health_only:
+            extra = {"health_only": True, "expected_image_digest": args.expected_image_digest}
         if args.env_sync_evidence_dir:
             from pathlib import Path
             directory = Path(args.env_sync_evidence_dir)

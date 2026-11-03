@@ -867,8 +867,19 @@ jobs:
             "${rollback_args[@]}"
           echo "image_digest=${image_digest}" >> "${GITHUB_OUTPUT}"
 
+          candidate_warmup_args=()
+          if [[ "${WORKFLOW_TARGET:-configured}" == "configured" ]]; then
+            if [[ "${#target_services[@]}" -ne 1 || "${target_services[0]}" != "${INPUT_CONFIGURED_SERVICE:-}" ]]; then
+              echo "Candidate warmup requires one exact configured target." >&2
+              exit 1
+            fi
+            # Revision-level minimum only; no service-level scaling or traffic change.
+            # Execution requires separate owner approval for warmup spend and redeploy.
+            candidate_warmup_args=(--min-instances=1)
+          fi
           for cloud_run_service in "${target_services[@]}"; do
-            gcloud run deploy "${cloud_run_service}" \
+            timeout 360s gcloud run deploy "${cloud_run_service}" \
+              "${candidate_warmup_args[@]}" \
               --project="${GCP_PROJECT_ID}" \
               --region="${CLOUD_RUN_REGION}" \
               --platform=managed \
@@ -890,6 +901,22 @@ jobs:
               --startup-probe="httpGet.path=/health,httpGet.port=8080,periodSeconds=10,timeoutSeconds=5,failureThreshold=24" \
               --quiet
           done
+
+      - name: Verify no-traffic candidate startup health
+        if: steps.config.outputs.deploy_enabled == 'true'
+        env:
+          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
+          EXPECTED_IMAGE_DIGEST: ${{ steps.deploy.outputs.image_digest }}
+        run: |
+          set -euo pipefail
+          if [ -n "${IBKR_INITIAL_SYNC_PLAN_PATH:-}" ]; then export SYNC_PLAN_JSON="$(cat "$IBKR_INITIAL_SYNC_PLAN_PATH")"; fi
+          timeout 360s uv run --no-sync python scripts/reconcile_cloud_runtime.py \
+            --platform=ibkr \
+            --project="${GCP_PROJECT_ID}" \
+            --region="${CLOUD_RUN_REGION}" \
+            --expected-commit="${SOURCE_COMMIT}" \
+            --expected-image-digest="${EXPECTED_IMAGE_DIGEST}" \
+            --verify-candidate-health-only
 
       - name: Summarize build-time UES binding coverage
         continue-on-error: true

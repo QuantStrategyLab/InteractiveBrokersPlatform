@@ -293,6 +293,8 @@ gcloud storage buckets add-iam-policy-binding "gs://run-sources-${PROJECT_ID}-${
    - 标准路径是 `Deploy Cloud Run` workflow；`configured` 必须提供精确的 `configured_service`，禁止默认扫全部 inventory。
    - `workflow_dispatch` 必须从 `refs/heads/main` 调用可信 workflow。可选 `source_commit` 仅接受本仓库已存在的完整 40 位 SHA；未传时沿用 workflow SHA。镜像构建使用单独检出的源码，并以实际源码 SHA 标记镜像、revision 与部署读回。workflow 自身仍由 GitHub 的 main ref admission 约束，不更换 WIF provider。
    - 镜像发布与 env 同步默认 `--no-traffic`：只准备候选 revision，不改当前流量。
+   - `configured` 镜像发布仅为精确选中的候选 revision 设置 `--min-instances=1`，不修改 service 全局 scaling；单次 deploy 上限 360 秒。切流前最多等待 300 秒，必须同时读到 `Ready=True` 和 `ContainerHealthy=True`；Retired 不代替启动健康。等待期间 revision、commit、image digest、配置、原流量和 latest candidate 漂移，以及查询失败、显式不健康或超时都会停止。单次查询最多 30 秒。
+   - 预热实例费用和每次准确目标的重新部署需另行获得 owner 授权。超时不会自动重试、切流或清除 revision minimum；候选最小实例配置的后续处置也需 owner 决定。离线测试不证明云端一定会启动零流量候选。
    - 只更新已批准目标的镜像时，明确设置 `deploy_image=true`、`sync_env=false`；只同步配置则设置 `deploy_image=false`、`sync_env=true`。两项仍受仓库级部署/同步开关约束，且必须指定精确 `configured_service`。这样通知等纯代码发布不会顺带改 Secret、运行开关或 Scheduler。
    - `approve_traffic_shift` / `approve_scheduler_sync` 默认 `false`；显式打开后才切流量或启停 Scheduler，并做读回失败停止。
    - Scheduler 同步时，主执行与预热任务按 `standard_execution_enabled` 启停；独立 precheck 仅在 `drill_precheck_enabled=true` 时启用。主执行开启、drill 关闭时，precheck 保持暂停或被暂停。
