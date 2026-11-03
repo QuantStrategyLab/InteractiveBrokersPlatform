@@ -17,6 +17,38 @@ def settlement_enabled(env=None):
     return value in {'true', '1'}
 
 
+def settlement_receipt_summary(execution_summary, observation):
+    """Amend the receipt only with complete coverage of original stock facts.
+
+    The store does not track option orders or pre-submission cycle decisions.
+    Missing identities/coverage retain the original uncertainty and outcome.
+    """
+    baseline = dict(execution_summary)
+    if (baseline.get('execution_status') not in {'executed', 'completed', 'pending_reconciliation'}
+            or any(value for key, value in baseline.items() if key.startswith('option_orders_'))):
+        return baseline
+    keys = ('orders_submitted', 'orders_pending', 'orders_filled',
+            'orders_partially_filled', 'orders_rejected_or_cancelled')
+    original = [row for key in keys for row in baseline.get(key, ()) or ()]
+    observed = observation['orders_submitted']
+    if not original or not observed:
+        return baseline
+
+    def identity(row):
+        order_id = row.get('broker_order_id')
+        if not order_id or any(row.get(key) is None for key in ('symbol', 'side', 'quantity')):
+            return None
+        return (str(order_id), row['symbol'], row['side'], row['quantity'])
+
+    expected = {identity(row) for row in original}
+    actual = [identity(row) for row in observed]
+    if None in expected or None in actual or len(set(actual)) != len(actual) or expected != set(actual):
+        return baseline
+    baseline.update({key: observation.get(key, []) for key in keys})
+    baseline['execution_status'] = 'pending_reconciliation' if baseline['orders_pending'] else 'completed'
+    return baseline
+
+
 def settled_notice(row, *, locale='en'):
     zh = locale in {'zh', 'zh-CN'}
     identity = mask_identifier(row.get('broker_order_id'))

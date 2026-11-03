@@ -76,3 +76,9 @@ and any scheduled/manual production invocation. A scheduler change requires its
 own explicit approval. Paper/runtime observation and real Telegram/digest delivery
 remain unproven by the fake-only tests. Live trading, Kelly and stop-loss settings
 are not enabled or modified by this feature.
+
+The cycle receipt retains its original execution facts when settlement coverage
+is empty or incomplete. Settlement may amend stock facts only when the broker
+order ID, symbol, side and quantity cover every original stock order. Untracked
+option orders and blocked/error/no-op cycle outcomes retain their original receipt
+baseline; a stock-only settlement subset cannot establish their completion.

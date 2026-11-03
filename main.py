@@ -1772,7 +1772,9 @@ def _handle_request(
         if not report.get("dry_run") and settlement_enabled():
             from application.settlement_route import runtime_settlement_store
             from application.order_settlement import settlement_summary
-            from application.settlement_reporting import publish_settlement_notices, settlement_candidate
+            from application.settlement_reporting import (
+                publish_settlement_notices, settlement_candidate, settlement_receipt_summary,
+            )
             from notifications.unified_adapter import event_for, persist_candidate
             import sys
             settlement_store = runtime_settlement_store(sys.modules[__name__])
@@ -1792,9 +1794,9 @@ def _handle_request(
             report_summary["settlement_outcomes"] = current
             # The original execution state remains unchanged. The receipt can
             # consume this separate, broker-confirmed reporting observation.
-            receipt_summary = {key: [row for row in value if row["source_run_id"] == report.get("run_id")]
-                               for key, value in settlement_observation.items() if isinstance(value, list)}
-            receipt_summary["execution_status"] = ("pending_reconciliation" if receipt_summary["orders_pending"] else "completed")
+            receipt_observation = {key: [row for row in value if row["source_run_id"] == report.get("run_id")]
+                                   for key, value in settlement_observation.items() if isinstance(value, list)}
+            receipt_summary = settlement_receipt_summary(execution_summary, receipt_observation)
         else:
             receipt_summary = execution_summary
         notification_delivery_log = _build_notification_delivery_log_for_report(
