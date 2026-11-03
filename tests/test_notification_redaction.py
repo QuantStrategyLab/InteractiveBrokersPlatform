@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import pytest
 
-import test_unified_notification_adapter as original
+from tests import test_unified_notification_adapter as original
 from notifications import unified_adapter as adapter
 from notifications.events import NotificationPublisher, RenderedNotification
 
