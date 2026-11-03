@@ -116,7 +116,8 @@ def test_configured_service_selects_one_target_and_all_downstream_sources(tmp_pa
     scoped_env["SYNC_PLAN_JSON"] = json.dumps(plan)
     assert [target.service_name for target in load_targets(env=scoped_env)] == ["service-b"]
     assert plan["targets"][0]["env"] == {"RUNTIME_TARGET_ENABLED": "false"}
-    assert result.stdout == ""
+    assert result.stdout.splitlines()
+    assert all(line.startswith("::add-mask::") for line in result.stdout.splitlines())
 
 
 def test_configured_service_rejects_unmatched_duplicate_or_noninventory(tmp_path, monkeypatch) -> None:

@@ -394,6 +394,12 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
+      # Register derived leaves as well as whole JSON bindings before cloud tools
+      # or subsequent steps can render them. This helper has no dependencies.
+      - name: Mask sync identifiers
+        if: steps.config.outputs.enabled == 'true'
+        run: python scripts/mask_sync_identifiers.py
+
       - name: Checkout selected image source
         if: steps.config.outputs.deploy_enabled == 'true'
         uses: actions/checkout@v6
@@ -575,7 +581,10 @@ jobs:
           import re
           from pathlib import Path
 
+          from scripts.mask_sync_identifiers import mask_identifiers
+
           plan = json.loads(os.environ["SYNC_PLAN_JSON"])
+          mask_identifiers(plan)
           selected = os.environ.get("INPUT_CONFIGURED_SERVICE", "")
           if os.environ.get("WORKFLOW_TARGET", "configured") == "configured":
               if not selected:
