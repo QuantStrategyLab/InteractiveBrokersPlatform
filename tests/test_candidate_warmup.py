@@ -10,13 +10,13 @@ from scripts.runtime_target_continuity import verify_traffic_revision
 
 def candidate():
     return {
-        "metadata": {"name": "unit-service-new", "labels": {"commit-sha": "abc"},
+        "metadata": {"name": "unit-service-new", "generation": 1, "labels": {"commit-sha": "abc"},
                      "annotations": {"autoscaling.knative.dev/minScale": "1"}},
         "spec": {"containers": [{"image": "fake@sha256:abc",
             "startupProbe": {"httpGet": {"path": "/health", "port": 8080}},
             "env": [{"name": "RUNTIME_TARGET_ENABLED", "value": "true"},
                     {"name": "RUNTIME_TARGET_JSON", "value": "{}"}]}]},
-        "status": {"imageDigest": "sha256:abc", "conditions": [
+        "status": {"observedGeneration": 1, "imageDigest": "sha256:abc", "conditions": [
             {"type": "Ready", "status": "True", "reason": "Retired"},
             {"type": "Active", "status": "False", "reason": "Retired"},
             {"type": "ContainerReady", "status": "True"}]}}
@@ -112,7 +112,7 @@ def test_integration_waits_without_traffic_then_routes_only_when_requested(healt
         rcr.ensure_latest_traffic(project="<PROJECT_ID>", region="unit-region",
             targets=[rcr.RuntimeTarget("unit-service")], expected_commit="abc", dry_run=False,
             **({"health_only": True, "expected_image_digest": "sha256:abc"} if health_only else {}))
-    assert len(reads) == 2
+    assert len(reads) == 4
     assert len(writes) == (0 if health_only else 1)
 
 

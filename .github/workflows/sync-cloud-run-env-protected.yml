@@ -912,7 +912,6 @@ jobs:
       - name: Verify no-traffic candidate startup health
         if: steps.config.outputs.deploy_enabled == 'true'
         env:
-          SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}
           EXPECTED_IMAGE_DIGEST: ${{ steps.deploy.outputs.image_digest }}
         run: |
           set -euo pipefail

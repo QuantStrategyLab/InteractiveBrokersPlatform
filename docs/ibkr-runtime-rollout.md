@@ -369,3 +369,11 @@ identities use the existing `IBKR_RUNTIME_SERVICE_ACCOUNT` and
 `IBKR_SCHEDULER_SERVICE_ACCOUNT` Secrets. No Variable fallback is used for these
 infrastructure bindings. Every sync plan stays in a mode-0600 runner-private file;
 subsequent steps receive its path rather than raw JSON outputs or step headers.
+
+Candidate warmup now requires two fresh healthy revision observations separated by
+a five-second poll, followed by a final fresh identity and startup-health check.
+The candidate generation must be a positive integer (or its canonical decimal
+string), match observedGeneration, and remain unchanged. Missing or inconsistent
+generation evidence fails closed. Health-only initial and polling reads use
+fixed diagnostics and a maximum 30-second timeout per read. These observations
+do not make traffic promotion an atomic cloud compare-and-set operation.
