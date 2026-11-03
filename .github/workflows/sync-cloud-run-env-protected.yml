@@ -271,7 +271,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in IBKR_DEPLOY_SERVICE_ACCOUNT IBKR_GCP_PROJECT_ID IBKR_RUNTIME_SERVICE_ACCOUNT IBKR_SCHEDULER_SERVICE_ACCOUNT STRATEGY_PLUGIN_ALLOWED_SIGNAL_PREFIXES; do
+          # Validate both repository-variable inputs and the aliases consumed below.
+          for name in IBKR_DEPLOY_SERVICE_ACCOUNT IBKR_GCP_PROJECT_ID IBKR_RUNTIME_SERVICE_ACCOUNT IBKR_SCHEDULER_SERVICE_ACCOUNT STRATEGY_PLUGIN_ALLOWED_SIGNAL_PREFIXES GCP_PROJECT_ID GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT GCP_RUNTIME_SERVICE_ACCOUNT GCP_SCHEDULER_SERVICE_ACCOUNT; do
             if [[ -z "${!name:-}" ]]; then
               echo "::error::$name is required" >&2
               exit 2
