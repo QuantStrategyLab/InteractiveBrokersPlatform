@@ -82,9 +82,10 @@ def test_workflow_scopes_revision_minimum_and_bounded_deploy():
     assert '"${WORKFLOW_TARGET:-configured}" == "configured"' in block
     assert '"${#target_services[@]}" -ne 1' in block
     assert '"${target_services[0]}" != "${INPUT_CONFIGURED_SERVICE:-}"' in block
-    assert 'candidate_warmup_args=(--min-instances=1)' in block
+    assert 'python -m scripts.cloud_run_candidate_warmup' in block
+    assert '--min-instances=1' not in block
     assert 'timeout 360s gcloud run deploy' in block
-    assert '"${candidate_warmup_args[@]}"' in block
+    assert '"${deploy_args[@]}"' in block
     assert '--no-traffic' in block
     assert '--min=' not in block
 
@@ -191,9 +192,10 @@ def test_workflow_executes_minimum_only_for_exact_selected_target(target, servic
     script = """set -eu
     gcloud() { printf '%s\\n' "$@"; }
     timeout() { shift; "$@"; }
+    uv() { if [[ "${*: -1}" == --eligible ]]; then if [[ "$WORKFLOW_TARGET" == configured ]]; then echo true; else echo false; fi; else printf '%s\\n' --tag=cand-aaaaaaaa --min-instances=1; fi; }
     """ + "target_services=(" + " ".join(shlex.quote(value) for value in services) + ")\n"
     script += textwrap.dedent('          candidate_warmup_args=()' + block)
-    env = {**os.environ, "WORKFLOW_TARGET": target, "INPUT_CONFIGURED_SERVICE": selector}
+    env = {**os.environ, "WORKFLOW_TARGET": target, "INPUT_CONFIGURED_SERVICE": selector, "RUNNER_TEMP": "/tmp", "GITHUB_OUTPUT": "/dev/null"}
     for key in ("GCP_PROJECT_ID", "CLOUD_RUN_REGION", "immutable_image", "GCP_RUNTIME_SERVICE_ACCOUNT", "SOURCE_COMMIT", "GITHUB_RUN_ID"):
         env[key] = "fake-value"
     result = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True)

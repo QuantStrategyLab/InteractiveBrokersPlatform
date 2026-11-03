@@ -377,3 +377,74 @@ string), match observedGeneration, and remain unchanged. Missing or inconsistent
 generation evidence fails closed. Health-only initial and polling reads use
 fixed diagnostics and a maximum 30-second timeout per read. These observations
 do not make traffic promotion an atomic cloud compare-and-set operation.
+
+### Exact-target Russell candidate warm-up
+
+The configured Russell image path uses `scripts/cloud_run_candidate_warmup.py`
+for deployment, health qualification, traffic promotion and `finally` cleanup in
+one process. Other profiles keep their existing image deployment path. Warm-up
+requires one exact admitted configured service, image deployment with environment
+sync disabled, and explicit traffic-shift approval. It changes no Scheduler,
+environment, Secret, IAM or runtime execution switch.
+
+The candidate is deployed with `--no-traffic --tag=cand-<source-sha8>
+--min-instances=1`. This is a **revision-level** minimum, never service-level
+`--min`. Google Cloud's **Revisions and minimum instances** section says revision
+minimums start when referenced in a traffic split or assigned a tag; an untagged
+zero-percent revision alone does not establish startup. One minimum instance is
+billed during this warm-up window, including idle time. Missing ContainerHealthy
+remains a hard denial, with bounded fresh readbacks. Raw condition readbacks
+separate absent startup evidence from an observed ContainerHealthy=False probe
+failure. Conditions alone do not establish log absence; the lifecycle readback
+checks for instance log records when startup is unobserved and Active=False.
+
+**Restoring zero creates another revision.** Google Cloud's **Configure
+revision-level minimum instances** and `gcloud run services update
+--min-instances` documentation state that this setting is immutable on a
+revision. Tag removal does not change traffic percentages or the serving
+revision's minimum. The script therefore removes the temporary tag, updates the
+service template with `--min-instances=0 --no-traffic --deploy-health-check`, and
+asserts that the replacement has the same image and container specification,
+minimum zero and unchanged traffic. After a successful initial promotion, this
+replacement must independently pass strict health and continuity checks before
+an explicit **second** guarded traffic migration. The final serving revision is
+the minimum-zero replacement. This is two revisions within one workflow run;
+acceptance must acknowledge that extra revision and traffic effect before
+execution. It is also an M08 deployment prerequisite.
+
+The warm revision remains immutable at configured minimum one. Once untagged and
+non-serving it no longer has the tag/traffic reference that provisions its
+minimum. Do not claim its revision configuration was reset to zero. A later
+rollback to, or tag on, this retained revision would reactivate minimum-one cost;
+include that fact in any separately approved rollback. Keep existing artifact
+KEEP protection and the old serving revision for rollback; this path deletes
+nothing.
+
+Any deploy/health/traffic failure or catchable interrupt enters the same cleanup
+path. Before initial promotion, cleanup preserves the old traffic and creates
+only the minimum-zero replacement. After promotion, a failed replacement create,
+health check, tag removal or readback makes cleanup fail loudly, prints redacted
+raw service/revision readbacks and records `cleanup_failed` in the runner-private
+result. It never routes to an unqualified revision, silently rolls back, retries
+a deployment or reports the template value as a successful serving reset.
+Minimum-one billing **may remain on cleanup failure** and needs owner response;
+normal success limits it to the warm-up window. SIGKILL, lost runner and provider
+outage cannot be guaranteed recoverable by a process-local `finally`. Retained
+state blocks automatic replay after restart. Preserve the failed attempt and
+reconcile it through the existing authorized operator path rather than rerunning
+it. Cloud read/compare guards are not an atomic Cloud Run compare-and-set.
+
+Treat deployment as successful only when all six have actual evidence:
+
+1. Production logs no longer show the `cash_reserve_ratio` TypeError.
+2. The final revision emitted a real heartbeat or snapshot; startup alone is insufficient.
+3. The final minimum-zero replacement carries 100% of service traffic.
+4. The prior revision no longer serves traffic and remains retained under KEEP for rollback.
+5. The temporary candidate tag is absent.
+6. Service-template and final serving-revision readbacks show minimum instances 0.
+
+These are execution acceptance criteria, not claims established by offline tests.
+Official references: [Minimum instances](https://cloud.google.com/run/docs/configuring/min-instances),
+[service update flags](https://cloud.google.com/sdk/gcloud/reference/run/services/update),
+[traffic tags](https://cloud.google.com/sdk/gcloud/reference/run/services/update-traffic),
+and [revision conditions](https://cloud.google.com/run/docs/reference/rest/v2/Condition).

@@ -467,7 +467,7 @@ def _resolve_revision_for_commit(
 def _verify_switch_candidate_with_wait(candidate: Mapping[str, Any], *, project: str, region: str,
                                        revision: str, commit: str | None) -> None:
     """Wait read-only for the exact switch candidate to settle before routing."""
-    from scripts.runtime_target_continuity import verify_traffic_revision
+    from scripts.runtime_target_continuity import StartupHealthPending, verify_traffic_revision
 
     from scripts.deploy_notification_only import metadata as normalized_metadata
 
@@ -489,7 +489,7 @@ def _verify_switch_candidate_with_wait(candidate: Mapping[str, Any], *, project:
                                     allow_cold_enabled=True)
             return
         except ValueError as exc:
-            if str(exc) != "traffic candidate has not passed its application startup probe":
+            if not isinstance(exc, StartupHealthPending):
                 raise
             conditions = candidate.get("status", {}).get("conditions", [])
             if any(row.get("type") in {"Ready", "ContainerReady", "ContainerHealthy"}
@@ -530,13 +530,13 @@ def _read_deploy_cloud(args: Sequence[str], *, json_output: bool = True,
 def _verify_deploy_candidate_with_wait(candidate: Mapping[str, Any], *, project: str, region: str,
                                        service_name: str, service: Mapping[str, Any],
                                        revision: str, commit: str | None,
-                                       require_generation: bool = False) -> None:
+                                       require_generation: bool = False, wait_for_start: bool = False) -> None:
     """Require stable fresh startup health while old traffic stays fixed.
 
     Observations are bounded to 300 seconds, not an atomic Cloud Run traffic CAS.
     No success is persisted across invocations or process restarts.
     """
-    from scripts.runtime_target_continuity import verify_traffic_revision
+    from scripts.runtime_target_continuity import StartupHealthPending, verify_traffic_revision
 
     warmed = (candidate.get("metadata", {}).get("annotations") or {}).get("autoscaling.knative.dev/minScale") == "1"
     strict_generation = warmed or require_generation
@@ -563,7 +563,7 @@ def _verify_deploy_candidate_with_wait(candidate: Mapping[str, Any], *, project:
                            "imageDigest": value.get("status", {}).get("imageDigest")}, sort_keys=True)
 
     original = identity(candidate)
-    if not warmed or _traffic_on_revision(service, revision):
+    if (not warmed and not wait_for_start) or _traffic_on_revision(service, revision):
         verify_traffic_revision(candidate, expected_revision=revision, expected_commit=commit,
                                 require_startup_health=True)
         return
@@ -606,7 +606,7 @@ def _verify_deploy_candidate_with_wait(candidate: Mapping[str, Any], *, project:
                                     require_startup_health=True)
         except ValueError as exc:
             healthy_count = 0
-            if str(exc) != "traffic candidate has not passed its application startup probe":
+            if not isinstance(exc, StartupHealthPending):
                 raise
             conditions = candidate.get("status", {}).get("conditions") or []
             if any(row.get("type") in {"Ready", "ContainerReady", "ContainerHealthy"}

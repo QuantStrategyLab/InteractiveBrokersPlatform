@@ -790,6 +790,9 @@ jobs:
 
       - name: Build, push, and deploy Cloud Run image
         id: deploy
+        env:
+          WARMUP_TRAFFIC_APPROVED: ${{ steps.config.outputs.traffic_shift_enabled }}
+          WARMUP_ENV_SYNC: ${{ steps.config.outputs.env_sync_enabled }}
         if: steps.config.outputs.deploy_enabled == 'true'
         run: |
           set -euo pipefail
@@ -880,37 +883,45 @@ jobs:
               echo "Candidate warmup requires one exact configured target." >&2
               exit 1
             fi
-            # Revision-level minimum only; no service-level scaling or traffic change.
-            # Execution requires separate owner approval for warmup spend and redeploy.
-            candidate_warmup_args=(--min-instances=1)
           fi
+          warmup_selected="$(uv run --no-sync python -m scripts.cloud_run_candidate_warmup --eligible)"
           for cloud_run_service in "${target_services[@]}"; do
-            timeout 360s gcloud run deploy "${cloud_run_service}" \
-              "${candidate_warmup_args[@]}" \
-              --project="${GCP_PROJECT_ID}" \
-              --region="${CLOUD_RUN_REGION}" \
-              --platform=managed \
-              --image="${immutable_image}" \
-              --service-account="${GCP_RUNTIME_SERVICE_ACCOUNT}" \
-              --no-allow-unauthenticated \
-              --ingress=internal \
-              --max-instances=1 \
-              --concurrency=1 \
-              --memory=512Mi \
-              --cpu=1 \
-              --timeout=300s \
-              --network=default \
-              --subnet=default \
-              --vpc-egress=private-ranges-only \
-              --labels="managed-by=github-actions,commit-sha=${SOURCE_COMMIT},github-run-id=${GITHUB_RUN_ID}" \
-              --no-traffic \
-              --deploy-health-check \
-              --startup-probe="httpGet.path=/health,httpGet.port=8080,periodSeconds=10,timeoutSeconds=5,failureThreshold=24" \
+            deploy_args=(
+              --project="${GCP_PROJECT_ID}"
+              --region="${CLOUD_RUN_REGION}"
+              --platform=managed
+              --image="${immutable_image}"
+              --service-account="${GCP_RUNTIME_SERVICE_ACCOUNT}"
+              --no-allow-unauthenticated
+              --ingress=internal
+              --max-instances=1
+              --concurrency=1
+              --memory=512Mi
+              --cpu=1
+              --timeout=300s
+              --network=default
+              --subnet=default
+              --vpc-egress=private-ranges-only
+              --labels="managed-by=github-actions,commit-sha=${SOURCE_COMMIT},github-run-id=${GITHUB_RUN_ID}"
+              --no-traffic
+              --deploy-health-check
+              --startup-probe="httpGet.path=/health,httpGet.port=8080,periodSeconds=10,timeoutSeconds=5,failureThreshold=24"
               --quiet
+            )
+            if [[ "${warmup_selected}" == "true" ]]; then
+              uv run --no-sync python -m scripts.cloud_run_candidate_warmup \
+                  --image="${immutable_image}" \
+                  --baseline="${RUNNER_TEMP}/cloud-run-no-traffic-baseline/${cloud_run_service}.json" \
+                  --state-path="${RUNNER_TEMP}/candidate-warmup-result.json" \
+                  -- "${deploy_args[@]}"
+              echo "warmup_managed=true" >> "${GITHUB_OUTPUT}"
+            else
+              timeout 360s gcloud run deploy "${cloud_run_service}" "${deploy_args[@]}"
+            fi
           done
 
       - name: Verify no-traffic candidate startup health
-        if: steps.config.outputs.deploy_enabled == 'true'
+        if: steps.config.outputs.deploy_enabled == 'true' && steps.deploy.outputs.warmup_managed != 'true'
         env:
           EXPECTED_IMAGE_DIGEST: ${{ steps.deploy.outputs.image_digest }}
         run: |
@@ -931,7 +942,7 @@ jobs:
           python3 scripts/verify_image_ues_release_binding.py --summarize-report "${RUNNER_TEMP}/ues-binding-coverage.json" >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Verify no-traffic deployment readback
-        if: steps.config.outputs.deploy_enabled == 'true'
+        if: steps.config.outputs.deploy_enabled == 'true' && steps.deploy.outputs.warmup_managed != 'true'
         env:
           DEPLOY_READBACK_DIR: ${{ runner.temp }}/cloud-run-no-traffic-baseline
           EXPECTED_IMAGE_DIGEST: ${{ steps.deploy.outputs.image_digest }}
@@ -1613,7 +1624,7 @@ jobs:
           done
 
       - name: Reconcile Cloud Run traffic
-        if: steps.config.outputs.traffic_shift_enabled == 'true'
+        if: steps.config.outputs.traffic_shift_enabled == 'true' && steps.deploy.outputs.warmup_managed != 'true'
         run: |
           set -euo pipefail
           if [ -n "${IBKR_INITIAL_SYNC_PLAN_PATH:-}" ]; then export SYNC_PLAN_JSON="$(cat "$IBKR_INITIAL_SYNC_PLAN_PATH")"; fi
