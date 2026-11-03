@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any
+import math
 
 from quant_platform_kit.common.execution_receipts import (
     attach_runtime_execution_receipt,
@@ -48,12 +49,17 @@ def attach_cycle_execution_receipt(
 
     summary = _combined_summary(execution_summary, reconciliation_record)
     status = str(summary.get("execution_status") or "").strip().lower()
-    reconciliation_required = status == "pending_reconciliation" or _has_any(summary, _PENDING_KEYS)
+    filled = _confirmed_fills(summary, _FILLED_KEYS)
+    partial = _confirmed_fills(summary, _PARTIAL_FILL_KEYS, partial=True)
+    uncertain_fills = ((_has_any(summary, _FILLED_KEYS) and not filled)
+                       or (_has_any(summary, _PARTIAL_FILL_KEYS) and not partial))
+    reconciliation_required = (status == "pending_reconciliation" or _has_any(summary, _PENDING_KEYS)
+                               or uncertain_fills)
     outcome, confirmation = resolve_execution_receipt_fact(
         dry_run=bool(report.get("dry_run")),
         submission_attempted=_has_any(summary, _SUBMITTED_KEYS),
-        partially_filled=_has_any(summary, _PARTIAL_FILL_KEYS),
-        filled=_has_any(summary, _FILLED_KEYS),
+        partially_filled=partial,
+        filled=filled,
         reconciliation_required=reconciliation_required,
         risk_blocked=status == "blocked" and not execution_failed,
         failed=execution_failed or status in _FAILURE_STATUSES,
@@ -109,3 +115,24 @@ def _explicit_non_action_outcome(summary: Mapping[str, Any]) -> str | None:
 
 def _has_any(summary: Mapping[str, Any], keys: tuple[str, ...]) -> bool:
     return any(bool(tuple(summary.get(key) or ())) for key in keys)
+
+
+def _confirmed_fills(summary, keys, *, partial=False):
+    rows = [row for key in keys for row in summary.get(key, ()) or ()]
+    if not rows:
+        return False
+    try:
+        for row in rows:
+            qty, filled, price = (float(row[key]) for key in ('quantity', 'filled_quantity', 'average_fill_price'))
+            if (not row.get('broker_order_id') or not all(math.isfinite(x) and x > 0 for x in (qty, filled, price))
+                    or filled > qty):
+                return False
+            if partial:
+                if (row.get('broker_confirmed_terminal') is not True or row.get('status') != 'Cancelled'
+                        or not filled < qty):
+                    return False
+            elif row.get('status') != 'Filled' or filled != qty:
+                return False
+    except (KeyError, TypeError, ValueError):
+        return False
+    return True

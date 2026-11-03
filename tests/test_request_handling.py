@@ -45,6 +45,7 @@ def test_cloud_run_route_contracts_are_registered(strategy_module):
         "/paper-command-consumer": ["POST"],
         "/probe": ["POST"],
         "/reconcile": ["POST"],
+        "/settle": ["POST"],
         "/live-permission-probe": ["POST"],
         "/monitor-dispatch": ["GET", "POST"],
         "/health": ["GET"],
