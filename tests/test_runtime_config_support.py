@@ -2093,3 +2093,30 @@ def test_initial_sync_plan_safe_error_excludes_exception_message(monkeypatch, ca
     error = capsys.readouterr().err
     assert "initial_state_plan_error category=ValueError" in error
     assert "private target" not in error
+
+
+@pytest.mark.parametrize("content", ["{", "[]", '{"market_regime_control_expected":"synthetic-private"}',
+                                    '{"market_regime_control_expected":{"plugin":"synthetic-private"}}'])
+def test_russell_regime_malformed_redacted(tmp_path, content):
+    path = tmp_path / "strategy.json"
+    path.write_text(content)
+    with pytest.raises(ValueError, match="^Invalid Russell regime configuration$") as error:
+        runtime_config_support_module.load_russell_regime_configuration(str(path))
+    assert "synthetic-private" not in str(error.value)
+    assert error.value.__suppress_context__ is True
+
+
+def test_russell_regime_missing_and_read_error(tmp_path):
+    assert runtime_config_support_module.load_russell_regime_configuration(None) == {}
+    with pytest.raises(ValueError, match="^Invalid Russell regime configuration$"):
+        runtime_config_support_module.load_russell_regime_configuration(str(tmp_path / "missing.json"))
+
+
+def test_russell_regime_preserves_independent_values(tmp_path):
+    path = tmp_path / "strategy.json"
+    binding = dict(plugin="market_regime_control", schema_version="market_regime_control.v1",
+                   as_of="2026-04-01", valid_until="2026-04-01", payload_sha256="a" * 64)
+    payload = dict(plugin="market_regime_control", as_of="2026-04-01")
+    config = dict(market_regime_control_expected=binding, market_regime_control=payload)
+    path.write_text(json.dumps({**config, "unrelated": "excluded"}))
+    assert runtime_config_support_module.load_russell_regime_configuration(str(path)) == config

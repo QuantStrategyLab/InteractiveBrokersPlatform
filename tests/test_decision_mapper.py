@@ -255,3 +255,17 @@ def test_map_strategy_decision_preserves_runtime_risk_limits_rejection_reason():
     assert target_weights is None
     assert metadata["execution_blocked_reason"] == "rejected:runtime_risk_limits"
     assert "no_execute" in metadata["risk_flags"]
+
+
+def test_regime_no_execute_blocks_even_with_risk_approval_and_positions():
+    decision = StrategyDecision(
+        risk_flags=("no_execute", "risk_gate:passed"),
+        positions=(PositionTarget(symbol="FAKEA", target_weight=0.5),),
+        diagnostics={"risk_gate": "APPROVE", "market_regime_control_binding_valid": False},
+    )
+    weights, _, _, _, metadata = map_strategy_decision(
+        decision, strategy_profile="russell_top50_leader_rotation",
+        runtime_metadata={"portfolio_total_equity": 10000.0},
+    )
+    assert weights is None
+    assert metadata["actionable"] is False

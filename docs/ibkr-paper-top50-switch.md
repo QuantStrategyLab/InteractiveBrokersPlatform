@@ -19,6 +19,30 @@ IBKR_FEATURE_SNAPSHOT_MANIFEST_PATH=gs://<shared-bucket>/strategy-artifacts/us_e
 NOTIFY_LANG=zh
 ```
 
+## Independent market regime evidence
+
+The approved strategy JSON selected by the existing `strategy_config_path`
+contains `market_regime_control_expected` and the matching
+`market_regime_control` plugin payload. The expected binding is an independent
+platform input with five required nonempty string fields: `plugin`,
+`schema_version`, `as_of`, `valid_until`, and `payload_sha256`. Use plugin
+`market_regime_control` and schema `market_regime_control.v1`; dates and the
+canonical payload digest must satisfy the pinned UES binding validator.
+Do not generate an approval binding from a received signal inside the runtime.
+
+Each Russell evaluation reads both inputs together from the configured file,
+replacing startup evidence. Missing binding or payload, expired dates and
+mismatched schema or digest remain non-actionable under the unchanged UES gate.
+Malformed or unreadable configured JSON raises a fixed error without including
+configuration values or underlying exception details. Publish configuration
+files atomically; a partial write blocks the evaluation.
+
+The payload is passed unchanged through context artifacts. Existing plugin
+portfolio metadata remains intact; it cannot supply the independent expected
+binding. Valid regime evidence clears only this prerequisite. Snapshot admission,
+portfolio equity, independent risk approval and execution controls still apply.
+This source change neither provisions authentic evidence nor activates a target.
+
 ## Rehearsal Sequence
 
 1. Publish a fresh `russell_top50_leader_rotation` snapshot/manifest/ranking/release summary to the GCS prefix above.
