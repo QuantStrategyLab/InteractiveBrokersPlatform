@@ -152,3 +152,26 @@ old candidates, zeros, or an artificial `not_due` result.
 
 References: [GitHub schedule timing](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)
 and [Cloud Run scheduled jobs](https://docs.cloud.google.com/run/docs/execute/jobs-on-schedule).
+
+## Strategy-cycle incident diagnostics
+
+Normal no-action cycles, including a verified empty account with no signal,
+remain daily-report candidates. Missing identity or an unconfirmed candidate
+write remains an operational coverage failure. No individual routine heartbeat
+is sent as a fallback.
+
+Snapshot failures and blocked strategy decisions use the shared QPK attention
+format in both legacy and unified delivery. The producer passes its decision
+summary separately from the heartbeat dashboard, preserving the unavailable
+status, diagnostic details and original execution block reason. Shared
+credential redaction and the notification diagnostic privacy helper remove
+account/resource bindings, addresses and network locations before either sink
+receives this context. The legacy heartbeat title and dashboard are not copied
+into the incident body.
+
+An `empty_position_decision` remains a safety block, not evidence of a healthy
+empty account or permission to liquidate. Existing incident ownership, persisted
+unknown delivery and restart suppression remain authoritative. Run time and run
+links come from the existing run report; absent evidence stays explicitly
+unknown. This format change does not change execution, dependency pins or
+notification schedules and does not establish deployed adoption or delivery.

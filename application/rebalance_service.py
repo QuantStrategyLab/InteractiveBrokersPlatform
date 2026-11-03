@@ -1241,6 +1241,8 @@ def run_strategy_core(
                     notification_publisher,
                     execution={"execution_status": "no_action", **(signal_metadata or {}), **(blocked_summary or {})},
                     attention=has_error,
+                    heartbeat=True,
+                    heartbeat_diagnostics=no_op_text,
                     notification=notification_renderers.render_heartbeat_notification(
                         dashboard=dashboard,
                         strategy_dashboard=strategy_dashboard,
@@ -1336,6 +1338,8 @@ def run_strategy_core(
                     notification_publisher,
                     execution={**(signal_metadata or {}), "execution_status": "no_op", "no_op_reason": "execution_already_recorded"},
                     attention=_has_notification_attention(signal_metadata, reason_codes=getattr(config, "notification_attention_reason_codes", ())),
+                    heartbeat=True,
+                    heartbeat_diagnostics=message,
                     notification=notification_renderers.render_heartbeat_notification(
                         dashboard=dashboard,
                         strategy_dashboard=strategy_dashboard,

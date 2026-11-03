@@ -1980,3 +1980,16 @@ def test_cash_only_runtime_overrides_force_option_overlays_off():
     assert overrides["option_growth_overlay_enabled"] is False
     assert overrides["option_income_overlay_enabled"] is False
     assert overrides["cash_reserve_ratio"] == 0.03
+
+
+def test_russell_regime_runtime_override(tmp_path):
+    import json
+    path = tmp_path / "strategy.json"
+    binding = dict(plugin="market_regime_control", schema_version="market_regime_control.v1",
+                   as_of="2026-04-01", valid_until="2026-04-01", payload_sha256="a" * 64)
+    path.write_text(json.dumps({"market_regime_control_expected": binding}))
+    settings = replace(_build_runtime_settings(profile="russell_top50_leader_rotation"),
+                       strategy_config_path=str(path))
+    overrides = strategy_runtime_module._build_runtime_overrides(settings)
+    assert overrides["market_regime_control_expected"] == binding
+    assert "market_regime_control" not in overrides
