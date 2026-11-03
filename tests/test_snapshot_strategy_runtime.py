@@ -366,3 +366,104 @@ def test_compute_signals_exposes_dry_run_price_fallbacks(strategy_module_factory
 
     assert result[4]["dry_run_price_fallbacks"]["BOXX"] == pytest.approx(101.0)
     assert result[4]["dry_run_price_fallbacks"]["AAPL"] == pytest.approx(200.0)
+
+
+@pytest.fixture
+def russell_regime_platform(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from tests.test_strategy_runtime import _build_runtime_settings
+    from quant_platform_kit.common.models import PortfolioSnapshot
+    from decision_mapper import map_strategy_decision
+    import pandas as pd
+
+    payload = dict(plugin="market_regime_control", schema_version="market_regime_control.v1",
+                   as_of="2026-04-01", canonical_route="risk_on",
+                   source_metadata={"producer": "synthetic-producer", "revision": "synthetic-revision"})
+    binding = dict(plugin="market_regime_control", schema_version="market_regime_control.v1",
+                   as_of="2026-04-01", valid_until="2026-04-01",
+                   payload_sha256=hashlib.sha256(json.dumps(payload, sort_keys=True,
+                       separators=(",", ":"), ensure_ascii=True).encode()).hexdigest())
+    config = dict(market_regime_control_expected=binding, market_regime_control=payload)
+    path = tmp_path / "strategy.json"
+    path.write_text(json.dumps(config))
+    settings = replace(_build_runtime_settings(profile="russell_top50_leader_rotation"),
+                       strategy_config_path=str(path), ib_gateway_mode="paper", runtime_target_enabled=False)
+    runtime = strategy_runtime_module.load_strategy_runtime(
+        settings.strategy_profile, runtime_settings=settings, logger=lambda _: None)
+    # Synthetic artifact IO and portfolio; real UES strategy, context and risk gate.
+    rows = _russell_top50_snapshot_rows()
+    fake_symbols = dict(zip(("NVDA", "META", "MSFT", "AAPL", "AMZN"),
+                            ("FAKEA", "FAKEB", "FAKEC", "FAKED", "FAKEE")))
+    rows = [{**row, "symbol": fake_symbols.get(row["symbol"], row["symbol"])} for row in rows]
+    monkeypatch.setattr(strategy_runtime_module, "load_feature_snapshot_guarded", lambda *a, **k:
+        SimpleNamespace(frame=rows, metadata={"snapshot_guard_decision": "proceed"}))
+    portfolio = PortfolioSnapshot(as_of=pd.Timestamp("2026-04-01", tz="UTC").to_pydatetime(),
+                                  total_equity=10000.0, buying_power=10000.0, positions=())
+    monkeypatch.setattr(strategy_runtime_module.LoadedStrategyRuntime,
+                        "_fetch_portfolio_snapshot_for_context", lambda *a, **k: portfolio)
+
+    from quant_platform_kit.risk.contracts import RuntimeRiskLimits
+    symbols = ("FAKEA", "FAKEB", "FAKEC", "FAKED", "FAKEE", "BOXX", "BIL")
+    limits = RuntimeRiskLimits(
+        allowed_symbols=symbols, product_leverage_factors={symbol: 1 for symbol in symbols},
+        nominal_caps={symbol: 1.0 for symbol in symbols}, total_nominal_exposure_cap=1.0,
+        total_effective_exposure_cap=1.0, max_positions=len(symbols))
+    # Supply explicit synthetic limits; never replace or skip the actual risk gate.
+    monkeypatch.setattr(strategy_runtime_module.LoadedStrategyRuntime,
+        "_build_runtime_risk_capabilities",
+        lambda self, inputs, capabilities: ({**capabilities, "runtime_risk_limits": limits}, "verified:synthetic"))
+
+    def evaluate():
+        result = runtime.evaluate(ib=None, current_holdings=set(), historical_close_loader=lambda *a, **k: None,
+            run_as_of=pd.Timestamp("2026-04-01"), translator=lambda key: key, pacing_sec=0)
+        mapped = map_strategy_decision(result.decision, strategy_profile=settings.strategy_profile,
+                                       runtime_metadata={**result.metadata, "portfolio_total_equity": portfolio.total_equity})
+        return result.decision, mapped[0]
+    return path, config, evaluate
+
+
+def test_russell_regime_valid_binding_final_weights(russell_regime_platform):
+    _, _, evaluate = russell_regime_platform
+    decision, weights = evaluate()
+    assert "no_execute" not in decision.risk_flags
+    assert decision.diagnostics["risk_gate"] == "APPROVE", (decision.risk_flags, decision.diagnostics.get("reason"))
+    assert weights and any(symbol.startswith("FAKE") for symbol in weights)
+
+
+@pytest.mark.parametrize("defect", ["missing_binding", "missing_payload", "schema", "digest", "as_of", "expired", "payload_mutated"])
+def test_russell_regime_invalid_binding_no_weights(russell_regime_platform, defect):
+    path, config, evaluate = russell_regime_platform
+    if defect == "missing_binding":
+        del config["market_regime_control_expected"]
+    elif defect == "missing_payload":
+        del config["market_regime_control"]
+    elif defect == "payload_mutated":
+        config["market_regime_control"]["source_metadata"]["revision"] = "synthetic-replacement"
+    else:
+        key, value = {"schema": ("schema_version", "synthetic.invalid"), "digest": ("payload_sha256", "0" * 64),
+                      "as_of": ("as_of", "2026-03-31"), "expired": ("valid_until", "2026-03-31")}[defect]
+        config["market_regime_control_expected"][key] = value
+    path.write_text(json.dumps(config))
+    decision, weights = evaluate()
+    assert "no_execute" in decision.risk_flags
+    assert weights is None
+    assert decision.diagnostics["market_regime_control_binding_valid"] is False
+
+
+def test_russell_regime_revocation_reread(russell_regime_platform):
+    path, config, evaluate = russell_regime_platform
+    assert evaluate()[1]
+    del config["market_regime_control_expected"]
+    path.write_text(json.dumps(config))
+    assert evaluate()[1] is None
+
+
+def test_russell_regime_read_error_redacted(russell_regime_platform, monkeypatch):
+    _, _, evaluate = russell_regime_platform
+    def fail(*args, **kwargs):
+        raise OSError("synthetic-private-detail")
+    monkeypatch.setattr(strategy_runtime_module.Path, "read_text", fail)
+    with pytest.raises(ValueError, match="^Invalid Russell regime configuration$") as error:
+        evaluate()
+    assert error.value.__suppress_context__ is True
+    assert "synthetic-private-detail" not in str(error.value)

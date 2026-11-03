@@ -46,7 +46,7 @@ from quant_platform_kit.common.runtime_inputs import (
     build_strategy_evaluation_inputs,
 )
 from quant_platform_kit.risk.contracts import RuntimeRiskLimits, SmallAccountRiskHoldPolicy
-from runtime_config_support import PlatformRuntimeSettings
+from runtime_config_support import PlatformRuntimeSettings, load_russell_regime_configuration
 from us_equity_strategies.signals import resolve_external_market_signal_inputs
 from strategy_loader import (
     load_strategy_definition,
@@ -1651,7 +1651,7 @@ class LoadedStrategyRuntime:
                 ib=ib,
                 portfolio_snapshot=portfolio_snapshot,
             )
-            return build_strategy_context_from_available_inputs(
+            context = build_strategy_context_from_available_inputs(
                 entrypoint=request.entrypoint,
                 runtime_adapter=runtime_adapter,
                 as_of=request.as_of,
@@ -1660,6 +1660,20 @@ class LoadedStrategyRuntime:
                 state={"current_holdings": tuple(current_holdings)},
                 capabilities=capabilities,
             )
+            if self.profile != "russell_top50_leader_rotation":
+                return context
+            # Re-read once per evaluation so revocation never reuses startup evidence.
+            evidence = load_russell_regime_configuration(self.runtime_settings.strategy_config_path)
+            context_config = dict(context.runtime_config)
+            artifacts = dict(context.artifacts)
+            for key in ("market_regime_control_expected", "market_regime_control"):
+                context_config.pop(key, None)
+                artifacts.pop(key, None)
+            if "market_regime_control_expected" in evidence:
+                context_config["market_regime_control_expected"] = evidence["market_regime_control_expected"]
+            if "market_regime_control" in evidence:
+                artifacts["market_regime_control"] = evidence["market_regime_control"]
+            return replace(context, runtime_config=context_config, artifacts=artifacts)
 
         def log_guard_metadata(guard_metadata: Mapping[str, Any]) -> None:
             self.logger(
@@ -1781,13 +1795,15 @@ def load_strategy_runtime(
         runtime_settings=runtime_settings,
         logger=logger,
     )
+    # Validate platform evidence before the legacy parameter loader can log errors.
+    runtime_overrides = _build_runtime_overrides(runtime_settings)
     runtime_config: dict[str, Any] = {}
     if (
         _FEATURE_SNAPSHOT_INPUT in frozenset(entrypoint.manifest.required_inputs)
         or runtime_settings.strategy_config_path
     ):
         runtime_config = runtime.load_runtime_parameters()
-    runtime_config.update(_build_runtime_overrides(runtime_settings))
+    runtime_config.update(runtime_overrides)
 
     merged_runtime_config = dict(entrypoint.manifest.default_config)
     merged_runtime_config.update(runtime_config)
@@ -1828,6 +1844,10 @@ def load_strategy_runtime(
 
 def _build_runtime_overrides(runtime_settings: PlatformRuntimeSettings) -> dict[str, Any]:
     overrides: dict[str, Any] = {}
+    if runtime_settings.strategy_profile == "russell_top50_leader_rotation":
+        evidence = load_russell_regime_configuration(runtime_settings.strategy_config_path)
+        if "market_regime_control_expected" in evidence:
+            overrides["market_regime_control_expected"] = evidence["market_regime_control_expected"]
     reserved_cash_floor_usd = getattr(runtime_settings, "reserved_cash_floor_usd", 0.0)
     reserved_cash_ratio = getattr(runtime_settings, "reserved_cash_ratio", None)
     if float(reserved_cash_floor_usd or 0.0) > 0.0:

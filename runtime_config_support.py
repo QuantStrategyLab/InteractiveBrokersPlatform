@@ -71,6 +71,28 @@ SUPPORTED_EXECUTION_BACKENDS = frozenset(
 )
 
 
+def load_russell_regime_configuration(config_path: str | None) -> dict[str, Any]:
+    """Read independent platform evidence, never synthesize it from a signal."""
+    if not config_path:
+        return {}
+    try:
+        config = json.loads(Path(config_path).read_text(encoding="utf-8"))
+        if not isinstance(config, dict):
+            raise ValueError
+        expected = config.get("market_regime_control_expected")
+        if "market_regime_control_expected" in config:
+            required = ("plugin", "schema_version", "as_of", "valid_until", "payload_sha256")
+            if not isinstance(expected, dict) or any(
+                not isinstance(expected.get(key), str) or not expected[key] for key in required
+            ):
+                raise ValueError
+        # UES owns semantic validation, dates, expiry and exact payload digest.
+        return {key: config[key] for key in ("market_regime_control_expected", "market_regime_control")
+                if key in config}
+    except (OSError, ValueError, TypeError):
+        raise ValueError("Invalid Russell regime configuration") from None
+
+
 def resolve_market(raw_value: str | None, *, account_group: str) -> str:
     for candidate in (raw_value, account_group):
         value = str(candidate or "").strip().upper()
