@@ -12,9 +12,9 @@ fi
 grep -Fq "if: github.event_name == 'workflow_dispatch'" "$caller_file"
 
 # Validate binding shapes without coupling the contract to one environment.
-grep -Eq '^[[:space:]]*GCP_WORKLOAD_IDENTITY_PROVIDER: (projects/[0-9]+/locations/global/workloadIdentityPools/[^/[:space:]]+/providers/[^/[:space:]]+|\$\{\{ vars\.[A-Z0-9_]+ \}\})$' "$workflow_file"
-grep -Fq 'GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}' "$workflow_file"
-grep -Fq 'GCP_SCHEDULER_SERVICE_ACCOUNT: ${{ vars.IBKR_SCHEDULER_SERVICE_ACCOUNT }}' "$workflow_file"
+grep -Fq 'GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}' "$workflow_file"
+grep -Fq 'GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ secrets.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}' "$workflow_file"
+grep -Fq 'GCP_SCHEDULER_SERVICE_ACCOUNT: ${{ secrets.IBKR_SCHEDULER_SERVICE_ACCOUNT }}' "$workflow_file"
 grep -Fq 'permissions:' "$workflow_file"
 grep -Fq 'id-token: write' "$workflow_file"
 grep -Fq 'workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}' "$workflow_file"
@@ -89,8 +89,8 @@ grep -Fq 'Skipping Cloud Run automation because ENABLE_GITHUB_CLOUD_RUN_DEPLOY a
 grep -Fq 'Skipping Cloud Run automation on push because ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION is not true.' "$workflow_file"
 grep -Fq 'uv run --no-sync python scripts/build_cloud_run_env_sync_plan.py --json' "$workflow_file"
 grep -Fq 'scripts/build_cloud_run_env_sync_plan.py --json' "$workflow_file"
-grep -Fq 'sync_plan_json<<__SYNC_PLAN_JSON__' "$workflow_file"
-grep -Fq 'SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}' "$workflow_file"
+! grep -Fq 'sync_plan_json<<__SYNC_PLAN_JSON__' "$workflow_file"
+! grep -Fq 'SYNC_PLAN_JSON: ${{ steps.strategy_requirements.outputs.sync_plan_json }}' "$workflow_file"
 grep -Fq 'Cloud Run env sync did not resolve any targets' "$workflow_file"
 grep -Fq 'TELEGRAM_TOKEN_SECRET_NAME or TELEGRAM_TOKEN' "$workflow_file"
 

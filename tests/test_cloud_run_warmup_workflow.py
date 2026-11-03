@@ -106,7 +106,8 @@ def test_configured_service_selects_one_target_and_all_downstream_sources(tmp_pa
 
     result, output, github_env, _ = _resolve_sync_plan(tmp_path, monkeypatch)
     assert result.returncode == 0, result.stderr
-    plan = json.loads(output.split("\n", 1)[1].split("\n", 1)[0])
+    plan_path = github_env.split("IBKR_INITIAL_SYNC_PLAN_PATH=", 1)[1].splitlines()[0]
+    plan = json.loads(Path(plan_path).read_text())
     assert [target["service_name"] for target in plan["targets"]] == ["service-b"]
     assert "CLOUD_RUN_SERVICES=service-b\n" in github_env
     assert "CLOUD_RUN_SERVICE=service-b\n" in github_env
@@ -152,8 +153,9 @@ def test_empty_selector_rejected_for_configured_and_hk_verify_preserves_targets(
     hk_path.mkdir()
     result, output, github_env, original = _resolve_sync_plan(hk_path, monkeypatch, target="hk-verify")
     assert result.returncode == 0, result.stderr
-    assert json.loads(output.split("\n", 1)[1].split("\n", 1)[0]) == original
-    assert github_env == ""
+    plan_path = github_env.split("IBKR_INITIAL_SYNC_PLAN_PATH=", 1)[1].splitlines()[0]
+    assert json.loads(Path(plan_path).read_text()) == original
+    assert github_env == f"IBKR_INITIAL_SYNC_PLAN_PATH={plan_path}\n"
 
 
 def test_single_target_sync_protects_artifacts_before_other_service_mutation() -> None:

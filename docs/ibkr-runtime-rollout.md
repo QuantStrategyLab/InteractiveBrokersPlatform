@@ -358,3 +358,14 @@ Set these non-secret repository variables before running the affected workflows.
 | `QSL_CONSOLE_BASE_URL` | HTTPS console origin without an API path | Publisher workflows | `https://example.invalid` for Python scripts |
 | `QSL_DIGEST_BUCKET` | Digest and parity evidence bucket | Store and parity workflows | none |
 | `STRATEGY_PLUGIN_ALLOWED_SIGNAL_PREFIXES` | Comma-separated permitted GCS signal prefixes | Plugin mount verification | none |
+
+### Private sync bindings
+
+The protected sync workflow accepts the required infrastructure Secret names in
+`config/cloud_run_sync_secret_names.json`. The dispatch caller must forward these
+same-name repository Secrets; defining their names does not create their values.
+Missing bindings stop preflight before authentication. Runtime and Scheduler
+identities use the existing `IBKR_RUNTIME_SERVICE_ACCOUNT` and
+`IBKR_SCHEDULER_SERVICE_ACCOUNT` Secrets. No Variable fallback is used for these
+infrastructure bindings. Every sync plan stays in a mode-0600 runner-private file;
+subsequent steps receive its path rather than raw JSON outputs or step headers.

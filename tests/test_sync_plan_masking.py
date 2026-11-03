@@ -33,7 +33,7 @@ def test_plan_masks_private_leaves_before_step_output(tmp_path, invalid):
         'project_number': int(private[3]), 'service_account': private[4], 'provider': provider})}}
     if invalid:
         target['env']['RUNTIME_TARGET_JSON'] = '{broken-private-binding'
-    plan = {'mode': 'per_service', 'targets': [target]}
+    plan = {'mode': 'per_service', 'targets': [target], 'opaque': 'VW5rbm93bi1lbmNvZGVkLWlk'}
     (tmp_path / 'python').symlink_to(sys.executable)
     fake_uv = tmp_path / 'uv'
     fake_uv.write_text('#!/bin/sh\nprintf "%s" "$FAKE_PLAN"\n')
@@ -53,13 +53,17 @@ def test_plan_masks_private_leaves_before_step_output(tmp_path, invalid):
         return
     assert result.returncode == 0
     masks = _masks(result.stdout)
-    rendered = output.read_text()
+    rendered = output.read_text() if output.exists() else ""
     for value in sorted(masks, key=len, reverse=True):
         rendered = rendered.replace(value, '***')
     assert all(value not in rendered for value in private)
     assert masks
+    assert "VW5rbm93bi1lbmNvZGVkLWlk" not in rendered
     # The raw handoff remains machine-readable and unchanged for execution.
-    assert json.loads(output.read_text().splitlines()[1]) == plan
+    plan_path = envfile.read_text().split("IBKR_INITIAL_SYNC_PLAN_PATH=", 1)[1].splitlines()[0]
+    assert json.loads(Path(plan_path).read_text()) == plan
+    assert Path(plan_path).stat().st_mode & 0o777 == 0o600
+    assert not output.exists()
     assert all(line.startswith('::add-mask::') for line in result.stdout.splitlines())
 
 
@@ -87,4 +91,4 @@ def test_cloud_masks_run_before_authentication_and_plan_output():
     text = WORKFLOW.read_text()
     assert text.index('python scripts/mask_sync_identifiers.py') < text.index('- name: Authenticate to Google Cloud')
     block = _step('Resolve admissible Cloud Run targets')
-    assert block.index('mask_identifiers(plan)') < block.index('handle.write("sync_plan_json')
+    assert block.index('mask_identifiers(plan)') < block.index('json.dump(plan, handle)')
