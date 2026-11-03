@@ -1,6 +1,7 @@
 """Synthetic RC-01C admission boundary; no broker or network access."""
 from datetime import datetime, timezone
 from types import SimpleNamespace as NS
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -48,7 +49,7 @@ def snapshot_for(symbol):
 def preview(symbol, profile, positions, values, targets, path, session):
     metadata = _signal_metadata(
         targets, risk_symbols=tuple(targets), trade_date="2026-11-02",
-        effective_date=datetime.now(timezone.utc).date().isoformat(),
+        effective_date=datetime.now(ZoneInfo("America/New_York")).date().isoformat(),
     )
     calls = []
     ib = NS(openTrades=lambda: [], reqAllOpenOrders=lambda: [], fills=lambda: [],
@@ -205,3 +206,23 @@ def test_native_drawdown_facts_outrank_a_stale_healthy_signal():
     assert gate.new_risk_buy_prohibited(result)
     values.pop("drawdown_from_peak")
     assert gate.evaluate_account_values_new_risk_admission(values, signal_metadata=metadata).hard_brake_triggered
+
+
+@pytest.mark.parametrize("instant", [
+    datetime(2026, 1, 15, 2, tzinfo=timezone.utc),
+    datetime(2026, 7, 15, 2, tzinfo=timezone.utc),
+    datetime(2026, 3, 8, 2, tzinfo=timezone.utc),
+    datetime(2026, 11, 1, 2, tzinfo=timezone.utc),
+])
+def test_tqqq_preview_uses_exchange_date_across_utc_midnight(monkeypatch, tmp_path, instant):
+    """The fixture must pass the real date gate in standard and daylight time."""
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return instant.astimezone(tz) if tz is not None else instant.replace(tzinfo=None)
+
+    monkeypatch.setattr(f"{__name__}.datetime", FrozenDateTime)
+    monkeypatch.setattr(execution_service, "datetime", FrozenDateTime)
+    test_switch_off_preserves_target_and_blocks_new_positions_and_adds(
+        "TQQQ", "tqqq_growth_income", 0, .025, tmp_path,
+    )
