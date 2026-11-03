@@ -274,19 +274,14 @@ def test_nonfinite_json_is_never_accepted(constant):
         pilot._json('{"value":' + constant + '}')
 
 
-def test_original_identity_is_bootstrapped_once_and_masked_before_env(tmp_path, capsys):
-    workflow = tmp_path / ".github/workflows"
-    workflow.mkdir(parents=True)
-    provider = "projects/123/locations/global/workloadIdentityPools/synthetic/providers/synthetic"
-    path = workflow / "sync-cloud-run-env-protected.yml"
-    path.write_text("env:\n  GCP_WORKLOAD_IDENTITY_PROVIDER: " + provider + "\n")
-    destination = tmp_path / "github-env"
-    pilot.bootstrap_identity(tmp_path, destination)
-    assert capsys.readouterr().out == "::add-mask::" + provider + "\n"
+def test_protected_identity_is_bootstrapped_without_public_output(tmp_path, capsys):
+    provider = "projects/123/locations/global/workloadIdentityPools/dummy-pool/providers/dummy-provider"
+    destination = tmp_path / "action-env"
+    pilot.bootstrap_identity({"GCP_WORKLOAD_IDENTITY_PROVIDER": provider}, destination)
+    assert capsys.readouterr().out == ""
     assert destination.read_text() == "PILOT_WIF_PROVIDER=" + provider + "\n"
-    path.write_text(path.read_text() * 2)
     with pytest.raises(pilot.ReleaseError, match="identity_source_unavailable"):
-        pilot.bootstrap_identity(tmp_path, destination)
+        pilot.bootstrap_identity({}, destination)
 
 
 @pytest.mark.parametrize("change", ["unready", "wrong_image", "config"])

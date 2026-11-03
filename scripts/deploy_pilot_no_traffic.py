@@ -143,16 +143,17 @@ def context(env: Mapping[str, str]) -> Context:
     return Context(project, region, service, target, env["PILOT_SOURCE_COMMIT"], host, rollback)
 
 
-def bootstrap_identity(source: Path, destination: Path) -> None:
-    """Use the original fixed WIF declaration; never copy a real mapping here."""
+def bootstrap_identity(env: Mapping[str, str], destination: Path) -> None:
+    """Consume the protected provider binding without exposing it in output."""
+    provider = env.get("GCP_WORKLOAD_IDENTITY_PROVIDER", "")
+    if not re.fullmatch(
+        r"projects/[0-9]+/locations/global/workloadIdentityPools/[A-Za-z0-9_-]+/providers/[A-Za-z0-9_-]+",
+        provider,
+    ):
+        raise ReleaseError("identity_source_unavailable")
     try:
-        text = (source / ".github/workflows/sync-cloud-run-env-protected.yml").read_text(encoding="utf-8")
-        matches = re.findall(r"(?m)^  GCP_WORKLOAD_IDENTITY_PROVIDER: (projects/[0-9]+/locations/global/workloadIdentityPools/[A-Za-z0-9_-]+/providers/[A-Za-z0-9_-]+)$", text)
-        if len(matches) != 1:
-            raise ReleaseError("identity_source_unavailable")
-        print(f"::add-mask::{matches[0]}")
         with destination.open("a", encoding="utf-8") as output:
-            output.write(f"PILOT_WIF_PROVIDER={matches[0]}\n")
+            output.write(f"PILOT_WIF_PROVIDER={provider}\n")
     except OSError:
         raise ReleaseError("identity_source_unavailable") from None
 
@@ -481,7 +482,7 @@ def main(argv=None) -> int:
                 destination = os.environ.get("GITHUB_ENV")
                 if not destination:
                     raise ReleaseError("identity_source_unavailable")
-                bootstrap_identity(Path(__file__).resolve().parents[1], Path(destination))
+                bootstrap_identity(os.environ, Path(destination))
             receipt.update(status="preflight_only", stage="preflight")
         elif args.source_dir is None:
             raise ReleaseError("source_commit_unverified")

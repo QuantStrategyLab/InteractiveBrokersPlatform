@@ -161,7 +161,7 @@ def main(argv=None) -> int:
                 destination = os.environ.get("GITHUB_ENV")
                 if not destination:
                     raise pilot.ReleaseError("identity_source_unavailable")
-                pilot.bootstrap_identity(Path(__file__).resolve().parents[1], Path(destination))
+                pilot.bootstrap_identity(os.environ, Path(destination))
             out.update(status="preflight", reason="preflight")
         else:
             out = diagnose(ctx, args.source_dir)
