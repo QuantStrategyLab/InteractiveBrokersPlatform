@@ -31,8 +31,7 @@ def test_main_scheduler_update_is_post_only_and_oidc_authenticated() -> None:
 
 def test_cloud_run_deploy_is_private_internal_and_serial() -> None:
     workflow = Path(".github/workflows/sync-cloud-run-env-protected.yml").read_text(encoding="utf-8")
-    deploy_block = workflow.split('gcloud run deploy "${cloud_run_service}"', 1)[1]
-    deploy_block = deploy_block.split("--quiet", 1)[0]
+    deploy_block = workflow.split('            deploy_args=(', 1)[1].split('            )', 1)[0]
 
     for option in (
         "--no-allow-unauthenticated",

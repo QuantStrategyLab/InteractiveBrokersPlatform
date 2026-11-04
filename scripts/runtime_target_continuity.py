@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Mapping
 from typing import Any
 
@@ -22,9 +23,28 @@ def verify_target_continuity(target: Mapping[str, Any]) -> str:
         raise ValueError("runtime target continuity validation failed") from exc
 
 
+class StartupHealthPending(ValueError):
+    """A missing/unknown health observation is not an observed failed probe."""
+
+
+def print_startup_conditions(rows: list) -> None:
+    from notifications.redaction import redact_notification_diagnostics
+
+    healthy = [row for row in rows if row.get("type") == "ContainerHealthy"]
+    if any(row.get("status") == "False" for row in healthy):
+        state = "startup_probe_failed"
+    elif not healthy:
+        # Conditions alone cannot prove the absence of instance logs. Keep that
+        # evidence explicitly unknown rather than inventing a failed probe.
+        state = "instance_start_not_observed; instance_logs=unknown"
+    else:
+        state = "startup_health_unknown_or_ambiguous"
+    print(state + "; raw_conditions=" + redact_notification_diagnostics(json.dumps(rows)), file=sys.stderr)
+
+
 def verify_traffic_revision(
     revision: Mapping[str, Any], *, expected_revision: str, expected_commit: str | None,
-    allow_cold_enabled: bool = False,
+    allow_cold_enabled: bool = False, require_startup_health: bool = False,
 ) -> None:
     """Validate revision health and narrowly admit eligible cold retired candidates.
 
@@ -35,6 +55,13 @@ def verify_traffic_revision(
     if metadata.get("name") != expected_revision or (metadata.get("labels") or {}).get("commit-sha") != expected_commit:
         raise ValueError("traffic candidate revision identity does not match")
     rows = revision.get("status", {}).get("conditions", [])
+    if not any(row.get("type") == "ContainerHealthy" and row.get("status") == "True" for row in rows):
+        print_startup_conditions(rows)
+    if require_startup_health:
+        critical = [row for row in rows if row.get("type") in {"Ready", "ContainerHealthy", "ContainerReady"}]
+        if (len({row.get("type") for row in critical}) != len(critical)
+                or any(row.get("status") == "False" for row in critical)):
+            raise ValueError("traffic candidate startup probe conditions are failed or ambiguous")
     conditions = {
         item.get("type"): item.get("status")
         for item in rows
@@ -59,9 +86,9 @@ def verify_traffic_revision(
                 for kind in ("Ready", "Active"))
     )
     if conditions.get("Ready") != "True" or not (
-        conditions.get("ContainerHealthy") == "True" or retired_disabled
+        conditions.get("ContainerHealthy") == "True" or (retired_disabled and not require_startup_health)
     ):
-        raise ValueError("traffic candidate has not passed its application startup probe")
+        raise StartupHealthPending("traffic candidate instance startup health not observed; startup probe evidence unavailable")
     probe = container.get("startupProbe") or {}
     http = probe.get("httpGet") or {}
     if http.get("path") != "/health" or http.get("port") != 8080 or "tcpSocket" in probe or "grpc" in probe:
