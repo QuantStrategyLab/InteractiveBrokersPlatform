@@ -71,7 +71,10 @@ class Release:
         self.commit, self.digest, self.run_id = commit, digest, run_id
         self.deploy_args, self.state_path, self.cloud = deploy_args, state_path, cloud
         self.no_traffic_verify = no_traffic_verify
-        self.tag = 'cand-' + commit[:8]
+        tag = 'cand-' + commit[:8]
+        # Cloud Run limits the combined tag and service name to 46 characters.
+        # Long exact targets use revision identity without a traffic tag.
+        self.tag = tag if len(service) + len(tag) <= 46 else None
         self.common = [f'--project={project}', f'--region={region}', '--format=json']
         self.warm = None
         self.reset = None
@@ -184,25 +187,27 @@ class Release:
         serving = active(current) == [(self.warm, 100)]
         if not serving and active(current) != active(self.before):
             raise RuntimeError('candidate cleanup traffic identity changed')
-        rows = current['status']['traffic']
-        tagged = [row for row in rows if row.get('tag') == self.tag]
-        if len(tagged) != 1 or tagged[0].get('revisionName') != self.warm:
-            raise RuntimeError('candidate cleanup tag identity mismatch')
-        self.stable()
-        remove_failed = False
-        try:
-            self.cloud(['gcloud', 'run', 'services', 'update-traffic', self.service, *self.common,
-                        '--remove-tags=' + self.tag, '--quiet'])
-        except Exception:
-            # Read back an ambiguous mutation, never repeat it. Still attempt
-            # the independent template reset if the exact warm binding holds.
-            remove_failed = True
-        self.expected = self.service_read()
-        self.candidate(self.expected, '1')
-        tag_removed = not remove_failed and not any(row.get('tag') == self.tag for row in self.expected['status']['traffic'])
-        if (self.expected.get('metadata', {}).get('uid') != current.get('metadata', {}).get('uid')
-                or active(self.expected) != active(current)):
-            raise RuntimeError('candidate cleanup tag removal changed traffic')
+        tag_removed = True
+        if self.tag:
+            rows = current['status']['traffic']
+            tagged = [row for row in rows if row.get('tag') == self.tag]
+            if len(tagged) != 1 or tagged[0].get('revisionName') != self.warm:
+                raise RuntimeError('candidate cleanup tag identity mismatch')
+            self.stable()
+            remove_failed = False
+            try:
+                self.cloud(['gcloud', 'run', 'services', 'update-traffic', self.service, *self.common,
+                            '--remove-tags=' + self.tag, '--quiet'])
+            except Exception:
+                # Read back an ambiguous mutation, never repeat it. Still attempt
+                # the independent template reset if the exact warm binding holds.
+                remove_failed = True
+            self.expected = self.service_read()
+            self.candidate(self.expected, '1')
+            tag_removed = not remove_failed and not any(row.get('tag') == self.tag for row in self.expected['status']['traffic'])
+            if (self.expected.get('metadata', {}).get('uid') != current.get('metadata', {}).get('uid')
+                    or active(self.expected) != active(current)):
+                raise RuntimeError('candidate cleanup tag removal changed traffic')
         # --min-instances is revision-level and immutable. --no-traffic prevents
         # this documented replacement revision from implicitly receiving traffic.
         # Never substitute --min (service-level), --to-latest or a health bypass.
@@ -222,7 +227,7 @@ class Release:
             self.health(reset)
             self.promote(reset)
         final = self.stable()
-        if (any(row.get('tag') == self.tag for row in final['status']['traffic'])
+        if ((self.tag and any(row.get('tag') == self.tag for row in final['status']['traffic']))
                 or any(name == self.warm for name, _ in active(final))
                 or str(self.revision_read(reset['metadata']['name'])['metadata'].get('annotations', {}).get(MINIMUM, '0')) != '0'):
             raise RuntimeError('candidate cleanup final assertions failed')
@@ -254,7 +259,7 @@ class Release:
         previous = self.revision_read(initial_traffic[0][0])
         if str(previous.get('metadata', {}).get('annotations', {}).get(MINIMUM, '0')) != '0':
             raise RuntimeError('candidate previous serving revision minimum is not zero')
-        if any(row.get('tag') == self.tag for row in self.before['status']['traffic']):
+        if self.tag and any(row.get('tag') == self.tag for row in self.before['status']['traffic']):
             raise RuntimeError('candidate tag collision; no mutation')
         if str(self.before.get('spec', {}).get('template', {}).get('metadata', {}).get('annotations', {}).get(MINIMUM, '0')) != '0':
             raise RuntimeError('candidate requires previous revision minimum zero')
@@ -264,7 +269,7 @@ class Release:
                 self.stable()
                 self.cloud(['gcloud', 'run', 'deploy', self.service, *self.common,
                             *[arg for arg in self.deploy_args if not arg.startswith(('--project=', '--region='))],
-                            '--tag=' + self.tag, '--min-instances=1'])
+                            *(['--tag=' + self.tag] if self.tag else []), '--min-instances=1'])
             finally:
                 # Even a timed-out/interrupted deploy may have taken effect.
                 current = self.service_read()

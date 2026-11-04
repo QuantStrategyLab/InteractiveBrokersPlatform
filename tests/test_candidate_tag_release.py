@@ -22,19 +22,20 @@ def plan(profile='russell_top50_leader_rotation'):
 
 
 class Cloud:
-    def __init__(self, failure=None):
+    def __init__(self, failure=None, service_name="unit-service"):
+        self.service_name = service_name
         self.failure = failure
         self.commands = []
         self.revisions = {}
         self.service = {'metadata': {'uid': 'service-uid', 'resourceVersion': '1'},
                         'spec': {'template': {'metadata': {'annotations': {}}, 'spec': {}}},
                         'status': {'conditions': [{'type': 'Ready', 'status': 'True'}],
-                                   'latestCreatedRevisionName': 'unit-service-old',
-                                   'traffic': [{'revisionName': 'unit-service-old', 'percent': 100}]}}
+                                   'latestCreatedRevisionName': self.service_name + '-old',
+                                   'traffic': [{'revisionName': self.service_name + '-old', 'percent': 100}]}}
         old = candidate()
-        old['metadata']['name'] = 'unit-service-old'
+        old['metadata']['name'] = self.service_name + '-old'
         old['metadata']['annotations'] = {}
-        self.revisions['unit-service-old'] = old
+        self.revisions[self.service_name + '-old'] = old
 
     def __call__(self, command):
         self.commands.append(command)
@@ -52,7 +53,7 @@ class Cloud:
             warm = 'deploy' in command
             if not warm and self.failure == 'reset_command':
                 raise RuntimeError('provider-private-detail')
-            name = 'unit-service-warm' if warm else 'unit-service-reset'
+            name = self.service_name + '-warm' if warm else self.service_name + '-reset'
             value = candidate()
             value['metadata'].update(name=name, uid=name, labels={'commit-sha': COMMIT, 'github-run-id': '123'})
             value['metadata']['annotations']['autoscaling.knative.dev/minScale'] = '1' if warm else '0'
@@ -61,8 +62,9 @@ class Cloud:
             self.revisions[name] = value
             self.service['status']['latestCreatedRevisionName'] = name
             self.service['spec']['template']['metadata']['annotations'] = copy.deepcopy(value['metadata']['annotations'])
-            if warm:
-                self.service['status']['traffic'].append({'revisionName': name, 'tag': 'cand-aaaaaaaa', 'percent': 0})
+            tag = next((v.split('=', 1)[1] for v in command if v.startswith('--tag=')), None)
+            if warm and tag:
+                self.service['status']['traffic'].append({'revisionName': name, 'tag': tag, 'percent': 0})
             self.service['metadata']['resourceVersion'] = str(len(self.commands))
             if warm and self.failure == 'deploy_abort':
                 raise InterruptedError('interrupted deploy')
@@ -72,7 +74,7 @@ class Cloud:
                 if self.failure != 'tag_sticks':
                     self.service['status']['traffic'] = [r for r in self.service['status']['traffic'] if r.get('tag') != remove]
                     if not self.service['status']['traffic']:
-                        self.service['status']['traffic'] = [{'revisionName': 'unit-service-warm', 'percent': 100}]
+                        self.service['status']['traffic'] = [{'revisionName': self.service_name + '-warm', 'percent': 100}]
             else:
                 target = next(v.split('=', 1)[1].rsplit('=', 1)[0] for v in command if v.startswith('--to-revisions='))
                 tags = [dict(r, percent=0) for r in self.service['status']['traffic'] if r.get('tag')]
