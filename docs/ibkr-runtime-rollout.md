@@ -293,6 +293,8 @@ gcloud storage buckets add-iam-policy-binding "gs://run-sources-${PROJECT_ID}-${
    - 标准路径是 `Deploy Cloud Run` workflow；`configured` 必须提供精确的 `configured_service`，禁止默认扫全部 inventory。
    - `workflow_dispatch` 必须从 `refs/heads/main` 调用可信 workflow。可选 `source_commit` 仅接受本仓库已存在的完整 40 位 SHA；未传时沿用 workflow SHA。镜像构建使用单独检出的源码，并以实际源码 SHA 标记镜像、revision 与部署读回。workflow 自身仍由 GitHub 的 main ref admission 约束，不更换 WIF provider。
    - 镜像发布与 env 同步默认 `--no-traffic`：只准备候选 revision，不改当前流量。
+   - `configured` 镜像发布仅为精确选中的候选 revision 设置 `--min-instances=1`，不修改 service 全局 scaling；单次 deploy 上限 360 秒。切流前最多等待 300 秒，必须同时读到 `Ready=True` 和 `ContainerHealthy=True`；Retired 不代替启动健康。等待期间 revision、commit、image digest、配置、原流量和 latest candidate 漂移，以及查询失败、显式不健康或超时都会停止。单次查询最多 30 秒。
+   - 预热实例费用和每次准确目标的重新部署需另行获得 owner 授权。超时不会自动重试、切流或清除 revision minimum；候选最小实例配置的后续处置也需 owner 决定。离线测试不证明云端一定会启动零流量候选。
    - 只更新已批准目标的镜像时，明确设置 `deploy_image=true`、`sync_env=false`；只同步配置则设置 `deploy_image=false`、`sync_env=true`。两项仍受仓库级部署/同步开关约束，且必须指定精确 `configured_service`。这样通知等纯代码发布不会顺带改 Secret、运行开关或 Scheduler。
    - `approve_traffic_shift` / `approve_scheduler_sync` 默认 `false`；显式打开后才切流量或启停 Scheduler，并做读回失败停止。
    - Scheduler 同步时，主执行与预热任务按 `standard_execution_enabled` 启停；独立 precheck 仅在 `drill_precheck_enabled=true` 时启用。主执行开启、drill 关闭时，precheck 保持暂停或被暂停。
@@ -356,3 +358,104 @@ Set these non-secret repository variables before running the affected workflows.
 | `QSL_CONSOLE_BASE_URL` | HTTPS console origin without an API path | Publisher workflows | `https://example.invalid` for Python scripts |
 | `QSL_DIGEST_BUCKET` | Digest and parity evidence bucket | Store and parity workflows | none |
 | `STRATEGY_PLUGIN_ALLOWED_SIGNAL_PREFIXES` | Comma-separated permitted GCS signal prefixes | Plugin mount verification | none |
+
+### Private sync bindings
+
+The protected sync workflow accepts the required infrastructure Secret names in
+`config/cloud_run_sync_secret_names.json`. The dispatch caller must forward these
+same-name repository Secrets; defining their names does not create their values.
+Missing bindings stop preflight before authentication. Runtime and Scheduler
+identities use the existing `IBKR_RUNTIME_SERVICE_ACCOUNT` and
+`IBKR_SCHEDULER_SERVICE_ACCOUNT` Secrets. No Variable fallback is used for these
+infrastructure bindings. Every sync plan stays in a mode-0600 runner-private file;
+subsequent steps receive its path rather than raw JSON outputs or step headers.
+
+Candidate warmup now requires two fresh healthy revision observations separated by
+a five-second poll, followed by a final fresh identity and startup-health check.
+The candidate generation must be a positive integer (or its canonical decimal
+string), match observedGeneration, and remain unchanged. Missing or inconsistent
+generation evidence fails closed. Health-only initial and polling reads use
+fixed diagnostics and a maximum 30-second timeout per read. These observations
+do not make traffic promotion an atomic cloud compare-and-set operation.
+
+### Exact-target Russell candidate warm-up
+
+Baseline capture and verification bound each service, IAM, Scheduler and revision
+read to 30 seconds. A timeout fails with a fixed diagnostic that omits command
+arguments and provider output. During candidate warm-up, that failure blocks
+traffic promotion and enters the existing tag-removal and minimum-zero cleanup;
+it does not retry the read or accept an incomplete baseline.
+
+Immediately before each traffic shift, the lifecycle rereads the exact revision
+and rechecks its identity, specification and startup health, including after
+baseline validation. Missing, unknown, unhealthy or unreadable revision evidence
+blocks promotion and enters the existing cleanup path.
+
+The configured Russell image path uses `scripts/cloud_run_candidate_warmup.py`
+for deployment, health qualification, traffic promotion and `finally` cleanup in
+one process. Other profiles keep their existing image deployment path. Warm-up
+requires one exact admitted configured service, image deployment with environment
+sync disabled, and explicit traffic-shift approval. It changes no Scheduler,
+environment, Secret, IAM or runtime execution switch.
+
+The candidate is deployed with `--no-traffic --tag=cand-<source-sha8>
+--min-instances=1`. This is a **revision-level** minimum, never service-level
+`--min`. Google Cloud's **Revisions and minimum instances** section says revision
+minimums start when referenced in a traffic split or assigned a tag; an untagged
+zero-percent revision alone does not establish startup. One minimum instance is
+billed during this warm-up window, including idle time. Missing ContainerHealthy
+remains a hard denial, with bounded fresh readbacks. Raw condition readbacks
+separate absent startup evidence from an observed ContainerHealthy=False probe
+failure. Conditions alone do not establish log absence; the lifecycle readback
+checks for instance log records when startup is unobserved and Active=False.
+
+**Restoring zero creates another revision.** Google Cloud's **Configure
+revision-level minimum instances** and `gcloud run services update
+--min-instances` documentation state that this setting is immutable on a
+revision. Tag removal does not change traffic percentages or the serving
+revision's minimum. The script therefore removes the temporary tag, updates the
+service template with `--min-instances=0 --no-traffic --deploy-health-check`, and
+asserts that the replacement has the same image and container specification,
+minimum zero and unchanged traffic. After a successful initial promotion, this
+replacement must independently pass strict health and continuity checks before
+an explicit **second** guarded traffic migration. The final serving revision is
+the minimum-zero replacement. This is two revisions within one workflow run;
+acceptance must acknowledge that extra revision and traffic effect before
+execution. It is also an M08 deployment prerequisite.
+
+The warm revision remains immutable at configured minimum one. Once untagged and
+non-serving it no longer has the tag/traffic reference that provisions its
+minimum. Do not claim its revision configuration was reset to zero. A later
+rollback to, or tag on, this retained revision would reactivate minimum-one cost;
+include that fact in any separately approved rollback. Keep existing artifact
+KEEP protection and the old serving revision for rollback; this path deletes
+nothing.
+
+Any deploy/health/traffic failure or catchable interrupt enters the same cleanup
+path. Before initial promotion, cleanup preserves the old traffic and creates
+only the minimum-zero replacement. After promotion, a failed replacement create,
+health check, tag removal or readback makes cleanup fail loudly, prints redacted
+raw service/revision readbacks and records `cleanup_failed` in the runner-private
+result. It never routes to an unqualified revision, silently rolls back, retries
+a deployment or reports the template value as a successful serving reset.
+Minimum-one billing **may remain on cleanup failure** and needs owner response;
+normal success limits it to the warm-up window. SIGKILL, lost runner and provider
+outage cannot be guaranteed recoverable by a process-local `finally`. Retained
+state blocks automatic replay after restart. Preserve the failed attempt and
+reconcile it through the existing authorized operator path rather than rerunning
+it. Cloud read/compare guards are not an atomic Cloud Run compare-and-set.
+
+Treat deployment as successful only when all six have actual evidence:
+
+1. Production logs no longer show the `cash_reserve_ratio` TypeError.
+2. The final revision emitted a real heartbeat or snapshot; startup alone is insufficient.
+3. The final minimum-zero replacement carries 100% of service traffic.
+4. The prior revision no longer serves traffic and remains retained under KEEP for rollback.
+5. The temporary candidate tag is absent.
+6. Service-template and final serving-revision readbacks show minimum instances 0.
+
+These are execution acceptance criteria, not claims established by offline tests.
+Official references: [Minimum instances](https://cloud.google.com/run/docs/configuring/min-instances),
+[service update flags](https://cloud.google.com/sdk/gcloud/reference/run/services/update),
+[traffic tags](https://cloud.google.com/sdk/gcloud/reference/run/services/update-traffic),
+and [revision conditions](https://cloud.google.com/run/docs/reference/rest/v2/Condition).

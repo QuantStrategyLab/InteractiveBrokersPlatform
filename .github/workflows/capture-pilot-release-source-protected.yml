@@ -26,6 +26,8 @@ on:
         required: true
       GCP_PROJECT_ID:
         required: true
+      GCP_WORKLOAD_IDENTITY_PROVIDER:
+        required: true
       GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT:
         required: true
       CLOUD_RUN_REGION:
@@ -64,6 +66,7 @@ jobs:
         env: &private_context
           PILOT_DEPLOY_GATE: ${{ secrets.DEPLOY_GATE }}
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           CLOUD_RUN_REGION: ${{ secrets.CLOUD_RUN_REGION }}
           CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}
           GCP_ARTIFACT_REGISTRY_HOSTNAME: ${{ secrets.GCP_ARTIFACT_REGISTRY_HOSTNAME }}

@@ -1,5 +1,7 @@
 # 单账户试点镜像的零流量发布
 
+预检通过受保护的 `GCP_WORKLOAD_IDENTITY_PROVIDER` Secret 接收 provider 绑定，写入当前 Actions runner 的环境文件供认证步骤使用，不再从 workflow 源码提取字面值。部署、release-source capture 和 serving-install diagnostic 共用此规则；绑定缺失或格式无效时在认证前停止，原目标与身份准入检查保持不变。
+
 本入口只为 TQQQ profile 构建并创建一个候选 revision。它保留原环境、风险政策、资源、网络、IAM、Scheduler 及实际服务流量，不启用交易、不解除熔断，也不调用券商。
 
 在原仓库 `main` 首次运行 `Deploy IBKR pilot without traffic`，输入 `profile=tqqq_growth_income` 和本次 dispatch 的准确 main SHA。既有 `ENABLE_GITHUB_CLOUD_RUN_DEPLOY` 必须已经为 true。入口不接受账户、项目或服务名；这些绑定沿用原部署来源，作为 reusable workflow 的具名 secrets 在受保护 runner 内解析。WIF provider 只从原通用 protected workflow 的唯一固定声明读取，先遮罩再提供给认证步骤，不复制实际映射或新增配置变量。不会要求在 Mac 读取 Secret 内容。

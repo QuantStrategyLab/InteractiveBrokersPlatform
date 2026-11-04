@@ -16,7 +16,7 @@ def _workflow() -> str:
 
 
 def _deploy_block(workflow: str) -> str:
-    return workflow.split('gcloud run deploy "${cloud_run_service}"', 1)[1].split("--quiet", 1)[0]
+    return workflow.split('            deploy_args=(', 1)[1].split('            )', 1)[0]
 
 
 def _env_update_block(workflow: str) -> str:
