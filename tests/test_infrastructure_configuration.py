@@ -49,7 +49,8 @@ def test_workflow_variables_are_checked_before_cloud_actions():
     variable_names = {
         "IBKR_GCP_PROJECT_ID", "IBKR_DEPLOY_SERVICE_ACCOUNT", "IBKR_RUNTIME_SERVICE_ACCOUNT",
         "IBKR_SCHEDULER_SERVICE_ACCOUNT", "QSL_CONSOLE_BASE_URL", "QSL_DIGEST_BUCKET",
-        "STRATEGY_PLUGIN_ALLOWED_SIGNAL_PREFIXES",
+        "STRATEGY_PLUGIN_ALLOWED_SIGNAL_PREFIXES", "GCP_PROJECT_ID",
+        "GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT",
     }
     for path in (root / ".github/workflows").glob("*.yml"):
         text = path.read_text()
@@ -64,14 +65,17 @@ def test_workflow_variables_are_checked_before_cloud_actions():
             code = guard.split("        run: |\n", 1)[1]
             code = "\n".join(line[10:] for line in code.splitlines())
             global_env = text.split("\nenv:\n", 1)[1].split("\njobs:\n", 1)[0] if "\nenv:\n" in text else ""
-            inherited = set(re.findall(r"^  ([A-Z_]+): \$\{\{ (?:vars|secrets)\.[A-Z_]+ \}\}$", global_env, re.MULTILINE))
-            configured = {name: "synthetic" for name in names | inherited}
+            bindings = dict(re.findall(r"^\s+([A-Z_]+): \$\{\{ (?:vars|secrets)\.([A-Z_]+) \}\}$", global_env + guard, re.MULTILINE))
+            configured = {name: "dummy" for name in bindings}
             result = subprocess.run(["/bin/bash", "-c", code], env=configured, capture_output=True, text=True)
             assert result.returncode == 0
             for name in names:
-                result = subprocess.run(["/bin/bash", "-c", code], env={k: v for k, v in configured.items() if k != name}, capture_output=True, text=True)
+                missing = {key: value for key, value in configured.items() if bindings[key] != name}
+                result = subprocess.run(["/bin/bash", "-c", code], env=missing, capture_output=True, text=True)
                 assert result.returncode == 2
-                assert f"{name} is required" in result.stderr
+                assert any(f"{key} is required" in result.stderr
+                           for key, source in bindings.items() if source == name)
+
 
 
 @pytest.mark.parametrize("missing_alias", [
@@ -95,3 +99,20 @@ def test_deploy_preflight_checks_consumed_infrastructure_aliases(missing_alias):
     result = subprocess.run(["/bin/bash", "-c", code], env=configured, capture_output=True, text=True)
     assert result.returncode == 2
     assert f"{missing_alias} is required" in result.stderr
+
+
+def test_documented_canonical_secrets_satisfy_preflight_without_legacy_aliases():
+    text = Path('.github/workflows/sync-cloud-run-env-protected.yml').read_text()
+    global_env = text.split('\nenv:\n', 1)[1].split('\njobs:\n', 1)[0]
+    guard = text.split('      - name: Require infrastructure variables\n', 1)[1].split('\n      - ', 1)[0]
+    secrets = {name: 'dummy' for name in (
+        'GCP_PROJECT_ID', 'GCP_WORKLOAD_IDENTITY_PROVIDER',
+        'GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT', 'IBKR_RUNTIME_SERVICE_ACCOUNT',
+        'IBKR_SCHEDULER_SERVICE_ACCOUNT')}
+    bindings = dict(re.findall(r'^\s+([A-Z_]+): \$\{\{ secrets\.([A-Z_]+) \}\}$', global_env + guard, re.MULTILINE))
+    env = {key: secrets.get(value, '') for key, value in bindings.items()}
+    env['STRATEGY_PLUGIN_ALLOWED_SIGNAL_PREFIXES'] = 'gs://dummy/'
+    code = guard.split('        run: |\n', 1)[1]
+    code = '\n'.join(line[10:] for line in code.splitlines())
+    result = subprocess.run(['/bin/bash', '-c', code], env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr

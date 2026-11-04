@@ -554,3 +554,19 @@ def test_network_annotation_requires_strict_known_json_shape(controlled_release,
     with pytest.raises(pilot.ReleaseError):
         state.execute()
     assert [args[0] for args, _ in state.calls] == ["git", "git"]
+
+
+@pytest.mark.parametrize('provider', ['', 'projects/invalid', 'projects/123/locations/global/workloadIdentityPools/dummy/providers/dummy\nINJECT=value'])
+def test_invalid_protected_provider_never_writes_environment(tmp_path, provider):
+    destination = tmp_path / 'action-env'
+    with pytest.raises(pilot.ReleaseError, match='identity_source_unavailable'):
+        pilot.bootstrap_identity({'GCP_WORKLOAD_IDENTITY_PROVIDER': provider}, destination)
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize('workflow', ['deploy-pilot-no-traffic-protected', 'capture-pilot-release-source-protected', 'diagnose-pilot-serving-install-protected'])
+def test_all_bootstrap_callers_consume_protected_provider(workflow):
+    text = Path('.github/workflows/' + workflow + '.yml').read_text()
+    assert 'GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}' in text
+    assert '${{ env.PILOT_WIF_PROVIDER }}' in text
+    assert 'projects/' not in text

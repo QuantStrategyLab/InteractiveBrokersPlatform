@@ -23,6 +23,13 @@ from scripts.runtime_target_continuity import verify_traffic_revision
 MINIMUM = 'autoscaling.knative.dev/minScale'
 
 
+def revision_metadata(value: dict) -> dict:
+    # resourceVersion advances on controller status updates, not desired changes.
+    # Preserve every other metadata field so identity/configuration drift blocks.
+    return {key: item for key, item in (value.get('metadata') or {}).items()
+            if key != 'resourceVersion'}
+
+
 def eligible(plan: dict, workflow_target: str, selector: str) -> bool:
     if workflow_target != 'configured':
         return False
@@ -146,7 +153,7 @@ class Release:
         # A fresh read after the wait prevents a cached healthy value from
         # authorizing a later update. Existing continuity checks stay strict.
         fresh = self.revision_read(value['metadata']['name'])
-        if fresh.get('metadata') != value.get('metadata') or fresh.get('spec') != value.get('spec'):
+        if revision_metadata(fresh) != revision_metadata(value) or fresh.get('spec') != value.get('spec'):
             raise RuntimeError('candidate revision changed during qualification')
         verify_traffic_revision(fresh, expected_revision=value['metadata']['name'],
                                 expected_commit=self.commit, require_startup_health=True)
@@ -156,7 +163,7 @@ class Release:
         # Baseline validation can outlast the earlier health observation.
         # Requalify the exact revision immediately before either traffic shift.
         fresh = self.revision_read(value['metadata']['name'])
-        if fresh.get('metadata') != value.get('metadata') or fresh.get('spec') != value.get('spec'):
+        if revision_metadata(fresh) != revision_metadata(value) or fresh.get('spec') != value.get('spec'):
             raise RuntimeError('candidate revision changed before promotion')
         verify_traffic_revision(fresh, expected_revision=value['metadata']['name'],
                                 expected_commit=self.commit, require_startup_health=True)

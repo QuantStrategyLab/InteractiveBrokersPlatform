@@ -326,3 +326,28 @@ def test_post_baseline_health_loss_blocks_promotion_and_restores(tmp_path, condi
     assert any('--remove-tags=cand-aaaaaaaa' in c for c in driver.commands)
     assert any('--min-instances=0' in c for c in driver.commands)
     assert json.loads((tmp_path / 'state.json').read_text())['status'] == 'restored'
+
+
+@pytest.mark.parametrize('stage', ['health', 'promote'])
+@pytest.mark.parametrize('field', ['resourceVersion', 'uid', 'generation', 'labels', 'spec'])
+def test_revision_version_churn_preserves_stable_identity(tmp_path, stage, field):
+    driver = Cloud()
+    driver(['gcloud', 'run', 'deploy', 'unit-service'])
+    obj = release(tmp_path, driver)
+    obj.expected = copy.deepcopy(driver.service)
+    value = copy.deepcopy(driver.revisions['unit-service-warm'])
+    fresh = driver.revisions['unit-service-warm']
+    if field == 'labels':
+        fresh['metadata']['labels']['commit-sha'] = 'c' * 40
+    elif field == 'spec':
+        fresh['spec']['containers'][0]['image'] = 'fake@sha256:' + 'c' * 64
+    else:
+        fresh['metadata'][field] = 'changed'
+    with mock.patch('scripts.reconcile_cloud_runtime._verify_deploy_candidate_with_wait'):
+        if field == 'resourceVersion':
+            getattr(obj, stage)(value)
+        else:
+            with pytest.raises(RuntimeError, match='candidate revision changed'):
+                getattr(obj, stage)(value)
+    shifts = [c for c in driver.commands if any(v.startswith('--to-revisions=') for v in c)]
+    assert bool(shifts) == (stage == 'promote' and field == 'resourceVersion')
