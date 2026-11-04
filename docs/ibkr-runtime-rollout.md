@@ -380,6 +380,12 @@ do not make traffic promotion an atomic cloud compare-and-set operation.
 
 ### Exact-target Russell candidate warm-up
 
+Baseline capture and verification bound each service, IAM, Scheduler and revision
+read to 30 seconds. A timeout fails with a fixed diagnostic that omits command
+arguments and provider output. During candidate warm-up, that failure blocks
+traffic promotion and enters the existing tag-removal and minimum-zero cleanup;
+it does not retry the read or accept an incomplete baseline.
+
 The configured Russell image path uses `scripts/cloud_run_candidate_warmup.py`
 for deployment, health qualification, traffic promotion and `finally` cleanup in
 one process. Other profiles keep their existing image deployment path. Warm-up
