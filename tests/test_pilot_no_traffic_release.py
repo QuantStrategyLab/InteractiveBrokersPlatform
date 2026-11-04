@@ -274,19 +274,14 @@ def test_nonfinite_json_is_never_accepted(constant):
         pilot._json('{"value":' + constant + '}')
 
 
-def test_original_identity_is_bootstrapped_once_and_masked_before_env(tmp_path, capsys):
-    workflow = tmp_path / ".github/workflows"
-    workflow.mkdir(parents=True)
-    provider = "projects/123/locations/global/workloadIdentityPools/synthetic/providers/synthetic"
-    path = workflow / "sync-cloud-run-env-protected.yml"
-    path.write_text("env:\n  GCP_WORKLOAD_IDENTITY_PROVIDER: " + provider + "\n")
-    destination = tmp_path / "github-env"
-    pilot.bootstrap_identity(tmp_path, destination)
-    assert capsys.readouterr().out == "::add-mask::" + provider + "\n"
+def test_protected_identity_is_bootstrapped_without_public_output(tmp_path, capsys):
+    provider = "projects/123/locations/global/workloadIdentityPools/dummy-pool/providers/dummy-provider"
+    destination = tmp_path / "action-env"
+    pilot.bootstrap_identity({"GCP_WORKLOAD_IDENTITY_PROVIDER": provider}, destination)
+    assert capsys.readouterr().out == ""
     assert destination.read_text() == "PILOT_WIF_PROVIDER=" + provider + "\n"
-    path.write_text(path.read_text() * 2)
     with pytest.raises(pilot.ReleaseError, match="identity_source_unavailable"):
-        pilot.bootstrap_identity(tmp_path, destination)
+        pilot.bootstrap_identity({}, destination)
 
 
 @pytest.mark.parametrize("change", ["unready", "wrong_image", "config"])
@@ -559,3 +554,19 @@ def test_network_annotation_requires_strict_known_json_shape(controlled_release,
     with pytest.raises(pilot.ReleaseError):
         state.execute()
     assert [args[0] for args, _ in state.calls] == ["git", "git"]
+
+
+@pytest.mark.parametrize('provider', ['', 'projects/invalid', 'projects/123/locations/global/workloadIdentityPools/dummy/providers/dummy\nINJECT=value'])
+def test_invalid_protected_provider_never_writes_environment(tmp_path, provider):
+    destination = tmp_path / 'action-env'
+    with pytest.raises(pilot.ReleaseError, match='identity_source_unavailable'):
+        pilot.bootstrap_identity({'GCP_WORKLOAD_IDENTITY_PROVIDER': provider}, destination)
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize('workflow', ['deploy-pilot-no-traffic-protected', 'capture-pilot-release-source-protected', 'diagnose-pilot-serving-install-protected'])
+def test_all_bootstrap_callers_consume_protected_provider(workflow):
+    text = Path('.github/workflows/' + workflow + '.yml').read_text()
+    assert 'GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}' in text
+    assert '${{ env.PILOT_WIF_PROVIDER }}' in text
+    assert 'projects/' not in text

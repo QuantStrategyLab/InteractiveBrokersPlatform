@@ -22,8 +22,17 @@ SCHEDULER_FORMAT = "json(name,state,schedule,timeZone,httpTarget.uri,httpTarget.
 REVISION_FORMAT = "json(metadata.name,metadata.labels,spec.containers[].image)"
 
 
+def _run_readback(command: list[str]) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(command, text=True, capture_output=True, check=False, timeout=30)
+    except subprocess.TimeoutExpired:
+        # TimeoutExpired includes command arguments and captured provider output.
+        # Keep those private and let the lifecycle enter its existing cleanup.
+        raise RuntimeError("read-only gcloud readback timed out after 30 seconds") from None
+
+
 def _run_json(command: list[str]) -> object:
-    result = subprocess.run(command, text=True, capture_output=True, check=False)
+    result = _run_readback(command)
     if result.returncode:
         raise RuntimeError("read-only gcloud readback command failed")
     try:
@@ -83,11 +92,11 @@ def _snapshot(args: argparse.Namespace) -> dict[str, object]:
 
 
 def _created_revision(args: argparse.Namespace) -> dict[str, object]:
-    result = subprocess.run([
+    result = _run_readback([
         "gcloud", "run", "services", "describe", args.service,
         f"--project={args.project}", f"--region={args.region}",
         "--format=value(status.latestCreatedRevisionName)",
-    ], text=True, capture_output=True, check=False)
+    ])
     revision_name = result.stdout.strip() if result.returncode == 0 else ""
     if not revision_name:
         raise RuntimeError("Cloud Run service did not report a created revision")
