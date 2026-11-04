@@ -386,6 +386,11 @@ arguments and provider output. During candidate warm-up, that failure blocks
 traffic promotion and enters the existing tag-removal and minimum-zero cleanup;
 it does not retry the read or accept an incomplete baseline.
 
+Immediately before each traffic shift, the lifecycle rereads the exact revision
+and rechecks its identity, specification and startup health, including after
+baseline validation. Missing, unknown, unhealthy or unreadable revision evidence
+blocks promotion and enters the existing cleanup path.
+
 The configured Russell image path uses `scripts/cloud_run_candidate_warmup.py`
 for deployment, health qualification, traffic promotion and `finally` cleanup in
 one process. Other profiles keep their existing image deployment path. Warm-up

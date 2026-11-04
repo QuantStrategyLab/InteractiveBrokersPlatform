@@ -153,6 +153,14 @@ class Release:
 
     def promote(self, value: dict) -> None:
         self.stable()
+        # Baseline validation can outlast the earlier health observation.
+        # Requalify the exact revision immediately before either traffic shift.
+        fresh = self.revision_read(value['metadata']['name'])
+        if fresh.get('metadata') != value.get('metadata') or fresh.get('spec') != value.get('spec'):
+            raise RuntimeError('candidate revision changed before promotion')
+        verify_traffic_revision(fresh, expected_revision=value['metadata']['name'],
+                                expected_commit=self.commit, require_startup_health=True)
+        self.stable()
         self.cloud(['gcloud', 'run', 'services', 'update-traffic', self.service, *self.common,
                     '--to-revisions=' + value['metadata']['name'] + '=100', '--quiet'])
         self.expected = self.service_read()

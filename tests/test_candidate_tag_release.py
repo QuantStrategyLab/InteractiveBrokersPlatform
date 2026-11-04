@@ -284,3 +284,45 @@ def test_empty_raw_describe_never_satisfies_cleanup_assertion(tmp_path):
             release(tmp_path, cloud).execute()
     assert json.loads((tmp_path / 'state.json').read_text())['status'] == 'cleanup_failed'
     assert not any('--to-revisions=unit-service-warm=100' in c for c in driver.commands)
+
+
+@pytest.mark.parametrize('condition', ['False', 'Unknown', None, 'unreadable'])
+def test_post_baseline_health_loss_blocks_promotion_and_restores(tmp_path, condition):
+    driver = Cloud()
+    baseline_finished = False
+
+    def cloud(command):
+        if (baseline_finished and condition == 'unreadable'
+                and 'revisions' in command and 'describe' in command
+                and command[4] == 'unit-service-warm'):
+            raise RuntimeError('candidate cloud operation failed or readback unavailable')
+        return driver(command)
+
+    obj = release(tmp_path, cloud)
+
+    def lose_health():
+        nonlocal baseline_finished
+        rows = driver.revisions['unit-service-warm']['status']['conditions']
+        rows[:] = [row for row in rows if row['type'] != 'ContainerHealthy']
+        if condition is not None:
+            rows.append({'type': 'ContainerHealthy', 'status': condition})
+        baseline_finished = True
+
+    obj.no_traffic_verify = lose_health
+    # Let cleanup read the binding after a failed promotion read.
+    restore = obj.restore
+
+    def cleanup():
+        nonlocal baseline_finished
+        baseline_finished = False
+        return restore()
+
+    with mock.patch.object(obj, 'restore', side_effect=cleanup), \
+         mock.patch('scripts.reconcile_cloud_runtime._verify_deploy_candidate_with_wait'):
+        with pytest.raises((ValueError, RuntimeError)):
+            obj.execute()
+    assert not any(any(v.startswith('--to-revisions=') for v in c) for c in driver.commands)
+    assert driver.service['status']['traffic'] == [{'revisionName': 'unit-service-old', 'percent': 100}]
+    assert any('--remove-tags=cand-aaaaaaaa' in c for c in driver.commands)
+    assert any('--min-instances=0' in c for c in driver.commands)
+    assert json.loads((tmp_path / 'state.json').read_text())['status'] == 'restored'
