@@ -141,6 +141,7 @@ def test_durable_open_dominates_closed_projection():
 
 @pytest.mark.parametrize("failure", ["missing", "old_capability", "read", "write", "corruption"])
 def test_persistence_failures_prohibit_new_risk(failure, tmp_path, monkeypatch):
+    # Rule A requires measured peak evidence; (50,000 - 40,000) / 50,000 = 0.2 exercises the actual journal failure.
     session = session_at(tmp_path)
     if failure == "missing":
         session = None
@@ -152,9 +153,9 @@ def test_persistence_failures_prohibit_new_risk(failure, tmp_path, monkeypatch):
             raise OSError("synthetic persistence failure")
         monkeypatch.setattr(AccountSubmissionSession, method, fail)
     else:
-        session.record_circuit_breaker_open(snapshot=gate.build_snapshot_from_portfolio({"total_equity": 40_000, "drawdown_from_peak": .2}))
+        session.record_circuit_breaker_open(snapshot=gate.build_snapshot_from_portfolio({"peak_equity_usd": 50_000, "total_equity": 40_000, "drawdown_from_peak": .2}))
         session._location(1).write_text("invalid json")
-    result = gate.evaluate_persistent_account_new_risk_admission({"equity": 40_000, "drawdown_from_peak": .2}, session=session)
+    result = gate.evaluate_persistent_account_new_risk_admission({"peak_equity_usd": 50_000, "equity": 40_000, "drawdown_from_peak": .2}, session=session)
     assert gate.new_risk_buy_prohibited(result)
     assert "PERSISTENT_BREAKER_UNAVAILABLE" in result.reason_codes
 

@@ -40,8 +40,11 @@ def _run_with_synthetic_account_nlv(*, account_nlv, **kwargs):
     read_portfolio = kwargs.pop("get_current_portfolio")
 
     def read_snapshot(ib):
-        snapshot = _legacy_portfolio_snapshot(ib, get_current_portfolio=read_portfolio)
+        positions, values = read_portfolio(ib)
+        snapshot = _legacy_portfolio_snapshot(ib, get_current_portfolio=lambda _ib: (positions, values))
+        # Rule A needs the explicit fake peak retained from this same snapshot read.
         return replace(snapshot, metadata={
+            **({"peak_equity_usd": values["peak_equity_usd"]} if "peak_equity_usd" in values else {}),
             "broker_net_liquidation": account_nlv,
             "total_equity_source": "broker_net_liquidation",
         })
@@ -72,6 +75,35 @@ def test_heartbeat_uses_broker_total_without_changing_strategy_equity():
     assert account_values["equity"] == 250.0
     assert account_values["heartbeat_account_snapshot"]["net_assets"] == 2500.0
     assert account_values["heartbeat_account_snapshot"]["available_cash"] == 100.0
+
+
+@pytest.mark.parametrize("observed_at", [
+    "2026-11-04T00:00:00+00:00", "2020-01-01T00:00:00Z", None, "invalid",
+])
+def test_snapshot_portfolio_preserves_drawdown_observation_evidence(observed_at):
+    metadata = {
+        "broker_net_liquidation": 40000.0,
+        "total_equity_source": "broker_net_liquidation",
+        "drawdown_from_peak": 0.2,
+        "drawdown_from_peak_observed_at": observed_at,
+    }
+    snapshot = SimpleNamespace(positions=(), total_equity=250.0, metadata=metadata.copy())
+
+    _positions, account_values = _snapshot_to_portfolio_view(snapshot)
+
+    assert "drawdown_from_peak_observed_at" in account_values
+    assert account_values["drawdown_from_peak_observed_at"] == observed_at
+    assert account_values["drawdown_from_peak"] == 0.2
+    assert account_values["account_equity_usd"] == 40000.0
+    assert snapshot.metadata == metadata
+
+
+def test_snapshot_portfolio_does_not_invent_drawdown_observation_time():
+    snapshot = SimpleNamespace(positions=(), metadata={"drawdown_from_peak": 0.2})
+
+    _positions, account_values = _snapshot_to_portfolio_view(snapshot)
+
+    assert "drawdown_from_peak_observed_at" not in account_values
 
 
 def test_no_trade_heartbeat_respects_window_and_notification_policy():
@@ -1083,6 +1115,7 @@ def test_run_strategy_core_prefers_structured_noop_status_in_zh(monkeypatch):
 
 @pytest.fixture
 def claim_cycle(tmp_path, monkeypatch, strategy_module):
+    # Rule A requires an explicit fake peak equal to NAV so the original order checks exercise a measured zero drawdown.
     submitted = []
     metadata = {
         "strategy_profile": "global_etf_rotation",
@@ -1179,7 +1212,7 @@ def claim_cycle(tmp_path, monkeypatch, strategy_module):
     def run(**overrides):
         return _run_with_synthetic_account_nlv(account_nlv=1000.0,
             connect_ib=lambda: ib,
-            get_current_portfolio=lambda _ib: (state.positions, {"equity": 1000.0, "buying_power": 1000.0}),
+            get_current_portfolio=lambda _ib: (state.positions, {"peak_equity_usd": 1000.0, "equity": 1000.0, "buying_power": 1000.0}),
             compute_signals=lambda *_args: (state.target_weights, "synthetic", False, "", state.metadata),
             execute_rebalance=strategy_module.execute_rebalance,
             send_tg_message=lambda _message: None,
@@ -1194,6 +1227,7 @@ def claim_cycle(tmp_path, monkeypatch, strategy_module):
 @pytest.mark.parametrize("case", ["default", "disabled", "no_store", "empty_key", "false", "exception"])
 @pytest.mark.parametrize("side", ["buy", "sell"])
 def test_cycle_requires_claim_before_actual_submit(claim_cycle, case, side):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     state = claim_cycle
     if side == "sell":
         state.positions = {"VOO": {"quantity": 5, "avg_cost": 100.0}}
@@ -1233,6 +1267,7 @@ def test_cycle_requires_claim_before_actual_submit(claim_cycle, case, side):
 
 
 def test_cycle_success_claim_precedes_one_submit_and_blocks_repeat(claim_cycle):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     state = claim_cycle
     from application.rebalance_service import _build_execution_marker_key
 
@@ -1253,6 +1288,7 @@ def test_cycle_success_claim_precedes_one_submit_and_blocks_repeat(claim_cycle):
 
 
 def test_cycle_unknown_submission_retains_claim_after_store_reopen(claim_cycle):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     state = claim_cycle
 
     def accepted_then_timeout(_ib, intent):
@@ -1269,6 +1305,7 @@ def test_cycle_unknown_submission_retains_claim_after_store_reopen(claim_cycle):
 
 
 def test_cycle_distinct_orders_share_one_successful_claim(claim_cycle):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     state = claim_cycle
     state.metadata["allocation"] = _weight_allocation(
         {"VOO": 0.3, "SPY": 0.3}, risk_symbols=("VOO", "SPY"),
@@ -1282,6 +1319,7 @@ def test_cycle_distinct_orders_share_one_successful_claim(claim_cycle):
 
 @pytest.mark.parametrize("case", ["dry_run", "empty_plan", "no_signal", "admission_rejected"])
 def test_cycle_non_submission_paths_do_not_claim(claim_cycle, case):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     state = claim_cycle
     store = Mock(spec=("has_marker", "claim_marker", "record_marker", "read_marker"))
     store.has_marker.return_value = False
@@ -1387,6 +1425,7 @@ def persistent_runner(claim_cycle, strategy_module, monkeypatch):
 
 
 def test_persistent_runner_first_ack_and_new_healthy_intent(persistent_runner):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     state = persistent_runner
     first = state.run()
     assert first.execution_summary["orders_pending"]
@@ -1403,6 +1442,7 @@ def test_persistent_runner_first_ack_and_new_healthy_intent(persistent_runner):
 
 
 def test_persistent_runner_unknown_new_date_target_snapshot_and_healthy_injection_still_blocks(persistent_runner):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     state = persistent_runner
     state.status = "Unknown"
     first = state.run()

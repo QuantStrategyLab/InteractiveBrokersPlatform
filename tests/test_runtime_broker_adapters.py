@@ -762,6 +762,7 @@ def test_persistent_main_submit_without_grant_never_reaches_adapter(strategy_mod
 
 @pytest.fixture
 def persistent_real_caller(tmp_path, monkeypatch, strategy_module_factory):
+    # Rule A requires an explicit fake peak equal to NAV so the original order checks exercise a measured zero drawdown.
     """Actual main -> adapter -> executor -> platform/QPK -> fake placeOrder."""
     from dataclasses import replace
     from functools import partial
@@ -847,7 +848,7 @@ def persistent_real_caller(tmp_path, monkeypatch, strategy_module_factory):
         state.adapters = replace(state.adapters, dry_run_only=dry_run)
         return module.execute_rebalance(
             ib, targets, {"VOO": {"quantity": 10.0, "avg_cost": 50.0}},
-            {"equity": 2000.0, "buying_power": 1500.0}, signal_metadata=metadata,
+            {"peak_equity_usd": 2000.0, "equity": 2000.0, "buying_power": 1500.0}, signal_metadata=metadata,
             acquire_execution_claim=lambda: state.claim_calls.append(True) or True,
             account_execution_session=selected,
         )
@@ -858,6 +859,7 @@ def persistent_real_caller(tmp_path, monkeypatch, strategy_module_factory):
 
 
 def test_persistent_main_real_caller_transmits_and_records_two_known_acks(persistent_real_caller):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     state = persistent_real_caller
     _logs, summary = state.run()
     assert [(c.symbol, o.action, o.totalQuantity) for c, o in state.submitted] == [("VOO", "SELL", 10), ("QQQM", "BUY", 20)]
@@ -920,6 +922,7 @@ def test_persistent_main_old_contract_imports_but_no_submit(persistent_real_call
 
 @pytest.mark.parametrize("status,filled,price", [("PartiallyFilled", 1, 49), ("Rejected", 0, 0)])
 def test_persistent_main_first_partial_or_reject_retains_healthy_path(persistent_real_caller, status, filled, price):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     state = persistent_real_caller
     state.status, state.filled, state.fill_price = status, filled, price
     _logs, summary = state.run()
@@ -946,6 +949,7 @@ def test_persistent_main_transport_after_place_order_is_durable_unknown(persiste
 
 
 def test_persistent_main_old_worker_paused_at_venue_cannot_be_stolen(persistent_real_caller, monkeypatch):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     import threading
     from concurrent.futures import ThreadPoolExecutor
     from quant_platform_kit.common.models import OrderIntent

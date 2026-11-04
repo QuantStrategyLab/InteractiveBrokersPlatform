@@ -63,6 +63,7 @@ def test_gate_disabled_when_env_zero():
 
 
 def test_missing_equity_prohibits_new_risk():
+    # Rule A represents unmeasured drawdown as None and retains the existing unavailable-equity prohibition.
     # Missing equity keeps observation_ok=False, which still fails closed via
     # EQUITY_UNKNOWN_FAIL_CLOSED in the gate below -- the circuit-breaker axis
     # is not durably OPEN here since there is no explicit unknown-pending /
@@ -72,6 +73,7 @@ def test_missing_equity_prohibits_new_risk():
         "reconciliation_status": "UNVERIFIED",
         "circuit_breaker_state": "CLOSED",
         "equity_usd": None,
+        "drawdown_from_peak": None,
     }
     result = evaluate_account_values_new_risk_admission({"equity": 0.0})
     assert result.disposition == NewRiskDisposition.NEW_RISK_PROHIBITED
@@ -214,8 +216,10 @@ def test_configured_limit_without_daily_loss_fact_fails_closed():
 
 
 def test_unknown_pending_orders_prohibits_and_opens_breaker():
+    # Rule A requires peak evidence; equal NAV and peak isolate the pending-order OPEN invariant.
     portfolio = {
         "total_equity": 50_000.0,
+        "peak_equity_usd": 50_000.0,
         "unknown_pending_orders": True,
     }
     snapshot = build_account_new_risk_snapshot(portfolio)
@@ -279,6 +283,7 @@ def test_rebalance_snapshot_preserves_absent_and_explicit_risk_fields(metadata):
 
 
 def test_build_portfolio_from_account_values_maps_equity():
+    # Rule A copies peak before projection; (55,000 - 50,000) / 55,000 = 1/11 is independently derived drawdown.
     portfolio = build_portfolio_from_account_values(
         {"equity": 50_000.0},
         signal_metadata={"peak_equity_usd": 55_000.0},
@@ -290,6 +295,8 @@ def test_build_portfolio_from_account_values_maps_equity():
         "reconciliation_status": "VERIFIED",
         "circuit_breaker_state": "CLOSED",
         "equity_usd": 50_000.0,
+        "peak_equity_usd": 55_000.0,
+        "drawdown_from_peak": 1 / 11,
     }
 
 
@@ -448,6 +455,7 @@ def test_attention_notify_on_new_risk_prohibit_dedupes(monkeypatch):
 
 
 def test_invalid_risk_projection_is_json_safe_and_preserves_independent_brake():
+    # Rule A ignores invalid cached drawdown: measured 0.2 trips the brake while invalid volatility still fails closed.
     import json
     from application.account_new_risk_gate_support import build_account_new_risk_snapshot, evaluate_portfolio_new_risk_admission
     portfolio = {"total_equity": 40000, "peak_equity_usd": 50000, "drawdown_from_peak": float("nan"), "realized_vol": float("nan")}
@@ -457,7 +465,7 @@ def test_invalid_risk_projection_is_json_safe_and_preserves_independent_brake():
     result = evaluate_portfolio_new_risk_admission(portfolio)
     assert result.risk_input_invalid and result.hard_brake_triggered
     assert result.combined_scale == 0.0
-    assert "INVALID_DRAWDOWN_FAIL_CLOSED" in result.reason_codes
+    assert "INVALID_DRAWDOWN_FAIL_CLOSED" not in result.reason_codes
     assert "INVALID_REALIZED_VOL_FAIL_CLOSED" in result.reason_codes
     assert "DRAWDOWN_BRAKE_TRIPPED" in result.reason_codes
 
