@@ -166,8 +166,6 @@ def build_account_new_risk_snapshot(
         if key in portfolio and portfolio[key] != healthy:
             projection[key] = portfolio[key]
     projection["equity_usd"] = equity_usd
-    if "peak_equity_usd" in portfolio and "drawdown_from_peak" not in portfolio:
-        projection.pop("drawdown_from_peak", None)
     for key in ("peak_equity_usd", "realized_vol"):
         if key in portfolio:
             projection[key] = _risk_input(portfolio[key]) if portfolio[key] is not None else "INVALID_RISK_INPUT"
@@ -178,12 +176,23 @@ def build_account_new_risk_snapshot(
         projection.pop(_DRAWDOWN_TIMESTAMP_KEY, None)
         if _DRAWDOWN_TIMESTAMP_KEY in portfolio:
             projection[_DRAWDOWN_TIMESTAMP_KEY] = portfolio[_DRAWDOWN_TIMESTAMP_KEY]
-    drawdown = _resolve_drawdown_from_peak(
-        equity_usd=equity_usd,
-        peak_equity_usd=_coerce_optional_float(projection.get("peak_equity_usd")),
-        explicit_source=portfolio if "drawdown_from_peak" in portfolio else projection,
-        observed_at=projection.get(_DRAWDOWN_TIMESTAMP_KEY),
-    )
+    native_drawdown = _coerce_optional_float(portfolio.get("drawdown_from_peak"))
+    if native_drawdown is not None and native_drawdown >= 0.0:
+        # Keep the current account read's explicit float exactly as main does.
+        # Only strategy/metadata caches need a fresh NAV/peak recomputation.
+        drawdown = native_drawdown
+    elif ("peak_equity_usd" in portfolio and "drawdown_from_peak" not in portfolio
+          and "drawdown_from_peak" not in projection):
+        # Native peak-only reads retain main's absent explicit axis and QPK's
+        # ratio-first calculation; no cached drawdown needs replacement.
+        return projection
+    else:
+        drawdown = _resolve_drawdown_from_peak(
+            equity_usd=equity_usd,
+            peak_equity_usd=_coerce_optional_float(projection.get("peak_equity_usd")),
+            explicit_source=portfolio if "drawdown_from_peak" in portfolio else projection,
+            observed_at=projection.get(_DRAWDOWN_TIMESTAMP_KEY),
+        )
     projection["drawdown_from_peak"] = drawdown
     if drawdown is None:
         # Reuse the existing unavailable-observation gate; None is UNKNOWN, not zero.
@@ -210,11 +219,18 @@ def build_portfolio_from_account_values(
     for key in ("peak_equity_usd", "drawdown_from_peak", "realized_vol", _DRAWDOWN_TIMESTAMP_KEY):
         if key in account_values:
             portfolio[key] = account_values[key]
-        elif key in metadata:
-            portfolio[key] = metadata[key]
     if "drawdown_from_peak" in account_values and _DRAWDOWN_TIMESTAMP_KEY not in account_values:
         portfolio.pop(_DRAWDOWN_TIMESTAMP_KEY, None)
     projection = dict(metadata.get("account_new_risk_snapshot") or {})
+    for key in ("peak_equity_usd", "realized_vol"):
+        if key not in account_values and key in metadata:
+            projection[key] = metadata[key]
+    if "drawdown_from_peak" not in account_values and "drawdown_from_peak" in metadata:
+        # Keep late metadata copies in the cache path, including their own timestamp.
+        projection["drawdown_from_peak"] = metadata["drawdown_from_peak"]
+        projection.pop(_DRAWDOWN_TIMESTAMP_KEY, None)
+        if _DRAWDOWN_TIMESTAMP_KEY in metadata:
+            projection[_DRAWDOWN_TIMESTAMP_KEY] = metadata[_DRAWDOWN_TIMESTAMP_KEY]
     # Facts from the native account read outrank a strategy's older projection.
     projection["equity_usd"] = portfolio["total_equity"]
     if "peak_equity_usd" in account_values and "drawdown_from_peak" not in account_values:
@@ -228,10 +244,11 @@ def build_portfolio_from_account_values(
             "account_new_risk_snapshot": projection,
         }
     )
-    # Both native and top-level copy paths expose the same revalidated value.
-    portfolio["drawdown_from_peak"] = portfolio["account_new_risk_snapshot"]["drawdown_from_peak"]
-    if _DRAWDOWN_TIMESTAMP_KEY in portfolio["account_new_risk_snapshot"]:
-        portfolio[_DRAWDOWN_TIMESTAMP_KEY] = portfolio["account_new_risk_snapshot"][_DRAWDOWN_TIMESTAMP_KEY]
+    for key in ("peak_equity_usd", "realized_vol"):
+        if key not in portfolio and key in metadata:
+            portfolio[key] = metadata[key]
+    # Derived values stay in the projection so a rebuild cannot mistake a cache
+    # for a native measurement and bypass NAV/peak or timestamp revalidation.
     return portfolio
 
 
