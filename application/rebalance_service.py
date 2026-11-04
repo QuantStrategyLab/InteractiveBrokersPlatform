@@ -707,7 +707,7 @@ def _snapshot_to_portfolio_view(snapshot) -> tuple[dict[str, dict[str, float | i
     # Carry explicit snapshot evidence to the existing account new-risk gate.
     # Missing fields stay absent; this projection does not read or reset state.
     for key in ("unknown_pending_orders", "durable_circuit_breaker_state", "peak_equity_usd", "drawdown_from_peak",
-                "realized_vol", "observation_status", "reconciliation_status", "circuit_breaker_state",
+                "drawdown_from_peak_observed_at", "realized_vol", "observation_status", "reconciliation_status", "circuit_breaker_state",
                 "production_drift_status", "daily_loss_usd"):
         if key in metadata:
             account_values[key] = metadata[key]

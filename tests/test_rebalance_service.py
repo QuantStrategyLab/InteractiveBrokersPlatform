@@ -77,6 +77,35 @@ def test_heartbeat_uses_broker_total_without_changing_strategy_equity():
     assert account_values["heartbeat_account_snapshot"]["available_cash"] == 100.0
 
 
+@pytest.mark.parametrize("observed_at", [
+    "2026-11-04T00:00:00+00:00", "2020-01-01T00:00:00Z", None, "invalid",
+])
+def test_snapshot_portfolio_preserves_drawdown_observation_evidence(observed_at):
+    metadata = {
+        "broker_net_liquidation": 40000.0,
+        "total_equity_source": "broker_net_liquidation",
+        "drawdown_from_peak": 0.2,
+        "drawdown_from_peak_observed_at": observed_at,
+    }
+    snapshot = SimpleNamespace(positions=(), total_equity=250.0, metadata=metadata.copy())
+
+    _positions, account_values = _snapshot_to_portfolio_view(snapshot)
+
+    assert "drawdown_from_peak_observed_at" in account_values
+    assert account_values["drawdown_from_peak_observed_at"] == observed_at
+    assert account_values["drawdown_from_peak"] == 0.2
+    assert account_values["account_equity_usd"] == 40000.0
+    assert snapshot.metadata == metadata
+
+
+def test_snapshot_portfolio_does_not_invent_drawdown_observation_time():
+    snapshot = SimpleNamespace(positions=(), metadata={"drawdown_from_peak": 0.2})
+
+    _positions, account_values = _snapshot_to_portfolio_view(snapshot)
+
+    assert "drawdown_from_peak_observed_at" not in account_values
+
+
 def test_no_trade_heartbeat_respects_window_and_notification_policy():
     idle = {"actionable": False, "risk_flags": ()}
     assert not _should_suppress_noop_notification(idle, order_count=0, notify_no_trade_cycles=True)
