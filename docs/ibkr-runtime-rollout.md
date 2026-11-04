@@ -383,8 +383,8 @@ do not make traffic promotion an atomic cloud compare-and-set operation.
 Baseline capture and verification bound each service, IAM, Scheduler and revision
 read to 30 seconds. A timeout fails with a fixed diagnostic that omits command
 arguments and provider output. During candidate warm-up, that failure blocks
-traffic promotion and enters the existing tag-removal and minimum-zero cleanup;
-it does not retry the read or accept an incomplete baseline.
+traffic promotion and enters the existing tag-removal (when tagged) and
+minimum-zero cleanup; it does not retry the read or accept an incomplete baseline.
 
 Immediately before each traffic shift, the lifecycle rereads the exact revision
 and rechecks its identity, specification and startup health, including after
@@ -399,11 +399,16 @@ sync disabled, and explicit traffic-shift approval. It changes no Scheduler,
 environment, Secret, IAM or runtime execution switch.
 
 The candidate is deployed with `--no-traffic --tag=cand-<source-sha8>
---min-instances=1`. This is a **revision-level** minimum, never service-level
-`--min`. Google Cloud's **Revisions and minimum instances** section says revision
-minimums start when referenced in a traffic split or assigned a tag; an untagged
-zero-percent revision alone does not establish startup. One minimum instance is
-billed during this warm-up window, including idle time. Missing ContainerHealthy
+--min-instances=1` when the service name plus the candidate tag fits Cloud Run's
+46-character combined limit. Longer names omit `--tag` entirely; promotion still
+uses the exact qualified revision name, and cleanup skips tag removal. Other
+profiles and supported short Russell services retain their existing path. This
+is a **revision-level** minimum, never service-level `--min`. Google Cloud's
+**Revisions and minimum instances** section says revision minimums start when referenced in a traffic split or assigned a tag; an untagged
+zero-percent revision alone does not establish startup. The untagged path retains
+`--deploy-health-check` and all existing fresh health and baseline checks; missing
+startup evidence stops promotion rather than routing traffic to warm the revision.
+One minimum instance is billed during this warm-up window, including idle time. Missing ContainerHealthy
 remains a hard denial, with bounded fresh readbacks. Raw condition readbacks
 separate absent startup evidence from an observed ContainerHealthy=False probe
 failure. Conditions alone do not establish log absence; the lifecycle readback
@@ -413,8 +418,8 @@ checks for instance log records when startup is unobserved and Active=False.
 revision-level minimum instances** and `gcloud run services update
 --min-instances` documentation state that this setting is immutable on a
 revision. Tag removal does not change traffic percentages or the serving
-revision's minimum. The script therefore removes the temporary tag, updates the
-service template with `--min-instances=0 --no-traffic --deploy-health-check`, and
+revision's minimum. The script therefore removes the temporary tag when present,
+updates the service template with `--min-instances=0 --no-traffic --deploy-health-check`, and
 asserts that the replacement has the same image and container specification,
 minimum zero and unchanged traffic. After a successful initial promotion, this
 replacement must independently pass strict health and continuity checks before
