@@ -46,6 +46,7 @@ class FakeIB(SyntheticAccountRefresh):
 def execute(monkeypatch, tmp_path):
     # Keep the actual default-on admission, authority validator, claim, lock,
     # pending collector and submit wrapper. Only notification IO is replaced.
+    # Rule A requires an explicit fake peak equal to NAV so the original order checks exercise a measured zero drawdown.
     monkeypatch.delenv("ACCOUNT_NEW_RISK_GATE", raising=False)
     monkeypatch.setattr(service, "maybe_publish_attention_for_admission", lambda *a, **k: {})
     submitted, claims = [], []
@@ -71,7 +72,7 @@ def execute(monkeypatch, tmp_path):
                 "snapshot_as_of": None, "portfolio_equity": 1000.,
                 "targets": targets, "max_target_values": {s: 100. for s in targets}},
         }
-        account = {"equity": 1000., "buying_power": 1000.}
+        account = {"peak_equity_usd": 1000., "equity": 1000., "buying_power": 1000.}
         if unknown_pending:
             account["unknown_pending_orders"] = True
             metadata["account_new_risk_snapshot"]["reconciliation_status"] = "UNVERIFIED"
@@ -156,12 +157,14 @@ def test_complete_empty_snapshot_preserves_reductions(execute, profile):
 
 
 def test_claim_failure_still_prevents_delegate(execute):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     with pytest.raises(RuntimeError, match="execution claim required"):
         execute(claim=False)
     assert execute.submitted == [] and len(execute.claims) == 1
 
 
 def test_successful_cycle_still_holds_same_day_lock(execute):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     execute()
     _, summary = execute()
     assert len(execute.submitted) == 1 and len(execute.claims) == 1
@@ -259,6 +262,7 @@ def test_external_pending_preserves_sell_without_reinvesting_proceeds(execute, m
 
 @pytest.mark.parametrize("profile", PROFILES)
 def test_other_account_external_pending_does_not_reserve_this_accounts_cash(execute, monkeypatch, profile):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     monkeypatch.setattr(FakeIB, "_rows", lambda self, mode: [_external_order(account="DU00000004")])
     _, summary = execute("external", profile=profile)
     assert [(i.side, i.quantity) for i in execute.submitted] == [("buy", 1)]
@@ -268,6 +272,7 @@ def test_other_account_external_pending_does_not_reserve_this_accounts_cash(exec
 @pytest.mark.parametrize("profile", PROFILES)
 @pytest.mark.parametrize("status", ["Cancelled", "ApiCancelled", "Inactive", "Filled"])
 def test_terminal_external_order_does_not_withhold_cash_or_add_proceeds(execute, monkeypatch, profile, status):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     monkeypatch.setattr(FakeIB, "_rows", lambda self, mode: [_external_order(status=status)])
     _, summary = execute("external", profile=profile)
     assert [(i.side, i.quantity) for i in execute.submitted] == [("buy", 1)]
@@ -275,6 +280,7 @@ def test_terminal_external_order_does_not_withhold_cash_or_add_proceeds(execute,
 
 
 def test_external_cash_block_does_not_take_execution_lock_before_fresh_retry(execute, monkeypatch):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     rows = [_external_order()]
     monkeypatch.setattr(FakeIB, "_rows", lambda self, mode: rows)
     _, blocked = execute("external")

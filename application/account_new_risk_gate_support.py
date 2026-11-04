@@ -8,6 +8,7 @@ import os
 from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import replace
+from datetime import datetime, timezone
 from typing import Any
 
 from quant_platform_kit.risk.account_new_risk_gate import (
@@ -34,6 +35,11 @@ _DEFAULT_DOMAIN = "us_equity"
 
 # Minimal carrier for gate-only daily-loss axis; not a production RRL binding.
 _DAILY_LOSS_LIMIT_CARRIER_SYMBOL = "SPY"
+
+# A fallback broker measurement is valid for at most one short account-read cycle.
+# Five minutes bounds reuse across delayed/restarted cycles; future dates never qualify.
+BROKER_DRAWDOWN_MAX_AGE_SECONDS = 300
+_DRAWDOWN_TIMESTAMP_KEY = "drawdown_from_peak_observed_at"
 
 _cycle_snapshot: InjectedReconciliationSnapshot | None = None
 
@@ -162,11 +168,26 @@ def build_account_new_risk_snapshot(
     projection["equity_usd"] = equity_usd
     if "peak_equity_usd" in portfolio and "drawdown_from_peak" not in portfolio:
         projection.pop("drawdown_from_peak", None)
-    for key in ("peak_equity_usd", "drawdown_from_peak", "realized_vol"):
+    for key in ("peak_equity_usd", "realized_vol"):
         if key in portfolio:
             projection[key] = _risk_input(portfolio[key]) if portfolio[key] is not None else "INVALID_RISK_INPUT"
         elif key in projection:
             projection[key] = _risk_input(projection[key])
+    if "drawdown_from_peak" in portfolio:
+        # A timestamp belongs to its own measurement, never another source's cache.
+        projection.pop(_DRAWDOWN_TIMESTAMP_KEY, None)
+        if _DRAWDOWN_TIMESTAMP_KEY in portfolio:
+            projection[_DRAWDOWN_TIMESTAMP_KEY] = portfolio[_DRAWDOWN_TIMESTAMP_KEY]
+    drawdown = _resolve_drawdown_from_peak(
+        equity_usd=equity_usd,
+        peak_equity_usd=_coerce_optional_float(projection.get("peak_equity_usd")),
+        explicit_source=portfolio if "drawdown_from_peak" in portfolio else projection,
+        observed_at=projection.get(_DRAWDOWN_TIMESTAMP_KEY),
+    )
+    projection["drawdown_from_peak"] = drawdown
+    if drawdown is None:
+        # Reuse the existing unavailable-observation gate; None is UNKNOWN, not zero.
+        projection["observation_status"] = "UNAVAILABLE"
     return projection
 
 
@@ -186,9 +207,13 @@ def build_portfolio_from_account_values(
             portfolio[key] = account_values[key]
         elif key in metadata:
             portfolio[key] = metadata[key]
-    for key in ("peak_equity_usd", "drawdown_from_peak", "realized_vol"):
+    for key in ("peak_equity_usd", "drawdown_from_peak", "realized_vol", _DRAWDOWN_TIMESTAMP_KEY):
         if key in account_values:
             portfolio[key] = account_values[key]
+        elif key in metadata:
+            portfolio[key] = metadata[key]
+    if "drawdown_from_peak" in account_values and _DRAWDOWN_TIMESTAMP_KEY not in account_values:
+        portfolio.pop(_DRAWDOWN_TIMESTAMP_KEY, None)
     projection = dict(metadata.get("account_new_risk_snapshot") or {})
     # Facts from the native account read outrank a strategy's older projection.
     projection["equity_usd"] = portfolio["total_equity"]
@@ -203,9 +228,10 @@ def build_portfolio_from_account_values(
             "account_new_risk_snapshot": projection,
         }
     )
-    for key in ("peak_equity_usd", "drawdown_from_peak", "realized_vol"):
-        if key not in portfolio and key in metadata:
-            portfolio[key] = metadata[key]
+    # Both native and top-level copy paths expose the same revalidated value.
+    portfolio["drawdown_from_peak"] = portfolio["account_new_risk_snapshot"]["drawdown_from_peak"]
+    if _DRAWDOWN_TIMESTAMP_KEY in portfolio["account_new_risk_snapshot"]:
+        portfolio[_DRAWDOWN_TIMESTAMP_KEY] = portfolio["account_new_risk_snapshot"][_DRAWDOWN_TIMESTAMP_KEY]
     return portfolio
 
 
@@ -245,13 +271,26 @@ def _resolve_drawdown_from_peak(
     *,
     equity_usd: float | None,
     peak_equity_usd: float | None,
-    explicit: float | None,
+    explicit_source: Mapping[str, Any],
+    observed_at: object = None,
 ) -> float | None:
-    if explicit is not None:
-        return explicit
-    if equity_usd is None or peak_equity_usd is None or peak_equity_usd <= 0.0:
+    if equity_usd is not None and equity_usd > 0.0 and peak_equity_usd is not None and peak_equity_usd > 0.0:
+        # Difference-first reproduces native 40,000/50,000 -> 0.2 exactly.
+        # Never inspect a cached/broker value when the account read can derive DD.
+        return max(0.0, (peak_equity_usd - equity_usd) / peak_equity_usd)
+    if not isinstance(observed_at, str):
         return None
-    return max(0.0, 1.0 - (equity_usd / peak_equity_usd))
+    try:
+        measured_at = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+        if measured_at.tzinfo is None:
+            return None
+        age = (datetime.now(timezone.utc) - measured_at).total_seconds()
+    except (ValueError, TypeError, OverflowError):
+        return None
+    if not 0 <= age <= BROKER_DRAWDOWN_MAX_AGE_SECONDS:
+        return None
+    broker_drawdown = _coerce_optional_float(explicit_source.get("drawdown_from_peak"))
+    return broker_drawdown if broker_drawdown is not None and broker_drawdown >= 0.0 else None
 
 
 def _resolve_explicit_daily_loss_usd(

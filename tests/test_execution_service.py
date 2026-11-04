@@ -311,6 +311,7 @@ def test_execute_rebalance_never_expands_approved_buy_budget(
     tmp_path, symbol, held, target_value, step, premium, buying_power, reserve,
     expected_quantity,
 ):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
@@ -333,7 +334,7 @@ def test_execute_rebalance_never_expands_approved_buy_budget(
 
     _logs, summary = execute_rebalance(
         FakeIB(), {}, {symbol: {"quantity": held}},
-        {"equity": 1000.0, "buying_power": buying_power},
+        {"peak_equity_usd": 1000.0, "equity": 1000.0, "buying_power": buying_power},
         fetch_quote_snapshots=lambda _ib, symbols: {
             item: SimpleNamespace(last_price=100.0) for item in symbols
         },
@@ -429,6 +430,7 @@ def test_execute_rebalance_reductions_follow_approved_target_without_retention_l
 
 
 def test_execute_rebalance_submits_limit_buy_for_underweight_position(monkeypatch, tmp_path):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
@@ -452,7 +454,7 @@ def test_execute_rebalance_submits_limit_buy_for_underweight_position(monkeypatc
         FakeIB(),
         {"VOO": 1.0},
         {},
-        {"equity": 1000.0, "buying_power": 1000.0},
+        {"peak_equity_usd": 1000.0, "equity": 1000.0, "buying_power": 1000.0},
         fetch_quote_snapshots=fake_fetch_quote_snapshots,
         submit_order_intent=fake_submit_order_intent,
         order_intent_cls=OrderIntent,
@@ -488,6 +490,7 @@ def test_execute_rebalance_submits_limit_buy_for_underweight_position(monkeypatc
 
 @pytest.mark.parametrize("claim", [None, lambda: False])
 def test_execute_rebalance_cannot_submit_without_successful_claim_callback(tmp_path, claim):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     submitted = []
     ib = with_synthetic_account_refresh(SimpleNamespace(
         openTrades=lambda: [], reqAllOpenOrders=lambda: [],
@@ -495,7 +498,7 @@ def test_execute_rebalance_cannot_submit_without_successful_claim_callback(tmp_p
     ))
     with pytest.raises(RuntimeError, match="execution claim required"):
         execute_rebalance(
-            ib, {"VOO": 0.5}, {}, {"equity": 1000.0, "buying_power": 1000.0},
+            ib, {"VOO": 0.5}, {}, {"peak_equity_usd": 1000.0, "equity": 1000.0, "buying_power": 1000.0},
             fetch_quote_snapshots=lambda _ib, symbols: {
                 symbol: SimpleNamespace(last_price=100.0) for symbol in symbols
             },
@@ -573,6 +576,7 @@ def test_execute_rebalance_paper_admission_blocks_before_calling_the_broker(tmp_
 
 
 def test_execute_rebalance_blocks_when_all_order_submissions_are_rejected(tmp_path):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
@@ -588,7 +592,7 @@ def test_execute_rebalance_blocks_when_all_order_submissions_are_rejected(tmp_pa
         FakeIB(),
         {"VOO": 1.0},
         {},
-        {"equity": 1000.0, "buying_power": 1000.0},
+        {"peak_equity_usd": 1000.0, "equity": 1000.0, "buying_power": 1000.0},
         fetch_quote_snapshots=lambda _ib, symbols: {
             symbol: SimpleNamespace(last_price=100.0) for symbol in symbols
         },
@@ -624,6 +628,7 @@ def test_execute_rebalance_blocks_when_all_order_submissions_are_rejected(tmp_pa
 
 
 def test_execute_rebalance_uses_symbol_specific_limit_buy_premium(monkeypatch, tmp_path):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
@@ -644,7 +649,7 @@ def test_execute_rebalance_uses_symbol_specific_limit_buy_premium(monkeypatch, t
         FakeIB(),
         {"SOXL": 1.0},
         {},
-        {"equity": 1000.0, "buying_power": 1000.0},
+        {"peak_equity_usd": 1000.0, "equity": 1000.0, "buying_power": 1000.0},
         fetch_quote_snapshots=lambda _ib, symbols: {
             symbol: SimpleNamespace(last_price=100.0) for symbol in symbols
         },
@@ -781,6 +786,7 @@ def test_execute_rebalance_blocks_multi_leg_option_without_final_risk_limits(tmp
 
 
 def test_execute_rebalance_hk_profile_dry_run_keeps_whole_share_orders_off_broker(tmp_path):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
@@ -799,7 +805,7 @@ def test_execute_rebalance_hk_profile_dry_run_keeps_whole_share_orders_off_broke
         FakeIB(),
         {"02834": 0.45, "03110": 0.35},
         {},
-        {"equity": 200000.0, "buying_power": 200000.0},
+        {"peak_equity_usd": 200000.0, "equity": 200000.0, "buying_power": 200000.0},
         fetch_quote_snapshots=lambda _ib, symbols: {
             symbol: SimpleNamespace(last_price=prices[symbol]) for symbol in symbols
         },
@@ -876,6 +882,7 @@ def test_execute_rebalance_uses_reserved_cash_floor_when_higher(tmp_path):
 
 
 def test_execute_rebalance_caps_buy_budget_by_reserved_cash_after_sell(tmp_path, monkeypatch):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
@@ -897,7 +904,7 @@ def test_execute_rebalance_caps_buy_budget_by_reserved_cash_after_sell(tmp_path,
             "SOXL": {"quantity": 3},
             "SOXX": {"quantity": 2},
         },
-        {"equity": 3289.13, "buying_power": 1412.12},
+        {"peak_equity_usd": 3289.13, "equity": 3289.13, "buying_power": 1412.12},
         fetch_quote_snapshots=lambda _ib, symbols: {
             symbol: SimpleNamespace(last_price=prices[symbol]) for symbol in symbols
         },
@@ -937,6 +944,7 @@ def test_execute_rebalance_caps_buy_budget_by_reserved_cash_after_sell(tmp_path,
 def test_execute_rebalance_live_cash_only_uses_initial_settled_cash_when_cash_balance_is_stale(
     tmp_path, monkeypatch, target_weight, buy_expected,
 ):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
@@ -973,7 +981,7 @@ def test_execute_rebalance_live_cash_only_uses_initial_settled_cash_when_cash_ba
             "SOXL": {"quantity": 3},
             "SOXX": {"quantity": 2},
         },
-        {"equity": 1920.36, "buying_power": 112.38},
+        {"peak_equity_usd": 1920.36, "equity": 1920.36, "buying_power": 112.38},
         fetch_quote_snapshots=lambda _ib, symbols: {
             symbol: SimpleNamespace(last_price=prices[symbol]) for symbol in symbols
         },
@@ -1017,6 +1025,7 @@ def test_execute_rebalance_live_cash_only_uses_initial_settled_cash_when_cash_ba
 
 
 def test_execute_rebalance_live_cash_only_does_not_bridge_unfilled_sell_submissions(tmp_path, monkeypatch):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
@@ -1040,7 +1049,7 @@ def test_execute_rebalance_live_cash_only_does_not_bridge_unfilled_sell_submissi
         FakeIB(),
         {},
         {"SOXL": {"quantity": 3}, "SOXX": {"quantity": 0}},
-        {"equity": 700.0, "buying_power": 112.38},
+        {"peak_equity_usd": 700.0, "equity": 700.0, "buying_power": 112.38},
         fetch_quote_snapshots=lambda _ib, symbols: {
             symbol: SimpleNamespace(last_price=prices[symbol]) for symbol in symbols
         },
@@ -1071,6 +1080,7 @@ def test_execute_rebalance_live_cash_only_does_not_bridge_unfilled_sell_submissi
 
 
 def test_execute_rebalance_live_cash_only_uses_partial_fill_proceeds_and_fill_price(tmp_path, monkeypatch):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
@@ -1104,7 +1114,7 @@ def test_execute_rebalance_live_cash_only_uses_partial_fill_proceeds_and_fill_pr
         FakeIB(),
         {},
         {"SOXL": {"quantity": 3}, "SOXX": {"quantity": 0}},
-        {"equity": 700.0, "buying_power": 100.0},
+        {"peak_equity_usd": 700.0, "equity": 700.0, "buying_power": 100.0},
         fetch_quote_snapshots=lambda _ib, symbols: {
             symbol: SimpleNamespace(last_price=prices[symbol]) for symbol in symbols
         },
@@ -1136,6 +1146,7 @@ def test_execute_rebalance_live_cash_only_uses_partial_fill_proceeds_and_fill_pr
 
 
 def test_execute_rebalance_projects_unbuyable_weight_target_to_zero_with_settled_funds(tmp_path, monkeypatch):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
@@ -1154,7 +1165,7 @@ def test_execute_rebalance_projects_unbuyable_weight_target_to_zero_with_settled
         FakeIB(),
         {},
         {"SOXX": {"quantity": 1}},
-        {"equity": 773.69, "buying_power": 236.81},
+        {"peak_equity_usd": 773.69, "equity": 773.69, "buying_power": 236.81},
         fetch_quote_snapshots=lambda _ib, symbols: {
             symbol: SimpleNamespace(last_price=prices[symbol]) for symbol in symbols
         },
@@ -1313,6 +1324,7 @@ def test_execute_rebalance_blocks_small_account_buy_but_keeps_strategy_reduction
 
 
 def test_execute_rebalance_routes_order_to_single_account_id(monkeypatch, tmp_path):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
@@ -1339,7 +1351,7 @@ def test_execute_rebalance_routes_order_to_single_account_id(monkeypatch, tmp_pa
         FakeIB(),
         {"TQQQ": 1.0},
         {},
-        {"equity": 1000.0, "buying_power": 1000.0},
+        {"peak_equity_usd": 1000.0, "equity": 1000.0, "buying_power": 1000.0},
         fetch_quote_snapshots=lambda _ib, symbols: {
             symbol: SimpleNamespace(last_price=100.0) for symbol in symbols
         },
@@ -1505,6 +1517,7 @@ def test_execute_rebalance_sells_existing_whole_shares_when_target_projects_to_c
 
 
 def test_execute_rebalance_projects_unbuyable_soxx_target_to_cash(monkeypatch, tmp_path):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
@@ -1523,7 +1536,7 @@ def test_execute_rebalance_projects_unbuyable_soxx_target_to_cash(monkeypatch, t
         FakeIB(),
         {},
         {"SOXL": {"quantity": 0}, "SOXX": {"quantity": 1}, "BOXX": {"quantity": 0}},
-        {"equity": 1170.60, "buying_power": 519.54},
+        {"peak_equity_usd": 1170.60, "equity": 1170.60, "buying_power": 519.54},
         fetch_quote_snapshots=lambda _ib, symbols: {
             symbol: SimpleNamespace(last_price=prices[symbol]) for symbol in symbols
         },
@@ -1571,6 +1584,7 @@ def test_execute_rebalance_projects_unbuyable_soxx_target_to_cash(monkeypatch, t
 def test_execute_rebalance_caps_buy_to_cash_when_overweight_sell_rounds_to_zero(
     monkeypatch, tmp_path
 ):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     """Reproduce SOXL/SOXX rotation: SOXX trim rounds to 0 shares; buys must not exceed cash."""
     class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
@@ -1593,7 +1607,7 @@ def test_execute_rebalance_caps_buy_to_cash_when_overweight_sell_rounds_to_zero(
         FakeIB(),
         {},
         {"SOXL": {"quantity": 0}, "SOXX": {"quantity": 4}, "BOXX": {"quantity": 0}},
-        {"equity": 4032.0, "buying_power": 400.0},
+        {"peak_equity_usd": 4032.0, "equity": 4032.0, "buying_power": 400.0},
         fetch_quote_snapshots=lambda _ib, symbols: {
             symbol: SimpleNamespace(last_price=prices[symbol]) for symbol in symbols
         },
@@ -1901,6 +1915,7 @@ def test_execute_rebalance_skips_when_same_day_fills_detected():
 
 
 def test_execute_rebalance_returns_structured_summary_when_requested(monkeypatch, tmp_path):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
@@ -1921,7 +1936,7 @@ def test_execute_rebalance_returns_structured_summary_when_requested(monkeypatch
         FakeIB(),
         {"VOO": 0.8, "BOXX": 0.2},
         {},
-        {"equity": 1000.0, "buying_power": 1000.0},
+        {"peak_equity_usd": 1000.0, "equity": 1000.0, "buying_power": 1000.0},
         fetch_quote_snapshots=fake_fetch_quote_snapshots,
         submit_order_intent=lambda *_args, **_kwargs: SimpleNamespace(broker_order_id="1", status="Submitted"),
         order_intent_cls=OrderIntent,
@@ -1963,6 +1978,7 @@ def test_execute_rebalance_returns_structured_summary_when_requested(monkeypatch
 
 
 def test_execute_rebalance_keeps_small_safe_haven_target_as_cash(monkeypatch, tmp_path):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
@@ -1980,7 +1996,7 @@ def test_execute_rebalance_keeps_small_safe_haven_target_as_cash(monkeypatch, tm
         FakeIB(),
         {"VOO": 0.5, "BOXX": 0.5},
         {},
-        {"equity": 1500.0, "buying_power": 1500.0},
+        {"peak_equity_usd": 1500.0, "equity": 1500.0, "buying_power": 1500.0},
         fetch_quote_snapshots=lambda _ib, symbols: {
             symbol: SimpleNamespace(last_price=100.0) for symbol in symbols
         },
@@ -2015,6 +2031,7 @@ def test_execute_rebalance_keeps_small_safe_haven_target_as_cash(monkeypatch, tm
 
 
 def test_execute_rebalance_sells_cash_sweep_symbol_when_buying_power_is_short(monkeypatch, tmp_path):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     class FakeIB(SyntheticAccountRefresh):
         def __init__(self):
             self._account_values_calls = 0
@@ -2055,7 +2072,7 @@ def test_execute_rebalance_sells_cash_sweep_symbol_when_buying_power_is_short(mo
         FakeIB(),
         {"VOO": 0.8, "BOXX": 0.2},
         {"VOO": {"quantity": 0}, "BOXX": {"quantity": 2}},
-        {"equity": 1000.0, "buying_power": 24.0},
+        {"peak_equity_usd": 1000.0, "equity": 1000.0, "buying_power": 24.0},
         fetch_quote_snapshots=lambda *_args, **_kwargs: {
             "VOO": SimpleNamespace(last_price=100.0),
             "BOXX": SimpleNamespace(last_price=100.0),
@@ -2185,6 +2202,7 @@ def test_execute_rebalance_blocks_when_material_target_has_no_buying_power():
 
 
 def test_execute_rebalance_uses_snapshot_prices_for_dry_run_when_quotes_missing(tmp_path):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
@@ -2200,7 +2218,7 @@ def test_execute_rebalance_uses_snapshot_prices_for_dry_run_when_quotes_missing(
         FakeIB(),
         {"VOO": 0.6, "BOXX": 0.4},
         {},
-        {"equity": 3000.0, "buying_power": 3000.0},
+        {"peak_equity_usd": 3000.0, "equity": 3000.0, "buying_power": 3000.0},
         fetch_quote_snapshots=lambda *_args, **_kwargs: {},
         submit_order_intent=lambda *_args, **_kwargs: None,
         order_intent_cls=OrderIntent,
@@ -2236,6 +2254,7 @@ def test_execute_rebalance_uses_snapshot_prices_for_dry_run_when_quotes_missing(
 
 
 def test_execute_rebalance_uses_price_fallbacks_for_live_when_quotes_missing(monkeypatch, tmp_path):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     class FakeIB(SyntheticAccountRefresh):
         def openTrades(self):
             return []
@@ -2259,7 +2278,7 @@ def test_execute_rebalance_uses_price_fallbacks_for_live_when_quotes_missing(mon
         FakeIB(),
         {"VOO": 1.0},
         {},
-        {"equity": 1000.0, "buying_power": 1000.0},
+        {"peak_equity_usd": 1000.0, "equity": 1000.0, "buying_power": 1000.0},
         fetch_quote_snapshots=lambda *_args, **_kwargs: {},
         submit_order_intent=fake_submit_order_intent,
         order_intent_cls=OrderIntent,
@@ -2295,6 +2314,7 @@ def test_execute_rebalance_uses_price_fallbacks_for_live_when_quotes_missing(mon
 
 @pytest.fixture
 def uncertain_cycle(tmp_path, monkeypatch):
+    # Rule A requires an explicit fake peak equal to NAV so the original order checks exercise a measured zero drawdown.
     """Real executor/claim/identity lock with offline approval and broker reports."""
     from application import execution_service as service
 
@@ -2367,7 +2387,7 @@ def uncertain_cycle(tmp_path, monkeypatch):
         )
         state.session = session
         return _execute_rebalance(
-            FakeIB(), targets, positions, {"equity": 2000.0, "buying_power": 1500.0},
+            FakeIB(), targets, positions, {"peak_equity_usd": 2000.0, "equity": 2000.0, "buying_power": 1500.0},
             fetch_quote_snapshots=lambda _ib, syms: {
                 s: SimpleNamespace(last_price=50.0) for s in syms
             },
@@ -2435,6 +2455,7 @@ def test_missing_broker_report_stops_without_discarding_intent(uncertain_cycle, 
 
 
 def test_unknown_buy_stops_later_buy(uncertain_cycle):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     _logs, summary = uncertain_cycle.run(
         SimpleNamespace(broker_order_id="buy-unknown", status="Unknown"), first_side="buy",
     )
@@ -2482,6 +2503,7 @@ def test_claim_persistence_failure_prevents_submit(uncertain_cycle):
 
 @pytest.mark.parametrize("status", ["Rejected", "rejected", "Cancelled", "ApiCancelled", "Submitted"])
 def test_known_outcome_retains_existing_continuation(uncertain_cycle, status):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     _logs, summary = uncertain_cycle.run(SimpleNamespace(broker_order_id="known-order", status=status))
     assert [(i.symbol, i.side) for i in uncertain_cycle.submitted] == [
         ("TQQQ", "sell"), ("QQQM", "buy"),
@@ -2492,6 +2514,7 @@ def test_known_outcome_retains_existing_continuation(uncertain_cycle, status):
 
 @pytest.mark.parametrize("failure", ["disconnect", "receipt-persistence"])
 def test_partial_fill_then_failure_retains_actual_adapter_facts(uncertain_cycle, failure):
+    # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     from application.ibkr_order_execution import submit_order_intent
 
     class DisconnectedStatus:
