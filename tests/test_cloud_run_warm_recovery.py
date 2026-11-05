@@ -360,3 +360,17 @@ def test_state_write_failure_cannot_prevent_compensation(tmp_path, failure_at, c
     writes = len(cloud.writes)
     with pytest.raises(FileExistsError): obj.execute()
     assert len(cloud.writes) == writes
+
+
+def test_compensation_rejects_unrelated_generation_advances(tmp_path):
+    obj, cloud = run(tmp_path)
+    original = cloud.__call__
+    def api(kind, name='', body=None, timeout=30):
+        value = original(kind, name, body, timeout)
+        if kind == 'service' and body is None and len(cloud.writes) >= 2:
+            value['metadata']['generation'] += 9
+        return value
+    obj.api = api
+    with pytest.raises(RecoveryError): obj.execute()
+    assert len(cloud.writes) == 2
+    assert json.loads(obj.attempt.read_text())['status'] == 'FAILED_RESTORE_UNCONFIRMED'

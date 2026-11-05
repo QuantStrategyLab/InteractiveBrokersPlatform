@@ -240,6 +240,8 @@ class Recovery:
         current = self.api('service')
         require(current['metadata']['uid'] == self.card['service_snapshot']['metadata']['uid'])
         require(current['spec']['template'] == self.expected['spec']['template'])
+        require(current['metadata']['generation'] in {self.expected['metadata']['generation'],
+                self.expected['metadata']['generation'] + 1})
         for key in ('name', 'namespace', 'labels', 'annotations'):
             require(service_meta(current, key) == service_meta(self.expected, key))
         left, right = copy.deepcopy(current['spec']), copy.deepcopy(self.expected['spec'])
