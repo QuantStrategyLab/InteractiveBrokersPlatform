@@ -186,3 +186,22 @@ def test_ambiguous_split_and_ownership_loss_do_not_replay(tmp_path, failure):
         assert any('--min-instances=0' in c for c in cloud.commands)
     else:
         assert not any('--min-instances=0' in c for c in cloud.commands)
+
+
+@pytest.mark.parametrize('length', [34, 45])
+def test_micro_split_preserves_existing_zero_percent_tags(tmp_path, length):
+    service_name = 'unit-' + 'x' * (length - 5)
+    cloud = Cloud(service_name=service_name)
+    old_tag = {'revisionName': service_name + '-old', 'percent': 0, 'tag': 't'}
+    cloud.service['status']['traffic'].append(old_tag)
+    obj = Release(project='<PROJECT_ID>', region='unit-region', service=service_name,
+                  commit=COMMIT, digest=DIGEST, run_id='123',
+                  deploy_args=['--image=fake@' + DIGEST, '--no-traffic', '--deploy-health-check'],
+                  state_path=tmp_path / 'state.json', cloud=cloud, no_traffic_verify=lambda: None)
+    assert obj.tag is None
+    with mock.patch('scripts.runtime_target_continuity.verify_target_continuity'), \
+         mock.patch('scripts.reconcile_cloud_runtime._read_deploy_cloud', side_effect=lambda c, **kw: cloud(c)), \
+         mock.patch('scripts.reconcile_cloud_runtime.time.sleep'):
+        assert obj.execute() == service_name + '-reset'
+    assert old_tag in cloud.service['status']['traffic']
+    assert_no_tags(cloud)

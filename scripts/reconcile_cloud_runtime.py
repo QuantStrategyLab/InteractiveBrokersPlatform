@@ -578,6 +578,10 @@ def _verify_deploy_candidate_with_wait(candidate: Mapping[str, Any], *, project:
         return
     if allow_warmup_split:
         split = service.get("status", {}).get("traffic")
+        if isinstance(split, list):
+            # Existing zero-percent tags do not change the serving distribution.
+            # The common validation below still checks every traffic entry.
+            split = [row for row in split if row.get("percent", 0) != 0]
         if (not warmed or not wait_for_start or not isinstance(split, list) or len(split) != 2
                 or sorted(row.get("percent", 0) for row in split) != [1, 99]
                 or sum(row.get("revisionName") == revision and row.get("percent") == 1
