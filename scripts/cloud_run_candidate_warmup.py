@@ -18,6 +18,7 @@ from typing import Callable
 
 from notifications.redaction import redact_notification_diagnostics
 from scripts import reconcile_cloud_runtime as reconcile
+from scripts import cloud_run_tag_policy as tag_policy
 from scripts.runtime_target_continuity import verify_traffic_revision
 
 MINIMUM = 'autoscaling.knative.dev/minScale'
@@ -66,26 +67,32 @@ def active(service: dict) -> list:
 class Release:
     def __init__(self, *, project: str, region: str, service: str, commit: str, digest: str,
                  run_id: str, deploy_args: list[str], state_path: Path,
-                 cloud: Callable[[list[str]], dict] = cloud, no_traffic_verify: Callable[[], None] | None = None):
+                 cloud: Callable[[list[str]], dict] = cloud, no_traffic_verify: Callable[[], None] | None = None,
+                 warmup_traffic_approved: bool = False, approved_service: str | None = None):
         self.project, self.region, self.service = project, region, service
         self.commit, self.digest, self.run_id = commit, digest, run_id
         self.deploy_args, self.state_path, self.cloud = deploy_args, state_path, cloud
         self.no_traffic_verify = no_traffic_verify
-        tag = 'cand-' + commit[:8]
-        # Cloud Run limits the combined tag and service name to 46 characters.
-        # Long exact targets use revision identity without a traffic tag.
-        self.tag = tag if len(service) + len(tag) <= 46 else None
+        self.warmup_traffic_approved = warmup_traffic_approved
+        self.approved_service = approved_service
+        self.operation_id = run_id + ':' + commit + ':' + digest
+        self.allocation = tag_policy.allocate_tag(service, 'cand-' + commit[:8],
+            existing_tags=[], operation_id=self.operation_id)
+        self.tag = self.allocation.tag
         self.common = [f'--project={project}', f'--region={region}', '--format=json']
         self.warm = None
         self.reset = None
         self.expected = None
         self.before = None
         self.cleaning = False
+        self.micro_traffic = None
 
     def record(self, status: str) -> None:
         # No resource names, bindings, env or provider diagnostics in this result.
         self.state_path.write_text(json.dumps({'status': status, 'tag': self.tag,
-                                              'reset_creates_revision': True}) + '\n')
+                                              'reset_creates_revision': True,
+                                              'contract_version': tag_policy.CONTRACT_VERSION,
+                                              'operation_fingerprint': self.allocation.operation_fingerprint}) + '\n')
 
     def service_read(self) -> dict:
         return self.cloud(['gcloud', 'run', 'services', 'describe', self.service, *self.common])
@@ -128,7 +135,9 @@ class Release:
 
     def stable(self) -> dict:
         current = self.service_read()
-        if self.expected is None or current != self.expected:
+        if (self.expected is None or current != self.expected
+                or (self.before is not None and current.get('metadata', {}).get('uid')
+                    != self.before.get('metadata', {}).get('uid'))):
             raise RuntimeError('candidate service changed outside this attempt')
         return current
 
@@ -151,7 +160,9 @@ class Release:
         reconcile._verify_deploy_candidate_with_wait(
             value, project=self.project, region=self.region, service_name=self.service,
             service=current, revision=value['metadata']['name'], commit=self.commit,
-            require_generation=True, wait_for_start=True)
+            require_generation=True, wait_for_start=True,
+            **({'allow_warmup_split': True}
+               if self.micro_traffic is not None and value['metadata']['name'] == self.warm else {}))
         self.stable()
         # A fresh read after the wait prevents a cached healthy value from
         # authorizing a later update. Existing continuity checks stay strict.
@@ -160,6 +171,25 @@ class Release:
             raise RuntimeError('candidate revision changed during qualification')
         verify_traffic_revision(fresh, expected_revision=value['metadata']['name'],
                                 expected_commit=self.commit, require_startup_health=True)
+
+    def start_untagged(self) -> None:
+        if tag_policy.lifecycle_for_impossible_tag(service_name=self.service,
+                approved_service=self.approved_service,
+                warmup_traffic_approved=self.warmup_traffic_approved) != 'MICRO_SPLIT':
+            raise RuntimeError('TAG_IMPOSSIBLE: exact warmup approval required')
+        self.stable()
+        previous = active(self.before)[0][0]
+        self.micro_traffic = sorted([(previous, 99), (self.warm, 1)])
+        try:
+            self.cloud(['gcloud', 'run', 'services', 'update-traffic', self.service, *self.common,
+                        '--to-revisions=' + previous + '=99,' + self.warm + '=1', '--quiet'])
+        finally:
+            # A timeout may follow an applied split. Read once, never replay;
+            # cleanup accepts only the exact original or intended distribution.
+            self.expected = self.service_read()
+        if (self.expected.get('metadata', {}).get('uid') != self.before['metadata']['uid']
+                or active(self.expected) != self.micro_traffic):
+            raise RuntimeError('candidate micro traffic split readback mismatch')
 
     def promote(self, value: dict) -> None:
         self.stable()
@@ -186,7 +216,18 @@ class Release:
         self.warm = warm['metadata']['name']
         serving = active(current) == [(self.warm, 100)]
         if not serving and active(current) != active(self.before):
-            raise RuntimeError('candidate cleanup traffic identity changed')
+            if self.micro_traffic is None or active(current) != self.micro_traffic:
+                raise RuntimeError('candidate cleanup traffic identity changed')
+            self.stable()
+            previous = active(self.before)[0][0]
+            self.cloud(['gcloud', 'run', 'services', 'update-traffic', self.service, *self.common,
+                        '--to-revisions=' + previous + '=100', '--quiet'])
+            self.expected = self.service_read()
+            if (self.expected.get('metadata', {}).get('uid') != current.get('metadata', {}).get('uid')
+                    or active(self.expected) != active(self.before)):
+                raise RuntimeError('candidate cleanup prior traffic restore mismatch')
+            self.candidate(self.expected, '1')
+            current = self.expected
         tag_removed = True
         if self.tag:
             rows = current['status']['traffic']
@@ -243,6 +284,10 @@ class Release:
                 raise ValueError('candidate deploy target binding mismatch')
         if '--no-traffic' not in self.deploy_args or '--deploy-health-check' not in self.deploy_args:
             raise ValueError('candidate deploy requires no-traffic and health check')
+        if self.tag is None and tag_policy.lifecycle_for_impossible_tag(
+                service_name=self.service, approved_service=self.approved_service,
+                warmup_traffic_approved=self.warmup_traffic_approved) != 'MICRO_SPLIT':
+            raise RuntimeError('TAG_IMPOSSIBLE: exact warmup approval required')
         # Exclusive create persists across crashes/restarts; no automatic replay.
         try:
             fd = os.open(self.state_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -259,7 +304,10 @@ class Release:
         previous = self.revision_read(initial_traffic[0][0])
         if str(previous.get('metadata', {}).get('annotations', {}).get(MINIMUM, '0')) != '0':
             raise RuntimeError('candidate previous serving revision minimum is not zero')
-        if self.tag and any(row.get('tag') == self.tag for row in self.before['status']['traffic']):
+        allocation = tag_policy.allocate_tag(self.service, 'cand-' + self.commit[:8],
+            existing_tags=[row['tag'] for row in self.before['status']['traffic'] if row.get('tag')],
+            operation_id=self.operation_id)
+        if allocation.status == 'REFUSE' or allocation != self.allocation:
             raise RuntimeError('candidate tag collision; no mutation')
         if str(self.before.get('spec', {}).get('template', {}).get('metadata', {}).get('annotations', {}).get(MINIMUM, '0')) != '0':
             raise RuntimeError('candidate requires previous revision minimum zero')
@@ -280,11 +328,17 @@ class Release:
             self.warm = warm['metadata']['name']
             if active(self.expected) != active(self.before):
                 raise RuntimeError('candidate deploy unexpectedly moved traffic')
-            self.readback('set')
-            self.health(warm)
             if self.no_traffic_verify is None:
                 raise RuntimeError('candidate original no-traffic verification missing')
-            self.no_traffic_verify()
+            if self.tag is None:
+                # Verify the unchanged baseline before temporarily routing 1%.
+                self.no_traffic_verify()
+                self.start_untagged()
+                warm = self.candidate(self.expected, '1')
+            self.readback('set')
+            self.health(warm)
+            if self.tag is not None:
+                self.no_traffic_verify()
             self.stable()
             self.promote(warm)
             self.record('promoted')
@@ -334,7 +388,8 @@ def main(argv=None) -> int:
                           service=os.environ['INPUT_CONFIGURED_SERVICE'], commit=os.environ['SOURCE_COMMIT'],
                           digest=args.image.split('@')[-1], run_id=os.environ['GITHUB_RUN_ID'],
                           deploy_args=args.deploy_args[1:] if args.deploy_args[:1] == ['--'] else args.deploy_args,
-                          state_path=args.state_path, no_traffic_verify=lambda: _verify(baseline_args))
+                          state_path=args.state_path, no_traffic_verify=lambda: _verify(baseline_args),
+                          warmup_traffic_approved=True, approved_service=baseline_args.service)
         def interrupted(signum, frame):
             # A catchable abort enters finally. Once cleanup starts, finish its
             # bounded attempts instead of interrupting the restoration itself.

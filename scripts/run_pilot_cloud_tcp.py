@@ -17,6 +17,7 @@ import urllib.error
 import urllib.request
 
 from scripts import deploy_pilot_no_traffic as pilot
+from scripts import cloud_run_tag_policy as tag_policy
 from scripts import diagnose_pilot_serving_install as serving
 from scripts import diagnose_runner_gateway_access as gateway
 from scripts import diagnose_serving_image_identity as identity
@@ -87,7 +88,16 @@ def prepared(ctx, before, group, run_id):
     # Keep the existing repository and never adopt a newer serving digest.
     base = base.rsplit("@", 1)[0] + "@" + BASE
     candidate = ctx.service + "-p" + hashlib.sha256(run_id.encode()).hexdigest()[:8]
-    tag = "tcp-" + hashlib.sha256(run_id.encode()).hexdigest()[:8]
+    try:
+        allocation = tag_policy.allocate_tag(ctx.service,
+            "tcp-" + hashlib.sha256(run_id.encode()).hexdigest()[:8],
+            existing_tags=[row["tag"] for row in before["traffic"] if row["tag"]],
+            operation_id="tcp:" + run_id + ":" + candidate)
+    except ValueError:
+        raise pilot.ReleaseError("tag_preflight_invalid") from None
+    if allocation.status != "ALLOCATED":
+        raise pilot.ReleaseError(allocation.status)
+    tag = allocation.tag
     if not pilot.NAME.fullmatch(candidate):
         raise pilot.ReleaseError("temporary_name_unavailable")
     if any(row["tag"] == tag for row in before["traffic"]):
@@ -166,7 +176,7 @@ def probe_configuration(template):
     return config
 
 
-def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=request, pause=time.sleep, progress=None):
+def execute(ctx, run_id, *, state_path=None, run=pilot.command, snapshot=pilot.snapshot, api=request, pause=time.sleep, progress=None):
     out = result() if progress is None else progress
     before = snapshot(ctx, run)
     pilot._no_manual_scaling(before["service"])
@@ -180,6 +190,12 @@ def execute(ctx, run_id, *, run=pilot.command, snapshot=pilot.snapshot, api=requ
     group = gateway.read_group(ctx, source["group_declarations"], adapt)
     desired, candidate, code_hash = prepared(ctx, before, group, run_id)
     probe = (candidate, desired["spec"]["traffic"][-1]["tag"])
+    if state_path is None:
+        raise pilot.ReleaseError("operation_state_required")
+    try:
+        tag_policy.claim_operation(state_path, ctx.project + ":" + ctx.region + ":" + ctx.service + ":" + candidate + ":" + run_id)
+    except ValueError:
+        raise pilot.ReleaseError("operation_restart_requires_reconciliation") from None
     out.update(binding_verified=True, probe_code_sha256=code_hash)
     token = run(["gcloud", "auth", "print-access-token", "--quiet"], stage="original_identity_unavailable").strip()
     endpoint = f"https://{ctx.region}-run.googleapis.com/apis/serving.knative.dev/v1/namespaces/{ctx.project}"
@@ -411,7 +427,7 @@ def main(argv=None):
                 raise pilot.ReleaseError("cleanup_run_id_invalid")
             out = cleanup_existing(ctx, cleanup_id, progress=out)
         else:
-            out = execute(ctx, os.environ["GITHUB_RUN_ID"], progress=out)
+            out = execute(ctx, os.environ["GITHUB_RUN_ID"], state_path=args.receipt.with_suffix(".claim"), progress=out)
     except CloudError as error:
         out.update(stage=str(error), cloud_http_status=error.http_status)
     except pilot.ReleaseError as error:

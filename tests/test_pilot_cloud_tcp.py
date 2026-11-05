@@ -17,7 +17,7 @@ from tests.test_pilot_no_traffic_release import baseline, environment, SERVING
 
 
 @pytest.fixture
-def lifecycle(monkeypatch):
+def lifecycle(monkeypatch, tmp_path):
     ctx = pilot.context(environment())
     before = baseline()
     before["service"]["spec"]["traffic"] = [{"revisionName": SERVING, "percent": 100}]
@@ -96,7 +96,7 @@ def lifecycle(monkeypatch):
         assert method == "DELETE"
         return {}
 
-    state.execute = lambda: cloud.execute(ctx, "123", run=run, snapshot=snapshot, api=api,
+    state.execute = lambda: cloud.execute(ctx, "123", state_path=tmp_path / "tcp.claim", run=run, snapshot=snapshot, api=api,
         pause=lambda _: None, progress=state.progress)
     return state
 
@@ -305,7 +305,7 @@ def test_only_exact_owned_zero_percent_route_can_be_ignored_during_probe(lifecyc
 def test_existing_tag_is_never_reassigned_to_the_probe(lifecycle):
     body, _, _ = cloud.prepared(lifecycle.ctx, lifecycle.before, lifecycle.group, "123")
     lifecycle.before["traffic"][0]["tag"] = body["spec"]["traffic"][-1]["tag"]
-    with pytest.raises(pilot.ReleaseError, match="temporary_tag_in_use"):
+    with pytest.raises(pilot.ReleaseError, match="REFUSE"):
         cloud.prepared(lifecycle.ctx, lifecycle.before, lifecycle.group, "123")
 
 

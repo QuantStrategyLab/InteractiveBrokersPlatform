@@ -19,6 +19,8 @@ import sys
 import tarfile
 import time
 
+from scripts import cloud_run_tag_policy as tag_policy
+
 from scripts.verify_cloud_run_no_traffic_deploy import _active_traffic, _digest
 from scripts.verify_image_ues_release_binding import check, new_report, revision_from_lockfile
 
@@ -245,6 +247,10 @@ def resolve_service(raw: str) -> str:
         raise ReleaseError("protected_inventory_unavailable") from None
     matches = [name for name in names if isinstance(name, str) and sha(name) == SERVICE_HASH]
     require(len(matches) == 1 and bool(re.fullmatch(r"[a-z][a-z0-9-]{0,62}", matches[0])), "fixed_target_not_uniquely_resolved")
+    try:
+        tag_policy.preflight(matches[0])
+    except ValueError:
+        raise ReleaseError("tag_preflight_invalid") from None
     return matches[0]
 
 

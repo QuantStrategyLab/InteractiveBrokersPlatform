@@ -402,14 +402,24 @@ It changes no Scheduler, environment, Secret, IAM or runtime execution switch.
 
 The candidate is deployed with `--no-traffic --tag=cand-<source-sha8>
 --min-instances=1` when the service name plus the candidate tag fits Cloud Run's
-46-character combined limit. Longer names omit `--tag` entirely; promotion still
-uses the exact qualified revision name, and cleanup skips tag removal. Short
+46-character combined limit. When the preferred tag does not fit, the shared
+policy allocates a shorter operation-bound tag if at least one character fits.
+Only tag-impossible service names omit `--tag` entirely. After verifying the
+unchanged no-traffic baseline, the exact-target traffic-approved lifecycle
+assigns 99% to the previous revision
+and 1% to the exact warm candidate, asserting the split readback before health
+qualification. Promotion uses the exact qualified revision name. On failure
+before promotion, cleanup recognizes only this exact split, restores the previous
+revision to 100% and verifies it before resetting the minimum. Unexpected traffic
+drift blocks cleanup mutations. Cleanup skips tag removal for untagged services. Short
 configured service names use the tagged path. This is a **revision-level**
 minimum, never service-level `--min`. Google Cloud's
 **Revisions and minimum instances** section says revision minimums start when referenced in a traffic split or assigned a tag; an untagged
 zero-percent revision alone does not establish startup. The untagged path retains
-`--deploy-health-check` and all existing fresh health and baseline checks; missing
-startup evidence stops promotion rather than routing traffic to warm the revision.
+`--deploy-health-check` and strict fresh startup health checks after the approved
+micro-split starts the revision. A Retired revision with no authentic instance
+startup evidence cannot pass qualification. The tagged path retains zero-percent
+serving traffic during qualification and verifies its baseline after health.
 One minimum instance is billed during this warm-up window, including idle time. Missing ContainerHealthy
 remains a hard denial, with bounded fresh readbacks. Raw condition readbacks
 separate absent startup evidence from an observed ContainerHealthy=False probe
@@ -487,3 +497,28 @@ the candidate. Missing controls or invalid targets fail validation. Notification
 runtime-switch and initial-state recovery modes require explicit `dry_run=false`.
 Only a separately authorized execution may set `dry_run=false`; all existing
 main-ref, admission and approval gates still apply.
+
+### Shared revision-tag preflight
+
+PR #976 is source-only. Peer4 is excluded from its service scope. Merging this
+change authorizes no deployment or redeployment; any later deployment requires
+a separate owner card naming the exact service, revision and permitted actions.
+
+Operator entry points use `scripts/cloud_run_tag_policy.py`, a local Option B
+implementation of `cloud-run-tags/v1`; QuantPlatformKit is the intended canonical
+owner. The policy validates the exact resolved service name and the combined
+46-character service/tag budget. It keeps a fitting preferred tag, otherwise
+uses a deterministic operation-bound shortened tag. Occupied tags are refused,
+including tags on zero-percent routes; a short name alone proves no ownership.
+The sync plan reports `tag_preflight` without changing service identity.
+
+Only the configured candidate warmup lifecycle accepts an exact-service warmup
+traffic approval for the temporary 99/1 split when no nonempty tag fits. TCP and
+maintenance-cash probes remain strictly no-traffic and refuse such a target.
+Image-only and notification-only entry points validate names without acquiring
+traffic authority. Existing workflow concurrency, immutable image/identity
+checks, baseline readbacks and cleanup remain required. Single-use local claims
+are retained after interruption and success: reconcile the existing attempt
+rather than deleting a claim or replaying an uncertain mutation. Local claims
+do not provide a distributed lock; provider resource-version checks and the
+protected workflow concurrency boundary remain required for cloud execution.

@@ -76,9 +76,11 @@ class Cloud:
                     if not self.service['status']['traffic']:
                         self.service['status']['traffic'] = [{'revisionName': self.service_name + '-warm', 'percent': 100}]
             else:
-                target = next(v.split('=', 1)[1].rsplit('=', 1)[0] for v in command if v.startswith('--to-revisions='))
+                targets = next(v.split('=', 1)[1] for v in command if v.startswith('--to-revisions='))
                 tags = [dict(r, percent=0) for r in self.service['status']['traffic'] if r.get('tag')]
-                self.service['status']['traffic'] = [{'revisionName': target, 'percent': 100}] + tags
+                self.service['status']['traffic'] = [
+                    {'revisionName': name, 'percent': int(percent)}
+                    for name, percent in (row.rsplit('=', 1) for row in targets.split(','))] + tags
             self.service['metadata']['resourceVersion'] = str(len(self.commands))
         else:
             pytest.fail('unexpected command')

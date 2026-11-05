@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
+from scripts import cloud_run_tag_policy as tag_policy
+
 PROFILE = "tqqq_growth_income"
 REPOSITORY = "QuantStrategyLab/InteractiveBrokersPlatform"
 IDENTITY_FIELDS = ("service_name", "strategy_profile", "platform_id", "account_scope", "deployment_selector", "account_selector")
@@ -119,6 +121,13 @@ def context(env: Mapping[str, str]) -> Context:
             service = next((str(_target_field(entry, defaults, key)).strip()
                             for key in ("service", "service_name", "cloud_run_service")
                             if _target_field(entry, defaults, key)), target.get("service_name", ""))
+            try:
+                tag_policy.preflight(service)
+                if env.get("PILOT_NETWORK_PREFLIGHT") == "true":
+                    if tag_policy.preflight(service, "tcp-" + "0" * 8)["tag_status"] == "TAG_IMPOSSIBLE":
+                        raise ReleaseError("TAG_IMPOSSIBLE")
+            except ValueError:
+                raise ReleaseError("tag_preflight_invalid") from None
             accounts = target.get("account_selector")
             if (not NAME.fullmatch(service) or target.get("service_name") != service
                     or target.get("platform_id") != "ibkr"

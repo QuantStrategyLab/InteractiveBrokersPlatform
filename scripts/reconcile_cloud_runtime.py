@@ -530,7 +530,8 @@ def _read_deploy_cloud(args: Sequence[str], *, json_output: bool = True,
 def _verify_deploy_candidate_with_wait(candidate: Mapping[str, Any], *, project: str, region: str,
                                        service_name: str, service: Mapping[str, Any],
                                        revision: str, commit: str | None,
-                                       require_generation: bool = False, wait_for_start: bool = False) -> None:
+                                       require_generation: bool = False, wait_for_start: bool = False,
+                                       allow_warmup_split: bool = False) -> None:
     """Require stable fresh startup health while old traffic stays fixed.
 
     Observations are bounded to 300 seconds, not an atomic Cloud Run traffic CAS.
@@ -575,6 +576,17 @@ def _verify_deploy_candidate_with_wait(candidate: Mapping[str, Any], *, project:
                 ) from None
             raise
         return
+    if allow_warmup_split:
+        split = service.get("status", {}).get("traffic")
+        if isinstance(split, list):
+            # Existing zero-percent tags do not change the serving distribution.
+            # The common validation below still checks every traffic entry.
+            split = [row for row in split if row.get("percent", 0) != 0]
+        if (not warmed or not wait_for_start or not isinstance(split, list) or len(split) != 2
+                or sorted(row.get("percent", 0) for row in split) != [1, 99]
+                or sum(row.get("revisionName") == revision and row.get("percent") == 1
+                       for row in split) != 1):
+            raise ReconcileError("candidate warmup requires exact approved micro split")
     baseline = json.dumps({"spec": service.get("spec", {}).get("traffic"),
                            "status": service.get("status", {}).get("traffic")}, sort_keys=True)
     traffic = service.get("status", {}).get("traffic")
@@ -582,7 +594,8 @@ def _verify_deploy_candidate_with_wait(candidate: Mapping[str, Any], *, project:
             or any(type(row.get("percent", 0)) is not int or row.get("percent", 0) < 0
                    or not row.get("revisionName") for row in traffic)
             or sum(row.get("percent", 0) for row in traffic) != 100
-            or any(row.get("revisionName") == revision and row.get("percent", 0) != 0 for row in traffic)):
+            or any(row.get("revisionName") == revision
+                   and row.get("percent", 0) != (1 if allow_warmup_split else 0) for row in traffic)):
         raise ReconcileError("candidate warmup requires known old traffic and zero candidate traffic")
     deadline = time.monotonic() + 300
 

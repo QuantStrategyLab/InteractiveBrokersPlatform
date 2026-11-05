@@ -82,6 +82,7 @@ jobs:
           PILOT_PROFILE: ${{ inputs.profile }}
           PILOT_SOURCE_COMMIT: ${{ inputs.source_commit }}
           PILOT_CLEANUP_RUN_ID: ${{ inputs.isolated_cleanup_run_id }}
+          PILOT_NETWORK_PREFLIGHT: ${{ inputs.isolated_network_preflight }}
           PILOT_JOB_NETWORK_PREFLIGHT: ${{ inputs.isolated_job_network_preflight }}
           PILOT_JOB_PHASE: ${{ inputs.isolated_job_phase }}
           PILOT_TEMPLATE_DIAGNOSTIC: ${{ inputs.isolated_template_diagnostic }}

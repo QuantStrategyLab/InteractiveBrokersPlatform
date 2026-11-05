@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 from scripts import deploy_pilot_no_traffic as pilot
+from scripts import cloud_run_tag_policy as tag_policy
 from scripts import diagnose_account_facts_identity as identity
 from scripts import publish_account_facts_from_report as publisher
 
@@ -24,21 +25,15 @@ def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def traffic_tag(run_id, service):
-    # Cloud Run limits tag + service name to 46 characters. The full run ID
-    # remains in the Scheduler name. A shortened tag is never overwritten:
-    # the existing-resource check rejects any occupied name before mutation.
-    number, encoded = int(run_id), ""
-    while number:
-        number, digit = divmod(number, 36)
-        encoded = "0123456789abcdefghijklmnopqrstuvwxyz"[digit] + encoded
-    available = 46 - len(service)
-    if available < 2:
-        raise pilot.ReleaseError("candidate_tag_length_unsupported")
-    tag = "c" + (encoded or "0")[-(available - 1):]
-    if not pilot.NAME.fullmatch(tag):
-        raise pilot.ReleaseError("candidate_tag_length_unsupported")
-    return tag
+def traffic_tag(run_id, service, *, existing_tags=()):
+    try:
+        allocation = tag_policy.allocate_tag(service, "cash-" + digest(run_id)[:8],
+            existing_tags=existing_tags, operation_id="maintenance-cash:" + run_id)
+    except ValueError:
+        raise pilot.ReleaseError("tag_preflight_invalid") from None
+    if allocation.status != "ALLOCATED":
+        raise pilot.ReleaseError(allocation.status)
+    return allocation.tag
 
 
 def configuration(revision):
@@ -131,7 +126,8 @@ def observe(expected, source, env, receipt, *, run=pilot.command, snapshot=pilot
         raise pilot.ReleaseError("candidate_not_admitted")
     revision = read(["run", "revisions", "describe", candidate, *common], "candidate_read_failed")
     candidate = admit(expected, before, revision, source)
-    tag = traffic_tag(env["GITHUB_RUN_ID"], ctx.service)
+    tag = traffic_tag(env["GITHUB_RUN_ID"], ctx.service,
+        existing_tags=[row["tag"] for row in before["traffic"] if row["tag"]])
     job = "ibkr-cash-read-" + env["GITHUB_RUN_ID"]
     service_url = before["service"]["status"]["url"]
     # Reuse the existing warm-up identity. No new IAM, account or caller.
@@ -148,6 +144,16 @@ def observe(expected, source, env, receipt, *, run=pilot.command, snapshot=pilot
     if (any(row.get("name", "").rsplit("/", 1)[-1] == job for row in jobs)
             or any(row["tag"] == tag for row in before["traffic"])):
         raise pilot.ReleaseError("observation_resource_already_exists")
+    try:
+        fd = os.open(receipt.with_suffix(".claim"), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        raise pilot.ReleaseError("observation_restart_requires_reconciliation") from None
+    with os.fdopen(fd, "w") as claim:
+        claim.write(json.dumps({"contract_version": tag_policy.CONTRACT_VERSION,
+            "operation_fingerprint": digest(ctx.service + ":" + candidate + ":" + env["GITHUB_RUN_ID"]),
+            "tag": tag}))
+        claim.flush()
+        os.fsync(claim.fileno())
     started = now()
     tag_attempted = job_attempted = False
     result = dict(status="STOPPED", reason="observation_not_completed", source_commit=source,
@@ -161,6 +167,13 @@ def observe(expected, source, env, receipt, *, run=pilot.command, snapshot=pilot
 
     save()
     try:
+        fresh = snapshot(ctx, run)
+        if fresh != before:
+            raise pilot.ReleaseError("observation_baseline_changed")
+        # Allocation uses the immediately re-read routing, never a saved batch.
+        if traffic_tag(env["GITHUB_RUN_ID"], ctx.service,
+                existing_tags=[row["tag"] for row in fresh["traffic"] if row["tag"]]) != tag:
+            raise pilot.ReleaseError("observation_tag_changed")
         tag_attempted = True
         run(["gcloud", "run", "services", "update-traffic", ctx.service, *common,
             "--update-tags=" + tag + "=" + candidate, "--quiet", "--format=json"], stage="tag_update_unknown")
