@@ -203,3 +203,15 @@ def test_workflow_executes_minimum_only_for_exact_selected_target(target, servic
     assert ("--min-instances=1" in result.stdout) is minimum
     assert "--min=" not in result.stdout
     if not success: assert result.stdout == ""
+
+
+def test_cold_unwarmed_candidate_fails_with_warmup_guidance_without_cloud_writes():
+    value = candidate()
+    value['metadata']['annotations']['autoscaling.knative.dev/minScale'] = '0'
+    with mock.patch.object(rcr, '_run') as run:
+        with pytest.raises(rcr.ReconcileError, match='instance start not observed.*warmup required'):
+            rcr._verify_deploy_candidate_with_wait(
+                value, project='<PROJECT_ID>', region='unit-region',
+                service_name='unit-service', service=service(),
+                revision='unit-service-new', commit='abc')
+    run.assert_not_called()

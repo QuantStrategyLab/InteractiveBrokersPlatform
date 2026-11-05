@@ -1,4 +1,4 @@
-"""One exact Russell candidate lifecycle, including asserted finally cleanup.
+"""One exact configured candidate lifecycle, including asserted finally cleanup.
 
 Revision minimums are immutable. Restoring zero therefore creates a second
 revision; if the warm revision is serving, that replacement needs independent
@@ -36,7 +36,7 @@ def eligible(plan: dict, workflow_target: str, selector: str) -> bool:
     targets = plan.get('targets') or []
     if len(targets) != 1 or not selector or targets[0].get('service_name') != selector:
         raise ValueError('candidate warmup requires one exact configured target')
-    return targets[0].get('strategy_profile') == 'russell_top50_leader_rotation'
+    return True
 
 
 def cloud(command: list[str]) -> dict:
@@ -320,7 +320,7 @@ def main(argv=None) -> int:
             print(str(selected).lower())
             return 0
         if not selected or os.environ.get('WARMUP_TRAFFIC_APPROVED') != 'true' or os.environ.get('WARMUP_ENV_SYNC') != 'false':
-            raise ValueError('candidate lifecycle requires exact Russell target, traffic approval and no env sync')
+            raise ValueError('candidate lifecycle requires exact configured target, traffic approval and no env sync')
         if not args.state_path or not args.image or not args.baseline:
             raise ValueError('candidate lifecycle evidence missing')
         from scripts.verify_cloud_run_no_traffic_deploy import _verify
