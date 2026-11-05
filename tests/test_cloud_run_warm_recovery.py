@@ -286,3 +286,77 @@ def test_unexpected_provider_provisioning_value_is_not_published(tmp_path):
     obj.execute()
     assert 'private-provider-value' not in obj.attempt.read_text()
     assert all(row['warm_minimum_one_provisioned'] == 'Unknown' for row in obj.minima)
+
+
+def fetch_card(tmp_path, monkeypatch, *, checksum=None, card_value=None, operator=None, environment=None):
+    import hashlib
+    from pathlib import Path
+    import textwrap
+    script = Path('.github/workflows/recover-cloud-run-warm.yml').read_text()
+    block = script.split('      - name: Fetch and verify the approved private card', 1)[1].split('      - name:', 1)[0]
+    python = textwrap.dedent(block.split("          python - <<'PY'\n", 1)[1].rsplit('          PY', 1)[0])
+    payload = json.dumps(card_value or card()).encode()
+    (tmp_path / 'recovery-input.json').write_text(json.dumps({'card_uri': 'gs://unit-private/card.json',
+        'card_sha256': checksum or hashlib.sha256(payload).hexdigest()}))
+    monkeypatch.setenv('RUNNER_TEMP', str(tmp_path))
+    monkeypatch.setenv('GITHUB_SHA', operator or card()['operator_commit'])
+    monkeypatch.setenv('RECOVERY_PROTECTED_ENVIRONMENT', environment or card()['protected_environment'])
+    previous = __import__('os').umask(0o077)
+    try:
+        with mock.patch('subprocess.run', return_value=mock.Mock(stdout=payload)) as cloud:
+            exec(compile(python, '<private-card-fetch>', 'exec'), {})
+        return cloud, payload
+    finally:
+        __import__('os').umask(previous)
+
+
+def test_protected_workflow_fetches_exact_card_without_logging(tmp_path, monkeypatch, capsys):
+    cloud, payload = fetch_card(tmp_path, monkeypatch)
+    result = tmp_path / 'recovery-card.json'
+    assert result.read_bytes() == payload
+    assert result.stat().st_mode & 0o077 == 0
+    cloud.assert_called_once_with(['gcloud', 'storage', 'cat', 'gs://unit-private/card.json'],
+                                  capture_output=True, check=True, timeout=30)
+    assert capsys.readouterr() == ('', '')
+
+
+@pytest.mark.parametrize('kwargs', [{'checksum': 'd' * 64}, {'operator': 'wrong'}, {'environment': 'wrong'}])
+def test_protected_fetch_rejects_wrong_bytes_operator_or_environment(tmp_path, monkeypatch, capsys, kwargs):
+    with pytest.raises(SystemExit, match='Private recovery card fetch or binding failed'):
+        fetch_card(tmp_path, monkeypatch, **kwargs)
+    assert not (tmp_path / 'recovery-card.json').exists()
+    assert capsys.readouterr() == ('', '')
+
+
+def test_workflow_has_native_environment_and_no_build_or_automatic_retry():
+    from pathlib import Path
+    workflow = Path('.github/workflows/recover-cloud-run-warm.yml').read_text()
+    assert "environment: ${{ vars.IBKR_DEPLOY_ENVIRONMENT }}" in workflow
+    assert "github.run_attempt == 1" in workflow
+    assert 'cancel-in-progress: false' in workflow
+    assert 'workflow_dispatch:' in workflow
+    assert all(trigger not in workflow for trigger in ('  push:', '  schedule:', '  workflow_call:'))
+    assert all(command not in workflow for command in ('docker build', 'docker push', 'gcloud run deploy',
+                                                       'gcloud secrets', 'gcloud projects add-iam'))
+    assert workflow.index('core.setSecret(value)') < workflow.index('google-github-actions/auth')
+    assert 'actions/upload-artifact' not in workflow
+
+
+@pytest.mark.parametrize('failure_at,case', [('FAILED', 'false'), ('PROMOTE_INTENT', 'ok'), ('SUCCEEDED', 'ok')])
+def test_state_write_failure_cannot_prevent_compensation(tmp_path, failure_at, case):
+    obj, cloud = run(tmp_path, case)
+    record = obj.record
+    failed = False
+    def broken(status):
+        nonlocal failed
+        if status == failure_at: failed = True
+        if failed: raise OSError('private-volume-full')
+        record(status)
+    obj.record = broken
+    with pytest.raises(RecoveryError): obj.execute()
+    assert cloud.service['status']['traffic'] == [{'revisionName': obj.warm, 'percent': 100}]
+    assert len(cloud.writes) == (4 if failure_at == 'SUCCEEDED' else 3)
+    assert obj.attempt.exists()
+    writes = len(cloud.writes)
+    with pytest.raises(FileExistsError): obj.execute()
+    assert len(cloud.writes) == writes

@@ -583,8 +583,14 @@ Run the operator code at the newly approved recovery merge, in the existing
 protected execution environment after that environment's approval. Source merge,
 `agent-approved`, a card file, and the `RECOVERY_PROTECTED_ENVIRONMENT` variable
 are not operational approval. The variable binds the runner's environment name;
-it does not implement or bypass the hosting platform's environment gate. No new
-workflow dispatch is introduced. A follow-up owner-approved operator job invokes:
+it does not implement or bypass the hosting platform's environment gate. The
+manual-only `recover-cloud-run-warm.yml` workflow uses the existing protected
+environment and existing workload identity. It accepts only a protected GCS card
+locator and its owner-approved SHA-256 checksum, masks both before use, downloads
+the card privately and verifies its exact bytes/operator/environment before
+execution. Dispatch at the approved operator merge; do not dispatch the ordinary
+build workflow. Native environment approval remains required, and workflow reruns
+are refused. The protected job invokes:
 
 ```bash
 RECOVERY_PROTECTED_ENVIRONMENT='<approved-environment>' \
@@ -646,8 +652,10 @@ baseline. It need not remain Active while temporarily unreferenced. Only the
 original warm-100, exact 99/1, or exact replacement-100 distributions are
 eligible. Concurrent identity/configuration changes or unknown third-party
 traffic stop compensation rather than overwrite another actor. A rejected,
-interrupted or ambiguous compensation is never retried. Inspect the private
-attempt status; `FAILED_RESTORE_UNCONFIRMED` must not be reported as restored.
+interrupted or ambiguous compensation is never retried. Failure-state persistence is best-effort: a full or unwritable private volume
+cannot suppress compensation, and the existing attempt claim is retained. A stale
+or unreadable attempt status requires protected readback and never permits replay.
+Inspect the private attempt status; `FAILED_RESTORE_UNCONFIRMED` must not be reported as restored.
 A failure before activation never advances traffic or creates another revision.
 
 Before and after execution, including a readable failure state, independent

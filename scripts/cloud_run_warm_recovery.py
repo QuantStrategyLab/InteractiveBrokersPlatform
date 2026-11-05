@@ -129,6 +129,12 @@ class Recovery:
         # Fixed states only, never raw identities/configuration/conditions.
         self.attempt.write_text(json.dumps({'status': status, 'minimum_readbacks': self.minima}) + '\n')
 
+    def failure_record(self, status: str):
+        # Keep the existing exclusive attempt claim even when its volume fails.
+        # Persistence must never suppress the independently authorized restore.
+        with contextlib.suppress(BaseException):
+            self.record(status)
+
     def minimum(self):
         value = self.api('minimum')
         require(value.get('name') == 'projects/' + self.project + '/locations/' + self.region
@@ -322,20 +328,21 @@ class Recovery:
             self.minimum()
             self.record('SUCCEEDED')
         except BaseException:
-            self.record('FAILED')
+            self.failure_record('FAILED')
             if self.activated:
                 try:
                     self.rollback()
                     self.minimum()
-                    self.record('FAILED_WARM_RESTORED')
+                    outcome = 'FAILED_WARM_RESTORED'
                 except BaseException:
-                    self.record('FAILED_RESTORE_UNCONFIRMED')
+                    outcome = 'FAILED_RESTORE_UNCONFIRMED'
+                self.failure_record(outcome)
             if not self.activated and self.expected is not None:
                 try:
                     self.minimum()
-                    self.record('FAILED')
+                    self.failure_record('FAILED')
                 except Exception:
-                    self.record('FAILED_MINIMUM_READBACK_UNAVAILABLE')
+                    self.failure_record('FAILED_MINIMUM_READBACK_UNAVAILABLE')
             raise RecoveryError('recovery stopped; inspect private attempt state; do not replay') from None
 
 

@@ -1,0 +1,112 @@
+name: Recover retained Cloud Run warm revision
+
+on:
+  workflow_dispatch:
+    inputs:
+      card_uri:
+        description: "Protected GCS recovery card approved for this exact operator commit"
+        type: string
+        required: true
+      card_sha256:
+        description: "Owner-approved SHA-256 of the private recovery card bytes"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ibkr-retained-warm-recovery
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    # Never rerun an attempt; a later owner action needs a new card/request.
+    if: github.event_name == 'workflow_dispatch' && github.run_attempt == 1
+    environment: ${{ vars.IBKR_DEPLOY_ENVIRONMENT }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Mask and retain private input locators
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const input = context.payload.inputs;
+            for (const value of Object.values(input)) core.setSecret(value);
+            if (!/^gs:\/\/[a-z0-9][a-z0-9._-]+\/[a-zA-Z0-9/_.-]+$/.test(input.card_uri) ||
+                !/^[a-f0-9]{64}$/.test(input.card_sha256)) {
+              throw new Error('Invalid private recovery card locator or checksum');
+            }
+            fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'recovery-input.json'),
+                             JSON.stringify(input), {mode: 0o600, flag: 'wx'});
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Fetch and verify the approved private card
+        env:
+          RECOVERY_PROTECTED_ENVIRONMENT: ${{ vars.IBKR_DEPLOY_ENVIRONMENT }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          os.umask(0o077)
+          try:
+              root = Path(os.environ['RUNNER_TEMP'])
+              value = json.loads((root / 'recovery-input.json').read_text())
+              result = subprocess.run(['gcloud', 'storage', 'cat', value['card_uri']],
+                  capture_output=True, check=True, timeout=30)
+              if hashlib.sha256(result.stdout).hexdigest() != value['card_sha256']:
+                  raise ValueError
+              card = json.loads(result.stdout)
+              if (card['operator_commit'] != os.environ['GITHUB_SHA']
+                      or not os.environ.get('RECOVERY_PROTECTED_ENVIRONMENT')
+                      or card['protected_environment'] != os.environ['RECOVERY_PROTECTED_ENVIRONMENT']):
+                  raise ValueError
+              with (root / 'recovery-card.json').open('xb') as file:
+                  file.write(result.stdout)
+          except Exception:
+              raise SystemExit('Private recovery card fetch or binding failed') from None
+          PY
+      - name: Install frozen operator dependencies
+        run: |
+          python -m pip install uv
+          uv sync --frozen --no-dev
+      - name: Execute the one-shot approved recovery
+        env:
+          RECOVERY_PROTECTED_ENVIRONMENT: ${{ vars.IBKR_DEPLOY_ENVIRONMENT }}
+        run: |
+          uv run --no-sync python -m scripts.cloud_run_warm_recovery \
+            --card "${RUNNER_TEMP}/recovery-card.json" \
+            --attempt "${RUNNER_TEMP}/recovery-attempt.json"
+      - name: Report sanitized attempt state
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          path = Path(os.environ['RUNNER_TEMP']) / 'recovery-attempt.json'
+          if path.exists():
+              value = json.loads(path.read_text())
+              allowed = {'STARTED', 'CREATE_INTENT', 'ACTIVATE_INTENT', 'PROMOTE_INTENT',
+                         'SUCCEEDED', 'FAILED', 'FAILED_WARM_RESTORED',
+                         'FAILED_RESTORE_UNCONFIRMED', 'FAILED_MINIMUM_READBACK_UNAVAILABLE'}
+              print('Recovery state: ' + (value['status'] if value.get('status') in allowed else 'UNKNOWN'))
+          else:
+              print('Recovery state: NOT_STARTED')
+          PY
