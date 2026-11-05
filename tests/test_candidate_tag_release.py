@@ -170,9 +170,10 @@ def test_stale_service_refuses_promotion_and_cleanup_mutation(tmp_path):
 
 @pytest.mark.parametrize('profile,workflow,selector,expected', [
     ('russell_top50_leader_rotation', 'configured', 'unit-service', True),
-    ('tqqq_growth_income', 'configured', 'unit-service', False),
+    ('tqqq_growth_income', 'configured', 'unit-service', True),
+    ('global_etf_rotation', 'configured', 'unit-service', True),
     ('russell_top50_leader_rotation', 'hk-verify', 'unit-service', False)])
-def test_only_selected_russell_target_gets_lifecycle(profile, workflow, selector, expected):
+def test_single_selected_configured_target_gets_lifecycle(profile, workflow, selector, expected):
     assert api().eligible(plan(profile), workflow, selector) is expected
 
 
@@ -353,3 +354,35 @@ def test_revision_version_churn_preserves_stable_identity(tmp_path, stage, field
                 getattr(obj, stage)(value)
     shifts = [c for c in driver.commands if any(v.startswith('--to-revisions=') for v in c)]
     assert bool(shifts) == (stage == 'promote' and field == 'resourceVersion')
+
+
+@pytest.mark.parametrize('profile', ['global_etf_rotation', 'tqqq_growth_income',
+                                     'russell_top50_leader_rotation'])
+def test_selected_profile_enters_existing_lifecycle(tmp_path, monkeypatch, profile):
+    module = api()
+    for key, value in {
+        'SYNC_PLAN_JSON': json.dumps(plan(profile)), 'WORKFLOW_TARGET': 'configured',
+        'INPUT_CONFIGURED_SERVICE': 'unit-service', 'WARMUP_TRAFFIC_APPROVED': 'true',
+        'WARMUP_ENV_SYNC': 'false', 'GCP_PROJECT_ID': '<PROJECT_ID>',
+        'CLOUD_RUN_REGION': 'unit-region', 'SOURCE_COMMIT': COMMIT,
+        'GITHUB_RUN_ID': '123',
+    }.items():
+        monkeypatch.setenv(key, value)
+    with mock.patch.object(module.Release, 'execute') as execute:
+        assert module.main(['--image=fake@' + DIGEST, '--baseline=unit.json',
+                            '--state-path=' + str(tmp_path / 'state.json')]) == 0
+    execute.assert_called_once_with()
+
+
+@pytest.mark.parametrize('traffic,env_sync', [('false', 'false'), ('true', 'true')])
+def test_non_russell_keeps_traffic_and_env_sync_guards(monkeypatch, traffic, env_sync):
+    module = api()
+    for key, value in {
+        'SYNC_PLAN_JSON': json.dumps(plan('global_etf_rotation')),
+        'WORKFLOW_TARGET': 'configured', 'INPUT_CONFIGURED_SERVICE': 'unit-service',
+        'WARMUP_TRAFFIC_APPROVED': traffic, 'WARMUP_ENV_SYNC': env_sync,
+    }.items():
+        monkeypatch.setenv(key, value)
+    with mock.patch.object(module.Release, 'execute') as execute:
+        assert module.main([]) == 1
+    execute.assert_not_called()
