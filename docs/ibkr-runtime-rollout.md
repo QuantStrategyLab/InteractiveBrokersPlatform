@@ -434,11 +434,56 @@ revision's minimum. The script therefore removes the temporary tag when present,
 updates the service template with `--min-instances=0 --no-traffic --deploy-health-check`, and
 asserts that the replacement has the same image and container specification,
 minimum zero and unchanged traffic. After a successful initial promotion, this
-replacement must independently pass strict health and continuity checks before
-an explicit **second** guarded traffic migration. The final serving revision is
+replacement is explicitly activated with **warm=99% / replacement=1%**, for both
+tagged and tag-impossible services. Exact-service traffic approval covers this
+second split as well as the later migration. The script checks the source at
+100%, the replacement's source/run/image/minimum binding, and the split readback
+before waiting. The minimum-zero exception in the health waiter is bound to this
+exact 99/1 pair; it does not relax the general minimum-one warmup requirement.
+The replacement must independently pass two fresh strict startup-health
+observations separated by five seconds, the final fresh waiter read, and the
+lifecycle's fresh identity/spec/image and continuity checks before explicit
+**replacement=100%**. Ready=True/Retired, an absent or Unknown ContainerHealthy,
+or the traffic reference itself is insufficient. The final serving revision is
 the minimum-zero replacement. This is two revisions within one workflow run;
 acceptance must acknowledge that extra revision and traffic effect before
 execution. It is also an M08 deployment prerequisite.
+
+If the second split or its health/readback fails or is interrupted, cleanup stops
+at the observed distribution with `cleanup_failed`. It never automatically
+restores warm=100%, repeats the split, or promotes the replacement. An ambiguous
+split is read back once without replay. A separate recovery authorization must
+state whether restoring the known healthy warm revision is allowed.
+
+The initial baseline requires the actual original serving revision **and** the
+service template to have revision minimum zero (an absent revision annotation
+means zero). An owner-authorized minimum-zero baseline is valid; nonzero or
+unknown values still block before deployment. Service-level `--min=0` does not
+change an immutable serving revision's `minScale=1` and cannot satisfy that
+precheck. A failed cleanup is not a fresh baseline: retain its state and revision
+identities; this change adds no restart/continuation entry point.
+
+A later recovery card must pin the reviewed operator/workflow SHA separately
+from the retained application source and image digest, the exact service/region
+and current source/replacement identities, fresh UID/spec/digest/run/traffic and
+minimum readbacks, and one bounded attempt. It must explicitly choose reuse of
+an unchanged replacement or authorization to create new revisions; an ordinary
+fresh deployment creates a new warm/replacement pair and is not continuation of
+the failed pair. State the 99/1 effect, the 300-second qualification bound, final
+100% and serving/template minimum zero, permitted health-only invocation (if any),
+cost acceptance, failure disposition and first-failure stop with no replay.
+Service-level minimums must also be read independently when checking idle cost.
+Limit the card to the named target, satisfy protected-environment approval, and
+exclude other peers, Secret/IAM/Scheduler changes and execution/risk switches.
+Merging this code authorizes none of those operational actions.
+
+The standard image workflow checks out operator scripts at the workflow run's
+`github.sha` and the application at `source_commit` in `source/`. Pin both
+independently: the reviewed fixed workflow ref and the approved application
+source. This path always builds/pushes an image and creates a new revision pair;
+retaining an application source does not guarantee the previous image digest.
+Reusing an unchanged image digest or existing replacement instead requires a
+separately reviewed recovery entry; the standard workflow exposes neither.
 
 The warm revision remains immutable at configured minimum one. Once untagged and
 non-serving it no longer has the tag/traffic reference that provisions its

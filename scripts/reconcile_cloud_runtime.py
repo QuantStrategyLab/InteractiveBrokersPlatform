@@ -531,7 +531,8 @@ def _verify_deploy_candidate_with_wait(candidate: Mapping[str, Any], *, project:
                                        service_name: str, service: Mapping[str, Any],
                                        revision: str, commit: str | None,
                                        require_generation: bool = False, wait_for_start: bool = False,
-                                       allow_warmup_split: bool = False) -> None:
+                                       allow_warmup_split: bool = False,
+                                       replacement_source_revision: str | None = None) -> None:
     """Require stable fresh startup health while old traffic stays fixed.
 
     Observations are bounded to 300 seconds, not an atomic Cloud Run traffic CAS.
@@ -564,7 +565,14 @@ def _verify_deploy_candidate_with_wait(candidate: Mapping[str, Any], *, project:
                            "imageDigest": value.get("status", {}).get("imageDigest")}, sort_keys=True)
 
     original = identity(candidate)
-    if (not warmed and not wait_for_start) or _traffic_on_revision(service, revision):
+    if replacement_source_revision is not None and (
+            not allow_warmup_split or not wait_for_start or not require_generation
+            or replacement_source_revision == revision
+            or not replacement_source_revision
+            or str((candidate.get('metadata', {}).get('annotations') or {}).get(
+                'autoscaling.knative.dev/minScale', '0')) != '0'):
+        raise ReconcileError("candidate replacement activation evidence invalid")
+    if not allow_warmup_split and ((not warmed and not wait_for_start) or _traffic_on_revision(service, revision)):
         try:
             verify_traffic_revision(candidate, expected_revision=revision, expected_commit=commit,
                                     require_startup_health=True)
@@ -582,10 +590,14 @@ def _verify_deploy_candidate_with_wait(candidate: Mapping[str, Any], *, project:
             # Existing zero-percent tags do not change the serving distribution.
             # The common validation below still checks every traffic entry.
             split = [row for row in split if row.get("percent", 0) != 0]
-        if (not warmed or not wait_for_start or not isinstance(split, list) or len(split) != 2
+        if ((not warmed and replacement_source_revision is None)
+                or not wait_for_start or not isinstance(split, list) or len(split) != 2
                 or sorted(row.get("percent", 0) for row in split) != [1, 99]
                 or sum(row.get("revisionName") == revision and row.get("percent") == 1
-                       for row in split) != 1):
+                       for row in split) != 1
+                or (replacement_source_revision is not None
+                    and sum(row.get('revisionName') == replacement_source_revision and row.get('percent') == 99
+                            for row in split) != 1)):
             raise ReconcileError("candidate warmup requires exact approved micro split")
     baseline = json.dumps({"spec": service.get("spec", {}).get("traffic"),
                            "status": service.get("status", {}).get("traffic")}, sort_keys=True)

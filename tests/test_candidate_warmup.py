@@ -64,6 +64,52 @@ def test_bounded_candidate_wait_preserves_identity_and_traffic(case):
                 rcr._verify_deploy_candidate_with_wait(original, **args)
 
 
+@pytest.mark.parametrize('case', ['valid', 'missing_source', 'wrong_source', 'same_source',
+                                'wrong_minimum', 'no_generation', 'no_wait', 'no_approval',
+                                'already_promoted', 'final_health_loss', 'generation_drift'])
+def test_minimum_zero_split_exception_is_exact_and_keeps_fresh_checks(case):
+    cold = candidate()
+    cold['metadata']['annotations']['autoscaling.knative.dev/minScale'] = '0'
+    current = service()
+    current['status']['traffic'] = [
+        {'revisionName': 'unit-service-warm', 'percent': 99},
+        {'revisionName': 'unit-service-new', 'percent': 1}]
+    args = dict(project='<PROJECT_ID>', region='unit-region', service_name='unit-service',
+                service=current, revision='unit-service-new', commit='abc',
+                require_generation=True, wait_for_start=True, allow_warmup_split=True,
+                replacement_source_revision='unit-service-warm')
+    if case == 'missing_source': args['replacement_source_revision'] = None
+    if case == 'wrong_source': args['replacement_source_revision'] = 'unit-service-other'
+    if case == 'same_source': args['replacement_source_revision'] = 'unit-service-new'
+    if case == 'wrong_minimum': cold['metadata']['annotations']['autoscaling.knative.dev/minScale'] = '1'
+    if case == 'no_generation': args['require_generation'] = False
+    if case == 'no_wait': args['wait_for_start'] = False
+    if case == 'no_approval': args['allow_warmup_split'] = False
+    if case == 'already_promoted':
+        current['status']['traffic'] = [{'revisionName': 'unit-service-new', 'percent': 100}]
+    reads = []
+    def read(command, **kwargs):
+        if 'services' in command:
+            return copy.deepcopy(current)
+        reads.append(command)
+        fresh = copy.deepcopy(cold)
+        fresh['status']['conditions'].append({'type': 'ContainerHealthy', 'status': 'True'})
+        if case == 'final_health_loss' and len(reads) == 3:
+            fresh['status']['conditions'][-1]['status'] = 'Unknown'
+        if case == 'generation_drift': fresh['status']['observedGeneration'] = 2
+        return fresh
+    with mock.patch.object(rcr, '_read_deploy_cloud', side_effect=read), \
+         mock.patch.object(rcr.time, 'sleep') as sleep, \
+         mock.patch('scripts.runtime_target_continuity.verify_target_continuity'):
+        if case == 'valid':
+            rcr._verify_deploy_candidate_with_wait(cold, **args)
+            assert len(reads) == 3
+            sleep.assert_called_once_with(5)
+        else:
+            with pytest.raises((rcr.ReconcileError, ValueError)):
+                rcr._verify_deploy_candidate_with_wait(cold, **args)
+
+
 def test_strict_health_rejects_disabled_retired_candidate():
     value = candidate()
     value["spec"]["containers"][0]["env"][0]["value"] = "false"

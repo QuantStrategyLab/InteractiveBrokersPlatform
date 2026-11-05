@@ -1,5 +1,6 @@
 """Fake-only long-service lifecycle regressions; no cloud requests."""
 import json
+import copy
 from unittest import mock
 
 import pytest
@@ -207,3 +208,103 @@ def test_micro_split_preserves_existing_zero_percent_tags(tmp_path, length):
         assert obj.execute() == service_name + '-reset'
     assert old_tag in cloud.service['status']['traffic']
     assert_no_tags(cloud)
+
+
+def test_cold_replacement_requires_second_split_and_fresh_health(tmp_path):
+    cloud = Cloud(service_name=SERVICE)
+    observations = []
+    def driver(command, **kwargs):
+        result = cloud(command)
+        if 'update' in command:
+            rows = cloud.revisions[SERVICE + '-reset']['status']['conditions']
+            assert not any(row['type'] == 'ContainerHealthy' for row in rows)
+        if 'revisions' in command and 'describe' in command and command[4].endswith('-reset'):
+            observations.append(copy.deepcopy(result))
+        if '--to-revisions=' + SERVICE + '-reset=100' in command:
+            # Two fresh observations, final waiter read, lifecycle fresh check,
+            # and promotion check must all follow activation, before 100%.
+            assert sum(any(row['type'] == 'ContainerHealthy' and row['status'] == 'True'
+                           for row in value['status']['conditions']) for value in observations) >= 5
+        return result
+    with mock.patch('scripts.runtime_target_continuity.verify_target_continuity'), \
+         mock.patch('scripts.reconcile_cloud_runtime._read_deploy_cloud', side_effect=driver), \
+         mock.patch('scripts.reconcile_cloud_runtime.time.sleep'), \
+         mock.patch('scripts.reconcile_cloud_runtime.time.monotonic', side_effect=range(1000)):
+        assert release(tmp_path, driver).execute() == SERVICE + '-reset'
+    mutations = [next(v for v in c if v.startswith('--to-revisions='))
+                 for c in cloud.commands if 'update-traffic' in c]
+    assert mutations == [
+        '--to-revisions=' + SERVICE + '-old=99,' + SERVICE + '-warm=1',
+        '--to-revisions=' + SERVICE + '-warm=100',
+        '--to-revisions=' + SERVICE + '-warm=99,' + SERVICE + '-reset=1',
+        '--to-revisions=' + SERVICE + '-reset=100']
+
+
+@pytest.mark.parametrize('failure', ['no_start', 'false', 'unknown', 'read_error',
+                                    'split_timeout', 'split_rejected', 'interrupt',
+                                    'traffic_drift', 'uid_drift', 'spec_drift', 'digest_drift'])
+def test_second_split_failure_stops_without_rollback_or_replay(tmp_path, failure):
+    cloud = Cloud(service_name=SERVICE)
+    split = '--to-revisions=' + SERVICE + '-warm=99,' + SERVICE + '-reset=1'
+    started = False
+    def driver(command, **kwargs):
+        nonlocal started
+        if split in command and failure == 'split_rejected':
+            cloud.commands.append(command)
+            raise RuntimeError('split rejected')
+        result = cloud(command)
+        if split in command:
+            started = True
+            if failure in {'split_timeout', 'interrupt'}:
+                raise (InterruptedError('interrupted') if failure == 'interrupt' else RuntimeError('timeout'))
+            if failure == 'traffic_drift':
+                cloud.service['status']['traffic'][0]['percent'] = 98
+                cloud.service['status']['traffic'][1]['percent'] = 2
+            if failure == 'uid_drift':
+                cloud.service['metadata']['uid'] = 'changed'
+        if started and 'revisions' in command and command[4].endswith('-reset'):
+            if failure == 'read_error':
+                raise RuntimeError('read unavailable')
+            if failure in {'no_start', 'false', 'unknown'}:
+                result['status']['conditions'] = [
+                    row for row in result['status']['conditions'] if row['type'] != 'ContainerHealthy']
+                if failure != 'no_start':
+                    result['status']['conditions'].append({'type': 'ContainerHealthy',
+                        'status': 'False' if failure == 'false' else 'Unknown'})
+            if failure == 'spec_drift':
+                result['spec']['containers'][0]['image'] = 'fake@changed'
+            if failure == 'digest_drift':
+                result['status']['imageDigest'] = 'sha256:' + 'c' * 64
+        return result
+    with mock.patch('scripts.runtime_target_continuity.verify_target_continuity'), \
+         mock.patch('scripts.reconcile_cloud_runtime._read_deploy_cloud', side_effect=driver), \
+         mock.patch('scripts.reconcile_cloud_runtime.time.sleep'), \
+         mock.patch('scripts.reconcile_cloud_runtime.time.monotonic', side_effect=range(0, 2000, 10)):
+        with pytest.raises(RuntimeError, match='cleanup'):
+            release(tmp_path, driver).execute()
+    assert sum(split in c for c in cloud.commands) == 1
+    assert not any('--to-revisions=' + SERVICE + '-reset=100' in c for c in cloud.commands)
+    assert sum('--to-revisions=' + SERVICE + '-warm=100' in c for c in cloud.commands) == 1
+    assert sum('update' in c for c in cloud.commands) == 1
+    assert json.loads((tmp_path / 'state.json').read_text())['status'] == 'cleanup_failed'
+    count = len(cloud.commands)
+    with pytest.raises(RuntimeError, match='restart'):
+        release(tmp_path, driver).execute()
+    assert len(cloud.commands) == count
+
+
+@pytest.mark.parametrize('minimum', [None, '0', '1', 'unknown'])
+def test_original_serving_minimum_zero_is_valid_baseline(tmp_path, minimum):
+    cloud = Cloud(service_name=SERVICE)
+    if minimum is not None:
+        cloud.revisions[SERVICE + '-old']['metadata']['annotations'][
+            'autoscaling.knative.dev/minScale'] = minimum
+    with mock.patch('scripts.runtime_target_continuity.verify_target_continuity'), \
+         mock.patch('scripts.reconcile_cloud_runtime._read_deploy_cloud', side_effect=lambda c, **kw: cloud(c)), \
+         mock.patch('scripts.reconcile_cloud_runtime.time.sleep'):
+        if minimum in {None, '0'}:
+            assert release(tmp_path, cloud).execute() == SERVICE + '-reset'
+        else:
+            with pytest.raises(RuntimeError, match='previous serving revision minimum'):
+                release(tmp_path, cloud).execute()
+            assert not any('deploy' in c or 'update' in c or 'update-traffic' in c for c in cloud.commands)
