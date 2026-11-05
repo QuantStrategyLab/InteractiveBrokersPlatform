@@ -500,6 +500,10 @@ main-ref, admission and approval gates still apply.
 
 ### Shared revision-tag preflight
 
+PR #976 is source-only. Peer4 is excluded from its service scope. Merging this
+change authorizes no deployment or redeployment; any later deployment requires
+a separate owner card naming the exact service, revision and permitted actions.
+
 Operator entry points use `scripts/cloud_run_tag_policy.py`, a local Option B
 implementation of `cloud-run-tags/v1`; QuantPlatformKit is the intended canonical
 owner. The policy validates the exact resolved service name and the combined
