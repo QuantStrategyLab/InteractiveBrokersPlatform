@@ -477,6 +477,14 @@ Limit the card to the named target, satisfy protected-environment approval, and
 exclude other peers, Secret/IAM/Scheduler changes and execution/risk switches.
 Merging this code authorizes none of those operational actions.
 
+The standard image workflow checks out operator scripts at the workflow run's
+`github.sha` and the application at `source_commit` in `source/`. Pin both
+independently: the reviewed fixed workflow ref and the approved application
+source. This path always builds/pushes an image and creates a new revision pair;
+retaining an application source does not guarantee the previous image digest.
+Reusing an unchanged image digest or existing replacement instead requires a
+separately reviewed recovery entry; the standard workflow exposes neither.
+
 The warm revision remains immutable at configured minimum one. Once untagged and
 non-serving it no longer has the tag/traffic reference that provisions its
 minimum. Do not claim its revision configuration was reset to zero. A later
