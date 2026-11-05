@@ -58,7 +58,10 @@ class Cloud:
             value['metadata'].update(name=name, uid=name, labels={'commit-sha': COMMIT, 'github-run-id': '123'})
             value['metadata']['annotations']['autoscaling.knative.dev/minScale'] = '1' if warm else '0'
             value['status']['imageDigest'] = DIGEST
-            value['status']['conditions'].append({'type': 'ContainerHealthy', 'status': 'True'})
+            # An unreferenced replacement can remain Retired even when the
+            # provider was asked for a deployment health check.
+            if warm and any(v.startswith('--tag=') for v in command):
+                value['status']['conditions'].append({'type': 'ContainerHealthy', 'status': 'True'})
             self.revisions[name] = value
             self.service['status']['latestCreatedRevisionName'] = name
             self.service['spec']['template']['metadata']['annotations'] = copy.deepcopy(value['metadata']['annotations'])
@@ -81,6 +84,11 @@ class Cloud:
                 self.service['status']['traffic'] = [
                     {'revisionName': name, 'percent': int(percent)}
                     for name, percent in (row.rsplit('=', 1) for row in targets.split(','))] + tags
+                for row in self.service['status']['traffic']:
+                    if row.get('percent', 0) > 0:
+                        self.revisions[row['revisionName']]['status']['conditions'] = [
+                            {'type': kind, 'status': 'True'} for kind in
+                            ('Ready', 'Active', 'ContainerReady', 'ContainerHealthy')]
             self.service['metadata']['resourceVersion'] = str(len(self.commands))
         else:
             pytest.fail('unexpected command')
@@ -91,7 +99,8 @@ def release(tmp_path, cloud):
     return api().Release(project='<PROJECT_ID>', region='unit-region', service='unit-service',
                          commit=COMMIT, digest=DIGEST, run_id='123',
                          deploy_args=['--image=fake@' + DIGEST, '--no-traffic', '--deploy-health-check'],
-                         state_path=tmp_path / 'state.json', cloud=cloud, no_traffic_verify=lambda: None)
+                         state_path=tmp_path / 'state.json', cloud=cloud, no_traffic_verify=lambda: None,
+                         warmup_traffic_approved=True, approved_service='unit-service')
 
 
 def test_tag_minimum_order_and_replacement_restore(tmp_path):
@@ -337,7 +346,7 @@ def test_post_baseline_health_loss_blocks_promotion_and_restores(tmp_path, condi
 @pytest.mark.parametrize('field', ['resourceVersion', 'uid', 'generation', 'labels', 'spec'])
 def test_revision_version_churn_preserves_stable_identity(tmp_path, stage, field):
     driver = Cloud()
-    driver(['gcloud', 'run', 'deploy', 'unit-service'])
+    driver(['gcloud', 'run', 'deploy', 'unit-service', '--tag=cand-aaaaaaaa'])
     obj = release(tmp_path, driver)
     obj.expected = copy.deepcopy(driver.service)
     value = copy.deepcopy(driver.revisions['unit-service-warm'])

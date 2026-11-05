@@ -86,6 +86,8 @@ class Release:
         self.before = None
         self.cleaning = False
         self.micro_traffic = None
+        self.micro_revision = None
+        self.replacement_source = None
 
     def record(self, status: str) -> None:
         # No resource names, bindings, env or provider diagnostics in this result.
@@ -161,13 +163,15 @@ class Release:
             value, project=self.project, region=self.region, service_name=self.service,
             service=current, revision=value['metadata']['name'], commit=self.commit,
             require_generation=True, wait_for_start=True,
-            **({'allow_warmup_split': True}
-               if self.micro_traffic is not None and value['metadata']['name'] == self.warm else {}))
+            **({'allow_warmup_split': True,
+                'replacement_source_revision': self.replacement_source}
+               if value['metadata']['name'] == self.micro_revision else {}))
         self.stable()
         # A fresh read after the wait prevents a cached healthy value from
         # authorizing a later update. Existing continuity checks stay strict.
         fresh = self.revision_read(value['metadata']['name'])
-        if revision_metadata(fresh) != revision_metadata(value) or fresh.get('spec') != value.get('spec'):
+        if (revision_metadata(fresh) != revision_metadata(value) or fresh.get('spec') != value.get('spec')
+                or fresh.get('status', {}).get('imageDigest') != value.get('status', {}).get('imageDigest')):
             raise RuntimeError('candidate revision changed during qualification')
         verify_traffic_revision(fresh, expected_revision=value['metadata']['name'],
                                 expected_commit=self.commit, require_startup_health=True)
@@ -177,12 +181,26 @@ class Release:
                 approved_service=self.approved_service,
                 warmup_traffic_approved=self.warmup_traffic_approved) != 'MICRO_SPLIT':
             raise RuntimeError('TAG_IMPOSSIBLE: exact warmup approval required')
-        self.stable()
         previous = active(self.before)[0][0]
-        self.micro_traffic = sorted([(previous, 99), (self.warm, 1)])
+        self.activate(previous, self.candidate(self.stable(), '1'))
+
+    def activate(self, source: str, value: dict) -> None:
+        """Reference one exact candidate; an applied but failed split is not replayed."""
+        if not self.warmup_traffic_approved or self.approved_service != self.service:
+            raise RuntimeError('candidate activation requires exact traffic approval')
+        current = self.stable()
+        target = value['metadata']['name']
+        if source == target or active(current) != [(source, 100)]:
+            raise RuntimeError('candidate activation source traffic mismatch')
+        fresh = self.candidate(current, '0' if target == self.reset else '1')
+        if revision_metadata(fresh) != revision_metadata(value) or fresh.get('spec') != value.get('spec'):
+            raise RuntimeError('candidate revision changed before activation')
+        self.micro_revision = target
+        self.replacement_source = source if target == self.reset else None
+        self.micro_traffic = sorted([(source, 99), (target, 1)])
         try:
             self.cloud(['gcloud', 'run', 'services', 'update-traffic', self.service, *self.common,
-                        '--to-revisions=' + previous + '=99,' + self.warm + '=1', '--quiet'])
+                        '--to-revisions=' + source + '=99,' + target + '=1', '--quiet'])
         finally:
             # A timeout may follow an applied split. Read once, never replay;
             # cleanup accepts only the exact original or intended distribution.
@@ -196,7 +214,8 @@ class Release:
         # Baseline validation can outlast the earlier health observation.
         # Requalify the exact revision immediately before either traffic shift.
         fresh = self.revision_read(value['metadata']['name'])
-        if revision_metadata(fresh) != revision_metadata(value) or fresh.get('spec') != value.get('spec'):
+        if (revision_metadata(fresh) != revision_metadata(value) or fresh.get('spec') != value.get('spec')
+                or fresh.get('status', {}).get('imageDigest') != value.get('status', {}).get('imageDigest')):
             raise RuntimeError('candidate revision changed before promotion')
         verify_traffic_revision(fresh, expected_revision=value['metadata']['name'],
                                 expected_commit=self.commit, require_startup_health=True)
@@ -265,6 +284,11 @@ class Release:
         if not tag_removed:
             raise RuntimeError('candidate cleanup tag removal not verified; template reset only')
         if serving:
+            # The untagged minimum-zero replacement may still be Retired despite
+            # --deploy-health-check. Explicitly activate it before qualification.
+            # Failure stops in cleanup_failed at the read-back distribution;
+            # second-stage rollback needs separate authority, never replay.
+            self.activate(self.warm, reset)
             self.health(reset)
             self.promote(reset)
         final = self.stable()
