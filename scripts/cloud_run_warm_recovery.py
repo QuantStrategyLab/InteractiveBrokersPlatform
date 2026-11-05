@@ -121,6 +121,7 @@ class Recovery:
         self.replacement = None
         self.activated = False
         self.minima = []
+        self.pending = None
 
     def valid(self):
         require(self.now() < self.expires)
@@ -194,10 +195,11 @@ class Recovery:
                 if key in current['metadata']}
         require(meta.get('resourceVersion'))
         meta['annotations'] = service_meta(current, 'annotations')
+        self.pending = {'before': copy.deepcopy(current), 'spec': copy.deepcopy(spec)}
         self.api('service', body={'apiVersion': 'serving.knative.dev/v1', 'kind': 'Service',
                                  'metadata': meta, 'spec': spec})
 
-    def settle(self, spec: dict, distribution: list):
+    def settle(self, spec: dict, distribution: list, *, fence_version=None):
         deadline = self.clock() + 60
         while True:
             remaining = deadline - self.clock()
@@ -206,12 +208,16 @@ class Recovery:
             require(self.clock() < deadline)
             require(value['metadata']['uid'] == self.card['service_snapshot']['metadata']['uid'])
             require(value['spec'] == spec)
-            require(value['metadata']['generation'] == self.expected['metadata']['generation'] + 1)
+            generation = self.expected['metadata']['generation']
+            require(value['metadata']['generation'] in (
+                {generation, generation + 1} if fence_version else {generation + 1}))
             for key in ('name', 'namespace', 'labels', 'annotations'):
                 require(service_meta(value, key) == service_meta(self.expected, key))
             if (active(value) == sorted(distribution)
-                    and value['status'].get('observedGeneration') == value['metadata']['generation']):
+                    and value['status'].get('observedGeneration') == value['metadata']['generation']
+                    and (fence_version is None or value['metadata']['resourceVersion'] != fence_version)):
                 self.expected = value
+                self.pending = None
                 return
             require(self.clock() < deadline)
             self.sleep(1)
@@ -239,27 +245,37 @@ class Recovery:
         self.check_warm(require_health=False)
         current = self.api('service')
         require(current['metadata']['uid'] == self.card['service_snapshot']['metadata']['uid'])
-        require(current['spec']['template'] == self.expected['spec']['template'])
-        require(current['metadata']['generation'] in {self.expected['metadata']['generation'],
-                self.expected['metadata']['generation'] + 1})
         for key in ('name', 'namespace', 'labels', 'annotations'):
             require(service_meta(current, key) == service_meta(self.expected, key))
-        left, right = copy.deepcopy(current['spec']), copy.deepcopy(self.expected['spec'])
-        left.pop('traffic', None)
-        right.pop('traffic', None)
-        require(left == right)
+        unresolved = self.pending
+        if unresolved is None:
+            require(current['metadata']['generation'] == self.expected['metadata']['generation']
+                    and current['spec'] == self.expected['spec'])
+        else:
+            generation = unresolved['before']['metadata']['generation']
+            # A successor belongs to this attempt only when its ENTIRE desired
+            # spec matches the outstanding write, including desired traffic.
+            require((current['metadata']['generation'] == generation
+                     and current['spec'] == unresolved['before']['spec'])
+                    or (current['metadata']['generation'] == generation + 1
+                        and current['spec'] == unresolved['spec']))
         allowed = [[(self.warm, 100)], sorted([(self.warm, 99), (self.card['replacement'], 1)]),
                    [(self.card['replacement'], 100)]]
         require(active(current) in allowed)
         desired = [{'revisionName': self.warm, 'percent': 100}]
-        if active(current) == [(self.warm, 100)] and current['spec'].get('traffic') == desired:
+        if (unresolved is None and active(current) == [(self.warm, 100)]
+                and current['spec'].get('traffic') == desired):
             self.expected = current
             return
         spec = copy.deepcopy(current['spec'])
         spec['traffic'] = desired
         self.expected = current
         self.put(current, spec)
-        self.settle(spec, [(self.warm, 100)])
+        # Even a preceding warm-100 observation cannot resolve a timed-out
+        # activation. One CAS compensation must advance resourceVersion, fencing
+        # the old precondition before restoration can be reported. No retry.
+        self.settle(spec, [(self.warm, 100)],
+                    fence_version=current['metadata']['resourceVersion'])
 
     def execute(self):
         # Exclusive creation persists across failure/restart, including reruns on

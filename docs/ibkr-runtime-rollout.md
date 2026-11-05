@@ -650,7 +650,13 @@ entry reads the actual state and attempts **one distinct warm=100 compensation**
 The warm's frozen identity/spec/digest must still match the already qualified
 baseline. It need not remain Active while temporarily unreferenced. Only the
 original warm-100, exact 99/1, or exact replacement-100 distributions are
-eligible. Concurrent identity/configuration changes or unknown third-party
+eligible. A confirmed write requires the exact confirmed generation and complete
+desired spec, including traffic. A successor generation is admitted only for an
+outstanding recovery write whose full desired spec matches its recorded intent.
+An ambiguous activation cannot be declared restored from a preceding warm-100
+read: the one CAS compensation must advance resourceVersion and confirm warm-100,
+fencing the old write precondition. Without that evidence restoration remains
+unconfirmed, including a no-op compensation with no version advance. Concurrent identity/configuration changes or unknown third-party
 traffic stop compensation rather than overwrite another actor. A rejected,
 interrupted or ambiguous compensation is never retried. Failure-state persistence is best-effort: a full or unwritable private volume
 cannot suppress compensation, and the existing attempt claim is retained. A stale

@@ -374,3 +374,50 @@ def test_compensation_rejects_unrelated_generation_advances(tmp_path):
     with pytest.raises(RecoveryError): obj.execute()
     assert len(cloud.writes) == 2
     assert json.loads(obj.attempt.read_text())['status'] == 'FAILED_RESTORE_UNCONFIRMED'
+
+
+def test_compensation_does_not_overwrite_foreign_pending_traffic(tmp_path):
+    obj, cloud = run(tmp_path)
+    original = cloud.__call__
+    def api(kind, name='', body=None, timeout=30):
+        value = original(kind, name, body, timeout)
+        if (kind == 'service' and body is None and len(cloud.writes) >= 2
+                and obj.expected['spec']['traffic'][0]['percent'] == 99):
+            value['metadata']['generation'] += 1
+            value['spec']['traffic'] = [{'revisionName': obj.warm, 'percent': 50},
+                                       {'revisionName': obj.card['replacement'], 'percent': 50}]
+        return value
+    obj.api = api
+    with pytest.raises(RecoveryError): obj.execute()
+    assert len(cloud.writes) == 2
+    assert json.loads(obj.attempt.read_text())['status'] == 'FAILED_RESTORE_UNCONFIRMED'
+
+
+@pytest.mark.parametrize('fence_accepted', [True, False])
+def test_ambiguous_uncommitted_activation_is_fenced_before_restore_confirmation(tmp_path, fence_accepted):
+    obj, cloud = run(tmp_path)
+    original = cloud.__call__
+    pending = None
+    def api(kind, name='', body=None, timeout=30):
+        nonlocal pending
+        if body is not None and len(cloud.writes) == 1:
+            pending = copy.deepcopy(body)
+            cloud.writes.append(copy.deepcopy(body))
+            raise RecoveryError('activation outcome unknown')
+        if body is not None and len(cloud.writes) == 2 and not fence_accepted:
+            cloud.writes.append(copy.deepcopy(body))
+            return copy.deepcopy(cloud.service)
+        if kind == 'minimum' and pending is not None:
+            if pending['metadata']['resourceVersion'] == cloud.service['metadata']['resourceVersion']:
+                cloud.service['spec'] = copy.deepcopy(pending['spec'])
+                cloud.service['status']['traffic'] = copy.deepcopy(pending['spec']['traffic'])
+                cloud.service['metadata']['generation'] += 1
+                cloud.service['metadata']['resourceVersion'] = 'late-activation'
+            pending = None
+        return original(kind, name, body, timeout)
+    obj.api = api
+    with pytest.raises(RecoveryError): obj.execute()
+    assert cloud.service['status']['traffic'] == [{'revisionName': obj.warm, 'percent': 100}]
+    assert len(cloud.writes) == 3
+    expected = 'FAILED_WARM_RESTORED' if fence_accepted else 'FAILED_RESTORE_UNCONFIRMED'
+    assert json.loads(obj.attempt.read_text())['status'] == expected
