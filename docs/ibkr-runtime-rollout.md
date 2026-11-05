@@ -567,3 +567,116 @@ are retained after interruption and success: reconcile the existing attempt
 rather than deleting a claim or replaying an uncertain mutation. Local claims
 do not provide a distributed lock; provider resource-version checks and the
 protected workflow concurrency boundary remain required for cloud execution.
+
+### One-shot warm-baseline recovery entry
+
+`scripts/cloud_run_warm_recovery.py` is a separate retained-image entry. It does
+not change the ordinary protected build workflow or its minimum-zero baseline
+rule. Its only baseline exception is the exact owner-card-bound warm revision at
+100% traffic and revision minimum one, with service and template minima zero.
+It creates **one new replacement** at revision minimum zero from the existing
+service template and the approved immutable image. There is no application
+checkout, build or image push. A missing digest stops before mutation; a build
+requires a separate scope and the ordinary image workflow.
+
+Run the operator code at the newly approved recovery merge, in the existing
+protected execution environment after that environment's approval. Source merge,
+`agent-approved`, a card file, and the `RECOVERY_PROTECTED_ENVIRONMENT` variable
+are not operational approval. The variable binds the runner's environment name;
+it does not implement or bypass the hosting platform's environment gate. The
+manual-only `recover-cloud-run-warm.yml` workflow uses the existing protected
+environment and existing workload identity. It accepts only a protected GCS card
+locator and its owner-approved SHA-256 checksum, masks both before use, downloads
+the card privately and verifies its exact bytes/operator/environment before
+execution. Dispatch at the approved operator merge; do not dispatch the ordinary
+build workflow. Native environment approval remains required, and workflow reruns
+are refused. The protected job invokes:
+
+```bash
+RECOVERY_PROTECTED_ENVIRONMENT='<approved-environment>' \
+  uv run --no-sync python -m scripts.cloud_run_warm_recovery \
+  --card /protected/recovery-card.json --attempt /protected/unique-attempt.json
+```
+
+The card is a mode-0600 JSON file supplied through approved protected storage,
+never a PR, command argument, log or public artifact. Keep its contents and the
+attempt outside Git. The source checkout must have the card's exact full
+`operator_commit` and no tracked modifications. Use a fresh request/attempt
+identity once; do not rerun or delete an attempt file to resume. The full original
+service snapshot is also a precondition: a different remote state cannot resume
+an earlier operation. Any later attempt needs a fresh owner card and readback.
+
+| Card field | Required binding |
+| --- | --- |
+| `authority`, `protected_environment`, `expires_at` | Explicit owner authority, protected runner environment and timezone-aware expiry, including the permitted minimum-one time/cost window |
+| `scope` | Exactly `s3-only`; no other peer or service |
+| `project`, `region`, `service` | One full identity from the protected S3 inventory; no wildcard |
+| `operator_commit`, `source_commit` | Full operator merge and separate retained application's commit label |
+| `image_digest` | Exact approved `sha256:` digest, equal to the warm revision's image digest |
+| `request_id`, `replacement` | New lowercase request identity; replacement exactly `<service>-rec-<request_id>`, at most 63 characters |
+| `service_snapshot` | Full fresh Cloud Run v1 service GET, including UID, resourceVersion, generation, metadata, template, spec and status; exact baseline equality is required |
+| `warm` | Full fresh v1 warm revision GET, including UID, generation, source/run labels, annotations, full spec and imageDigest |
+| `restore_warm_on_failure` | Exactly `true`, explicitly permitting one warm-100 compensation after an activation/promotion failure or unknown outcome, including after forward approval expiry |
+
+The baseline must use an explicit warm-100 desired traffic row, with no tags or
+latest-revision indirection. The existing template must already carry the
+approved application source label, a single application container, an untagged
+image repository and minimum zero. The template spec must equal the verified warm spec. Configuration and Secret
+references are copied without synchronization; runtime target continuity remains checked by
+the common verifier. No Secret value, IAM policy, Scheduler, execution switch or
+risk setting is changed.
+
+Execution qualifies the frozen warm twice, five seconds apart. It then creates
+the exact replacement without routing traffic to it, shifts warm=99 and
+replacement=1, and allows at most 300 seconds for strict startup qualification.
+Two fresh healthy observations must be separated by five seconds; Ready,
+Active, ContainerReady and ContainerHealthy must each be uniquely True, with
+current observed generation and unchanged revision identity/spec/digest. A
+Retired or unknown result is never healthy. A final fresh check precedes the
+exact replacement=100 update. No application HTTP request is sent, including to
+health routes; the entry observes Cloud Run's configured startup-probe evidence.
+
+All writes use the service's current `metadata.resourceVersion` as an optimistic
+concurrency precondition. Only template name/image/minimum and the explicit
+traffic rows change; the service UID, desired configuration and metadata remain
+bound. Provider-generated operation/URL/creator/status annotations are excluded
+from desired metadata comparison. See the
+[Cloud Run v1 replaceService contract](https://docs.cloud.google.com/run/docs/reference/rest/v1/namespaces.services/replaceService).
+Successful writes allow up to 60 seconds of control-plane convergence, with no
+write replay. Health qualification retains its separate 300-second deadline.
+
+After any activation or promotion failure, including an ambiguous write, the
+entry reads the actual state and attempts **one distinct warm=100 compensation**.
+The warm's frozen identity/spec/digest must still match the already qualified
+baseline. It need not remain Active while temporarily unreferenced. Only the
+original warm-100, exact 99/1, or exact replacement-100 distributions are
+eligible. A confirmed write requires the exact confirmed generation and complete
+desired spec, including traffic. A successor generation is admitted only for an
+outstanding recovery write whose full desired spec matches its recorded intent.
+An ambiguous activation cannot be declared restored from a preceding warm-100
+read: the one CAS compensation must advance resourceVersion and confirm warm-100,
+fencing the old write precondition. Without that evidence restoration remains
+unconfirmed, including a no-op compensation with no version advance. Concurrent identity/configuration changes or unknown third-party
+traffic stop compensation rather than overwrite another actor. A rejected,
+interrupted or ambiguous compensation is never retried. Failure-state persistence is best-effort: a full or unwritable private volume
+cannot suppress compensation, and the existing attempt claim is retained. A stale
+or unreadable attempt status requires protected readback and never permits replay.
+Inspect the private attempt status; `FAILED_RESTORE_UNCONFIRMED` must not be reported as restored.
+A failure before activation never advances traffic or creates another revision.
+
+Before and after execution, including a readable failure state, independent
+[Cloud Run v2 services.get](https://docs.cloud.google.com/run/docs/reference/rest/v2/projects.locations.services/get)
+checks service and template minimum zero. The private attempt records these
+minima and the warm revision's MinInstancesProvisioned observation. Successful
+final serving revision minimum zero is verified separately. An unreferenced
+minimum-one revision or zero service minimum does not prove zero billing;
+unknown provisioning remains unknown and no billing total is queried. All raw
+provider diagnostics and credential tokens remain private and are not printed.
+
+A later owner deploy card must pin all fields above, the exact reviewed recovery
+merge, the retained image/source, fresh complete snapshots, the attempt identity
+and expiry. It must explicitly approve one replacement, 99/1, the bounded health
+window, replacement-100 and warm-100 compensation, with independent minimum/cost
+readbacks. Exclude Peer1/Peer2/Peer4, all other services, Secret/IAM/Scheduler,
+environment sync, risk/execution switches, orders, deletion and automatic retry.
+Engineering acceptance does not authorize invoking this entry.
