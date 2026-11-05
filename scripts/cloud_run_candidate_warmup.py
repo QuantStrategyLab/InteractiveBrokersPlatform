@@ -73,8 +73,12 @@ class Release:
         self.no_traffic_verify = no_traffic_verify
         tag = 'cand-' + commit[:8]
         # Cloud Run limits the combined tag and service name to 46 characters.
-        # Long exact targets use revision identity without a traffic tag.
-        self.tag = tag if len(service) + len(tag) <= 46 else None
+        # Preserve eight source hex digits even when using the compact prefix.
+        if len(service) + len(tag) > 46:
+            tag = 'c' + commit[:8]
+        if len(service) + len(tag) > 46:
+            raise ValueError('CANDIDATE_TAG_LENGTH_UNSUPPORTED: service plus source-bound tag exceeds 46; no cloud operation')
+        self.tag = tag
         self.common = [f'--project={project}', f'--region={region}', '--format=json']
         self.warm = None
         self.reset = None
