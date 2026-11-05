@@ -27,12 +27,14 @@ def release(tmp_path, service, **kwargs):
 
 
 @pytest.mark.parametrize('length', [34, 38, 44, 45])
-def test_warmup_shortens_instead_of_using_micro_traffic(tmp_path, length):
-    obj, cloud = release(tmp_path, 's' * length)
+def test_shortened_tag_activates_only_the_cleanup_replacement(tmp_path, length):
+    obj, cloud = release(tmp_path, 's' * length,
+                         warmup_traffic_approved=True, approved_service='s' * length)
     assert obj.tag and len(obj.tag) + length <= 46
     with mock.patch('scripts.reconcile_cloud_runtime._verify_deploy_candidate_with_wait'):
         obj.execute()
-    assert not any('=99,' in arg for command in cloud.commands for arg in command)
+    splits = [arg for command in cloud.commands for arg in command if '=99,' in arg]
+    assert splits == ['--to-revisions=' + cloud.service_name + '-warm=99,' + cloud.service_name + '-reset=1']
 
 
 def test_impossible_warmup_without_exact_approval_refuses_before_mutation(tmp_path):
@@ -97,7 +99,8 @@ def test_warmup_fresh_foreign_tag_blocks_mutation(tmp_path):
 
 
 def test_shortened_warmup_restart_does_not_reallocate_or_replay(tmp_path):
-    obj, cloud = release(tmp_path, 's' * 45)
+    obj, cloud = release(tmp_path, 's' * 45,
+                         warmup_traffic_approved=True, approved_service='s' * 45)
     assert obj.tag
     with mock.patch('scripts.reconcile_cloud_runtime._verify_deploy_candidate_with_wait'):
         obj.execute()
