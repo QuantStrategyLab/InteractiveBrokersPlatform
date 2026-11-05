@@ -134,7 +134,7 @@ def test_cloud_read_failure_does_not_export_provider_diagnostics(capsys):
             rcr._verify_deploy_candidate_with_wait(candidate(), project="<PROJECT_ID>",
                 region="unit-region", service_name="unit-service", service=service(),
                 revision="unit-service-new", commit="abc")
-    assert str(error.value) == "candidate warmup cloud read failed"
+    assert str(error.value) == "candidate warmup cloud read failed: COMMAND_FAILED"
     assert error.value.__suppress_context__
     assert capsys.readouterr() == ("", "")
 

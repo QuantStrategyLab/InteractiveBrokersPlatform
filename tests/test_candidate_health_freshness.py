@@ -110,5 +110,5 @@ def test_health_cli_stderr_never_contains_initial_provider_diagnostics(tmp_path,
                                  'SYNC_PLAN_JSON': plan}, capture_output=True, text=True,
                             timeout=10)
     assert result.returncode == 1
-    assert result.stderr.strip() == 'error: candidate warmup cloud read failed'
+    assert result.stderr.strip() == 'error: candidate warmup cloud read failed: COMMAND_FAILED'
     assert 'private-diagnostic-sentinel' not in result.stdout + result.stderr

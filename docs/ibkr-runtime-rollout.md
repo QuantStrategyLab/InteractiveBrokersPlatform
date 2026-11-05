@@ -399,15 +399,21 @@ sync disabled, and explicit traffic-shift approval. It changes no Scheduler,
 environment, Secret, IAM or runtime execution switch.
 
 The candidate is deployed with `--no-traffic --tag=cand-<source-sha8>
---min-instances=1` when the service name plus the candidate tag fits Cloud Run's
-46-character combined limit. Longer names omit `--tag` entirely; promotion still
-uses the exact qualified revision name, and cleanup skips tag removal. Other
-profiles and supported short Russell services retain their existing path. This
-is a **revision-level** minimum, never service-level `--min`. Google Cloud's
-**Revisions and minimum instances** section says revision minimums start when referenced in a traffic split or assigned a tag; an untagged
-zero-percent revision alone does not establish startup. The untagged path retains
-`--deploy-health-check` and all existing fresh health and baseline checks; missing
-startup evidence stops promotion rather than routing traffic to warm the revision.
+--min-instances=1`. If needed, the compact `c<source-sha8>` tag preserves the
+same eight source digits within Cloud Run's 46-character service-plus-tag limit.
+Services longer than 37 characters fail before cloud calls or attempt-state
+creation with `CANDIDATE_TAG_LENGTH_UNSUPPORTED`; the tag is never silently
+omitted. A service name already exceeding 46 cannot use this warm-up path even
+with a one-character tag. Renaming or replacing a target requires separate owner
+approval. No traffic, health or execution gate is relaxed.
+This is a **revision-level** minimum, never service-level `--min`. Google Cloud's
+**Revisions and minimum instances** section says revision minimums start when
+referenced in a traffic split or assigned a tag; an untagged zero-percent revision
+alone does not establish startup.
+Candidate-health cloud reads fail immediately with fixed `TIMEOUT`,
+`EXECUTION_UNAVAILABLE`, `COMMAND_FAILED` or `INVALID_READBACK` reasons, without
+command arguments or provider diagnostics. The 300-second health deadline and
+30-second per-read bound remain in force.
 One minimum instance is billed during this warm-up window, including idle time. Missing ContainerHealthy
 remains a hard denial, with bounded fresh readbacks. Raw condition readbacks
 separate absent startup evidence from an observed ContainerHealthy=False probe

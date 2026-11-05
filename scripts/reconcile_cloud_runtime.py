@@ -522,8 +522,16 @@ def _read_deploy_cloud(args: Sequence[str], *, json_output: bool = True,
             rows = value.get("status", {}).get(key, [])
             if not isinstance(rows, list) or any(not isinstance(row, Mapping) for row in rows):
                 raise ValueError("invalid status")
-    except (ReconcileError, subprocess.TimeoutExpired, OSError, ValueError, TypeError, AttributeError):
-        raise ReconcileError("candidate warmup cloud read failed") from None
+    except subprocess.TimeoutExpired:
+        raise ReconcileError("candidate warmup cloud read failed: TIMEOUT") from None
+    except OSError:
+        raise ReconcileError("candidate warmup cloud read failed: EXECUTION_UNAVAILABLE") from None
+    except ReconcileError as exc:
+        # Inspect only the typed cause, never provider text or command arguments.
+        reason = "INVALID_READBACK" if isinstance(exc.__cause__, json.JSONDecodeError) else "COMMAND_FAILED"
+        raise ReconcileError("candidate warmup cloud read failed: " + reason) from None
+    except (ValueError, TypeError, AttributeError):
+        raise ReconcileError("candidate warmup cloud read failed: INVALID_READBACK") from None
     return value
 
 

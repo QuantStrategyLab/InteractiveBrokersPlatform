@@ -1,4 +1,4 @@
-"""Fake-only long-service lifecycle regressions; no cloud requests."""
+"""Fake-only compact-tag lifecycle regressions; no cloud requests."""
 import json
 from unittest import mock
 
@@ -7,7 +7,7 @@ import pytest
 from scripts.cloud_run_candidate_warmup import Release
 from tests.test_candidate_tag_release import Cloud, COMMIT, DIGEST
 
-SERVICE = 'unit-' + 'x' * 41 + '62'
+SERVICE = 'unit-' + 'x' * 30 + '62'
 
 
 def release(tmp_path, cloud):
@@ -17,9 +17,9 @@ def release(tmp_path, cloud):
                    state_path=tmp_path / 'state.json', cloud=cloud, no_traffic_verify=lambda: None)
 
 
-def assert_no_tags(cloud):
-    assert not any(value.startswith(('--tag', '--remove-tags', '--set-tags', '--update-tags'))
-                   for command in cloud.commands for value in command)
+def assert_compact_tag(cloud):
+    assert any('--tag=caaaaaaaa' in command for command in cloud.commands)
+    assert any('--remove-tags=caaaaaaaa' in command for command in cloud.commands)
     assert sum('deploy' in command for command in cloud.commands) == 1
 
 
@@ -30,8 +30,8 @@ def test_long_service_qualifies_both_revisions_and_promotes_by_name(tmp_path):
         observed.append(value['metadata']['name'])
     with mock.patch('scripts.reconcile_cloud_runtime._verify_deploy_candidate_with_wait', side_effect=health):
         result = release(tmp_path, cloud).execute()
-    assert len(SERVICE) == 48
-    assert_no_tags(cloud)
+    assert len(SERVICE) == 37
+    assert_compact_tag(cloud)
     assert result == SERVICE + '-reset'
     assert observed == [SERVICE + '-warm', SERVICE + '-reset']
     assert cloud.service['status']['traffic'] == [{'revisionName': result, 'percent': 100}]
@@ -48,7 +48,7 @@ def test_long_service_failure_preserves_old_traffic_without_retry(tmp_path, fail
     with mock.patch('scripts.reconcile_cloud_runtime._verify_deploy_candidate_with_wait', side_effect=health_error):
         with pytest.raises((RuntimeError, ValueError, InterruptedError)):
             obj.execute()
-    assert_no_tags(cloud)
+    assert_compact_tag(cloud)
     assert cloud.service['status']['traffic'] == [{'revisionName': SERVICE + '-old', 'percent': 100}]
     assert any('--min-instances=0' in command for command in cloud.commands)
     assert json.loads((tmp_path / 'state.json').read_text())['status'] == 'restored'
@@ -62,7 +62,7 @@ def test_long_service_restart_blocks_replay(tmp_path):
     with pytest.raises(RuntimeError, match='restart'):
         release(tmp_path, cloud).execute()
     assert len(cloud.commands) == commands
-    assert_no_tags(cloud)
+    assert_compact_tag(cloud)
 
 
 def test_long_service_stale_snapshot_blocks_mutation(tmp_path):
@@ -73,7 +73,7 @@ def test_long_service_stale_snapshot_blocks_mutation(tmp_path):
         with pytest.raises(RuntimeError):
             release(tmp_path, cloud).execute()
     assert not any('update-traffic' in command or 'update' in command for command in cloud.commands)
-    assert_no_tags(cloud)
+    assert any('--tag=caaaaaaaa' in command for command in cloud.commands)
 
 
 def test_long_service_readback_keeps_shared_redaction(tmp_path, capsys):
@@ -85,13 +85,12 @@ def test_long_service_readback_keeps_shared_redaction(tmp_path, capsys):
     output = capsys.readouterr().out
     assert 'U12345678' not in output and 'private.example.invalid' not in output
     assert 'private-project' not in output
-    assert_no_tags(cloud)
+    assert_compact_tag(cloud)
 
 
-@pytest.mark.parametrize('length,tagged', [(33, True), (34, False), (48, False)])
-def test_combined_tag_length_preserves_supported_short_services(tmp_path, length, tagged):
-    obj = release(tmp_path, Cloud())
-    obj = Release(project=obj.project, region=obj.region, service='x' * length,
-                  commit=COMMIT, digest=DIGEST, run_id='123', deploy_args=obj.deploy_args,
-                  state_path=obj.state_path, cloud=obj.cloud)
-    assert bool(obj.tag) is tagged
+@pytest.mark.parametrize('length', [33, 34, 37])
+def test_combined_tag_length_preserves_supported_short_services(tmp_path, length):
+    obj = Release(project='<PROJECT_ID>', region='unit-region', service='x' * length,
+                  commit=COMMIT, digest=DIGEST, run_id='123', deploy_args=[],
+                  state_path=tmp_path / 'state.json')
+    assert obj.tag and length + len(obj.tag) <= 46
