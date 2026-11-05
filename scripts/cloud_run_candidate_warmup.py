@@ -73,7 +73,7 @@ class Release:
         self.no_traffic_verify = no_traffic_verify
         tag = 'cand-' + commit[:8]
         # Cloud Run limits the combined tag and service name to 46 characters.
-        # Long exact targets use revision identity without a traffic tag.
+        # Untaggable targets need an approved temporary traffic split to start.
         self.tag = tag if len(service) + len(tag) <= 46 else None
         self.common = [f'--project={project}', f'--region={region}', '--format=json']
         self.warm = None
@@ -81,6 +81,7 @@ class Release:
         self.expected = None
         self.before = None
         self.cleaning = False
+        self.micro_traffic = None
 
     def record(self, status: str) -> None:
         # No resource names, bindings, env or provider diagnostics in this result.
@@ -128,7 +129,9 @@ class Release:
 
     def stable(self) -> dict:
         current = self.service_read()
-        if self.expected is None or current != self.expected:
+        if (self.expected is None or current != self.expected
+                or (self.before is not None and current.get('metadata', {}).get('uid')
+                    != self.before.get('metadata', {}).get('uid'))):
             raise RuntimeError('candidate service changed outside this attempt')
         return current
 
@@ -151,7 +154,9 @@ class Release:
         reconcile._verify_deploy_candidate_with_wait(
             value, project=self.project, region=self.region, service_name=self.service,
             service=current, revision=value['metadata']['name'], commit=self.commit,
-            require_generation=True, wait_for_start=True)
+            require_generation=True, wait_for_start=True,
+            **({'allow_warmup_split': True}
+               if self.micro_traffic is not None and value['metadata']['name'] == self.warm else {}))
         self.stable()
         # A fresh read after the wait prevents a cached healthy value from
         # authorizing a later update. Existing continuity checks stay strict.
@@ -160,6 +165,21 @@ class Release:
             raise RuntimeError('candidate revision changed during qualification')
         verify_traffic_revision(fresh, expected_revision=value['metadata']['name'],
                                 expected_commit=self.commit, require_startup_health=True)
+
+    def start_untagged(self) -> None:
+        self.stable()
+        previous = active(self.before)[0][0]
+        self.micro_traffic = sorted([(previous, 99), (self.warm, 1)])
+        try:
+            self.cloud(['gcloud', 'run', 'services', 'update-traffic', self.service, *self.common,
+                        '--to-revisions=' + previous + '=99,' + self.warm + '=1', '--quiet'])
+        finally:
+            # A timeout may follow an applied split. Read once, never replay;
+            # cleanup accepts only the exact original or intended distribution.
+            self.expected = self.service_read()
+        if (self.expected.get('metadata', {}).get('uid') != self.before['metadata']['uid']
+                or active(self.expected) != self.micro_traffic):
+            raise RuntimeError('candidate micro traffic split readback mismatch')
 
     def promote(self, value: dict) -> None:
         self.stable()
@@ -186,7 +206,18 @@ class Release:
         self.warm = warm['metadata']['name']
         serving = active(current) == [(self.warm, 100)]
         if not serving and active(current) != active(self.before):
-            raise RuntimeError('candidate cleanup traffic identity changed')
+            if self.micro_traffic is None or active(current) != self.micro_traffic:
+                raise RuntimeError('candidate cleanup traffic identity changed')
+            self.stable()
+            previous = active(self.before)[0][0]
+            self.cloud(['gcloud', 'run', 'services', 'update-traffic', self.service, *self.common,
+                        '--to-revisions=' + previous + '=100', '--quiet'])
+            self.expected = self.service_read()
+            if (self.expected.get('metadata', {}).get('uid') != current.get('metadata', {}).get('uid')
+                    or active(self.expected) != active(self.before)):
+                raise RuntimeError('candidate cleanup prior traffic restore mismatch')
+            self.candidate(self.expected, '1')
+            current = self.expected
         tag_removed = True
         if self.tag:
             rows = current['status']['traffic']
@@ -280,11 +311,17 @@ class Release:
             self.warm = warm['metadata']['name']
             if active(self.expected) != active(self.before):
                 raise RuntimeError('candidate deploy unexpectedly moved traffic')
-            self.readback('set')
-            self.health(warm)
             if self.no_traffic_verify is None:
                 raise RuntimeError('candidate original no-traffic verification missing')
-            self.no_traffic_verify()
+            if self.tag is None:
+                # Verify the unchanged baseline before temporarily routing 1%.
+                self.no_traffic_verify()
+                self.start_untagged()
+                warm = self.candidate(self.expected, '1')
+            self.readback('set')
+            self.health(warm)
+            if self.tag is not None:
+                self.no_traffic_verify()
             self.stable()
             self.promote(warm)
             self.record('promoted')

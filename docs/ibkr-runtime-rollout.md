@@ -402,14 +402,21 @@ It changes no Scheduler, environment, Secret, IAM or runtime execution switch.
 
 The candidate is deployed with `--no-traffic --tag=cand-<source-sha8>
 --min-instances=1` when the service name plus the candidate tag fits Cloud Run's
-46-character combined limit. Longer names omit `--tag` entirely; promotion still
-uses the exact qualified revision name, and cleanup skips tag removal. Short
+46-character combined limit. Longer names omit `--tag` entirely. After verifying the unchanged no-traffic
+baseline, the traffic-approved lifecycle assigns 99% to the previous revision
+and 1% to the exact warm candidate, asserting the split readback before health
+qualification. Promotion uses the exact qualified revision name. On failure
+before promotion, cleanup recognizes only this exact split, restores the previous
+revision to 100% and verifies it before resetting the minimum. Unexpected traffic
+drift blocks cleanup mutations. Cleanup skips tag removal for untagged services. Short
 configured service names use the tagged path. This is a **revision-level**
 minimum, never service-level `--min`. Google Cloud's
 **Revisions and minimum instances** section says revision minimums start when referenced in a traffic split or assigned a tag; an untagged
 zero-percent revision alone does not establish startup. The untagged path retains
-`--deploy-health-check` and all existing fresh health and baseline checks; missing
-startup evidence stops promotion rather than routing traffic to warm the revision.
+`--deploy-health-check` and strict fresh startup health checks after the approved
+micro-split starts the revision. A Retired revision with no authentic instance
+startup evidence cannot pass qualification. The tagged path retains zero-percent
+serving traffic during qualification and verifies its baseline after health.
 One minimum instance is billed during this warm-up window, including idle time. Missing ContainerHealthy
 remains a hard denial, with bounded fresh readbacks. Raw condition readbacks
 separate absent startup evidence from an observed ContainerHealthy=False probe
