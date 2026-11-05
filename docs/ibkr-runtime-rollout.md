@@ -464,3 +464,24 @@ Official references: [Minimum instances](https://cloud.google.com/run/docs/confi
 [service update flags](https://cloud.google.com/sdk/gcloud/reference/run/services/update),
 [traffic tags](https://cloud.google.com/sdk/gcloud/reference/run/services/update-traffic),
 and [revision conditions](https://cloud.google.com/run/docs/reference/rest/v2/Condition).
+
+### Protected deployment dry-run
+
+The manual deploy workflow defaults `dry_run` to `true`. The deployment job
+selects its GitHub Environment through the repository variable
+`IBKR_DEPLOY_ENVIRONMENT`, resolving its WIF credentials from Environment Secrets.
+The selector must name an existing owner-protected Environment; an empty selector
+fails before authentication. Set it through a separately authorized configuration
+change after confirming approval and branch restrictions. Existing Environment approval and
+branch restrictions must be configured independently; this workflow does not
+create or modify them.
+
+Select one exact configured service and the intended deployment controls. A
+dry-run authenticates, resolves the admitted target and validates the deployment
+inputs, but skips image builds, revision preparation, cloud writes, traffic,
+Scheduler operations and runtime-switch result persistence. It is plan validation,
+not evidence that a cloud write will succeed or that a serving revision adopted
+the candidate. Missing controls or invalid targets fail validation. Notification,
+runtime-switch and initial-state recovery modes require explicit `dry_run=false`.
+Only a separately authorized execution may set `dry_run=false`; all existing
+main-ref, admission and approval gates still apply.

@@ -5,6 +5,9 @@ name: Deploy Cloud Run (protected execution)
 on:
   workflow_call:
     inputs:
+      dry_run:
+        type: boolean
+        required: true
       notification_marker_mode:
         type: string
         required: false
@@ -141,8 +144,9 @@ env:
 jobs:
   sync-cloud-run-env:
     name: Deploy / Sync Cloud Run
+    environment: ${{ vars.IBKR_DEPLOY_ENVIRONMENT }}
     # Production deployment and environment sync require an explicit operator dispatch.
-    if: github.event_name == 'workflow_dispatch' && inputs.notification_only != true && inputs.notification_readback_only != true && (inputs.notification_marker_mode == '' || inputs.notification_marker_mode == 'disabled')
+    if: github.event_name == 'workflow_dispatch' && inputs.notification_only != true && inputs.notification_readback_only != true && (inputs.notification_marker_mode == '' || inputs.notification_marker_mode == 'disabled') || (github.event_name == 'workflow_dispatch' && inputs.dry_run == true)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -150,6 +154,15 @@ jobs:
       contents: read
       id-token: write
     env:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ secrets.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
+      GCP_RUNTIME_SERVICE_ACCOUNT: ${{ secrets.IBKR_RUNTIME_SERVICE_ACCOUNT }}
+      GCP_SCHEDULER_SERVICE_ACCOUNT: ${{ secrets.IBKR_SCHEDULER_SERVICE_ACCOUNT }}
+      INPUT_DRY_RUN: ${{ inputs.dry_run }}
+      INPUT_NOTIFICATION_ONLY: ${{ inputs.notification_only }}
+      INPUT_NOTIFICATION_READBACK_ONLY: ${{ inputs.notification_readback_only }}
+      INPUT_NOTIFICATION_MARKER_MODE: ${{ inputs.notification_marker_mode }}
       ENABLE_GITHUB_CLOUD_RUN_DEPLOY: ${{ vars.ENABLE_GITHUB_CLOUD_RUN_DEPLOY }}
       ENABLE_GITHUB_ENV_SYNC: ${{ vars.ENABLE_GITHUB_ENV_SYNC }}
       ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION: ${{ vars.ENABLE_MAIN_PUSH_CLOUD_RUN_AUTOMATION }}
@@ -293,10 +306,34 @@ jobs:
             fi
           done
 
+      - name: Validate protected deployment environment
+        env:
+          DEPLOY_ENVIRONMENT: ${{ vars.IBKR_DEPLOY_ENVIRONMENT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DEPLOY_ENVIRONMENT:-}" ]; then
+            echo 'Protected deployment Environment selector is required.' >&2
+            exit 1
+          fi
+
       - name: Check whether Cloud Run automation is enabled
         id: config
         run: |
           set -euo pipefail
+          case "${INPUT_DRY_RUN-false}" in
+            true|false) ;;
+            *) echo 'Invalid deployment dry_run input.' >&2; exit 1 ;;
+          esac
+          if [ "${INPUT_DRY_RUN-false}" = true ] &&
+             { [ "${INPUT_NOTIFICATION_ONLY:-false}" = true ] ||
+               [ "${INPUT_NOTIFICATION_READBACK_ONLY:-false}" = true ] ||
+               { [ "${INPUT_NOTIFICATION_MARKER_MODE:-disabled}" != disabled ] && [ -n "${INPUT_NOTIFICATION_MARKER_MODE:-}" ]; } ||
+               [ "${INPUT_RUNTIME_SWITCH_ONLY:-false}" = true ] ||
+               [ -n "${INPUT_INITIAL_STATE_SOURCE_RUN_ID:-}" ]; }; then
+            echo 'Deployment dry-run does not support notification or runtime recovery modes.' >&2
+            exit 1
+          fi
+
 
           write_github_output() {
             printf '%s\n' "$@" >> "$GITHUB_OUTPUT"
@@ -395,6 +432,10 @@ jobs:
             "scheduler_sync_enabled=${scheduler_sync_enabled}"
 
           if [ "${deploy_enabled}" != "true" ] && [ "${env_sync_enabled}" != "true" ] && [ "${traffic_shift_enabled}" != "true" ] && [ "${scheduler_sync_enabled}" != "true" ]; then
+            if [ "${INPUT_DRY_RUN-false}" = true ]; then
+              echo 'Dry-run requires at least one enabled deployment control.' >&2
+              exit 1
+            fi
             write_github_output "enabled=false"
             echo "Skipping Cloud Run automation because ENABLE_GITHUB_CLOUD_RUN_DEPLOY and ENABLE_GITHUB_ENV_SYNC are not true." >&2
             exit 0
@@ -750,8 +791,26 @@ jobs:
             exit 1
           fi
 
+      - name: Validate Cloud Scheduler inputs
+        if: steps.config.outputs.scheduler_sync_enabled == 'true' && inputs.runtime_switch_only != true
+        run: |
+          set -euo pipefail
+          scheduler_location="${CLOUD_SCHEDULER_LOCATION:-${CLOUD_RUN_REGION:-}}"
+          if [ -z "${scheduler_location}" ]; then
+            echo "Cloud Scheduler schedule sync requires CLOUD_RUN_REGION or CLOUD_SCHEDULER_LOCATION." >&2
+            exit 1
+          fi
+          if [ -z "${GCP_SCHEDULER_SERVICE_ACCOUNT:-}" ]; then
+            echo "Cloud Scheduler schedule sync requires GCP_SCHEDULER_SERVICE_ACCOUNT." >&2
+            exit 1
+          fi
+
+      - name: Confirm deployment dry-run validation
+        if: inputs.dry_run == true && steps.config.outputs.enabled == 'true'
+        run: echo 'Deployment plan validated; build, cloud writes, traffic and Scheduler operations were not executed.'
+
       - name: Capture no-traffic deployment baseline
-        if: steps.config.outputs.deploy_enabled == 'true'
+        if: inputs.dry_run == false && (steps.config.outputs.deploy_enabled == 'true')
         env:
           DEPLOY_READBACK_DIR: ${{ runner.temp }}/cloud-run-no-traffic-baseline
         run: |
@@ -780,7 +839,7 @@ jobs:
           done
 
       - name: Verify deployed runtime target admission before traffic shift
-        if: steps.config.outputs.deploy_enabled == 'true'
+        if: inputs.dry_run == false && (steps.config.outputs.deploy_enabled == 'true')
         run: |
           set -euo pipefail
           if [ -n "${IBKR_INITIAL_SYNC_PLAN_PATH:-}" ]; then export SYNC_PLAN_JSON="$(cat "$IBKR_INITIAL_SYNC_PLAN_PATH")"; fi
@@ -793,7 +852,7 @@ jobs:
         env:
           WARMUP_TRAFFIC_APPROVED: ${{ steps.config.outputs.traffic_shift_enabled }}
           WARMUP_ENV_SYNC: ${{ steps.config.outputs.env_sync_enabled }}
-        if: steps.config.outputs.deploy_enabled == 'true'
+        if: inputs.dry_run == false && (steps.config.outputs.deploy_enabled == 'true')
         run: |
           set -euo pipefail
           if [ -n "${IBKR_INITIAL_SYNC_PLAN_PATH:-}" ]; then export SYNC_PLAN_JSON="$(cat "$IBKR_INITIAL_SYNC_PLAN_PATH")"; fi
@@ -921,7 +980,7 @@ jobs:
           done
 
       - name: Verify no-traffic candidate startup health
-        if: steps.config.outputs.deploy_enabled == 'true' && steps.deploy.outputs.warmup_managed != 'true'
+        if: inputs.dry_run == false && (steps.config.outputs.deploy_enabled == 'true' && steps.deploy.outputs.warmup_managed != 'true')
         env:
           EXPECTED_IMAGE_DIGEST: ${{ steps.deploy.outputs.image_digest }}
         run: |
@@ -937,12 +996,12 @@ jobs:
 
       - name: Summarize build-time UES binding coverage
         continue-on-error: true
-        if: always() && steps.config.outputs.deploy_enabled == 'true'
+        if: always() && steps.config.outputs.deploy_enabled == 'true' && inputs.dry_run == false
         run: |
           python3 scripts/verify_image_ues_release_binding.py --summarize-report "${RUNNER_TEMP}/ues-binding-coverage.json" >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Verify no-traffic deployment readback
-        if: steps.config.outputs.deploy_enabled == 'true' && steps.deploy.outputs.warmup_managed != 'true'
+        if: inputs.dry_run == false && (steps.config.outputs.deploy_enabled == 'true' && steps.deploy.outputs.warmup_managed != 'true')
         env:
           DEPLOY_READBACK_DIR: ${{ runner.temp }}/cloud-run-no-traffic-baseline
           EXPECTED_IMAGE_DIGEST: ${{ steps.deploy.outputs.image_digest }}
@@ -969,7 +1028,7 @@ jobs:
           done
 
       - name: Wait for Cloud Run deployment of current commit
-        if: steps.config.outputs.deploy_enabled == 'true' && steps.config.outputs.env_sync_enabled == 'true'
+        if: inputs.dry_run == false && (steps.config.outputs.deploy_enabled == 'true' && steps.config.outputs.env_sync_enabled == 'true')
         run: |
           set -euo pipefail
           if [ -n "${IBKR_INITIAL_SYNC_PLAN_PATH:-}" ]; then export SYNC_PLAN_JSON="$(cat "$IBKR_INITIAL_SYNC_PLAN_PATH")"; fi
@@ -1017,7 +1076,7 @@ jobs:
           done
 
       - name: Prepare env-only revision and runtime switch
-        if: steps.config.outputs.env_sync_enabled == 'true' && steps.config.outputs.deploy_enabled != 'true' && steps.config.outputs.traffic_shift_enabled == 'true'
+        if: inputs.dry_run == false && (steps.config.outputs.env_sync_enabled == 'true' && steps.config.outputs.deploy_enabled != 'true' && steps.config.outputs.traffic_shift_enabled == 'true')
         env:
           EXACT_ENV_TRAFFIC: ${{ steps.config.outputs.deploy_enabled != 'true' && steps.config.outputs.traffic_shift_enabled == 'true' }}
           RUNTIME_SWITCH_ONLY: ${{ inputs.runtime_switch_only }}
@@ -1233,7 +1292,7 @@ jobs:
           fi
 
       - name: Sync Cloud Run environment
-        if: steps.config.outputs.env_sync_enabled == 'true' && inputs.runtime_switch_only != true && inputs.initial_state_source_run_id == ''
+        if: inputs.dry_run == false && (steps.config.outputs.env_sync_enabled == 'true' && inputs.runtime_switch_only != true && inputs.initial_state_source_run_id == '')
         env:
           EXACT_ENV_TRAFFIC: ${{ steps.config.outputs.deploy_enabled != 'true' && steps.config.outputs.traffic_shift_enabled == 'true' }}
         run: |
@@ -1624,7 +1683,7 @@ jobs:
           done
 
       - name: Reconcile Cloud Run traffic
-        if: steps.config.outputs.traffic_shift_enabled == 'true' && steps.deploy.outputs.warmup_managed != 'true'
+        if: inputs.dry_run == false && (steps.config.outputs.traffic_shift_enabled == 'true' && steps.deploy.outputs.warmup_managed != 'true')
         run: |
           set -euo pipefail
           if [ -n "${IBKR_INITIAL_SYNC_PLAN_PATH:-}" ]; then export SYNC_PLAN_JSON="$(cat "$IBKR_INITIAL_SYNC_PLAN_PATH")"; fi
@@ -1665,7 +1724,7 @@ jobs:
           fi
 
       - name: Verify strategy plugin mounts
-        if: steps.config.outputs.env_sync_enabled == 'true' && inputs.runtime_switch_only != true && inputs.initial_state_source_run_id == ''
+        if: inputs.dry_run == false && (steps.config.outputs.env_sync_enabled == 'true' && inputs.runtime_switch_only != true && inputs.initial_state_source_run_id == '')
         env:
           STRATEGY_PLUGIN_MOUNT_ENV_NAMES: IBKR_STRATEGY_PLUGIN_MOUNTS_JSON
         run: |
@@ -1674,7 +1733,7 @@ jobs:
           python3 scripts/verify_cloud_run_strategy_plugin_mounts.py
 
       - name: Reconcile existing runtime switch scheduler
-        if: steps.config.outputs.scheduler_sync_enabled == 'true' && inputs.runtime_switch_only == true
+        if: inputs.dry_run == false && (steps.config.outputs.scheduler_sync_enabled == 'true' && inputs.runtime_switch_only == true)
         run: |
           set -euo pipefail
           if [ -n "${IBKR_INITIAL_SYNC_PLAN_PATH:-}" ]; then export SYNC_PLAN_JSON="$(cat "$IBKR_INITIAL_SYNC_PLAN_PATH")"; fi
@@ -1742,7 +1801,7 @@ jobs:
           PY
 
       - name: Save runtime switch result
-        if: always() && inputs.runtime_switch_only == true
+        if: inputs.dry_run == false && (always() && inputs.runtime_switch_only == true)
         uses: actions/upload-artifact@v4
         with:
           name: ibkr-runtime-switch-result-${{ github.run_id }}-${{ github.run_attempt }}
@@ -1751,20 +1810,12 @@ jobs:
           retention-days: 7
 
       - name: Sync Cloud Scheduler schedule
-        if: steps.config.outputs.scheduler_sync_enabled == 'true' && inputs.runtime_switch_only != true
+        if: inputs.dry_run == false && (steps.config.outputs.scheduler_sync_enabled == 'true' && inputs.runtime_switch_only != true)
         run: |
           set -euo pipefail
           if [ -n "${IBKR_INITIAL_SYNC_PLAN_PATH:-}" ]; then export SYNC_PLAN_JSON="$(cat "$IBKR_INITIAL_SYNC_PLAN_PATH")"; fi
 
-          scheduler_location="${CLOUD_SCHEDULER_LOCATION:-${CLOUD_RUN_REGION}}"
-          if [ -z "${scheduler_location}" ]; then
-            echo "Cloud Scheduler schedule sync requires CLOUD_RUN_REGION or CLOUD_SCHEDULER_LOCATION." >&2
-            exit 1
-          fi
-          if [ -z "${GCP_SCHEDULER_SERVICE_ACCOUNT:-}" ]; then
-            echo "Cloud Scheduler schedule sync requires GCP_SCHEDULER_SERVICE_ACCOUNT." >&2
-            exit 1
-          fi
+          scheduler_location="${CLOUD_SCHEDULER_LOCATION:-${CLOUD_RUN_REGION:-}}"
 
           mapfile -t scheduler_updates < <(python - <<'PY'
           import json
@@ -2102,7 +2153,7 @@ jobs:
 
   notification-only:
     name: Fixed notification overlay / no traffic
-    if: github.event_name == 'workflow_dispatch' && inputs.notification_only == true && (inputs.notification_marker_mode == '' || inputs.notification_marker_mode == 'disabled')
+    if: github.event_name == 'workflow_dispatch' && inputs.notification_only == true && inputs.dry_run == false && (inputs.notification_marker_mode == '' || inputs.notification_marker_mode == 'disabled')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -2214,7 +2265,7 @@ jobs:
 
   notification-binding-prepare:
     name: Prepare exact IBKR notification binding / read only
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.notification_marker_mode == 'binding-prepare'
+    if: inputs.dry_run == false && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.notification_marker_mode == 'binding-prepare')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -2312,7 +2363,7 @@ jobs:
 
   notification-binding-read:
     name: Read one exact IBKR business binding only
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.notification_marker_mode == 'binding-read'
+    if: inputs.dry_run == false && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.notification_marker_mode == 'binding-read')
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -2364,7 +2415,7 @@ jobs:
 
   notification-marker-probe:
     name: Fixed synthetic marker Job control
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && ((inputs.notification_marker_mode == 'execute-probe' && inputs.approve_marker_probe == true) || ((inputs.notification_marker_mode == 'probe-readback' || inputs.notification_marker_mode == 'probe-validate-only') && inputs.approve_marker_probe == false))
+    if: inputs.dry_run == false && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && ((inputs.notification_marker_mode == 'execute-probe' && inputs.approve_marker_probe == true) || ((inputs.notification_marker_mode == 'probe-readback' || inputs.notification_marker_mode == 'probe-validate-only') && inputs.approve_marker_probe == false)))
     runs-on: ubuntu-latest
     timeout-minutes: 6
     permissions:
