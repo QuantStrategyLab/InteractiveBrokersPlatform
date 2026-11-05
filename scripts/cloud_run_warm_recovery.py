@@ -142,7 +142,8 @@ class Recovery:
                 if row.get('type') == 'MinInstancesProvisioned']
         self.minima.append({'service_minimum': 0, 'template_minimum': 0,
                             'warm_revision_minimum': 1,
-                            'warm_minimum_one_provisioned': rows[0] if len(rows) == 1 else 'Unknown',
+                            'warm_minimum_one_provisioned': (rows[0] if len(rows) == 1
+                                and rows[0] in {'True', 'False', 'Unknown'} else 'Unknown'),
                             'billing_total': 'NOT_QUERIED'})
 
     def stable(self, distribution: list, timeout=30) -> dict:
@@ -193,7 +194,10 @@ class Recovery:
     def settle(self, spec: dict, distribution: list):
         deadline = self.clock() + 60
         while True:
-            value = self.api('service')
+            remaining = deadline - self.clock()
+            require(remaining > 0)
+            value = self.api('service', timeout=min(30, remaining))
+            require(self.clock() < deadline)
             require(value['metadata']['uid'] == self.card['service_snapshot']['metadata']['uid'])
             require(value['spec'] == spec)
             require(value['metadata']['generation'] == self.expected['metadata']['generation'] + 1)
@@ -271,6 +275,7 @@ class Recovery:
             current = self.stable([(self.warm, 100)])
             self.valid()
             spec = copy.deepcopy(current['spec'])
+            require(spec['template']['spec'] == self.card['warm']['spec'])
             template = spec['template']
             template['metadata']['name'] = self.card['replacement']
             template['metadata'].setdefault('annotations', {})[MINIMUM] = '0'

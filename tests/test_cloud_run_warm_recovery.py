@@ -255,3 +255,34 @@ def test_cli_checks_pin_and_environment_before_cloud(tmp_path):
         with pytest.raises(SystemExit) as error: main()
         assert error.value.code == 1
         api.assert_not_called()
+
+
+def test_template_must_preserve_the_verified_warm_configuration(tmp_path):
+    approval = card()
+    approval['service_snapshot']['spec']['template']['spec']['containerConcurrency'] = 2
+    obj, cloud = run(tmp_path, approval=approval)
+    with pytest.raises(RecoveryError): obj.execute()
+    assert cloud.writes == []
+
+
+def test_control_plane_convergence_never_accepts_a_late_read(tmp_path):
+    obj, cloud = run(tmp_path)
+    original = cloud.__call__
+    def api(kind, name='', body=None, timeout=30):
+        value = original(kind, name, body, timeout)
+        if kind == 'service' and body is None and len(cloud.writes) == 1:
+            cloud.seconds += 61
+        return value
+    obj.api = api
+    with pytest.raises(RecoveryError): obj.execute()
+    assert len(cloud.writes) == 1
+    assert cloud.service['status']['traffic'] == [{'revisionName': 'unit-service-warm', 'percent': 100}]
+
+
+def test_unexpected_provider_provisioning_value_is_not_published(tmp_path):
+    obj, cloud = run(tmp_path)
+    cloud.revisions[obj.warm]['status']['conditions'].append(
+        {'type': 'MinInstancesProvisioned', 'status': 'private-provider-value'})
+    obj.execute()
+    assert 'private-provider-value' not in obj.attempt.read_text()
+    assert all(row['warm_minimum_one_provisioned'] == 'Unknown' for row in obj.minima)

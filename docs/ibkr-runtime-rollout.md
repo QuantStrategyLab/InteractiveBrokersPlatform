@@ -615,8 +615,8 @@ an earlier operation. Any later attempt needs a fresh owner card and readback.
 The baseline must use an explicit warm-100 desired traffic row, with no tags or
 latest-revision indirection. The existing template must already carry the
 approved application source label, a single application container, an untagged
-image repository and minimum zero. Configuration and Secret references are
-copied without synchronization; runtime target continuity remains checked by
+image repository and minimum zero. The template spec must equal the verified warm spec. Configuration and Secret
+references are copied without synchronization; runtime target continuity remains checked by
 the common verifier. No Secret value, IAM policy, Scheduler, execution switch or
 risk setting is changed.
 
