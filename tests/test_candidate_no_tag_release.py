@@ -14,7 +14,8 @@ def release(tmp_path, cloud):
     return Release(project='<PROJECT_ID>', region='unit-region', service=SERVICE,
                    commit=COMMIT, digest=DIGEST, run_id='123',
                    deploy_args=['--image=fake@' + DIGEST, '--no-traffic', '--deploy-health-check'],
-                   state_path=tmp_path / 'state.json', cloud=cloud, no_traffic_verify=lambda: None)
+                   state_path=tmp_path / 'state.json', cloud=cloud, no_traffic_verify=lambda: None,
+                   warmup_traffic_approved=True, approved_service=SERVICE)
 
 
 def assert_no_tags(cloud):
@@ -94,7 +95,7 @@ def test_long_service_readback_keeps_shared_redaction(tmp_path, capsys):
     assert_no_tags(cloud)
 
 
-@pytest.mark.parametrize('length,tagged', [(33, True), (34, False), (48, False)])
+@pytest.mark.parametrize('length,tagged', [(33, True), (34, True), (45, True), (48, False)])
 def test_combined_tag_length_preserves_supported_short_services(tmp_path, length, tagged):
     obj = release(tmp_path, Cloud())
     obj = Release(project=obj.project, region=obj.region, service='x' * length,
@@ -188,7 +189,7 @@ def test_ambiguous_split_and_ownership_loss_do_not_replay(tmp_path, failure):
         assert not any('--min-instances=0' in c for c in cloud.commands)
 
 
-@pytest.mark.parametrize('length', [34, 45])
+@pytest.mark.parametrize('length', [46, 48])
 def test_micro_split_preserves_existing_zero_percent_tags(tmp_path, length):
     service_name = 'unit-' + 'x' * (length - 5)
     cloud = Cloud(service_name=service_name)
@@ -197,7 +198,8 @@ def test_micro_split_preserves_existing_zero_percent_tags(tmp_path, length):
     obj = Release(project='<PROJECT_ID>', region='unit-region', service=service_name,
                   commit=COMMIT, digest=DIGEST, run_id='123',
                   deploy_args=['--image=fake@' + DIGEST, '--no-traffic', '--deploy-health-check'],
-                  state_path=tmp_path / 'state.json', cloud=cloud, no_traffic_verify=lambda: None)
+                  state_path=tmp_path / 'state.json', cloud=cloud, no_traffic_verify=lambda: None,
+                  warmup_traffic_approved=True, approved_service=service_name)
     assert obj.tag is None
     with mock.patch('scripts.runtime_target_continuity.verify_target_continuity'), \
          mock.patch('scripts.reconcile_cloud_runtime._read_deploy_cloud', side_effect=lambda c, **kw: cloud(c)), \

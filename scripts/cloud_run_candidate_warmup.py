@@ -18,6 +18,7 @@ from typing import Callable
 
 from notifications.redaction import redact_notification_diagnostics
 from scripts import reconcile_cloud_runtime as reconcile
+from scripts import cloud_run_tag_policy as tag_policy
 from scripts.runtime_target_continuity import verify_traffic_revision
 
 MINIMUM = 'autoscaling.knative.dev/minScale'
@@ -66,15 +67,18 @@ def active(service: dict) -> list:
 class Release:
     def __init__(self, *, project: str, region: str, service: str, commit: str, digest: str,
                  run_id: str, deploy_args: list[str], state_path: Path,
-                 cloud: Callable[[list[str]], dict] = cloud, no_traffic_verify: Callable[[], None] | None = None):
+                 cloud: Callable[[list[str]], dict] = cloud, no_traffic_verify: Callable[[], None] | None = None,
+                 warmup_traffic_approved: bool = False, approved_service: str | None = None):
         self.project, self.region, self.service = project, region, service
         self.commit, self.digest, self.run_id = commit, digest, run_id
         self.deploy_args, self.state_path, self.cloud = deploy_args, state_path, cloud
         self.no_traffic_verify = no_traffic_verify
-        tag = 'cand-' + commit[:8]
-        # Cloud Run limits the combined tag and service name to 46 characters.
-        # Untaggable targets need an approved temporary traffic split to start.
-        self.tag = tag if len(service) + len(tag) <= 46 else None
+        self.warmup_traffic_approved = warmup_traffic_approved
+        self.approved_service = approved_service
+        self.operation_id = run_id + ':' + commit + ':' + digest
+        self.allocation = tag_policy.allocate_tag(service, 'cand-' + commit[:8],
+            existing_tags=[], operation_id=self.operation_id)
+        self.tag = self.allocation.tag
         self.common = [f'--project={project}', f'--region={region}', '--format=json']
         self.warm = None
         self.reset = None
@@ -86,7 +90,9 @@ class Release:
     def record(self, status: str) -> None:
         # No resource names, bindings, env or provider diagnostics in this result.
         self.state_path.write_text(json.dumps({'status': status, 'tag': self.tag,
-                                              'reset_creates_revision': True}) + '\n')
+                                              'reset_creates_revision': True,
+                                              'contract_version': tag_policy.CONTRACT_VERSION,
+                                              'operation_fingerprint': self.allocation.operation_fingerprint}) + '\n')
 
     def service_read(self) -> dict:
         return self.cloud(['gcloud', 'run', 'services', 'describe', self.service, *self.common])
@@ -167,6 +173,10 @@ class Release:
                                 expected_commit=self.commit, require_startup_health=True)
 
     def start_untagged(self) -> None:
+        if tag_policy.lifecycle_for_impossible_tag(service_name=self.service,
+                approved_service=self.approved_service,
+                warmup_traffic_approved=self.warmup_traffic_approved) != 'MICRO_SPLIT':
+            raise RuntimeError('TAG_IMPOSSIBLE: exact warmup approval required')
         self.stable()
         previous = active(self.before)[0][0]
         self.micro_traffic = sorted([(previous, 99), (self.warm, 1)])
@@ -274,6 +284,10 @@ class Release:
                 raise ValueError('candidate deploy target binding mismatch')
         if '--no-traffic' not in self.deploy_args or '--deploy-health-check' not in self.deploy_args:
             raise ValueError('candidate deploy requires no-traffic and health check')
+        if self.tag is None and tag_policy.lifecycle_for_impossible_tag(
+                service_name=self.service, approved_service=self.approved_service,
+                warmup_traffic_approved=self.warmup_traffic_approved) != 'MICRO_SPLIT':
+            raise RuntimeError('TAG_IMPOSSIBLE: exact warmup approval required')
         # Exclusive create persists across crashes/restarts; no automatic replay.
         try:
             fd = os.open(self.state_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -290,7 +304,10 @@ class Release:
         previous = self.revision_read(initial_traffic[0][0])
         if str(previous.get('metadata', {}).get('annotations', {}).get(MINIMUM, '0')) != '0':
             raise RuntimeError('candidate previous serving revision minimum is not zero')
-        if self.tag and any(row.get('tag') == self.tag for row in self.before['status']['traffic']):
+        allocation = tag_policy.allocate_tag(self.service, 'cand-' + self.commit[:8],
+            existing_tags=[row['tag'] for row in self.before['status']['traffic'] if row.get('tag')],
+            operation_id=self.operation_id)
+        if allocation.status == 'REFUSE' or allocation != self.allocation:
             raise RuntimeError('candidate tag collision; no mutation')
         if str(self.before.get('spec', {}).get('template', {}).get('metadata', {}).get('annotations', {}).get(MINIMUM, '0')) != '0':
             raise RuntimeError('candidate requires previous revision minimum zero')
@@ -371,7 +388,8 @@ def main(argv=None) -> int:
                           service=os.environ['INPUT_CONFIGURED_SERVICE'], commit=os.environ['SOURCE_COMMIT'],
                           digest=args.image.split('@')[-1], run_id=os.environ['GITHUB_RUN_ID'],
                           deploy_args=args.deploy_args[1:] if args.deploy_args[:1] == ['--'] else args.deploy_args,
-                          state_path=args.state_path, no_traffic_verify=lambda: _verify(baseline_args))
+                          state_path=args.state_path, no_traffic_verify=lambda: _verify(baseline_args),
+                          warmup_traffic_approved=True, approved_service=baseline_args.service)
         def interrupted(signum, frame):
             # A catchable abort enters finally. Once cleanup starts, finish its
             # bounded attempts instead of interrupting the restoration itself.

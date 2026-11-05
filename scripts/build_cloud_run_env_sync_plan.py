@@ -60,6 +60,7 @@ from runtime_config_support import (  # noqa: E402
 from quant_platform_kit.common.runtime_heartbeat_policy import (  # noqa: E402
     runtime_target_permits_standard_execution,
 )
+from scripts import cloud_run_tag_policy as tag_policy  # noqa: E402
 from scripts.reconciliation_recovery_state_ledger import (  # noqa: E402
     apply_recovery_state_ledger_from_env,
 )
@@ -539,6 +540,9 @@ def _build_target_plan(
     if not service_name:
         raise ValueError("Each Cloud Run sync target requires service/service_name")
 
+    # Validate the exact configured name; budget classification is not authority
+    # to rename a target or start an untagged no-traffic candidate.
+    tag_preflight = tag_policy.preflight(service_name, "cand-" + "0" * 8)
     runtime_target_service = str(runtime_target.get("service_name") or "").strip()
     if runtime_target_service and runtime_target_service != service_name:
         raise ValueError(
@@ -568,6 +572,7 @@ def _build_target_plan(
         permitted = enabled and runtime_target_permits_standard_execution(runtime_target)
         return {
             "service_name": service_name,
+            "tag_preflight": tag_preflight,
             "strategy_profile": raw_profile,
             "env": {"RUNTIME_TARGET_ENABLED": "true" if enabled else "false",
                     "RUNTIME_TARGET_JSON": json.dumps(runtime_target, separators=(",", ":"), sort_keys=True)},
@@ -740,6 +745,7 @@ def _build_target_plan(
 
     return {
         "service_name": service_name,
+        "tag_preflight": tag_preflight,
         "strategy_profile": canonical_profile,
         "env": env_values,
         "scheduler": scheduler,

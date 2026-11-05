@@ -64,9 +64,9 @@ class Cloud:
         if args[1:4] == ["run", "services", "update-traffic"]:
             rows = self.state["service"]["status"]["traffic"]
             if any(arg.startswith("--update-tags=") for arg in args):
-                rows.append(dict(revisionName=CANDIDATE, percent=0, tag="c3f", url="https://c3f---synthetic.run.app"))
+                rows.append(dict(revisionName=CANDIDATE, percent=0, tag="cash-a665a459", url="https://cash-a665a459---synthetic.run.app"))
             else:
-                rows[:] = [row for row in rows if row.get("tag") != "c3f"]
+                rows[:] = [row for row in rows if row.get("tag") != "cash-a665a459"]
             return "{}"
         if args[1:4] == ["scheduler", "jobs", "list"]:
             return json.dumps(self.jobs)
@@ -75,7 +75,7 @@ class Cloud:
         if args[1:4] == ["scheduler", "jobs", "create"]:
             self.jobs.append(dict(name="ibkr-cash-read-123", state="ENABLED", schedule="03 01 30 09 *",
                 timeZone="Etc/UTC", attemptDeadline="300s", retryConfig={}, httpTarget=dict(
-                uri="https://c3f---synthetic.run.app/probe", httpMethod="POST", headers={"X-QSL-Maintenance-Cash": "1"},
+                uri="https://cash-a665a459---synthetic.run.app/probe", httpMethod="POST", headers={"X-QSL-Maintenance-Cash": "1"},
                 oidcToken=dict(serviceAccountEmail="synthetic-caller", audience="https://synthetic.run.app"))))
             if self.failure == "create_unknown":
                 raise pilot.ReleaseError("scheduler_create_unknown")
@@ -174,12 +174,13 @@ def test_zero_traffic_retired_candidate_does_not_replace_service_ready_identity(
 def test_realistic_run_identifier_fits_combined_tag_limit_and_shorter_budget():
     run_id = "40218930896"
     tag = observer.traffic_tag(run_id, "s" * 38)
-    assert len(tag) == 8 and int(tag[1:], 36) == int(run_id)
+    assert len(tag) == 8
     assert len(tag) + 38 == 46
     assert len(observer.traffic_tag(run_id, "s" * 39)) == 7
     assert len(observer.traffic_tag(run_id, "s" * 44)) == 2
-    with pytest.raises(pilot.ReleaseError, match="candidate_tag_length_unsupported"):
-        observer.traffic_tag(run_id, "s" * 45)
+    assert len(observer.traffic_tag(run_id, "s" * 45)) == 1
+    with pytest.raises(pilot.ReleaseError, match="TAG_IMPOSSIBLE"):
+        observer.traffic_tag(run_id, "s" * 46)
     assert tag != observer.traffic_tag(str(int(run_id) + 1), "s" * 38)
 
 
@@ -197,11 +198,11 @@ def test_candidate_report_cannot_use_live_report_namespace(change):
 
 def test_occupied_short_tag_is_rejected_without_replacing_it(tmp_path):
     state, revision, expected, _ = inputs()
-    state["traffic"].append(dict(revision=CANDIDATE, percent=0, tag="c3f", url="https://c3f---synthetic.run.app"))
+    state["traffic"].append(dict(revision=CANDIDATE, percent=0, tag="cash-a665a459", url="https://cash-a665a459---synthetic.run.app"))
     cloud = Cloud(state, revision)
-    state["service"]["status"]["traffic"].append(dict(revisionName=CANDIDATE, percent=0, tag="c3f", url="https://c3f---synthetic.run.app"))
+    state["service"]["status"]["traffic"].append(dict(revisionName=CANDIDATE, percent=0, tag="cash-a665a459", url="https://cash-a665a459---synthetic.run.app"))
     cloud.state = state
-    with pytest.raises(pilot.ReleaseError, match="observation_resource_already_exists"):
+    with pytest.raises(pilot.ReleaseError, match="REFUSE"):
         observer.observe(expected, COMMIT, {**environment(), "CLOUD_RUN_REGION": "us-central1"}, tmp_path / "safe.json",
             run=cloud.run, snapshot=cloud.snapshot, now=lambda: NOW)
     assert not any(args[1:4] == ["run", "services", "update-traffic"] for args in cloud.calls)

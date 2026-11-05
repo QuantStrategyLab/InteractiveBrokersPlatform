@@ -402,8 +402,11 @@ It changes no Scheduler, environment, Secret, IAM or runtime execution switch.
 
 The candidate is deployed with `--no-traffic --tag=cand-<source-sha8>
 --min-instances=1` when the service name plus the candidate tag fits Cloud Run's
-46-character combined limit. Longer names omit `--tag` entirely. After verifying the unchanged no-traffic
-baseline, the traffic-approved lifecycle assigns 99% to the previous revision
+46-character combined limit. When the preferred tag does not fit, the shared
+policy allocates a shorter operation-bound tag if at least one character fits.
+Only tag-impossible service names omit `--tag` entirely. After verifying the
+unchanged no-traffic baseline, the exact-target traffic-approved lifecycle
+assigns 99% to the previous revision
 and 1% to the exact warm candidate, asserting the split readback before health
 qualification. Promotion uses the exact qualified revision name. On failure
 before promotion, cleanup recognizes only this exact split, restores the previous
@@ -494,3 +497,24 @@ the candidate. Missing controls or invalid targets fail validation. Notification
 runtime-switch and initial-state recovery modes require explicit `dry_run=false`.
 Only a separately authorized execution may set `dry_run=false`; all existing
 main-ref, admission and approval gates still apply.
+
+### Shared revision-tag preflight
+
+Operator entry points use `scripts/cloud_run_tag_policy.py`, a local Option B
+implementation of `cloud-run-tags/v1`; QuantPlatformKit is the intended canonical
+owner. The policy validates the exact resolved service name and the combined
+46-character service/tag budget. It keeps a fitting preferred tag, otherwise
+uses a deterministic operation-bound shortened tag. Occupied tags are refused,
+including tags on zero-percent routes; a short name alone proves no ownership.
+The sync plan reports `tag_preflight` without changing service identity.
+
+Only the configured candidate warmup lifecycle accepts an exact-service warmup
+traffic approval for the temporary 99/1 split when no nonempty tag fits. TCP and
+maintenance-cash probes remain strictly no-traffic and refuse such a target.
+Image-only and notification-only entry points validate names without acquiring
+traffic authority. Existing workflow concurrency, immutable image/identity
+checks, baseline readbacks and cleanup remain required. Single-use local claims
+are retained after interruption and success: reconcile the existing attempt
+rather than deleting a claim or replaying an uncertain mutation. Local claims
+do not provide a distributed lock; provider resource-version checks and the
+protected workflow concurrency boundary remain required for cloud execution.
