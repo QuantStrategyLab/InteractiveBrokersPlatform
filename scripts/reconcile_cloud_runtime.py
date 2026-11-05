@@ -564,8 +564,16 @@ def _verify_deploy_candidate_with_wait(candidate: Mapping[str, Any], *, project:
 
     original = identity(candidate)
     if (not warmed and not wait_for_start) or _traffic_on_revision(service, revision):
-        verify_traffic_revision(candidate, expected_revision=revision, expected_commit=commit,
-                                require_startup_health=True)
+        try:
+            verify_traffic_revision(candidate, expected_revision=revision, expected_commit=commit,
+                                    require_startup_health=True)
+        except StartupHealthPending:
+            if not warmed and not _traffic_on_revision(service, revision):
+                raise ReconcileError(
+                    "candidate instance start not observed; warmup required before startup health verification; "
+                    "cold minimum-zero candidate cannot establish ContainerHealthy without starting an instance"
+                ) from None
+            raise
         return
     baseline = json.dumps({"spec": service.get("spec", {}).get("traffic"),
                            "status": service.get("status", {}).get("traffic")}, sort_keys=True)

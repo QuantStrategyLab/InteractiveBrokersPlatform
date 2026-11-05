@@ -6,13 +6,24 @@ from xml.etree import ElementTree as ET
 
 import pytest
 
-from application.flex_daily import runner, state
+from application.flex_daily import runner, state, storage
 from application.flex_daily.__main__ import pull_outcome
 from application.flex_daily.storage import Conflict
 from tests.test_flex_daily_cloud import Memory, config, report
 
 START = '2026-11-03'
 NOW = datetime(2026, 11, 4, 22, tzinfo=timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def frozen_lease_clock(monkeypatch):
+    """Keep lease release on the same fixed clock as collector acquisition."""
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW.astimezone(tz) if tz is not None else NOW.replace(tzinfo=None)
+
+    monkeypatch.setattr(storage, 'datetime', FrozenDatetime)
 
 
 def forward_config():
@@ -353,3 +364,15 @@ def test_native_account_rebinding_cannot_reuse_other_accounts_anchor():
     ev = evidence(store, '2026-11-04')
     assert ev['previous_actual_cutoff'] is None
     assert 'opening_snapshot_missing' in ev['issues']
+
+
+def test_frozen_clock_preserves_lease_release_and_owner_fencing():
+    store = Memory()
+    first = storage.Lease(store, 'state/pull-lease.json', NOW)
+    with pytest.raises(Conflict, match='already_running'):
+        storage.Lease(store, 'state/pull-lease.json', NOW)
+    first.release()
+    second = storage.Lease(store, 'state/pull-lease.json', NOW)
+    with pytest.raises(Conflict):
+        first.release()
+    second.check(NOW)

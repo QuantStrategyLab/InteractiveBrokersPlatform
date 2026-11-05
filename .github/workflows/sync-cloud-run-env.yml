@@ -4,6 +4,11 @@ run-name: ${{ inputs.runtime_switch_only && format('Runtime switch {0}', inputs.
 on:
   workflow_dispatch:
     inputs:
+      dry_run:
+        description: "Validate the selected deployment plan without build, cloud writes, traffic or Scheduler changes; false requires separate execution approval."
+        required: true
+        type: boolean
+        default: true
       notification_marker_mode:
         description: "Isolated notification binding read/prepare or retained synthetic marker Job; deployment controls stay false."
         required: true
@@ -129,6 +134,7 @@ jobs:
       id-token: write
     uses: ./.github/workflows/sync-cloud-run-env-protected.yml
     with:
+      dry_run: ${{ inputs.dry_run }}
       notification_marker_mode: ${{ inputs.notification_marker_mode }}
       approve_marker_probe: ${{ inputs.approve_marker_probe }}
       notification_only: ${{ inputs.notification_only }}

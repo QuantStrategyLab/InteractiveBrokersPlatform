@@ -378,7 +378,7 @@ generation evidence fails closed. Health-only initial and polling reads use
 fixed diagnostics and a maximum 30-second timeout per read. These observations
 do not make traffic promotion an atomic cloud compare-and-set operation.
 
-### Exact-target Russell candidate warm-up
+### Exact configured-target candidate warm-up
 
 Baseline capture and verification bound each service, IAM, Scheduler and revision
 read to 30 seconds. A timeout fails with a fixed diagnostic that omits command
@@ -391,19 +391,21 @@ and rechecks its identity, specification and startup health, including after
 baseline validation. Missing, unknown, unhealthy or unreadable revision evidence
 blocks promotion and enters the existing cleanup path.
 
-The configured Russell image path uses `scripts/cloud_run_candidate_warmup.py`
+Every single configured-target image path uses `scripts/cloud_run_candidate_warmup.py`
 for deployment, health qualification, traffic promotion and `finally` cleanup in
-one process. Other profiles keep their existing image deployment path. Warm-up
+one process, including non-Russell profiles such as global ETF rotation. Warm-up
 requires one exact admitted configured service, image deployment with environment
-sync disabled, and explicit traffic-shift approval. It changes no Scheduler,
-environment, Secret, IAM or runtime execution switch.
+sync disabled, and explicit traffic-shift approval. Non-configured paths remain
+unchanged. A cold unwarmed candidate still fails closed, with guidance that an
+instance must start through warm-up before startup health can be verified.
+It changes no Scheduler, environment, Secret, IAM or runtime execution switch.
 
 The candidate is deployed with `--no-traffic --tag=cand-<source-sha8>
 --min-instances=1` when the service name plus the candidate tag fits Cloud Run's
 46-character combined limit. Longer names omit `--tag` entirely; promotion still
-uses the exact qualified revision name, and cleanup skips tag removal. Other
-profiles and supported short Russell services retain their existing path. This
-is a **revision-level** minimum, never service-level `--min`. Google Cloud's
+uses the exact qualified revision name, and cleanup skips tag removal. Short
+configured service names use the tagged path. This is a **revision-level**
+minimum, never service-level `--min`. Google Cloud's
 **Revisions and minimum instances** section says revision minimums start when referenced in a traffic split or assigned a tag; an untagged
 zero-percent revision alone does not establish startup. The untagged path retains
 `--deploy-health-check` and all existing fresh health and baseline checks; missing
@@ -464,3 +466,24 @@ Official references: [Minimum instances](https://cloud.google.com/run/docs/confi
 [service update flags](https://cloud.google.com/sdk/gcloud/reference/run/services/update),
 [traffic tags](https://cloud.google.com/sdk/gcloud/reference/run/services/update-traffic),
 and [revision conditions](https://cloud.google.com/run/docs/reference/rest/v2/Condition).
+
+### Protected deployment dry-run
+
+The manual deploy workflow defaults `dry_run` to `true`. The deployment job
+selects its GitHub Environment through the repository variable
+`IBKR_DEPLOY_ENVIRONMENT`, resolving its WIF credentials from Environment Secrets.
+The selector must name an existing owner-protected Environment; an empty selector
+fails before authentication. Set it through a separately authorized configuration
+change after confirming approval and branch restrictions. Existing Environment approval and
+branch restrictions must be configured independently; this workflow does not
+create or modify them.
+
+Select one exact configured service and the intended deployment controls. A
+dry-run authenticates, resolves the admitted target and validates the deployment
+inputs, but skips image builds, revision preparation, cloud writes, traffic,
+Scheduler operations and runtime-switch result persistence. It is plan validation,
+not evidence that a cloud write will succeed or that a serving revision adopted
+the candidate. Missing controls or invalid targets fail validation. Notification,
+runtime-switch and initial-state recovery modes require explicit `dry_run=false`.
+Only a separately authorized execution may set `dry_run=false`; all existing
+main-ref, admission and approval gates still apply.
