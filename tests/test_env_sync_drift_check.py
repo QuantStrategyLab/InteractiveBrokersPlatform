@@ -42,6 +42,17 @@ def test_drift_workflow_env_mirrors_sync_workflow():
     assert sync_env.pop("INPUT_INITIAL_STATE_SOURCE_RUN_ID") == "''"
     assert sync_env.pop("INPUT_INITIAL_STATE_CURRENT_RUN_ID") == "''"
     assert sync_env.pop("IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX") == "${{ secrets.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX }}"
+    # Deployment admission and Environment credentials are intentionally job-scoped.
+    for key in ("INPUT_DRY_RUN", "INPUT_NOTIFICATION_ONLY", "INPUT_NOTIFICATION_READBACK_ONLY", "INPUT_NOTIFICATION_MARKER_MODE"):
+        assert sync_env.pop(key) == "''"
+    for key, secret in (
+        ("GCP_PROJECT_ID", "GCP_PROJECT_ID"),
+        ("GCP_WORKLOAD_IDENTITY_PROVIDER", "GCP_WORKLOAD_IDENTITY_PROVIDER"),
+        ("GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT", "GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT"),
+        ("GCP_RUNTIME_SERVICE_ACCOUNT", "IBKR_RUNTIME_SERVICE_ACCOUNT"),
+        ("GCP_SCHEDULER_SERVICE_ACCOUNT", "IBKR_SCHEDULER_SERVICE_ACCOUNT"),
+    ):
+        assert sync_env.pop(key) == "${{ secrets." + secret + " }}"
     assert drift_env == sync_env
 
 
