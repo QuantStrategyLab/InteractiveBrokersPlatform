@@ -66,3 +66,27 @@ def test_missing_environment_selector_blocks_before_authentication(tmp_path):
         result = subprocess.run(["bash", "-euo", "pipefail", "-c", script], env=dict(os.environ, DEPLOY_ENVIRONMENT=value), capture_output=True, text=True)
         assert result.returncode == expected
         assert value not in result.stderr if value else True
+
+
+def test_scheduler_only_dry_run_validates_required_inputs():
+    text = WORKFLOW.read_text().split("      - name: Confirm deployment dry-run validation", 1)[0]
+    sections = [section for section in text.split("      - name: ")
+                if "if: steps.config.outputs.scheduler_sync_enabled == 'true'" in section]
+    assert len(sections) == 1
+    body = sections[0].split("        run: |\n", 1)[1]
+    script = "\n".join(line[10:] for line in body.splitlines())
+    common = {key: value for key, value in os.environ.items()
+              if key not in {"CLOUD_RUN_REGION", "CLOUD_SCHEDULER_LOCATION", "GCP_SCHEDULER_SERVICE_ACCOUNT"}}
+    cases = [({}, False),
+             ({"CLOUD_RUN_REGION": "", "CLOUD_SCHEDULER_LOCATION": ""}, False),
+             ({"CLOUD_RUN_REGION": "fake-region"}, False),
+             ({"GCP_SCHEDULER_SERVICE_ACCOUNT": "fake-scheduler"}, False),
+             ({"CLOUD_RUN_REGION": "fake-region", "GCP_SCHEDULER_SERVICE_ACCOUNT": "fake-scheduler"}, True),
+             ({"CLOUD_SCHEDULER_LOCATION": "fake-location", "GCP_SCHEDULER_SERVICE_ACCOUNT": "fake-scheduler"}, True)]
+    for extra, valid in cases:
+        result = subprocess.run(["bash", "-euo", "pipefail", "-c", script],
+                                env=dict(common, **extra), capture_output=True, text=True)
+        assert (result.returncode == 0) == valid
+        for value in extra.values():
+            if value:
+                assert value not in result.stderr

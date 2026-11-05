@@ -791,6 +791,20 @@ jobs:
             exit 1
           fi
 
+      - name: Validate Cloud Scheduler inputs
+        if: steps.config.outputs.scheduler_sync_enabled == 'true' && inputs.runtime_switch_only != true
+        run: |
+          set -euo pipefail
+          scheduler_location="${CLOUD_SCHEDULER_LOCATION:-${CLOUD_RUN_REGION:-}}"
+          if [ -z "${scheduler_location}" ]; then
+            echo "Cloud Scheduler schedule sync requires CLOUD_RUN_REGION or CLOUD_SCHEDULER_LOCATION." >&2
+            exit 1
+          fi
+          if [ -z "${GCP_SCHEDULER_SERVICE_ACCOUNT:-}" ]; then
+            echo "Cloud Scheduler schedule sync requires GCP_SCHEDULER_SERVICE_ACCOUNT." >&2
+            exit 1
+          fi
+
       - name: Confirm deployment dry-run validation
         if: inputs.dry_run == true && steps.config.outputs.enabled == 'true'
         run: echo 'Deployment plan validated; build, cloud writes, traffic and Scheduler operations were not executed.'
@@ -1801,15 +1815,7 @@ jobs:
           set -euo pipefail
           if [ -n "${IBKR_INITIAL_SYNC_PLAN_PATH:-}" ]; then export SYNC_PLAN_JSON="$(cat "$IBKR_INITIAL_SYNC_PLAN_PATH")"; fi
 
-          scheduler_location="${CLOUD_SCHEDULER_LOCATION:-${CLOUD_RUN_REGION}}"
-          if [ -z "${scheduler_location}" ]; then
-            echo "Cloud Scheduler schedule sync requires CLOUD_RUN_REGION or CLOUD_SCHEDULER_LOCATION." >&2
-            exit 1
-          fi
-          if [ -z "${GCP_SCHEDULER_SERVICE_ACCOUNT:-}" ]; then
-            echo "Cloud Scheduler schedule sync requires GCP_SCHEDULER_SERVICE_ACCOUNT." >&2
-            exit 1
-          fi
+          scheduler_location="${CLOUD_SCHEDULER_LOCATION:-${CLOUD_RUN_REGION:-}}"
 
           mapfile -t scheduler_updates < <(python - <<'PY'
           import json
