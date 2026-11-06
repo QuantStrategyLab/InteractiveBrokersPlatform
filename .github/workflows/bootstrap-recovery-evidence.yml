@@ -1,0 +1,37 @@
+name: Bootstrap private recovery evidence
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ibkr-retained-warm-recovery
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    if: github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && github.ref == 'refs/heads/main'
+    environment: ${{ vars.IBKR_DEPLOY_ENVIRONMENT }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Create private storage and retain stable pre-warm evidence
+        env:
+          IBKR_RECOVERY_BOOTSTRAP_JSON: ${{ secrets.IBKR_RECOVERY_BOOTSTRAP_JSON }}
+          RECOVERY_PROTECTED_ENVIRONMENT: ${{ vars.IBKR_DEPLOY_ENVIRONMENT }}
+        run: python -m scripts.recovery_evidence_bootstrap
