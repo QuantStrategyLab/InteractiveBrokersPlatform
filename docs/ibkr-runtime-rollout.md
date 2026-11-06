@@ -709,7 +709,8 @@ letters/digits, the request identity follows the recovery-card grammar, and
 `restore_warm_on_failure` must be true. Keep these values private. Configuring
 these bindings is a separately authorized operation, not part of publishing code.
 
-The existing Environment workload identity needs only `run.services.get`,
+The existing Environment workload identity needs only `resourcemanager.projects.get`,
+`run.services.get`,
 `run.revisions.get`, `storage.buckets.create`, `storage.buckets.get`,
 `storage.buckets.getIamPolicy`, `storage.objects.create`, and
 `storage.objects.get` for this entry. Scope storage permissions to the dedicated
@@ -726,6 +727,12 @@ outside this entry. No existing bucket is adopted or repaired: creation is the
 distributed single-use claim, including after runner restart. A conflict, timeout
 or uncertain write stops without retry, cleanup or a second suffix. Reconcile the
 original request privately before considering any separately approved new one.
+
+Each snapshot resolves the configured project ID through Resource Manager and
+validates its numeric project number. The v1 namespace must match that resolved
+number or the configured ID; unknown or mismatched project bindings stop before
+storage writes. Approval expiry is checked after acquiring each write token,
+immediately before sending bucket or object creation.
 
 Fresh v1 service, v1 warm revision and v2 service snapshots retain resource sizes,
 scaling, billing annotations and identity/configuration privately. Stable readbacks

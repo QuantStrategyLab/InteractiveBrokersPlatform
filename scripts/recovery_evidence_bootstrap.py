@@ -40,8 +40,8 @@ LIFECYCLE = {'rule': [{'action': {'type': 'Delete'}, 'condition': {'age': 7}}]}
 
 class API:
     """Single attempts with captured credentials/diagnostics; no SDK retries."""
-    def __init__(self, config):
-        self.config = config
+    def __init__(self, config, *, now=lambda: datetime.now(timezone.utc)):
+        self.config, self.now = config, now
         self.bucket = 'ibkr-recovery-evidence-' + config['bucket_suffix']
 
     def __call__(self, kind, *, body=None, name=None, data=None):
@@ -51,6 +51,8 @@ class API:
         bucket = 'https://storage.googleapis.com/storage/v1/b/' + self.bucket
         method = 'GET'
         if kind == 'service': url = base + '/services/' + c['service']
+        elif kind == 'project':
+            url = 'https://cloudresourcemanager.googleapis.com/v1/projects/' + c['project']
         elif kind == 'warm': url = base + '/revisions/' + c['warm_revision']
         elif kind == 'minimum':
             url = ('https://run.googleapis.com/v2/projects/' + c['project']
@@ -73,6 +75,11 @@ class API:
             request = Request(url, data=data, method=method,
                               headers={'Authorization': 'Bearer ' + token,
                                        'Content-Type': 'application/json'})
+            # Authentication can consume the remaining approval window. Recheck
+            # at the transport boundary, after token acquisition, for every POST.
+            if method == 'POST':
+                require(datetime.fromisoformat(c['issued_at']) <= self.now()
+                        < datetime.fromisoformat(c['expires_at']))
             with urlopen(request, timeout=30) as response:
                 result = response.read()
             return result if kind == 'download' else json.loads(result)
@@ -103,16 +110,20 @@ class Bootstrap:
         self.valid()
         self.bucket = 'ibkr-recovery-evidence-' + c['bucket_suffix']
         self.prefix = 's3-recovery/' + c['request_id'] + '/'
-        self.api = api or API(c)
+        self.api = api or API(c, now=now)
 
     def valid(self):
         require(self.issued <= self.now() < self.expires)
 
     def snapshot(self):
         c = self.config
+        project = self.api('project')
+        require(project['projectId'] == c['project'])
+        number = project['projectNumber']
+        require(isinstance(number, str) and re.fullmatch(r'[1-9][0-9]*', number))
         service, warm, minimum = (self.api(kind) for kind in ('service', 'warm', 'minimum'))
         require(service['metadata']['name'] == c['service'])
-        require(service['metadata']['namespace'] == c['project'])
+        require(service['metadata']['namespace'] in {c['project'], number})
         require(service['metadata'].get('uid') and service['metadata'].get('resourceVersion'))
         require(service['spec']['traffic'] == [{'revisionName': c['warm_revision'], 'percent': 100}])
         require(warm['metadata']['name'] == c['warm_revision'] and warm['metadata'].get('uid'))

@@ -35,6 +35,7 @@ class Fake:
             'status': {'imageDigest': 'sha256:' + 'c' * 64}}
         self.minimum = {'name': 'projects/fake-project/locations/fake-region/services/fake-service',
                         'uid': 'fake-uid', 'scaling': {'minInstanceCount': 0}}
+        self.project = {'projectId': 'fake-project', 'projectNumber': '123456789012'}
         self.bucket = None
         self.objects = {}
         self.calls = []
@@ -52,6 +53,7 @@ class Fake:
                 if self.drift and self.reads > 1:
                     value['metadata']['resourceVersion'] = 'changed'
                 return value
+            if kind == 'project': return copy.deepcopy(self.project)
             if kind == 'warm': return copy.deepcopy(self.warm)
             if kind == 'minimum': return copy.deepcopy(self.minimum)
             if kind == 'create_bucket':
@@ -86,7 +88,7 @@ def test_private_card_contract_and_exact_object_readbacks():
     assert receipt['card_sha256'] == hashlib.sha256(card_bytes).hexdigest()
     assert receipt['pricing_status'] == 'NOT_PROVEN'
     assert set(cloud.calls) <= {'service', 'warm', 'minimum', 'create_bucket', 'bucket',
-                                'iam', 'upload', 'download'}
+                                'iam', 'upload', 'download', 'project'}
 
 
 @pytest.mark.parametrize('field,value', [
@@ -185,7 +187,7 @@ def test_transport_uses_create_only_preconditions_and_captures_diagnostics(monke
         return Response()
     monkeypatch.setattr(module.subprocess, 'run', Mock(return_value=Mock(stdout='fake-token')))
     monkeypatch.setattr(module, 'urlopen', open_request)
-    api = module.API(config())
+    api = module.API(config(), now=lambda: NOW)
     api('upload', name='s3-recovery/fake1/recovery-card.json', data=b'{}')
     assert requests[0].method == 'POST'
     assert 'ifGenerationMatch=0' in requests[0].full_url
@@ -226,3 +228,72 @@ def test_missing_environment_is_rejected_before_credential_acquisition():
     assert guard < auth
     assert "if not os.environ.get('RECOVERY_PROTECTED_ENVIRONMENT')" in text[guard:auth]
     assert 'raise SystemExit' in text[guard:auth]
+
+
+@pytest.mark.parametrize('namespace', ['fake-project', '123456789012'])
+def test_resolved_project_namespace_accepts_id_and_number(namespace):
+    cloud = Fake()
+    cloud.service['metadata']['namespace'] = namespace
+    run(cloud)
+    assert cloud.calls.index('project') < cloud.calls.index('create_bucket')
+
+
+@pytest.mark.parametrize('project', [
+    {'projectId': 'other-fake-project', 'projectNumber': '123456789012'},
+    {'projectId': 'fake-project', 'projectNumber': ''},
+    {'projectId': 'fake-project', 'projectNumber': None},
+    {'projectId': 'fake-project', 'projectNumber': 'invalid'},
+])
+def test_invalid_project_resolution_blocks_writes(project):
+    cloud = Fake()
+    cloud.project = project
+    with pytest.raises(BootstrapError): run(cloud)
+    assert 'create_bucket' not in cloud.calls
+
+
+def test_foreign_numeric_namespace_blocks_writes():
+    cloud = Fake()
+    cloud.service['metadata']['namespace'] = '999999999999'
+    with pytest.raises(BootstrapError): run(cloud)
+    assert 'create_bucket' not in cloud.calls
+
+
+@pytest.mark.parametrize('kind', ['create_bucket', 'upload'])
+def test_expiry_during_credential_acquisition_blocks_transport_write(monkeypatch, kind):
+    from scripts import recovery_evidence_bootstrap as module
+    from unittest.mock import Mock
+    clock = [NOW]
+    def acquire(*args, **kwargs):
+        clock[0] = datetime(2030, 1, 1, 1, tzinfo=timezone.utc)
+        return Mock(stdout='fake-token')
+    monkeypatch.setattr(module.subprocess, 'run', acquire)
+    request = Mock()
+    monkeypatch.setattr(module, 'urlopen', request)
+    # Exercise the real transport from Bootstrap, including its injected clock.
+    bootstrap = Bootstrap(config(), now=lambda: clock[0], operator='b' * 40,
+                          environment='fake-protected')
+    bootstrap.valid()
+    with pytest.raises(BootstrapError):
+        bootstrap.api(kind, body={}, name='fake-object', data=b'{}')
+    request.assert_not_called()
+
+
+def test_project_lookup_transport_and_private_error(monkeypatch):
+    from scripts import recovery_evidence_bootstrap as module
+    from unittest.mock import Mock
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def read(self):
+            return b'{"projectId":"fake-project","projectNumber":"123456789012"}'
+    monkeypatch.setattr(module.subprocess, 'run', Mock(return_value=Mock(stdout='fake-token')))
+    request = Mock(return_value=Response())
+    monkeypatch.setattr(module, 'urlopen', request)
+    api = module.API(config(), now=lambda: NOW)
+    assert api('project')['projectNumber'] == '123456789012'
+    sent = request.call_args.args[0]
+    assert sent.method == 'GET'
+    assert sent.full_url == 'https://cloudresourcemanager.googleapis.com/v1/projects/fake-project'
+    request.side_effect = RuntimeError('fake-private-project-detail')
+    with pytest.raises(BootstrapError) as error: api('project')
+    assert 'private-project-detail' not in str(error.value)
