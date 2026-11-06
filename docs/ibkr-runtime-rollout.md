@@ -685,3 +685,70 @@ window, replacement-100 and warm-100 compensation, with independent minimum/cost
 readbacks. Exclude Peer1/Peer2/Peer4, all other services, Secret/IAM/Scheduler,
 environment sync, risk/execution switches, orders, deletion and automatic retry.
 Engineering acceptance does not authorize invoking this entry.
+
+### Private recovery evidence bootstrap
+
+`bootstrap-recovery-evidence.yml` is a manual, main-only preparatory entry in the
+same protected Environment and concurrency group as warm recovery. It never
+invokes recovery, changes Cloud Run, creates IAM/Secrets, or starts a warm
+revision. Merging its definition does not authorize dispatch. Native Environment
+approval and exact owner authority for the operator revision, target and storage
+scope remain required; review and validate that Environment's protection before
+any later dispatch. A missing Environment name fails before credential acquisition.
+Reruns are refused.
+
+An authorized operator supplies `IBKR_RECOVERY_BOOTSTRAP_JSON` as a protected
+Environment secret, never public dispatch inputs or repository Variables. It contains
+`authority`, `protected_environment`, `project`, `region`, `service`,
+`warm_revision`, `source_commit`, `operator_commit`, `image_digest`, `request_id`,
+`bucket_suffix`, `issued_at`, `expires_at`, and `restore_warm_on_failure`.
+Identity and image fields retain the recovery-card bindings above. The operator
+commit must equal the workflow checkout; `issued_at` and `expires_at` have explicit
+timezones and a positive window of at most 60 minutes. The suffix is 8–32 lowercase
+letters/digits, the request identity follows the recovery-card grammar, and
+`restore_warm_on_failure` must be true. Keep these values private. Configuring
+these bindings is a separately authorized operation, not part of publishing code.
+
+The existing Environment workload identity needs only `resourcemanager.projects.get`,
+`run.services.get`,
+`run.revisions.get`, `storage.buckets.create`, `storage.buckets.get`,
+`storage.buckets.getIamPolicy`, `storage.objects.create`, and
+`storage.objects.get` for this entry. Scope storage permissions to the dedicated
+bucket where the provider supports that restriction; bucket creation requires the
+approved project scope. No role/policy is created or granted by the entry. Missing
+permissions stop execution rather than trigger a grant or an alternate identity.
+
+The script creates one dedicated regional Standard bucket with uniform
+bucket-level access, enforced public access prevention, a 7-day object deletion
+lifecycle, versioning disabled and soft deletion disabled. It verifies the bucket
+and absence of public IAM members. Object deletion is lifecycle-managed and
+asynchronous; seven days is not a precise deletion timestamp. Bucket deletion is
+outside this entry. No existing bucket is adopted or repaired: creation is the
+distributed single-use claim, including after runner restart. A conflict, timeout
+or uncertain write stops without retry, cleanup or a second suffix. Reconcile the
+original request privately before considering any separately approved new one.
+
+Each snapshot resolves the configured project ID through Resource Manager and
+validates its numeric project number. The v1 namespace must match that resolved
+number or the configured ID; unknown or mismatched project bindings stop before
+storage writes. Approval expiry is checked after acquiring each write token,
+immediately before sending bucket or object creation.
+
+Fresh v1 service, v1 warm revision and v2 service snapshots retain resource sizes,
+scaling, billing annotations and identity/configuration privately. Stable readbacks
+must match before a card is uploaded and before its receipt is retained. Only
+`gs://<bucket>/s3-recovery/<request_id>/pre-warm-snapshot.json`,
+`recovery-card.json` and `receipt.json` are written, with create-only generation
+preconditions and exact byte readbacks. There is no public artifact, locator or
+checksum output. An authorized protected read of `receipt.json` supplies the card
+locator/checksum for the separate recovery gate. Partial artifacts or a missing
+receipt are not success and cannot authorize recovery.
+
+The receipt explicitly leaves regional-price and incremental-budget qualification
+`NOT_PROVEN`. These snapshots are inputs to that assessment, not a price quote,
+US$1 budget proof, health qualification or recovery approval. Later recovery must
+verify the exact merged operator revision, valid owner time/cost bounds, private
+receipt and card checksum, fresh target state and native Environment approval.
+Expiry stops bootstrap writes; this entry has no compensation because it never
+changes warm/traffic state. It cannot extend a prior approval or automatically
+launch recovery after merge.
