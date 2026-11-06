@@ -1,0 +1,89 @@
+name: Observe or initialize four disabled short-name destinations
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Observe, validate only, or separately authorized inert initialization
+        required: true
+        default: observe
+        type: choice
+        options: [observe, validate, initialize]
+      mapping_ref:
+        description: Exact restricted four-target mapping reference
+        required: true
+        type: string
+      source_revision:
+        description: Exact approved source revision
+        required: true
+        type: string
+      plan_sha256:
+        description: SHA-256 of the canonical protected migration plan
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# All four destinations share one lock. Never cancel an in-flight cloud request.
+concurrency:
+  group: ibkr-four-target-short-name-migration
+  cancel-in-progress: false
+
+jobs:
+  migration:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.run_attempt == 1
+    environment: ${{ vars.IBKR_DEPLOY_ENVIRONMENT }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      MIGRATION_ENVIRONMENT: ${{ vars.IBKR_DEPLOY_ENVIRONMENT }}
+      MIGRATION_PLAN_JSON: ${{ secrets.IBKR_SHORT_NAME_MIGRATION_PLAN_JSON }}
+      MIGRATION_AUTHORIZATION_JSON: ${{ secrets.IBKR_SHORT_NAME_MIGRATION_AUTHORIZATION_JSON }}
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      INPUT_MODE: ${{ inputs.mode }}
+      INPUT_MAPPING_REF: ${{ inputs.mapping_ref }}
+      INPUT_SOURCE_REVISION: ${{ inputs.source_revision }}
+      INPUT_PLAN_SHA256: ${{ inputs.plan_sha256 }}
+      CLOUDSDK_CORE_DISABLE_FILE_LOGGING: 'true'
+      CLOUDSDK_CORE_LOG_HTTP: 'false'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Mask private bindings and admit exact scope before authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m scripts.mask_sync_identifiers
+          python3 - <<'PY'
+          import os
+          from scripts.short_name_migration import admit
+          try:
+              admit(os.environ['INPUT_MODE'], os.environ)
+          except Exception:
+              raise SystemExit('Migration admission blocked; private diagnostics suppressed') from None
+          PY
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+        with:
+          version: '>= 416.0.0'
+      - name: Observe or initialize inert destinations without cutover
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m scripts.short_name_migration --mode "$INPUT_MODE" --report "$RUNNER_TEMP/short-name-migration.safe.json"
+      - name: Retain anonymous reference-only result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: short-name-migration-${{ github.run_id }}
+          path: ${{ runner.temp }}/short-name-migration.safe.json
+          if-no-files-found: error
