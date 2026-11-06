@@ -133,6 +133,7 @@ def verify_service(p, t, service, uid):
         require(service.get(key) == body[key])
     # Proto3 JSON omits default false/zero fields; these are defined API values.
     require(service.get('invokerIamDisabled', False) is False)
+    require(service.get('scaling', {}).get('minInstanceCount', 0) == 0)
     template = service.get('template', {})
     expected = body['template']
     for key in ('serviceAccount', 'timeout', 'maxInstanceRequestConcurrency'):
@@ -204,18 +205,32 @@ class Cloud:
             raise Blocked('Cloud transport failed; outcome may be unknown') from None
 
 
-def wait_operation(cloud, operation, parent):
+def wait_operation(cloud, operation, parents, *, validation=False):
+    """Confirm completion; validate-only success need not contain a service."""
+    require(isinstance(operation, dict) and 'error' not in operation)
+    if validation and operation.get('done') is True and 'name' not in operation:
+        return None
     name = operation.get('name', '')
+    require(isinstance(name, str))
     if name.startswith(RUN_API + '/'):
         name = name[len(RUN_API) + 1:]
-    require(name.startswith(parent + '/operations/') and re.fullmatch(r'[A-Za-z0-9-]+', name.split('/')[-1]))
-    for _ in range(30):
-        result = cloud('GET', RUN_API + '/' + name)
-        require(isinstance(result, dict) and not result.get('error'))
+    parents = (parents,) if isinstance(parents, str) else parents
+    require(any(name.startswith(parent + '/operations/') for parent in parents) and
+            re.fullmatch(r'[A-Za-z0-9-]+', name.split('/')[-1]))
+    result = operation
+    for attempt in range(31):
+        require(isinstance(result, dict) and 'error' not in result)
+        require(isinstance(result.get('done', False), bool))
         if result.get('done') is True:
+            if validation:
+                return None
             require(isinstance(result.get('response'), dict))
             return result['response']
-        time.sleep(2)
+        if attempt == 30:
+            break
+        if attempt:
+            time.sleep(2)
+        result = cloud('GET', RUN_API + '/' + name)
     raise Blocked('Operation pending; inspect before any separately authorized continuation')
 
 
@@ -224,6 +239,9 @@ def run(mode, env, cloud):
     project = cloud('GET', PROJECT_API + p['project'])
     require(isinstance(project, dict) and project.get('projectId') == p['project'] and project.get('state') == 'ACTIVE')
     parent = f"projects/{p['project']}/locations/{p['region']}"
+    project_name = project.get('name', '')
+    require(isinstance(project_name, str) and re.fullmatch(r'projects/[0-9]+', project_name))
+    operation_parents = (parent, project_name + '/locations/' + p['region'])
     rows = []
     # Complete all four read-only checks before the first validation or creation.
     for t in p['targets']:
@@ -240,8 +258,9 @@ def run(mode, env, cloud):
     for t, row in zip(p['targets'], rows):
         if row['state'] == 'ABSENT':
             authorize(env)
-            cloud('POST', RUN_API + '/' + parent + '/services?serviceId=' +
-                  urllib.parse.quote(t['new'], safe='') + '&validateOnly=true', service_body(p, t))
+            operation = cloud('POST', RUN_API + '/' + parent + '/services?serviceId=' +
+                              urllib.parse.quote(t['new'], safe='') + '&validateOnly=true', service_body(p, t))
+            wait_operation(cloud, operation, operation_parents, validation=True)
     if mode == 'validate':
         return {'mode': mode, 'targets': rows}
     for t, row in zip(p['targets'], rows):
@@ -255,7 +274,7 @@ def run(mode, env, cloud):
         authorize(env)
         operation = cloud('POST', RUN_API + '/' + parent + '/services?serviceId=' +
                           urllib.parse.quote(t['new'], safe=''), service_body(p, t))
-        created = wait_operation(cloud, operation, parent)
+        created = wait_operation(cloud, operation, operation_parents)
         verify_service(p, t, created, created.get('uid'))
         readback = cloud('GET', url)
         require(isinstance(readback, dict))

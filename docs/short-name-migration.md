@@ -55,7 +55,12 @@ admission is required for new names.
 
 `validate` requires a separate current authorization and sends service creation
 requests with the API's `validateOnly=true` for absent destinations. It creates
-nothing. `initialize` first completes those validations for all four, then
+nothing. Each validation operation must finish successfully before proceeding;
+a successful validate-only operation need not return a service. Pending operations
+are polled, and errors or unknown outcomes block all creation. Operation names
+may use the exact project ID or numeric name from the authenticated active-project
+readback, within the approved region only. `initialize` first completes those
+validations for all four, then
 re-reads each destination immediately before an atomic create. It never patches
 or replaces an existing service. An existing accepted destination is checked
 again and left unchanged. A concurrent creator, collision or failure stops the
@@ -89,7 +94,8 @@ the service again. The ready/created revision must agree; observed generation
 must match current generation; reconciliation must be finished; traffic must be
 exactly 100% to that inert revision with no tag. The service's identity, image
 digest, inert command, empty environment, service account, ingress and scaling
-must match the protected plan. Proto3 JSON omission of default false/zero fields
+must match the protected plan. Both service-level and revision-template minimum
+instance counts must be zero. Proto3 JSON omission of default false/zero fields
 is interpreted using the documented API defaults; required identities and readiness
 fields still need explicit evidence. These values stay in runner memory. The uploaded
 result contains only four reference states and revision/traffic verification
