@@ -50,6 +50,21 @@ def fingerprint(value: dict) -> dict:
             'imageDigest': value.get('status', {}).get('imageDigest')}
 
 
+def template_matches_revision(template: dict, revision: dict) -> bool:
+    if template == revision:
+        return True
+    containers = template.get('containers', [])
+    observed = revision.get('containers', [])
+    if (len(containers) != 1 or len(observed) != 1 or 'name' in containers[0]
+            or not isinstance(observed[0].get('name'), str) or not observed[0]['name']):
+        return False
+    # Cloud Run may generate a revision-only name for an unnamed container.
+    # Normalize only this comparison; frozen snapshots remain byte-for-byte bound.
+    normalized = copy.deepcopy(revision)
+    normalized['containers'][0].pop('name')
+    return template == normalized
+
+
 def healthy(value: dict, commit: str) -> None:
     # The common verifier prints provider conditions; keep those private here.
     with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
@@ -177,7 +192,7 @@ class Recovery:
         require(value['metadata'].get('name') == self.card['replacement'])
         require(str(value['metadata'].get('annotations', {}).get(MINIMUM, '0')) == '0')
         template = self.expected['spec']['template']
-        require(value['spec'] == template['spec'])
+        require(template_matches_revision(template['spec'], value['spec']))
         for key in ('labels', 'annotations'):
             for name, item in template['metadata'].get(key, {}).items():
                 require(value['metadata'].get(key, {}).get(name) == item)
@@ -299,7 +314,7 @@ class Recovery:
             current = self.stable([(self.warm, 100)])
             self.valid()
             spec = copy.deepcopy(current['spec'])
-            require(spec['template']['spec'] == self.card['warm']['spec'])
+            require(template_matches_revision(spec['template']['spec'], self.card['warm']['spec']))
             template = spec['template']
             template['metadata']['name'] = self.card['replacement']
             template['metadata'].setdefault('annotations', {})[MINIMUM] = '0'
