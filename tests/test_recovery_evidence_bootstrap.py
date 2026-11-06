@@ -204,7 +204,7 @@ def test_manual_protected_workflow_never_dispatches_recovery():
     assert 'group: ibkr-retained-warm-recovery' in text
     assert 'cancel-in-progress: false' in text
     assert '  contents: read\n  id-token: write' in text
-    assert text.count('run:') == 1
+    assert text.count('run:') == 2
     assert 'run: python -m scripts.recovery_evidence_bootstrap' in text
     assert 'upload-artifact' not in text
     assert 'pull_request' not in text and 'schedule:' not in text
@@ -216,3 +216,13 @@ def test_transport_refuses_redirect_with_credentials():
     with pytest.raises(BootstrapError):
         NoRedirect().redirect_request(Request('https://example.invalid'), None, 302,
                                       'redirect', {}, 'https://other.invalid')
+
+
+def test_missing_environment_is_rejected_before_credential_acquisition():
+    from pathlib import Path
+    text = Path('.github/workflows/bootstrap-recovery-evidence.yml').read_text()
+    guard = text.index('name: Verify protected environment binding')
+    auth = text.index('uses: google-github-actions/auth@v3')
+    assert guard < auth
+    assert "if not os.environ.get('RECOVERY_PROTECTED_ENVIRONMENT')" in text[guard:auth]
+    assert 'raise SystemExit' in text[guard:auth]

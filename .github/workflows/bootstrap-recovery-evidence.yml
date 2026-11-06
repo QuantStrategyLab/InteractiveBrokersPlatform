@@ -25,6 +25,15 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - name: Verify protected environment binding
+        env:
+          RECOVERY_PROTECTED_ENVIRONMENT: ${{ vars.IBKR_DEPLOY_ENVIRONMENT }}
+        run: |
+          python - <<'PYTHON'
+          import os
+          if not os.environ.get('RECOVERY_PROTECTED_ENVIRONMENT'):
+              raise SystemExit('Protected environment binding is required')
+          PYTHON
       - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}

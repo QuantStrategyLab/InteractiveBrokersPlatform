@@ -694,7 +694,8 @@ invokes recovery, changes Cloud Run, creates IAM/Secrets, or starts a warm
 revision. Merging its definition does not authorize dispatch. Native Environment
 approval and exact owner authority for the operator revision, target and storage
 scope remain required; review and validate that Environment's protection before
-any later dispatch. Reruns are refused.
+any later dispatch. A missing Environment name fails before credential acquisition.
+Reruns are refused.
 
 An authorized operator supplies `IBKR_RECOVERY_BOOTSTRAP_JSON` as a protected
 Environment secret, never public dispatch inputs or repository Variables. It contains
