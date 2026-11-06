@@ -752,3 +752,65 @@ receipt and card checksum, fresh target state and native Environment approval.
 Expiry stops bootstrap writes; this entry has no compensation because it never
 changes warm/traffic state. It cannot extend a prior approval or automatically
 launch recovery after merge.
+
+
+### Encrypted read-only warm snapshot and receipt
+
+`read-warm-recovery-snapshot.yml` is a separate manual, main-only reader in the
+existing protected Environment and retained-warm recovery concurrency group.
+Only its definition is being introduced. Publication or merge does not authorize
+configuration, dispatch, bootstrap, recovery, or a change of recovery operator.
+The retained bootstrap/recovery operator remains the previously approved merged
+operator, supplied privately in `operator_commit`; the reader's checkout is not
+an operator rebinding. Native Environment reviewer protection must be read back
+before any separately authorized run. Missing protection is an operational blocker.
+
+Two protected Environment secrets are prerequisites, provisioned only under a
+separate authorization:
+
+- `IBKR_RECOVERY_READER_JSON`: `protected_environment`, `project`, `region`,
+  `service`, and `operator_commit`; receipt mode additionally requires the exact
+  bootstrap `bucket_suffix` and `request_id`. Keep bindings out of dispatch inputs.
+- `IBKR_RECOVERY_READER_CERT_PEM`: the coordinator's trusted public X.509 encryption
+  certificate. Keep its private key solely in the approved coordinator's private
+  execution channel, never in Actions, repository secrets, Git, or this box.
+  Verify recipient ownership before configuring the certificate. Missing or
+  unusable certificates fail without an export; there is no plaintext fallback.
+
+The workflow reuses existing WIF credentials. The reader sends only bounded GET
+requests for the configured Resource Manager project, Cloud Run v1 service and
+retained revision, Cloud Run v2 service, and (in receipt mode) the three exact
+bootstrap objects. It never lists accounts, reads Secret Manager, writes storage,
+changes IAM or Cloud Run, or invokes another workflow. Permissions needed are
+`resourcemanager.projects.get`, `run.services.get`, `run.revisions.get` and, for
+receipt mode, `storage.objects.get` on the exact approved bootstrap prefix.
+The existing identity may have broader capabilities; this code has no cloud write
+transport. Missing permissions fail rather than trigger a grant or identity change.
+
+Snapshot mode exports current `project`, `region`, `service`, `warm_revision`,
+`source_commit`, and `image_digest`, with private v1/v2 snapshots for scaling,
+billing and configuration assessment. Both reads must match. Split/tagged traffic,
+foreign namespaces, unexpected minimums and malformed provenance fail closed.
+Authority, request identity, bucket suffix, time window and restoration decision
+are owner-supplied bootstrap inputs, not facts discoverable from Cloud Run; this
+reader neither invents them nor renews a TTL. Receipt mode additionally verifies
+the exact receipt/card checksum, retained operator, request/target bindings and
+stored/current snapshot agreement, then re-reads all three objects and current
+state. Missing, changed, or invalid evidence fails. A receipt may describe an
+expired approval; `READ_VERIFIED` describes evidence integrity only and is never
+permission to recover. Evidence is time-bounded, not an atomic cloud transaction.
+
+The script encrypts its in-memory JSON using OpenSSL authenticated CMS with
+AES-256-GCM. It writes no plaintext evidence file and emits fixed diagnostics.
+Only `warm-readback.cms` is uploaded, on success, as `encrypted-warm-readback`
+with one-day requested artifact retention. The repository is public: artifact
+access controls are not a privacy guarantee. Only possession of the coordinator's
+private key enables decryption; encrypted artifacts must never be mistaken for
+public-safe plaintext evidence. GitHub artifact retention does not revoke copies.
+The coordinator downloads and decrypts only in its approved private channel,
+checks the producer run/head and artifact digest, and assembles any later
+bootstrap configuration privately. No plaintext, object locator or evidence
+checksum belongs in an issue, PR, public log or job summary. A rerun or preexisting
+local export directory is refused; concurrent approved reads cannot overwrite
+one another. An interrupted/failed run uploads nothing. Pricing, recovery and
+runtime qualification remain unproved and separately gated.
