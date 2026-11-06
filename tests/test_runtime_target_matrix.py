@@ -19,19 +19,19 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_RECONCILIATION = [
     {
         "profile": "soxl_soxx_trend_income",
-        "service": "interactive-brokers-quant-live-u00000001-service",
+        "service": "ibkr-quant-live-demo01-service",
     },
     {
         "profile": "tqqq_growth_income",
-        "service": "interactive-brokers-quant-live-u00000002-service",
+        "service": "ibkr-quant-live-demo02-service",
     },
     {
         "profile": "global_etf_rotation",
-        "service": "interactive-brokers-quant-live-u00000003-service",
+        "service": "ibkr-quant-live-demo03-service",
     },
     {
         "profile": "russell_top50_leader_rotation",
-        "service": "interactive-brokers-quant-live-u00000004-service",
+        "service": "ibkr-quant-live-demo04-service",
     },
 ]
 
