@@ -7,7 +7,7 @@ from unittest import mock
 import pytest
 
 from scripts.cloud_run_candidate_warmup import MINIMUM
-from scripts.cloud_run_warm_recovery import API, Recovery, RecoveryError, healthy
+from scripts.cloud_run_warm_recovery import API, Recovery, RecoveryError, healthy, template_matches_revision
 
 DIGEST = 'sha256:' + 'a' * 64
 COMMIT = 'b' * 40
@@ -263,6 +263,74 @@ def test_template_must_preserve_the_verified_warm_configuration(tmp_path):
     obj, cloud = run(tmp_path, approval=approval)
     with pytest.raises(RecoveryError): obj.execute()
     assert cloud.writes == []
+
+
+def test_warm_only_generated_container_name_preserves_template(tmp_path):
+    approval = card()
+    approval['warm']['spec']['containers'][0]['name'] = 'generated-warm'
+    obj, cloud = run(tmp_path, approval=approval)
+    obj.execute()
+    assert len(cloud.writes) == 3
+    assert 'name' not in cloud.writes[0]['spec']['template']['spec']['containers'][0]
+    assert obj.card['warm']['spec']['containers'][0]['name'] == 'generated-warm'
+    assert json.loads(obj.attempt.read_text())['status'] == 'SUCCEEDED'
+
+
+def test_replacement_only_generated_container_name_is_still_frozen(tmp_path):
+    obj, cloud = run(tmp_path)
+    original = cloud.__call__
+    def api(kind, name='', body=None, timeout=30):
+        value = original(kind, name, body, timeout)
+        if kind == 'revision' and name == obj.card['replacement']:
+            value['spec']['containers'][0]['name'] = 'generated-replacement'
+        return value
+    obj.api = api
+    obj.execute()
+    assert len(cloud.writes) == 3
+    assert obj.replacement['spec']['containers'][0]['name'] == 'generated-replacement'
+    assert json.loads(obj.attempt.read_text())['status'] == 'SUCCEEDED'
+
+
+@pytest.mark.parametrize('field,value', [
+    ('image', 'registry.invalid/unit/other'), ('env', []), ('resources', {'limits': {'cpu': '2'}}),
+    ('startupProbe', {}), ('name', ''), ('name', None)])
+def test_generated_name_never_hides_other_container_drift(tmp_path, field, value):
+    approval = card()
+    approval['warm']['spec']['containers'][0]['name'] = 'generated-warm'
+    approval['warm']['spec']['containers'][0][field] = value
+    obj, cloud = run(tmp_path, approval=approval)
+    with pytest.raises(RecoveryError): obj.execute()
+    assert cloud.writes == []
+
+
+def test_configured_names_and_multiple_containers_are_not_normalized():
+    template = card()['warm']['spec']
+    observed = copy.deepcopy(template)
+    observed['containers'][0]['name'] = 'generated'
+    original = copy.deepcopy(observed)
+    assert template_matches_revision(template, observed)
+    assert observed == original
+    template['containers'][0]['name'] = 'configured'
+    assert not template_matches_revision(template, observed)
+    assert not template_matches_revision(observed, {'containers': []})
+    template['containers'].append(copy.deepcopy(template['containers'][0]))
+    observed['containers'].append(copy.deepcopy(observed['containers'][0]))
+    assert not template_matches_revision(template, observed)
+
+
+def test_generated_name_change_after_freezing_triggers_one_compensation(tmp_path):
+    obj, cloud = run(tmp_path)
+    original = cloud.__call__
+    def api(kind, name='', body=None, timeout=30):
+        value = original(kind, name, body, timeout)
+        if kind == 'revision' and name == obj.card['replacement']:
+            value['spec']['containers'][0]['name'] = 'first' if len(cloud.writes) == 1 else 'changed'
+        return value
+    obj.api = api
+    with pytest.raises(RecoveryError): obj.execute()
+    assert len(cloud.writes) == 3
+    assert cloud.service['spec']['traffic'] == [{'revisionName': obj.warm, 'percent': 100}]
+    assert json.loads(obj.attempt.read_text())['status'] == 'FAILED_WARM_RESTORED'
 
 
 def test_control_plane_convergence_never_accepts_a_late_read(tmp_path):
