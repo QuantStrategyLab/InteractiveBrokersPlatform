@@ -1,0 +1,66 @@
+name: Read private warm recovery snapshot
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Read current warm configuration or verify bootstrap receipt"
+        type: choice
+        options:
+          - snapshot
+          - receipt
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ibkr-retained-warm-recovery
+  cancel-in-progress: false
+
+jobs:
+  read:
+    if: github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && github.ref == 'refs/heads/main'
+    environment: ${{ vars.IBKR_DEPLOY_ENVIRONMENT }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Verify protected read bindings
+        env:
+          RECOVERY_PROTECTED_ENVIRONMENT: ${{ vars.IBKR_DEPLOY_ENVIRONMENT }}
+          IBKR_RECOVERY_READER_JSON: ${{ secrets.IBKR_RECOVERY_READER_JSON }}
+          IBKR_RECOVERY_READER_CERT_PEM: ${{ secrets.IBKR_RECOVERY_READER_CERT_PEM }}
+        run: |
+          python - <<'PY'
+          import os
+          if not all(os.environ.get(key) for key in (
+              'RECOVERY_PROTECTED_ENVIRONMENT', 'IBKR_RECOVERY_READER_JSON',
+              'IBKR_RECOVERY_READER_CERT_PEM')):
+              raise SystemExit('Protected read bindings are required')
+          PY
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Read and encrypt private evidence
+        env:
+          RECOVERY_PROTECTED_ENVIRONMENT: ${{ vars.IBKR_DEPLOY_ENVIRONMENT }}
+          IBKR_RECOVERY_READER_JSON: ${{ secrets.IBKR_RECOVERY_READER_JSON }}
+          IBKR_RECOVERY_READER_CERT_PEM: ${{ secrets.IBKR_RECOVERY_READER_CERT_PEM }}
+          READER_MODE: ${{ inputs.mode }}
+        run: python -m scripts.warm_snapshot_reader
+      - uses: actions/upload-artifact@v4
+        with:
+          name: encrypted-warm-readback
+          path: ${{ runner.temp }}/warm-reader/warm-readback.cms
+          if-no-files-found: error
+          retention-days: 1
