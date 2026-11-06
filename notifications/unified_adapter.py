@@ -479,25 +479,72 @@ def _cycle_attention_notification(kind, execution, report, diagnostics=""):
         os.environ.get("QSL_NOTIFY_LANG") or os.environ.get("NOTIFY_LANG"))
     profile = report.get("strategy_profile") or (report.get("runtime_target") or {}).get("strategy_profile")
     profile = profile if isinstance(profile, str) and profile in STRATEGY_CATALOG.definitions else "unknown"
-    # Only fixed producer codes may cross the private execution boundary.
-    known_blocks = {"empty_position_decision", "strategy_risk_rejected",
-                    "account_brake_source_or_submit_unavailable", "account_brake_submission_not_confirmed"}
-    reason = next((value for key in ("execution_blocked_reason", "no_op_reason")
-                   if isinstance(value := execution.get(key), str) and value in known_blocks), kind)
+    # Structured codes only; arbitrary provider prose stays inside diagnostics.
+    reason = kind
+    for key in ("execution_blocked_reason", "no_op_reason"):
+        value = execution.get(key)
+        if isinstance(value, str) and re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*(?::[a-zA-Z0-9_]+)?", value) and len(value) <= 160:
+            reason = redact_notification_diagnostics(value)
+            break
+    blocked = kind == "blocked_run"
     decision = shared.AttentionDecision(
-        level=shared.AttentionLevel.ACTION, reason_codes=("operational_uncertain",),
+        level=shared.AttentionLevel.ACTION,
+        reason_codes=("new_risk_prohibited" if blocked else "operational_uncertain",),
         dd_ratio=None, should_notify=True, next_step_key="open_console_confirm")
-    arguments = dict(locale=locale, platform="ibkr", account_alias="unknown",
+    # Use the same target-bound opaque identity as the candidate producer.
+    # Never substitute a service/project name or another target's environment.
+    try:
+        identity, _ = with_run(report, _identity, report.get("runtime_target"))
+    except (ValueError, TypeError, AttributeError):
+        identity = {}
+    missing = [field for field in ("opaque_account_uid", "target_id")
+               if not isinstance(identity.get(field), str) or identity[field].strip().lower() in {"", "unknown", "none", "account", "账户"}]
+    alias = "unknown" if missing else identity["opaque_account_uid"]
+    arguments = dict(locale=locale, platform="ibkr", account_alias=alias,
                      strategy_profile=profile, decision=decision, guard_reason_codes=(reason,))
-    # The pinned compact renderer already supports these evidence fields and
-    # validates/strips URLs. Keep that shared boundary instead of dropping the
-    # link and appending a second run-time section in the compatibility path.
+    from quant_platform_kit.risk.attention_display import attention_details
+    run_url = None
+    for source in (report, execution):
+        for field in ("console_run_url", "actions_run_url", "cloud_run_url", "strategy_cycle_url"):
+            value = source.get(field)
+            if isinstance(value, str):
+                detail = attention_details(locale="en", daily_loss_context=None, occurred_at=None, run_url=value)[-1]
+                if detail.startswith("Run details: https://"):
+                    run_url = value
+                    break
+        if run_url:
+            break
     renderer = getattr(shared, "render_attention_notification", shared.render_attention_compact)
-    text = renderer(**arguments, occurred_at=report.get("started_at"), run_url=report.get("console_run_url"))
+    text = renderer(**arguments, occurred_at=report.get("started_at"), run_url=run_url)
+    # Extend the pinned renderer's vocabulary locally; do not change its guards.
+    from quant_platform_kit.common.operational_notification_localization import operational_notification_text
+    explanations = {
+        "blocked_run": ("保护规则阻断本次运行，请查看风控记录", "A protection rule blocked this run; review risk records"),
+        "empty_position_decision": ("空持仓决策受到保护规则限制，请查看风控记录", "Empty-position decision blocked by protection rules; review risk records"),
+        "strategy_risk_rejected": ("策略风控拒绝本次操作，请查看风控记录", "Strategy risk checks rejected this action; review risk records"),
+        "rejected": ("策略风控拒绝本次操作，请查看风控记录", "Strategy risk checks rejected this action; review risk records"),
+        "account_brake_source_or_submit_unavailable": ("账户保护数据或提交服务不可用，请查看风控记录", "Account protection source or submission service unavailable; review risk records"),
+        "account_brake_submission_not_confirmed": ("账户保护提交未确认，请查看风控记录", "Account protection submission unconfirmed; review risk records"),
+    }
+    explanation = explanations.get(reason.partition(":")[0])
+    if explanation:
+        text = text.replace(f"{reason}: " + operational_notification_text(locale, "attention_reason_unknown"),
+                            f"{reason}: " + explanation[0 if locale == "zh" else 1])
+    text = text.replace(operational_notification_text(locale, "attention_reason_unknown"),
+                        "未知原因码，请查看风控记录" if locale == "zh" else "Unknown reason code; review risk records")
+    if missing:
+        names = {"opaque_account_uid": "DIGEST_OPAQUE_ACCOUNT_UID/IBKR_DIGEST_OPAQUE_ACCOUNT_UID", "target_id": "DIGEST_TARGET_ID/IBKR_DIGEST_TARGET_ID"}
+        label = "账户未绑定（缺少或无效：" if locale == "zh" else "Account unbound (missing or invalid: "
+        label += ", ".join(names[field] for field in missing) + ("）" if locale == "zh" else ")")
+        text = text.replace("账户未知" if locale == "zh" else "Account unknown", label, 1)
+    text = text.replace("未提供运行链接", "运行详情不可用（RUN_LINK_MISSING）").replace(
+        "Run link not provided", "Run details unavailable (RUN_LINK_MISSING)")
     # Carry only the caller's decision diagnostics, never its legacy dashboard/title.
     if diagnostics:
         label = "诊断" if locale == "zh" else "Diagnostics"
         text += f"\n{label}: {redact_notification_diagnostics(diagnostics)}"
+        text += ("\n快照决策不代表执行获准；本次运行仍需核对阻断或故障记录。" if locale == "zh" else
+                 "\nA snapshot decision does not authorize execution; review this run's block or fault records.")
     text = redact_sensitive_text(text)
     return RenderedNotification(text, text)
 

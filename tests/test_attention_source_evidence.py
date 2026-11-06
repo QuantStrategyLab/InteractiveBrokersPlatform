@@ -20,7 +20,7 @@ def test_blocked_attention_preserves_known_source_cause(monkeypatch, field, code
     assert execution == original
 
 
-@pytest.mark.parametrize("value", ["private account detail", "synthetic_private_code", None, [], {}])
+@pytest.mark.parametrize("value", ["private account detail", "private code with spaces", None, [], {}])
 def test_unrecognized_source_reason_retains_fixed_fallback(monkeypatch, value):
     monkeypatch.setenv("NOTIFY_LANG", "en")
     body = adapter._cycle_attention_notification("blocked_run", {"no_op_reason": value}, {}).detailed_text
