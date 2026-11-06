@@ -621,7 +621,12 @@ an earlier operation. Any later attempt needs a fresh owner card and readback.
 The baseline must use an explicit warm-100 desired traffic row, with no tags or
 latest-revision indirection. The existing template must already carry the
 approved application source label, a single application container, an untagged
-image repository and minimum zero. The template spec must equal the verified warm spec. Configuration and Secret
+image repository and minimum zero. The template spec must equal the verified warm
+spec, except for a revision-only container name generated for a single unnamed
+container. The same comparison applies to replacement readbacks. Explicit
+container names and every other field must match; frozen revision fingerprints
+still include the generated name. See the [Cloud Run container name reference](https://docs.cloud.google.com/run/docs/reference/yaml/v1).
+Configuration and Secret
 references are copied without synchronization; runtime target continuity remains checked by
 the common verifier. No Secret value, IAM policy, Scheduler, execution switch or
 risk setting is changed.
