@@ -469,7 +469,6 @@ def _kind(execution, *, dry_run=False):
 
 def _cycle_attention_notification(kind, execution, report, diagnostics=""):
     """Render incident facts with QPK; never forward a legacy heartbeat body."""
-    from zoneinfo import ZoneInfo
     from notifications.events import RenderedNotification
     from notifications.redaction import redact_notification_diagnostics
     from quant_platform_kit.notifications._redaction import redact_sensitive_text
@@ -480,30 +479,21 @@ def _cycle_attention_notification(kind, execution, report, diagnostics=""):
         os.environ.get("QSL_NOTIFY_LANG") or os.environ.get("NOTIFY_LANG"))
     profile = report.get("strategy_profile") or (report.get("runtime_target") or {}).get("strategy_profile")
     profile = profile if isinstance(profile, str) and profile in STRATEGY_CATALOG.definitions else "unknown"
-    reason = ("empty_position_decision" if execution.get("execution_blocked_reason") == "empty_position_decision"
-              else kind)
+    # Only fixed producer codes may cross the private execution boundary.
+    known_blocks = {"empty_position_decision", "strategy_risk_rejected",
+                    "account_brake_source_or_submit_unavailable", "account_brake_submission_not_confirmed"}
+    reason = next((value for key in ("execution_blocked_reason", "no_op_reason")
+                   if isinstance(value := execution.get(key), str) and value in known_blocks), kind)
     decision = shared.AttentionDecision(
         level=shared.AttentionLevel.ACTION, reason_codes=("operational_uncertain",),
         dd_ratio=None, should_notify=True, next_step_key="open_console_confirm")
     arguments = dict(locale=locale, platform="ibkr", account_alias="unknown",
                      strategy_profile=profile, decision=decision, guard_reason_codes=(reason,))
-    renderer = getattr(shared, "render_attention_notification", None)
-    if renderer is not None:
-        text = renderer(**arguments, occurred_at=report.get("started_at"), run_url=report.get("console_run_url"))
-    else:
-        # The frozen consumer pin predates QPK #769. Keep its shared layout;
-        # do not construct a console URL or forward private diagnostic payloads.
-        text = shared.render_attention_compact(**arguments)
-        unknown = "未知" if locale == "zh" else "Unknown"
-        stamp = unknown
-        try:
-            value = datetime.fromisoformat(str(report.get("started_at")).replace("Z", "+00:00"))
-            if value.tzinfo is not None and value.utcoffset() is not None:
-                stamp = value.astimezone(ZoneInfo("Asia/Singapore")).strftime("%Y-%m-%d %H:%M:%S SGT")
-        except (TypeError, ValueError, OverflowError):
-            pass
-        text += (f"\n运行时间：{stamp}\n运行详情：当前格式版本不提供运行链接" if locale == "zh" else
-                 f"\nRun time: {stamp}\nRun details: Run link unavailable with the pinned formatter")
+    # The pinned compact renderer already supports these evidence fields and
+    # validates/strips URLs. Keep that shared boundary instead of dropping the
+    # link and appending a second run-time section in the compatibility path.
+    renderer = getattr(shared, "render_attention_notification", shared.render_attention_compact)
+    text = renderer(**arguments, occurred_at=report.get("started_at"), run_url=report.get("console_run_url"))
     # Carry only the caller's decision diagnostics, never its legacy dashboard/title.
     if diagnostics:
         label = "诊断" if locale == "zh" else "Diagnostics"

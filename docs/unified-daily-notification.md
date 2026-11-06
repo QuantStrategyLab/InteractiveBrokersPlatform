@@ -175,3 +175,12 @@ unknown delivery and restart suppression remain authoritative. Run time and run
 links come from the existing run report; absent evidence stays explicitly
 unknown. This format change does not change execution, dependency pins or
 notification schedules and does not establish deployed adoption or delivery.
+
+Incident attention messages retain allowlisted completed block causes from
+`execution_blocked_reason` or `no_op_reason`; unknown provider text retains the
+fixed incident classification. The pinned shared compact renderer receives the
+report's existing `started_at` and `console_run_url`, just like newer renderers.
+It validates the supplied HTTPS link and removes query strings/fragments. A
+missing or unsafe source link remains unavailable; a monitor run or guessed
+console route is never substituted for a business run. These display fields do
+not change routing, incident identity, risk decisions or execution permission.
