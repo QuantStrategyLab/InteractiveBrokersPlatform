@@ -49,10 +49,10 @@
 
 | id | service | account_group | execution_mode | include_lifecycle | include_reconciliation |
 | --- | --- | --- | --- | --- | --- |
-| `soxl_soxx_trend_income` | `interactive-brokers-quant-live-u00000001-service` | `live-u00000001` | `live` | true | true |
-| `tqqq_growth_income` | `interactive-brokers-quant-live-u00000002-service` | `live-u00000002` | `live` | true | true |
-| `global_etf_rotation` | `interactive-brokers-quant-live-u00000003-service` | `live-u00000003` | `live` | true | true |
-| `russell_top50_leader_rotation` | `interactive-brokers-quant-live-u00000004-service` | `live-u00000004` | `live` | true | true |
+| `soxl_soxx_trend_income` | `ibkr-quant-live-demo01-service` | `live-u00000001` | `live` | true | true |
+| `tqqq_growth_income` | `ibkr-quant-live-demo02-service` | `live-u00000002` | `live` | true | true |
+| `global_etf_rotation` | `ibkr-quant-live-demo03-service` | `live-u00000003` | `live` | true | true |
+| `russell_top50_leader_rotation` | `ibkr-quant-live-demo04-service` | `live-u00000004` | `live` | true | true |
 | `us_combo_shadow` | `interactive-brokers-us-combo-shadow-service` | `us-combo-shadow` | `shadow` | false | false |
 
 示例中五个目标的 `enabled` 均为 `false`。这表示公开清单的安全默认值，**不**覆盖 Environment / Cloud Run 里现有的启停状态，也不授权交易。
@@ -98,3 +98,51 @@ Unclassified or missing dates remain `null`. These are local execution records,
 not a broker open-order count or authorization to clear a claim. The diagnostic
 reads bounded objects without connecting to the broker and emits no account,
 order, object URI, marker key or financial values.
+
+## Short service names and staged migration
+
+The four synthetic live examples use `ibkr-quant-live-demoNN-service`, with no
+account identifier in the service name. Each is 30 characters; a 13-character
+`cand-01234567` tag gives a combined length of 43, within the shared
+`cloud-run-tags/v1` budget of 46. Production candidates use a private, unique
+opaque slot instead of `demoNN`; resolve the exact old-to-new mapping from the
+approved protected inventory. The examples are not that mapping. The shadow
+example is outside this migration.
+
+Set the same approved short name in every applicable protected inventory field:
+`service`, `service_name` and `runtime_target.service_name`. The existing sync-plan
+builder rejects a mismatch and runs the shared tag preflight. Do not add an
+implicit long-to-short fallback: missing, duplicate, ambiguous or mismatched
+bindings must stop preparation. Keep account selectors, strategy profiles,
+execution modes and risk settings unchanged when preparing a candidate inventory.
+The public manifest cannot change a deployed target or the protected inventory.
+
+Cloud Run does not rename an existing service in place. A later approved operation
+must create a replacement and explicitly migrate consumers. Before requesting
+that operation, prepare and review the following against a fresh source readback:
+
+1. Bind the exact old/new service pair, project, region and source revision; verify
+   the destination is absent or belongs to this same approved migration. An
+   unknown destination owner or service collision blocks the operation.
+2. Revalidate the runtime-target fingerprint, execution claims, continuity and
+   strategy-release bindings. A changed `service_name` changes target identity;
+   carrying the old fingerprint, release admission or continuity receipt forward
+   without revalidation is not valid. Do not reset, duplicate or fabricate order
+   markers or opening state.
+3. Inventory Scheduler URLs and OIDC audiences, health probes, reconciliation,
+   account-facts consumers, notification producers, runtime-setting selectors and
+   rollback references. Prepare coordinated updates so both services cannot
+   execute the same account concurrently. Do not enable a Scheduler job or
+   execution on the replacement as part of source preparation.
+4. Obtain separate owner authorization bound to the destination and reviewed
+   revision before any deployment, traffic, protected configuration, IAM, Secret
+   or Scheduler mutation. Use the established guarded workflow and require its
+   dry-run and before/after readbacks; this document adds no workflow or bypass.
+5. Keep the existing service and its evidence until the approved migration has
+   verified consumer adoption and rollback. An interrupted or uncertain migration
+   requires reconciliation and a fresh readback before another attempt; never
+   infer success from a short name or a green offline test.
+
+The source-only short-name change leaves all five example targets disabled.
+It does not deploy, change traffic, switch execution mode, approve continuity,
+qualify PAPER sessions or enable live trading, Kelly or stop-loss controls.
