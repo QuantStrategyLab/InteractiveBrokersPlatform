@@ -46,19 +46,17 @@ def send(token, chat_id, text):
     session = requests.Session()
     session.trust_env = False
     try:
-        response = session.post(f'https://api.telegram.org/bot{token}/sendMessage',
-                                json={'chat_id': chat_id, 'text': text}, timeout=20, allow_redirects=False)
-        if response.status_code in (401, 403):
+        from notifications.intent_transport import send_intent
+        receipt = send_intent(text, token=token, chat_id=chat_id, requests_module=session,
+                              timeout=20, request_options={"allow_redirects": False})
+        if receipt["http_status"] in (401, 403):
             return {'delivery': 'blocked'}
-        if response.status_code == 429:
-            body = response.json()
-            delay = body.get('parameters', {}).get('retry_after')
-            return {'delivery': 'rate_limited', 'retry_after': delay if type(delay) is int and delay > 0 else 3600}
-        if response.status_code != 200:
+        if receipt["http_status"] == 429:
+            return {'delivery': 'rate_limited', 'retry_after': receipt.get('retry_after', 3600)}
+        if receipt["http_status"] != 200:
             return {'delivery': 'unknown'}
-        body = response.json()
-        message_id = body.get('result', {}).get('message_id')
-        if body.get('ok') is True and type(message_id) is int:
+        message_id = receipt.get('message_id')
+        if receipt['ok'] and type(message_id) is int:
             return {'delivery': 'sent', 'message_id': message_id}
         return {'delivery': 'unknown'}
     except (requests.RequestException, ValueError):
