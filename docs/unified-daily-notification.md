@@ -176,11 +176,25 @@ links come from the existing run report; absent evidence stays explicitly
 unknown. This format change does not change execution, dependency pins or
 notification schedules and does not establish deployed adoption or delivery.
 
-Incident attention messages retain allowlisted completed block causes from
-`execution_blocked_reason` or `no_op_reason`; unknown provider text retains the
-fixed incident classification. The pinned shared compact renderer receives the
-report's existing `started_at` and `console_run_url`, just like newer renderers.
-It validates the supplied HTTPS link and removes query strings/fragments. A
-missing or unsafe source link remains unavailable; a monitor run or guessed
-console route is never substituted for a business run. These display fields do
-not change routing, incident identity, risk decisions or execution permission.
+Incident attention messages retain structured reason codes from
+`execution_blocked_reason` or `no_op_reason`, with local operator explanations
+for known block classes. Unknown structured codes remain visible after shared
+redaction and direct the operator to risk records; arbitrary provider prose
+retains the fixed incident classification. A blocked cycle is displayed as a
+protection block, while other abnormal classifications retain operational
+uncertainty. Snapshot diagnostics do not authorize execution or clear a block.
+
+Account display uses the candidate producer's target-bound opaque identity,
+masked by the shared renderer. Missing or invalid identity names the required
+`DIGEST_OPAQUE_ACCOUNT_UID` / `IBKR_DIGEST_OPAQUE_ACCOUNT_UID` and/or
+`DIGEST_TARGET_ID` / `IBKR_DIGEST_TARGET_ID` fields. Service/project names and
+identities bound to a different runtime target are never substituted.
+
+The shared renderer receives the report's existing `started_at` and the first
+valid explicit `console_run_url`, `actions_run_url`, `cloud_run_url` or
+`strategy_cycle_url` from the report or execution evidence. Shared validation
+requires HTTPS and removes query strings/fragments. An absent or unsafe source
+link is displayed as unavailable (`RUN_LINK_MISSING`); an unrelated Actions run
+or guessed console route is never substituted for a business run. These display
+fields do not change routing, incident identity, risk decisions or execution
+permission, and do not establish deployed adoption.
