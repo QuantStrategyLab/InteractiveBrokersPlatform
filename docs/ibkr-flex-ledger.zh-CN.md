@@ -18,6 +18,63 @@ code，不含账户标识、估值、费用、出入金金额或 TWR 数值。�
 输出固定错误码，不打印 SDK 异常正文。本模块不配置 Flex Secret/Query/账户范围，也不自动
 调用 workflow；禁止把 Gateway 凭据当 Flex token。诊断脚本 stdout 仅是脱敏状态报告。
 
+## 脱敏金额 artifact 导出
+
+现有 `diagnose-ibkr-flex-readonly.yml` 新增默认关闭的 `export_amounts`，与其他诊断
+模式互斥。需显式选择 `read_once=true`、`export_amounts=true`，并提供成对的
+`expected_period_from/to`（最多 31 天）；`cashflow_period_from/to` 必须留空。
+导出模式将 expected 日期同时用于 SendRequest 的 `fd/td` 与返回期间断言。
+main、首 attempt、原并发队列、原 Secrets 和账户绑定限制保持不变。
+
+CLI 为 `python -m scripts.export_ibkr_flex_amounts --preflight` 和 `--export-once`。
+后者另外要求 `IBKR_FLEX_AMOUNT_EXPORT_ENABLED=true` 及 runner 的临时目录。
+配置不完整时不请求；一次只生成一份报表，先等 1 秒，再领取原 reference。
+只有 1019 允许每隔 3 秒继续领取，总共最多 6 次；其他失败直接退出，不重跑生成。
+原始 XML、令牌、Query ID、领取 reference 和账户映射只在进程内存使用。
+
+产物是 `ibkr-flex-redacted-amounts-<run-id>` 下唯一的
+`ibkr-flex-redacted-amounts.json`，schema 为 `ibkr_flex_redacted_amounts.v1`。
+只在读取、整份验证和脱敏写入均成功后上传，保留 1 天；临时文件权限为 `0600`，
+不覆盖已有文件，结束时清理。日志仅输出固定状态，不输出金额、HTTP 异常、原文或凭据；
+导出过程中关闭 Python logging 和 HTTP debug 输出。
+
+**artifact 不是私有保险箱。** [GitHub 下载规则](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts)
+允许有仓库读取权限的已登录用户下载；公开仓库的脱敏金额仍可能被他人读取。
+短保留期不会收回已下载副本。仅在该可见范围已获授权的对账任务中启用。
+本改动不自动派发工作流，也不写网站、生产配置或其他存储。
+
+账户使用 `account-1` 等编号：顺序为现有受保护 primary、additional 配置顺序；
+没有 additional 配置时只允许唯一 expected 账户。全部批准账户必须恰好各有一份 statement，
+期间必须一致且精确匹配请求；不从 XML 推断或扩大授权。所有显式行账户必须与所属
+statement 一致，拒绝模型子账、重复或未知账户。映射不进入 artifact，编号不用于跨次
+运行绑定账户。
+
+每户分别保留 Trades、CashTransactions、StmtFunds 三组原生行，不去重、不相加。
+三组可能描述同一笔经济事件，尤其不能把 CashTransactions 和 StmtFunds 金额重复相加。
+只输出显式白名单字段：币种、证券代码、方向/活动码、日期、金额及匿名原生身份。
+金额作为有界十进制字符串保留精度，不经 float，不补零、不换币；可选字段缺失为 null。
+Trades 只接受 EXECUTION 行，并要求 quantity、tradePrice、proceeds、symbol、buySell；
+CashTransactions 要求 amount；StmtFunds 的余额行可只有 balance，此时 amount 仍为 null。
+其余可选金额包括 netCash、佣金、税、借贷、余额及交易总额。原生结算日可晚于报表期间，
+交易、现金活动与报告日期必须在窗口内。日期与日期时间保留原有精度，时区记为 null。
+
+原生 transactionID、tradeID、ibExecID 及 origTradeID/origExecID 转为该账户和该文件内
+的 `id-N`，相同来源身份复用编号，缺失为 null；不导出原始 ID 或可反查哈希。
+重复行和冲突行原样保留，不据经济字段相似性合并，也不自动解释更正。
+账户别名、备注、描述、clientReference、原始字段名及原文哈希均不输出。
+现金 type 仅保留已知枚举，未知值为 null 且 `typeRecognized=false`。
+
+缺区段、重复区段、未知子记录、缺币种、无效金额或日期、超出 8 MiB/10,000 行，
+以及最终检查发现账户或敏感配置值残留时，整份导出失败，不上传部分结果。
+存在但空的区段保存为空列表；`coverage=reported_rows_only_not_complete_history`、
+`reconciliation=not_performed`、`missing_fields_are_zero=false` 始终保留。
+这些记录只能用于后续核对，不能证明 Query 完整、历史无遗漏、现金算术已通过或可以交易。
+
+字段含义参考 IBKR [Trades](https://www.ibkrguides.com/reportingreference/reportguide/tradesfq.htm)
+及 [Statement of Funds](https://www.ibkrguides.com/reportingreference/reportguide/statement%20of%20fundsfq.htm)。
+`tests/test_ibkr_flex_amount_export.py` 使用合成报表验证精度、匿名身份、账户/期间隔离、
+缺失与空区段、坏数据全拒绝、同 reference 有界领取、失败文件清理、固定日志及成功后上传。
+
 ## 输入与账户合同
 
 ```python

@@ -249,7 +249,7 @@ def test_cli_validator_strips_unknown_keys_and_rejects_malformed_values():
 def test_workflow_new_mode_remains_default_closed_and_mutually_exclusive():
     workflow = Path(".github/workflows/diagnose-ibkr-flex-readonly.yml").read_text()
     assert 'execution_source_only:\n' in workflow
-    assert '"$EXECUTION_SOURCE_ONLY"; do' in workflow
+    assert '"$EXECUTION_SOURCE_ONLY" "$EXPORT_AMOUNTS"; do' in workflow
     assert 'preflight_args+=(--execution-source-only)' in workflow
     assert 'diagnose_ibkr_flex_ledger --execution-read-once' in workflow
     assert 'github.run_attempt == 1 && inputs.read_once' in workflow
