@@ -115,6 +115,9 @@ same bound account and were observed within the source run. The observation
 time is retained, stock positions are marked as partial account coverage, and
 no account identifier is added to the snapshot. Missing or conflicting
 snapshots leave the run and its execution counts available.
+The scheduled QRS account report reads these snapshots. The older Actions
+preview remains an execution-count view. CI checks the export through the
+pinned scheduled renderer.
 
 Use one job per existing central target, with its exact protected runtime JSON,
 archive prefix, opaque UID, target ID, destination and slot. No identifiers can

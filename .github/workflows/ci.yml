@@ -106,7 +106,22 @@ jobs:
       - name: Ensure uv.lock matches pyproject.toml
         run: uv lock --check
 
+      - name: Checkout the scheduled QRS account report consumer
+        uses: actions/checkout@v6
+        with:
+          repository: QuantStrategyLab/QuantRuntimeSettings
+          ref: 4a5636a84f7a8f4eba8fad84cefa118f561dafe9
+          path: .offline-qrs-digest
+          persist-credentials: false
+          sparse-checkout: |
+            python/scripts
+            platform-config.json
+            display-names.config.json
+          sparse-checkout-cone-mode: false
+
       - name: Run unit tests
+        env:
+          QRS_DAILY_REPORT_CHECKOUT: ${{ github.workspace }}/.offline-qrs-digest
         run: |
           set -euo pipefail
           PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run --no-sync python -m pytest -q tests

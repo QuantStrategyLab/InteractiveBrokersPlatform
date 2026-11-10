@@ -1,10 +1,12 @@
-"""Real IBKR archive export -> pinned, offline QRS intake/merge/aggregate."""
+"""Real IBKR archive export through the pinned offline QRS consumers."""
 from copy import deepcopy
 from datetime import timedelta
 import hashlib
 import importlib
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
 from unittest.mock import patch
 
@@ -100,11 +102,7 @@ def render(qrs, rows, summary, locale):
     return qrs["unified_daily_digest"].render(payload)
 
 
-@pytest.mark.parametrize("account_id,offset,accepted", [
-    ("U0000001", 0, True), ("U0000002", 0, False), ("U0000001", 2, False),
-])
-def test_archive_exports_only_in_run_snapshots_for_the_bound_account(qrs, monkeypatch, tmp_path,
-                                                                   account_id, offset, accepted):
+def archive_snapshot_report(account_id, offset=0):
     target = {**TARGET, "account_selector": ["U0000001"]}
     source = archive_report("snapshot-run")
     source["runtime_target"] = target
@@ -117,6 +115,15 @@ def test_archive_exports_only_in_run_snapshots_for_the_bound_account(qrs, monkey
             {"symbol": "SYN", "quantity": "-2", "market_value": "-20", "currency": "USD"},
         ],
     }
+    return source, target
+
+
+@pytest.mark.parametrize("account_id,offset,accepted", [
+    ("U0000001", 0, True), ("U0000002", 0, False), ("U0000001", 2, False),
+])
+def test_archive_exports_only_in_run_snapshots_for_the_bound_account(qrs, monkeypatch, tmp_path,
+                                                                   account_id, offset, accepted):
+    source, target = archive_snapshot_report(account_id, offset)
     payload = export_archive(monkeypatch, [source], seed_unknown=True, target=target)
     rows, _ = intake(qrs, tmp_path, payload)
     assert len(rows) == 1
@@ -124,12 +131,46 @@ def test_archive_exports_only_in_run_snapshots_for_the_bound_account(qrs, monkey
     assert account_id not in json.dumps(rows)
     if accepted:
         assert rows[0]["account_daily_facts"] == {"snapshots": [{
-            "as_of": observed, "equity": 125.5, "equity_currency": "USD",
+            "as_of": NOW.isoformat(), "equity": 125.5, "equity_currency": "USD",
             "holdings_scope": "stocks_only",
             "holdings": [{"symbol": "SYN", "quantity": -2.0, "asset_type": "stock"}],
         }]}
     else:
         assert "account_daily_facts" not in rows[0]
+
+
+def test_archive_snapshot_reaches_the_scheduled_account_renderer(monkeypatch):
+    qrs_checkout = os.environ.get("QRS_DAILY_REPORT_CHECKOUT")
+    if not qrs_checkout:
+        pytest.skip("the CI-pinned QRS daily report checkout is required")
+    source, target = archive_snapshot_report("U0000001")
+    payload = export_archive(monkeypatch, [source], seed_unknown=True, target=target)
+    # Isolate the scheduled receiver from the Actions-era module fixtures.
+    result = subprocess.run(
+        [sys.executable, "-c", """
+import json
+import sys
+
+import cloud_run_daily_digest as digest
+
+rows = json.load(sys.stdin)["runs"]
+binding = {name: rows[0][name] for name in digest.IDENTITY}
+configuration = digest.Configuration(
+    [{**binding, "candidate_slot": "synthetic-slot"}],
+    "projects/synthetic/locations/synthetic/jobs/daily-digest",
+    "synthetic", "2026-10-17",
+)
+message, _ = digest._report(configuration, rows, ["present"], rows[0]["business_day"], None)
+print(message)
+"""],
+        input=json.dumps(payload), cwd=qrs_checkout, text=True, capture_output=True, check=True,
+        env={"PYTHONPATH": str(Path(qrs_checkout).resolve() / "python/scripts"),
+             "PYTHONUTF8": "1", "QRS_UNIFIED_NOTIFICATION_ENABLED": "true"},
+    )
+    assert "总资产：USD 125.50" in result.stdout
+    assert "仅列已核实持仓" in result.stdout
+    assert "SYN -2股" in result.stdout
+    assert "U0000001" not in result.stdout
 
 
 def test_real_archive_two_healthy_runs_roundtrip_and_duplicate_observation(qrs, monkeypatch, tmp_path):
