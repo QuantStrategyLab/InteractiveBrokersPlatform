@@ -109,6 +109,16 @@ or access Secret Manager. Archive reads use the Storage SDK and the job's
 attached identity; the image does not need gcloud. Existing candidate writes,
 merge semantics and identity checks remain authoritative.
 
+The archive publisher includes existing verified USD net assets and stock
+positions in `account_daily_facts.snapshots` when they are available for the
+same bound account and were observed within the source run. The observation
+time is retained, stock positions are marked as partial account coverage, and
+no account identifier is added to the snapshot. Missing or conflicting
+snapshots leave the run and its execution counts available.
+The scheduled QRS account report reads these snapshots. The older Actions
+preview remains an execution-count view. CI checks the export through the
+pinned scheduled renderer.
+
 Use one job per existing central target, with its exact protected runtime JSON,
 archive prefix, opaque UID, target ID, destination and slot. No identifiers can
 be inferred from a display label. Supply the existing notification schedule so

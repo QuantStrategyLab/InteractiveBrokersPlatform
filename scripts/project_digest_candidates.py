@@ -1059,6 +1059,9 @@ def project_notification_events(records: Sequence[Mapping[str, Any]]) -> dict[st
         if any("settlement" in item for item in items):
             from application.settlement_reporting import project_settlement_rows
             project_settlement_rows(row, items)
+        snapshots = [item["account_snapshot"] for item in items if "account_snapshot" in item]
+        if snapshots and isinstance(snapshots[0], dict) and all(snapshot == snapshots[0] for snapshot in snapshots):
+            row["account_daily_facts"] = {"snapshots": snapshots[:1]}
         rows.append(row)
     return {"schema_version": SCHEMA_VERSION, "producer_status": "projected", "runs": rows}
 

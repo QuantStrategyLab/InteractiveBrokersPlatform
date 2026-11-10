@@ -111,6 +111,43 @@ jobs:
           set -euo pipefail
           PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run --no-sync python -m pytest -q tests
 
+  digest-consumer-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      QRS_DAILY_REPORT_CHECKOUT: ${{ github.workspace }}/.offline-qrs-digest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Checkout the scheduled QRS account report consumer
+        uses: actions/checkout@v6
+        with:
+          repository: QuantStrategyLab/QuantRuntimeSettings
+          ref: 4a5636a84f7a8f4eba8fad84cefa118f561dafe9
+          path: .offline-qrs-digest
+          persist-credentials: false
+          sparse-checkout: |
+            python/scripts
+            platform-config.json
+            display-names.config.json
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Test the archive export through the scheduled renderer
+        run: |
+          set -euo pipefail
+          python -m pip install uv
+          uv sync --frozen --extra test
+          PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run --no-sync python -m pytest -q \
+            tests/test_notification_qrs_roundtrip.py -k scheduled_account_renderer
+
   tqqq-offline-risk:
     # Artificial contracts only; no cloud identity, broker, production pin or
     # deployment. The research overlay exists only in this job's environment.

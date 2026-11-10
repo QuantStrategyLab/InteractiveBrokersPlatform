@@ -106,7 +106,8 @@ def _state_store(env=None):
     return GCSMarkerStore(values.get("IBKR_NOTIFICATION_MARKER_GCS_URI", ""))
 
 
-def persist_candidate(fact, *, actually_ran=True, dry_run=False, state_store=None, candidate_store=None, env=None, block_reason=None, settlement=None):
+def persist_candidate(fact, *, actually_ran=True, dry_run=False, state_store=None, candidate_store=None, env=None,
+                      block_reason=None, settlement=None, account_snapshot=None):
     """Persist event/run identity and bridge the existing candidate producer."""
     from scripts.project_digest_candidates import merge_routine_observation_counts, project_notification_events
     if actually_ran is not True:
@@ -161,6 +162,9 @@ def persist_candidate(fact, *, actually_ran=True, dry_run=False, state_store=Non
                 record = {**prior, "event": merged,
                           **({"conflict": True} if conflict else {}),
                           **({"block_reason": block_reason} if block_reason else {})}
+        if account_snapshot is not None:
+            previous_snapshot = (prior or {}).get("account_snapshot", account_snapshot)
+            record["account_snapshot"] = account_snapshot if previous_snapshot == account_snapshot else None
         events[fact["dedupe_key"]] = record
         changed = events != old["events"]
         value = {"revision": old["revision"] + int(changed), "events": events}
@@ -852,6 +856,41 @@ def publish_risk_attention(decision, publish, *, profile, reasons=(), recovery_p
         return {"sent": 0, "skipped": 0, "failed": 1}
 
 
+def _archived_account_snapshot(report, selector, started, now):
+    from scripts.publish_account_facts_from_report import (
+        POSITIONS_SCOPE, SNAPSHOT_SCHEMA, _ACCOUNT_ID, _ProjectionError,
+        _decimal_text, _observed_timestamp, _project_positions,
+    )
+
+    facts = (report.get("summary") or {}).get("account_facts")
+    if (report["dry_run"] or not isinstance(facts, Mapping) or facts.get("schema_version") != SNAPSHOT_SCHEMA
+            or len(selector) != 1 or not _ACCOUNT_ID.fullmatch(selector[0]) or facts.get("account_ids") != selector):
+        return None
+    try:
+        observed = _observed_timestamp(facts.get("observed_at"))
+        finished = _observed_timestamp(report.get("finished_at"))
+    except _ProjectionError:
+        return None
+    if not started <= observed <= finished <= now:
+        return None
+
+    snapshot = {"as_of": observed.isoformat()}
+    if facts.get("currency") == "USD" and facts.get("net_assets") is not None:
+        try:
+            equity = float(_decimal_text(facts["net_assets"]))
+        except _ProjectionError:
+            pass
+        else:
+            snapshot.update(equity=equity, equity_currency="USD")
+    positions = _project_positions(facts)
+    if positions:
+        snapshot.update(holdings_scope=POSITIONS_SCOPE, holdings=[
+            {"symbol": row["symbol"], "quantity": float(row["quantity"]), "asset_type": "stock"}
+            for row in positions
+        ])
+    return snapshot if len(snapshot) > 1 else None
+
+
 def persist_archived_reports(reports, env, *, now=None):
     target = json.loads(env["RUNTIME_TARGET_JSON"])
     required = {"platform_id", "strategy_profile", "service_name", "account_scope", "account_selector", "deployment_selector", "dry_run_only"}
@@ -910,8 +949,9 @@ def persist_archived_reports(reports, env, *, now=None):
         def validate_receipt(source):
             return attach_execution_receipt(dict(source), source.get("execution_receipt"))["execution_receipt"]
         block_reason = _latest_notification_block_reason([report], validate_receipt)
+        snapshot = _archived_account_snapshot(report, target["account_selector"], stamp, current)
         if not _checked_candidate(_with_routine_observations(event.to_candidate(), report), env=env, actually_ran=True,
-                                  dry_run=report["dry_run"], block_reason=block_reason):
+                                  dry_run=report["dry_run"], block_reason=block_reason, account_snapshot=snapshot):
             raise CandidatePersistenceError("notification_candidate_write_unconfirmed")
     return {"status": "projected", "uploaded": True, "runs": len(reports)}
 
