@@ -48,11 +48,11 @@ def archive_report(run, orders=()):
     return source
 
 
-def export_archive(monkeypatch, reports, *, seed_unknown=False):
+def export_archive(monkeypatch, reports, *, seed_unknown=False, target=TARGET):
     state, candidates = StateStore(), CandidateStore()
     monkeypatch.setattr(adapter, "_state_store", lambda env=None: state)
     monkeypatch.setattr(adapter, "GCSCandidateStore", lambda *args, **kwargs: candidates)
-    env = {adapter.FLAG: "true", "RUNTIME_TARGET_ENABLED": "true", "RUNTIME_TARGET_JSON": json.dumps(TARGET),
+    env = {adapter.FLAG: "true", "RUNTIME_TARGET_ENABLED": "true", "RUNTIME_TARGET_JSON": json.dumps(target),
            "DIGEST_STORE_TARGET": "synthetic-slot", "DIGEST_OPAQUE_ACCOUNT_UID": "synthetic-account",
            "DIGEST_TARGET_ID": "synthetic-target", "EXECUTION_REPORT_GCS_URI": "gs://synthetic/archive",
            "DIGEST_CANDIDATES_GCS_URI": "gs://synthetic/candidates"}
@@ -98,6 +98,38 @@ def render(qrs, rows, summary, locale):
         evidence_coverage=digest.EvidenceCoverage(candidates_configured=True, candidates_loaded=True,
                                                  candidates_count=len(rows)))
     return qrs["unified_daily_digest"].render(payload)
+
+
+@pytest.mark.parametrize("account_id,offset,accepted", [
+    ("U0000001", 0, True), ("U0000002", 0, False), ("U0000001", 2, False),
+])
+def test_archive_exports_only_in_run_snapshots_for_the_bound_account(qrs, monkeypatch, tmp_path,
+                                                                   account_id, offset, accepted):
+    target = {**TARGET, "account_selector": ["U0000001"]}
+    source = archive_report("snapshot-run")
+    source["runtime_target"] = target
+    observed = (NOW + timedelta(seconds=offset)).isoformat()
+    source["summary"]["account_facts"] = {
+        "schema_version": "ibkr_account_snapshot.v1", "account_ids": [account_id],
+        "observed_at": observed, "currency": "USD", "net_assets": "125.50",
+        "broker_reported_positions_scope": "stocks_only",
+        "broker_reported_positions": [
+            {"symbol": "SYN", "quantity": "-2", "market_value": "-20", "currency": "USD"},
+        ],
+    }
+    payload = export_archive(monkeypatch, [source], seed_unknown=True, target=target)
+    rows, _ = intake(qrs, tmp_path, payload)
+    assert len(rows) == 1
+    assert rows[0]["order_count"] == rows[0]["fill_count"] == 0
+    assert account_id not in json.dumps(rows)
+    if accepted:
+        assert rows[0]["account_daily_facts"] == {"snapshots": [{
+            "as_of": observed, "equity": 125.5, "equity_currency": "USD",
+            "holdings_scope": "stocks_only",
+            "holdings": [{"symbol": "SYN", "quantity": -2.0, "asset_type": "stock"}],
+        }]}
+    else:
+        assert "account_daily_facts" not in rows[0]
 
 
 def test_real_archive_two_healthy_runs_roundtrip_and_duplicate_observation(qrs, monkeypatch, tmp_path):
