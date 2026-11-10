@@ -211,3 +211,12 @@ Remove exactly the recorded IAM additions and new jobs/identities as appropriate
 Preserve private evidence and secret versions; deletion requires separate approval.
 A suggested monthly budget of USD 10 should produce alerts; an alerts-only budget does
 not impose a hard spending cap. No billing change is performed by the renderer.
+
+## Shared image release
+
+Run `Flex collection release` manually from the default branch. Select the
+protected target and start with `verify`. It reads the expected fixed image
+through the target's short-lived release identity. Keep the runtime identity
+and schedule separate. Use an isolated target to exercise image updates.
+
+[Organization release workflow](https://github.com/QuantStrategyLab/.github/blob/main/docs/deployment-workflows.md)

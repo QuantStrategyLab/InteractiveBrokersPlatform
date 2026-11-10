@@ -1,0 +1,31 @@
+name: Flex collection release
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Protected release environment
+        type: choice
+        required: true
+        options:
+          - flex-release
+          - flex-release-test
+      operation:
+        description: Release operation
+        type: choice
+        required: true
+        default: verify
+        options:
+          - verify
+          - deploy
+          - rollback
+permissions: {}
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      id-token: write
+    uses: QuantStrategyLab/.github/.github/workflows/deploy-job.yml@d24b018db70b8c4ebb35284bb133f5a5bbc7dad5
+    with:
+      provider: gcp
+      environment: ${{ inputs.target }}
+      operation: ${{ inputs.operation }}
