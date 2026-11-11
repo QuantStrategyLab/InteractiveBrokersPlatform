@@ -29,6 +29,16 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - name: Require infrastructure variables
+        env:
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${IBKR_DEPLOY_SERVICE_ACCOUNT:-}" ]]; then
+            echo "::error::IBKR_DEPLOY_SERVICE_ACCOUNT is required" >&2
+            exit 2
+          fi
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
