@@ -17,12 +17,21 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Install public configuration scanner
+        shell: bash
         run: |
           set -euo pipefail
-          if ! command -v rg >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install --yes --no-install-recommends ripgrep
+          if ! command -v rg >/dev/null; then
+            release="ripgrep-14.1.0-x86_64-unknown-linux-musl"
+            archive="$RUNNER_TEMP/$release.tar.gz"
+            curl --fail --silent --show-error --location --retry 2 --max-time 60 \
+              "https://github.com/BurntSushi/ripgrep/releases/download/14.1.0/$release.tar.gz" \
+              --output "$archive"
+            printf '%s  %s\n' 'f84757b07f425fe5cf11d87df6644691c644a5cd2348a2c670894272999d3ba7' "$archive" | sha256sum --check --status
+            tar -xzf "$archive" -C "$RUNNER_TEMP" "$release/rg"
+            export PATH="$RUNNER_TEMP/$release:$PATH"
+            printf '%s\n' "$RUNNER_TEMP/$release" >> "$GITHUB_PATH"
           fi
+          command -v rg
 
       - name: Verify public configuration scanner failure behavior
         run: |

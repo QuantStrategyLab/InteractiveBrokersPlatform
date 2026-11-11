@@ -124,3 +124,57 @@ def test_compatible_account_copies_only_its_existing_digest_binding():
 
     with pytest.raises(ValueError, match="unique_same_account_digest_job_missing"):
         activate_compatible_digest(lambda _: {"jobs": [jobs[1], jobs[1]]}, PATH, target, {"env": []}, {})
+
+
+def test_legacy_route_requires_the_same_archive_and_changes_no_trading_fields(monkeypatch):
+    from scripts import maintain_live_cloud_run as release
+
+    archive = "gs://example/execution"
+    env = {
+        "EXECUTION_REPORT_GCS_URI": {"name": "EXECUTION_REPORT_GCS_URI", "value": archive},
+        "RUNTIME_TARGET_ENABLED": {"name": "RUNTIME_TARGET_ENABLED", "value": "true"},
+    }
+    container = {"image": "old-image", "env": list(env.values())}
+    target = {"account_scope": "example"}
+    checked = []
+
+    def check(_request, path, actual, *, archive_prefix):
+        checked.append((path, actual, archive_prefix))
+        return {}
+
+    monkeypatch.setattr(release, "notification_bindings", check)
+    monkeypatch.setattr(release, "build_verified_image", lambda value: "new-image" if value == "old-image" else None)
+    release.activate_legacy_digest(None, PATH, target, container, env, apply=True)
+    assert checked == [(PATH, target, archive)]
+    assert container["image"] == "new-image"
+    assert {entry["name"]: entry["value"] for entry in container["env"]} == {
+        "EXECUTION_REPORT_GCS_URI": archive, "RUNTIME_TARGET_ENABLED": "true",
+        "QSL_ROUTINE_NOTIFICATION_MODE": "daily_digest", "QSL_DIGEST_ROUTINE_ORDERS": "true",
+    }
+
+
+def test_russell_reuses_serving_settings_and_keeps_the_prior_image_revision():
+    import copy
+    from scripts.maintain_live_cloud_run import LEGACY_DIGEST_PROFILES, release_template
+
+    active = {"containers": [{"image": "old-image", "env": [{"name": "RUNTIME_TARGET_ENABLED", "value": "true"}]}]}
+    staged = copy.deepcopy(active)
+    staged["containers"][0]["image"] = "other-stage-image"
+    staged["labels"] = {"stage": "other"}
+    service = {"template": staged, "latestCreatedRevision": NEW}
+    prior_path = PATH + "/revisions/" + NEW
+
+    def read(path):
+        assert path == prior_path
+        return {**staged, "uid": "prior-stage"}
+
+    template, retained = release_template(
+        read, PATH, service, active, PATH + "/revisions/" + OLD, LEGACY_DIGEST_PROFILES["russell"],
+    )
+    assert template == active
+    assert retained == (prior_path, "prior-stage")
+    assert service["template"]["containers"][0]["image"] == "other-stage-image"
+
+    staged["containers"][0]["env"][0]["value"] = "false"
+    with pytest.raises(ValueError, match="revision_configuration_mismatch"):
+        release_template(read, PATH, service, active, PATH + "/revisions/" + OLD, LEGACY_DIGEST_PROFILES["russell"])
