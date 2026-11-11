@@ -44,3 +44,11 @@ def test_bad_cash_binding_only_excludes_affected_account_and_future_dates_are_ig
     assert _project(_report(), date(2026, 10, 14)) == {}
     with pytest.raises(FlexSourceError):
         _project(_report(extra=True))
+
+
+def test_multiday_report_uses_the_period_end_date():
+    original = _report()
+    raw = original.content.replace(b'fromDate="20261015"', b'fromDate="20261001"')
+    result = _project(FlexReport(content_sha256="a" * 64, content=raw))
+    assert len(result) == 4
+    assert {record["statement_date"] for record in result.values()} == {"2026-10-15"}

@@ -65,8 +65,8 @@ def project_digest_cash(report, *, expected_primary, allowed_accounts, bindings,
         account = statement.get("accountId", "").strip()
         slot, uid, target = bindings[account]
         period = {"from": _day(statement.get("fromDate")), "to": _day(statement.get("toDate"))}
-        day = period["to"]
-        if day is None or period["from"] != day or date.fromisoformat(day) > latest_day:
+        start, day = period["from"], period["to"]
+        if not start or not day or start > day or date.fromisoformat(day) > latest_day:
             continue
         if any(row.get("accountId", "").strip() not in {"", account}
                for section in statement.findall("CashReport") for row in section.iter()):

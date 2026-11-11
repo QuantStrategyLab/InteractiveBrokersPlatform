@@ -8,7 +8,8 @@ on:
         type: boolean
         default: false
   schedule:
-    - cron: "5 22 * * 1-5"
+    # Saturday UTC also collects Friday's completed statement if it was not ready on Friday.
+    - cron: "5 22 * * 1-6"
 
 permissions: {}
 concurrency:
