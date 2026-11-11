@@ -10,12 +10,14 @@ import time
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from scripts.prepare_legacy_digest_overlay import build_verified_image
 from scripts.summarize_historical_execution_cloud import resolve_private_service
 
 API = "https://run.googleapis.com/v2/"
 PROFILE = "soxl_soxx_trend_income"
 PRIMARY_PROFILE = "tqqq_growth_income"
 COMPATIBLE_DIGEST_PROFILE = "global_etf_rotation"
+LEGACY_DIGEST_PROFILES = {"soxl": PROFILE, "russell": "russell_top50_leader_rotation"}
 DIGEST_BINDINGS = (
     "DIGEST_CANDIDATES_GCS_URI", "DIGEST_STORE_TARGET", "DIGEST_TARGET_ID",
     "DIGEST_OPAQUE_ACCOUNT_UID", "IBKR_NOTIFICATION_MARKER_GCS_URI",
@@ -72,7 +74,7 @@ def wait_for_operation(request, operation):
     require(operation.get("done") and not operation.get("error"), "cloud_run_operation_failed")
 
 
-def notification_bindings(request, path, target):
+def notification_bindings(request, path, target, archive_prefix=None):
     """Read the exact binding already used by this account's private digest Job."""
     response = request(path.rsplit("/services/", 1)[0] + "/jobs?pageSize=100")
     require(not response.get("nextPageToken"), "digest_job_inventory_truncated")
@@ -89,6 +91,8 @@ def notification_bindings(request, path, target):
         except (TypeError, ValueError):
             continue
         if job_target == target and env.get("QSL_ROUTINE_NOTIFICATION_MODE") == "daily_digest":
+            require(archive_prefix is None or env.get("EXECUTION_REPORT_GCS_URI") == archive_prefix,
+                    "legacy_digest_archive_binding_mismatch")
             require(job.get("terminalCondition", {}).get("state") == "CONDITION_SUCCEEDED", "digest_job_not_ready")
             matches.append({key: env[key] for key in DIGEST_BINDINGS})
     require(len(matches) == 1, "unique_same_account_digest_job_missing")
@@ -110,7 +114,26 @@ def activate_compatible_digest(request, path, target, container, env):
         entry["value"] = value
 
 
-def repair(request, path, incident_revision=None, *, order_digest=False, account_digest=False, apply=False):
+def activate_legacy_digest(request, path, target, container, env, *, apply):
+    prefix = env.get("EXECUTION_REPORT_GCS_URI", {}).get("value")
+    require(isinstance(prefix, str) and prefix.startswith("gs://"), "legacy_execution_archive_missing")
+    notification_bindings(request, path, target, archive_prefix=prefix)
+    require(env.get("IBKR_UNIFIED_NOTIFICATION_ENABLED", {}).get("value", "false") == "false"
+            and env.get("QSL_ROUTINE_NOTIFICATION_MODE", {}).get("value", "immediate") == "immediate",
+            "legacy_route_changed")
+    for key in ("QSL_ROUTINE_NOTIFICATION_MODE", "QSL_DIGEST_ROUTINE_ORDERS"):
+        value = DIGEST_ROUTE[key]
+        if key in env:
+            require(set(env[key]) == {"name", "value"}, "legacy_notification_setting_not_literal")
+            env[key]["value"] = value
+        else:
+            container["env"].append({"name": key, "value": value})
+    if apply:
+        container["image"] = build_verified_image(container["image"])
+
+
+def repair(request, path, incident_revision=None, *, order_digest=False, account_digest=False,
+           legacy_profile=None, apply=False):
     service = request(path)
     route, = service["traffic"]
     active, = [row for row in service["trafficStatuses"] if row.get("percent", 0) > 0]
@@ -120,7 +143,7 @@ def repair(request, path, incident_revision=None, *, order_digest=False, account
             "traffic_not_single_untagged_revision")
     old_path = revision_path(path, active["revision"])
     require(old_path == revision_path(path, route["revision"]), "traffic_readback_mismatch")
-    if not (order_digest or account_digest):
+    if not (order_digest or account_digest or legacy_profile):
         require(incident_revision and old_path == revision_path(path, incident_revision),
                 "incident_revision_no_longer_serving")
     old = request(old_path)
@@ -130,11 +153,15 @@ def repair(request, path, incident_revision=None, *, order_digest=False, account
     require(re.search(r"@sha256:[a-f0-9]{64}$", container["image"]), "serving_image_not_immutable")
     env = {row["name"]: row for row in container["env"]}
     target = json.loads(env["RUNTIME_TARGET_JSON"]["value"])
-    profile = COMPATIBLE_DIGEST_PROFILE if account_digest else PRIMARY_PROFILE if order_digest else PROFILE
+    profile = legacy_profile or (COMPATIBLE_DIGEST_PROFILE if account_digest else PRIMARY_PROFILE if order_digest else PROFILE)
     require(env["RUNTIME_TARGET_ENABLED"].get("value") == "true" and target["execution_mode"] == "live"
             and target["dry_run_only"] is False and target["strategy_profile"] == profile
             and target["service_name"] == path.rsplit("/", 1)[-1], "active_incident_target_mismatch")
-    if account_digest:
+    if legacy_profile:
+        activate_legacy_digest(request, path, target, container, env, apply=apply)
+        if apply:
+            template["labels"]["qsl-notification-patch"] = "legacy-daily"
+    elif account_digest:
         activate_compatible_digest(request, path, target, container, env)
     elif order_digest:
         require(env["IBKR_UNIFIED_NOTIFICATION_ENABLED"].get("value") == "true"
@@ -180,17 +207,19 @@ def repair(request, path, incident_revision=None, *, order_digest=False, account
 
 def main():
     mode = os.environ["IBKR_LIVE_SERVICE_MAINTENANCE"]
-    require(mode in {"validate", "apply", "validate-order-digest", "apply-order-digest",
+    legacy_match = re.fullmatch(r"(?:validate|apply)-legacy-(soxl|russell)", mode)
+    legacy_profile = LEGACY_DIGEST_PROFILES[legacy_match[1]] if legacy_match else None
+    require(legacy_profile or mode in {"validate", "apply", "validate-order-digest", "apply-order-digest",
                      "validate-account-digest", "apply-account-digest"}, "mode_invalid")
     order_digest = mode.endswith("-order-digest")
     account_digest = mode.endswith("-account-digest")
     project = os.environ["GCP_PROJECT_ID"]
     region = os.environ["CLOUD_RUN_REGION"]
-    profile = COMPATIBLE_DIGEST_PROFILE if account_digest else PRIMARY_PROFILE if order_digest else PROFILE
+    profile = legacy_profile or (COMPATIBLE_DIGEST_PROFILE if account_digest else PRIMARY_PROFILE if order_digest else PROFILE)
     name = resolve_private_service(os.environ["CLOUD_RUN_SERVICE_TARGETS_JSON"], profile)
     require(all(re.fullmatch(r"[a-z0-9-]+", value) for value in (project, region, name)), "resource_binding_invalid")
     incident_revision = None
-    if not (order_digest or account_digest):
+    if not (order_digest or account_digest or legacy_profile):
         rows = json.loads(gcloud("logging", "read", INCIDENT + f' AND resource.labels.service_name="{name}"',
                                 "--project=" + project, "--limit=30", "--format=json"))
         revisions = {
@@ -211,9 +240,12 @@ def main():
         return result
 
     repair(request, f"projects/{project}/locations/{region}/services/{name}", incident_revision,
-           order_digest=order_digest, account_digest=account_digest, apply=mode.startswith("apply"))
-    change = "account_digest_route" if account_digest else "routine_orders_to_digest" if order_digest else "memory_limit_1Gi"
-    print(json.dumps({"maintenance_verified": True, "mode": mode, "serving_image_preserved": True,
+           order_digest=order_digest, account_digest=account_digest, legacy_profile=legacy_profile,
+           apply=mode.startswith("apply"))
+    change = ("legacy_digest_route" if legacy_profile else "account_digest_route" if account_digest
+              else "routine_orders_to_digest" if order_digest else "memory_limit_1Gi")
+    print(json.dumps({"maintenance_verified": True, "mode": mode,
+                      "serving_image_preserved": not bool(legacy_profile and mode.startswith("apply")),
                       "verified_change": change}))
 
 

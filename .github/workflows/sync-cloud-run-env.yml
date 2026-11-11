@@ -16,6 +16,10 @@ on:
           - apply-order-digest
           - validate-account-digest
           - apply-account-digest
+          - validate-legacy-soxl
+          - apply-legacy-soxl
+          - validate-legacy-russell
+          - apply-legacy-russell
       dry_run:
         description: "Validate the selected deployment plan without build, cloud writes, traffic or Scheduler changes; false requires separate execution approval."
         required: true

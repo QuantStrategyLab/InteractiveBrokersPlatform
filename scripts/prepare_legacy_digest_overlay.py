@@ -3,7 +3,13 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
+import json
+import os
 from pathlib import Path
+import re
+import subprocess
+import tempfile
 
 REBALANCE = "application/rebalance_service.py"
 MAIN = "main.py"
@@ -87,6 +93,53 @@ def patch_archive(source):
     updated = source.replace(ORIGINAL_ARCHIVE, NEW_ARCHIVE, 1)
     ast.parse(updated)
     return updated
+
+
+def build_verified_image(base):
+    """Build only the two exact source changes using the already authorized runner."""
+    if not re.fullmatch(r"[a-z0-9-]+-docker.pkg.dev/[a-z0-9_./-]+@sha256:[a-f0-9]{64}", base):
+        raise ValueError("legacy_serving_image_not_immutable")
+
+    def command(*args, timeout=45):
+        return subprocess.check_output(args, text=True, stderr=subprocess.DEVNULL, timeout=timeout).strip()
+
+    def image_file(image, name):
+        return command("docker", "run", "--rm", "--network=none", "--entrypoint=cat", image, "/app/" + name)
+
+    repo = base.split("@")[0]
+    registry = repo.split("/")[0]
+    command("gcloud", "auth", "configure-docker", registry, "--quiet")
+    command("docker", "pull", base, timeout=180)
+    sources = {name: transform(image_file(base, name) + "\n")
+               for name, transform in ((REBALANCE, patch_rebalance), (MAIN, patch_archive))}
+    combined = "".join(sources.values()).encode()
+    tag = repo + ":legacy-daily-routing-" + hashlib.sha256(combined).hexdigest()[:12]
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        for name, source in sources.items():
+            dst = root / "source" / name
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_text(source)
+        (root / "Dockerfile").write_text(f"FROM {base}\nCOPY source/ /app/\n")
+        command("docker", "build", "--network=none", "-t", tag, directory, timeout=180)
+    old, candidate = json.loads(command("docker", "image", "inspect", base, tag))
+    original_config = {k: v for k, v in old["Config"].items() if k != "Image"}
+    candidate_config = {k: v for k, v in candidate["Config"].items() if k != "Image"}
+    if not (original_config == candidate_config and old["Os"] == candidate["Os"]
+            and old["Architecture"] == candidate["Architecture"]
+            and candidate["RootFS"]["Layers"][:-1] == old["RootFS"]["Layers"]):
+        raise ValueError("legacy_overlay_container_configuration_changed")
+    for name, source in sources.items():
+        if image_file(tag, name) != source.rstrip():
+            raise ValueError("legacy_overlay_source_readback_mismatch")
+    command("docker", "push", tag, timeout=180)
+    digest = command("gcloud", "artifacts", "docker", "images", "describe", tag, "--format=value(image_summary.digest)")
+    if not re.fullmatch(r"sha256:[a-f0-9]{64}", digest):
+        raise ValueError("legacy_overlay_digest_unconfirmed")
+    head = command("git", "ls-remote", "origin", "refs/heads/main").split()
+    if len(head) != 2 or head[0] != os.environ.get("GITHUB_SHA"):
+        raise ValueError("reviewed_branch_changed")
+    return repo + "@" + digest
 
 
 def main():
