@@ -4,6 +4,14 @@ run-name: ${{ inputs.runtime_switch_only && format('Runtime switch {0}', inputs.
 on:
   workflow_dispatch:
     inputs:
+      incident_memory_repair:
+        description: "Memory-only repair for the confirmed live Cloud Run incident."
+        type: choice
+        default: disabled
+        options:
+          - disabled
+          - validate
+          - apply
       dry_run:
         description: "Validate the selected deployment plan without build, cloud writes, traffic or Scheduler changes; false requires separate execution approval."
         required: true
@@ -127,7 +135,7 @@ concurrency:
 jobs:
   sync-cloud-run-env:
     name: Deploy / Sync Cloud Run
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.incident_memory_repair == 'disabled'
     permissions:
       actions: read
       contents: read
@@ -183,3 +191,30 @@ jobs:
       DIGEST_TARGET_ID: ${{ secrets.DIGEST_TARGET_ID }}
       IBKR_DIGEST_OPAQUE_ACCOUNT_UID: ${{ secrets.IBKR_DIGEST_OPAQUE_ACCOUNT_UID }}
       IBKR_DIGEST_TARGET_ID: ${{ secrets.IBKR_DIGEST_TARGET_ID }}
+
+
+  incident-memory-repair:
+    name: Repair only the confirmed Cloud Run memory limit
+    if: >-
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
+      github.run_attempt == 1 &&
+      (inputs.incident_memory_repair == 'validate' && inputs.dry_run ||
+       inputs.incident_memory_repair == 'apply' && !inputs.dry_run) &&
+      !inputs.deploy_image && !inputs.sync_env && !inputs.approve_traffic_shift &&
+      !inputs.approve_scheduler_sync && !inputs.runtime_switch_only &&
+      !inputs.notification_only && !inputs.notification_readback_only &&
+      inputs.notification_marker_mode == 'disabled' && inputs.source_commit == '' &&
+      inputs.configured_service == '' && inputs.target == 'configured'
+    uses: ./.github/workflows/sync-cloud-run-env-protected.yml
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    with:
+      dry_run: ${{ inputs.dry_run }}
+      incident_memory_repair: ${{ inputs.incident_memory_repair }}
+    secrets:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ secrets.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
+      CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ vars.CLOUD_RUN_SERVICE_TARGETS_JSON || secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}

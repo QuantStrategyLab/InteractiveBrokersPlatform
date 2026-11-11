@@ -5,6 +5,9 @@ name: Deploy Cloud Run (protected execution)
 on:
   workflow_call:
     inputs:
+      incident_memory_repair:
+        type: string
+        required: false
       dry_run:
         type: boolean
         required: true
@@ -146,7 +149,7 @@ jobs:
     name: Deploy / Sync Cloud Run
     environment: ${{ vars.IBKR_DEPLOY_ENVIRONMENT }}
     # Production deployment and environment sync require an explicit operator dispatch.
-    if: github.event_name == 'workflow_dispatch' && inputs.notification_only != true && inputs.notification_readback_only != true && (inputs.notification_marker_mode == '' || inputs.notification_marker_mode == 'disabled') || (github.event_name == 'workflow_dispatch' && inputs.dry_run == true)
+    if: inputs.incident_memory_repair == '' && (github.event_name == 'workflow_dispatch' && inputs.notification_only != true && inputs.notification_readback_only != true && (inputs.notification_marker_mode == '' || inputs.notification_marker_mode == 'disabled') || (github.event_name == 'workflow_dispatch' && inputs.dry_run == true))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -2481,3 +2484,35 @@ jobs:
           name: notification-marker-${{ github.run_id }}
           path: ${{ runner.temp }}/notification-marker.safe.json
           if-no-files-found: error
+
+
+  incident-memory-repair:
+    name: Verify and repair the live memory limit
+    if: >-
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
+      github.run_attempt == 1 && github.workflow_ref ==
+      format('{0}/.github/workflows/sync-cloud-run-env.yml@refs/heads/main', github.repository) &&
+      (inputs.incident_memory_repair == 'validate' && inputs.dry_run ||
+       inputs.incident_memory_repair == 'apply' && !inputs.dry_run)
+    environment: ibkr-live
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Verify exact serving configuration and memory-only change
+        env:
+          CLOUD_RUN_REGION: ${{ vars.CLOUD_RUN_REGION }}
+          CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}
+          IBKR_OOM_REPAIR: ${{ inputs.incident_memory_repair }}
+        run: python3 -m scripts.repair_cloud_run_memory
