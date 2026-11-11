@@ -24,8 +24,14 @@ jobs:
     if: github.ref == 'refs/heads/main'
     permissions:
       id-token: write
-    uses: QuantStrategyLab/.github/.github/workflows/deploy-job.yml@d24b018db70b8c4ebb35284bb133f5a5bbc7dad5
+    uses: QuantStrategyLab/.github/.github/workflows/deploy-job.yml@ec284d416698b3883a217b625b5ca1df8549b904
     with:
       provider: gcp
       environment: ${{ inputs.target }}
       operation: ${{ inputs.operation }}
+    secrets:
+      DEPLOY_WIF_PROVIDER: ${{ secrets.DEPLOY_WIF_PROVIDER }}
+      DEPLOY_SERVICE_ACCOUNT: ${{ secrets.DEPLOY_SERVICE_ACCOUNT }}
+      DEPLOY_RESOURCE: ${{ secrets.DEPLOY_RESOURCE }}
+      DEPLOY_PREVIOUS_IMAGE: ${{ secrets.DEPLOY_PREVIOUS_IMAGE }}
+      DEPLOY_CANDIDATE_IMAGE: ${{ secrets.DEPLOY_CANDIDATE_IMAGE }}
