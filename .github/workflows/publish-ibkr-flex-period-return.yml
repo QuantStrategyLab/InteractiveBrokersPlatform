@@ -12,6 +12,11 @@ on:
         type: boolean
         required: false
         default: false
+      digest_cash_only:
+        description: "Publish only the four private daily settled cash objects."
+        type: boolean
+        required: false
+        default: false
       report_date:
         description: "Optional one historical native daily return (YYYY-MM-DD), within the last 365 days. No trading or query template change."
         type: string
@@ -62,9 +67,18 @@ jobs:
   publish:
     # A rerun would generate a new reference. Pending/unknown outcomes require
     # investigation, not a rerun or a fresh dispatch to replace the request.
-    if: ${{ github.repository == 'QuantStrategyLab/InteractiveBrokersPlatform' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && ((github.event_name == 'workflow_dispatch' && inputs.publish_once && vars.IBKR_PERIOD_RETURN_PUBLISH_ENABLED == 'true') || (github.event_name == 'schedule' && vars.IBKR_PERIOD_RETURN_AUTO_SYNC_ENABLED == 'true')) }}
+    if: >-
+      github.repository == 'QuantStrategyLab/InteractiveBrokersPlatform' &&
+      github.ref == 'refs/heads/main' && github.run_attempt == 1 &&
+      ((github.event_name == 'workflow_dispatch' &&
+        ((inputs.digest_cash_only && vars.IBKR_FLEX_DIGEST_JOB_REFS != '') ||
+         (inputs.publish_once && vars.IBKR_PERIOD_RETURN_PUBLISH_ENABLED == 'true'))) ||
+       (github.event_name == 'schedule' && vars.IBKR_PERIOD_RETURN_AUTO_SYNC_ENABLED == 'true'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Require infrastructure variables
         env:
@@ -90,6 +104,16 @@ jobs:
       - name: Install locked runtime dependencies
         run: uv sync --frozen --no-dev
 
+      - name: Authenticate to the existing digest candidate store
+        if: >-
+          vars.IBKR_FLEX_DIGEST_JOB_REFS != '' &&
+          inputs.report_date == '' && !inputs.primary_return_only &&
+          !inputs.additional_returns_only && !inputs.external_flow_only
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.IBKR_FLEX_DIGEST_WIF_PROVIDER }}
+          service_account: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+
       - name: Generate, collect and publish once
         run: |
           publisher_args=()
@@ -97,7 +121,13 @@ jobs:
             echo "additional_return_slot_mode_invalid" >&2
             exit 2
           fi
-          if [ "$PRIMARY_RETURN_ONLY" = "true" ]; then
+          if [ "$DIGEST_CASH_ONLY" = "true" ]; then
+            if [ "$PRIMARY_RETURN_ONLY" = "true" ] || [ "$EXTERNAL_FLOW_ONLY" = "true" ] || [ "$ADDITIONAL_RETURNS_ONLY" = "true" ] || [ -n "$IBKR_FLOW_PERIOD_FROM$IBKR_FLOW_PERIOD_TO$IBKR_NATIVE_RETURN_DATE" ]; then
+              echo "digest_cash_only_mode_invalid" >&2
+              exit 2
+            fi
+            publisher_args=(--digest-cash-only)
+          elif [ "$PRIMARY_RETURN_ONLY" = "true" ]; then
             if [ "$EXTERNAL_FLOW_ONLY" = "true" ] || [ "$ADDITIONAL_RETURNS_ONLY" = "true" ] || [ -n "$IBKR_FLOW_PERIOD_FROM$IBKR_FLOW_PERIOD_TO" ] || [ -z "$IBKR_NATIVE_RETURN_DATE" ]; then
               echo "primary_return_mode_invalid" >&2
               exit 2
@@ -121,6 +151,9 @@ jobs:
           uv run --no-sync python -m scripts.publish_ibkr_flex_period_return "${publisher_args[@]}"
         env:
           IBKR_PERIOD_RETURN_PUBLISH_ENABLED: "true"
+          DIGEST_CASH_ONLY: ${{ inputs.digest_cash_only }}
+          IBKR_FLEX_DIGEST_JOB_REFS: ${{ vars.IBKR_FLEX_DIGEST_JOB_REFS }}
+          DIGEST_CANDIDATES_GCS_URI: ${{ vars.DIGEST_CANDIDATES_GCS_URI }}
           EXTERNAL_FLOW_ONLY: ${{ inputs.external_flow_only }}
           ADDITIONAL_RETURNS_ONLY: ${{ inputs.additional_returns_only }}
           ADDITIONAL_RETURN_SLOT: ${{ inputs.additional_return_slot }}
@@ -143,4 +176,4 @@ jobs:
           IBKR_PERIOD_RETURN_ADDITIONAL1_ACCOUNT_KEY: ${{ secrets.IBKR_PERIOD_RETURN_ADDITIONAL1_ACCOUNT_KEY }}
           IBKR_FLEX_TOKEN: ${{ secrets.IBKR_FLEX_TOKEN }}
           IBKR_FLEX_QUERY_ID: ${{ secrets.IBKR_FLEX_QUERY_ID }}
-          IBKR_ACCOUNT_FACTS_SYNC_TOKEN: ${{ secrets.IBKR_ACCOUNT_FACTS_SYNC_TOKEN }}
+          IBKR_ACCOUNT_FACTS_SYNC_TOKEN: ${{ !inputs.digest_cash_only && secrets.IBKR_ACCOUNT_FACTS_SYNC_TOKEN || '' }}

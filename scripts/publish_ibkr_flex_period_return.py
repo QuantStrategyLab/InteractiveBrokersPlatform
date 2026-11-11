@@ -496,7 +496,7 @@ def _collect_configured_ledger(config, session):
         session=session, allowed_report_account_ids=allowed)
 
 
-def _collect_return_ledgers(config, session):
+def _collect_configured_report(config, session):
     """One generation for all selected accounts, with the existing 1019 limit."""
     day = config.get("report_date")
     request = request_activity_flex_report(token=config["flex_token"], query_id=config["query_id"],
@@ -504,17 +504,67 @@ def _collect_return_ledgers(config, session):
     for attempt in range(6):
         try:
             report = collect_activity_flex_xml(request, session=session)
-            break
+            return report
         except FlexReportPending as pending:
             if pending.request != request:
                 raise FlexSourceError("IBKR Flex pending handle changed") from None
             if attempt == 5:
                 raise
             time.sleep(3)
+
+
+def _build_return_ledgers(config, report):
     # Validate every selected ledger before any publication. Private XML stays in memory.
     return {slot: build_flex_ledger(report, expected_account_ids=target["expected_account_ids"],
         allowed_report_account_ids=config["allowed_report_account_ids"])
         for slot, target in {"primary": config, **config["additional_returns"]}.items()}
+
+
+def _collect_return_ledgers(config, session):
+    return _build_return_ledgers(config, _collect_configured_report(config, session))
+
+
+def _digest_cash(report, config):
+    from scripts.publish_ibkr_digest_cash import publish_digest_cash
+
+    try:
+        count = publish_digest_cash(
+            report, expected_primary=config["expected_account_ids"],
+            allowed_accounts=config["allowed_report_account_ids"],
+            job_refs=os.environ["IBKR_FLEX_DIGEST_JOB_REFS"],
+            destination=os.environ["DIGEST_CANDIDATES_GCS_URI"],
+        )
+    except Exception:
+        return {"settled_cash_status": "publish_failed"}
+    return {"settled_cash_status": "published" if count == 4 else "partial",
+            "settled_cash_accounts": count}
+
+
+def _digest_cash_only():
+    try:
+        env = os.environ
+        if (env.get("IBKR_PERIOD_RETURN_PUBLISH_ENABLED") != "true" or not env.get("IBKR_FLEX_DIGEST_JOB_REFS")
+                or any(env.get(name) for name in ("IBKR_NATIVE_RETURN_DATE", "IBKR_FLOW_PERIOD_FROM", "IBKR_FLOW_PERIOD_TO"))):
+            raise ValueError("digest_cash_configuration_missing")
+        primary = _selector(json.loads(env["IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON"]))
+        if len(primary) != 1 or primary != _selector(json.loads(env["IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON"])):
+            raise ValueError("digest_cash_primary_invalid")
+        config = {
+            "expected_account_ids": primary,
+            "allowed_report_account_ids": _configured_report_accounts(env, primary),
+            "flex_token": env["IBKR_FLEX_TOKEN"],
+            "query_id": env["IBKR_FLEX_QUERY_ID"],
+        }
+        with requests.Session() as session:
+            session.trust_env = False
+            report = _collect_configured_report(config, session)
+        result = _digest_cash(report, config)
+    except FlexReportPending:
+        result = {"settled_cash_status": "flex_pending"}
+    except Exception:
+        result = {"settled_cash_status": "read_failed"}
+    print(json.dumps(result, sort_keys=True))
+    return 0 if result["settled_cash_status"] == "published" else 1
 
 
 def _publish_additional_return(ledger, config, observed_at, *, diagnostics=None):
@@ -547,6 +597,8 @@ def main(argv: Sequence[str] = ()) -> int:
         return 2
     if tuple(argv) == ("--cashflow-only",):
         return _cashflow_only()
+    if tuple(argv) == ("--digest-cash-only",):
+        return _digest_cash_only()
     diagnostics = {}
     if tuple(argv) == ("--preflight",):
         result = _configuration_preflight(os.environ)
@@ -562,6 +614,8 @@ def main(argv: Sequence[str] = ()) -> int:
     else:
         try:
             config = _config(os.environ)
+            digest_enabled = (not config.get("report_date") and not argv
+                              and bool(os.environ.get("IBKR_FLEX_DIGEST_JOB_REFS")))
             if primary_only and not config.get("report_date"):
                 raise PeriodReturnError("historical_date_required")
             if additional_only and not config["additional_returns"]:
@@ -577,7 +631,12 @@ def main(argv: Sequence[str] = ()) -> int:
             try:
                 with requests.Session() as session:
                     session.trust_env = False
-                    if config["additional_returns"] and not primary_only:
+                    if digest_enabled:
+                        report = _collect_configured_report(config, session)
+                        diagnostics.update(_digest_cash(report, config))
+                        ledgers = _build_return_ledgers(config, report)
+                        ledger = ledgers["primary"]
+                    elif config["additional_returns"] and not primary_only:
                         ledgers = _collect_return_ledgers(config, session)
                         ledger = ledgers["primary"]
                     else:
@@ -588,7 +647,7 @@ def main(argv: Sequence[str] = ()) -> int:
                 status = "flex_pending"
             except FlexSourceError as exc:
                 status = "flex_import_failed"
-                diagnostics = exc.safe_diagnostic
+                diagnostics.update(exc.safe_diagnostic)
             except Exception as exc:
                 status = "flex_import_failed"
                 name = type(exc).__name__

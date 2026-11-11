@@ -162,6 +162,11 @@ TWR，不是账户收费计划、当前已交收资金、证券/碎股权限、�
 
 ## 原生期间收益的一次发布
 
+配置 `IBKR_FLEX_DIGEST_JOB_REFS` 和现有摘要存储的云身份后，定时发布会从同一次
+Flex 报表取四个日报账户的 USD 期末已结算现金。每户通过现有 Cloud Run 日报任务的
+账号和身份核对，金额与报表日期保存到各自的私有对象。完整收益报表仍按原规则校验。
+手动选 `digest_cash_only` 时只写现金摘要，现有收益、成交和资金流发布保持独立。
+
 `application.ibkr_period_return.build_ibkr_period_return` 从已复核账户的账本提取
 `ibkr_account_period_return.v1`。它只接受唯一受保护预期账户、有效且一致的报表/原生收益
 期间、`return_assessment.computable=True`、`native_ibkr_twr` 方法与 `ChangeInNAV.twr`
