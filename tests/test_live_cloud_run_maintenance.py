@@ -10,16 +10,18 @@ OLD = "example-service-old"
 NEW = "example-service-new"
 
 
-def simulator(*, drift=False, order_digest=False):
-    target = {"execution_mode": "live", "dry_run_only": False, "strategy_profile": PRIMARY_PROFILE if order_digest else PROFILE,
+def simulator(*, drift=False, order_digest=False, etf_attention=False):
+    profile = "global_etf_rotation" if etf_attention else PRIMARY_PROFILE if order_digest else PROFILE
+    target = {"execution_mode": "live", "dry_run_only": False, "strategy_profile": profile,
               "service_name": "example-service"}
     container = {"image": "example.invalid/image@sha256:" + "1" * 64,
                  "env": [{"name": "RUNTIME_TARGET_ENABLED", "value": "true"},
                          {"name": "RUNTIME_TARGET_JSON", "value": json.dumps(target)}],
                  "resources": {"limits": {"memory": "512Mi", "cpu": "1"}}}
-    if order_digest:
+    if order_digest or etf_attention:
         route_env = {"IBKR_UNIFIED_NOTIFICATION_ENABLED": "true", "QSL_ROUTINE_NOTIFICATION_MODE": "daily_digest",
-                     "QSL_DIGEST_ROUTINE_ORDERS": "false", "DIGEST_CANDIDATES_GCS_URI": "gs://test/digest",
+                     "QSL_DIGEST_ROUTINE_ORDERS": "true" if etf_attention else "false",
+                     "DIGEST_CANDIDATES_GCS_URI": "gs://test/digest",
                      "DIGEST_STORE_TARGET": "test-slot", "DIGEST_TARGET_ID": "test-target",
                      "DIGEST_OPAQUE_ACCOUNT_UID": "test-account", "IBKR_NOTIFICATION_MARKER_GCS_URI": "gs://test/marker"}
         container["env"].extend({"name": key, "value": value} for key, value in route_env.items())
@@ -95,6 +97,39 @@ def test_primary_order_routing_changes_only_its_existing_digest_switch():
     assert entry["value"] == "false"
     entry["value"] = "true"
     assert writes[1][1]["template"]["containers"] == [before]
+
+
+@pytest.mark.parametrize("binding_drift", [False, True])
+def test_etf_attention_changes_only_the_image_and_label(monkeypatch, binding_drift):
+    from scripts import maintain_live_cloud_run as release
+
+    request, writes = simulator(etf_attention=True)
+    before = request(PATH)["template"]
+    original_image = before["containers"][0]["image"]
+    candidate = "example.invalid/image@sha256:" + "2" * 64
+    env = {row["name"]: row["value"] for row in before["containers"][0]["env"]}
+    bindings = {name: env[name] for name in release.DIGEST_BINDINGS}
+    if binding_drift:
+        bindings["DIGEST_STORE_TARGET"] = "another-account"
+    monkeypatch.setattr(release, "notification_bindings", lambda *_: bindings)
+    builds = []
+
+    def build(image, *, etf_attention):
+        builds.append((image, etf_attention))
+        return candidate
+
+    monkeypatch.setattr(release, "build_verified_image", build)
+    if binding_drift:
+        with pytest.raises(ValueError, match="etf_digest_route_changed"):
+            repair(request, PATH, etf_attention=True, apply=True)
+        assert not writes and not builds
+    else:
+        repair(request, PATH, etf_attention=True, apply=True)
+        before["containers"][0]["image"] = candidate
+        before["labels"] = {"qsl-notification-patch": "etf-attention"}
+        assert builds == [(original_image, True)]
+        assert writes[1][1]["template"] == before
+        assert writes[2][1]["traffic"][0]["revision"] == NEW
 
 
 def test_compatible_account_copies_only_its_existing_digest_binding():
