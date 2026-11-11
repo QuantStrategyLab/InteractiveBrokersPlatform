@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       live_service_maintenance:
-        description: "Choose the incident memory repair or primary routine-order routing."
+        description: "Choose a narrow memory or daily digest routing change."
         type: choice
         default: disabled
         options:
@@ -14,6 +14,8 @@ on:
           - apply
           - validate-order-digest
           - apply-order-digest
+          - validate-account-digest
+          - apply-account-digest
       dry_run:
         description: "Validate the selected deployment plan without build, cloud writes, traffic or Scheduler changes; false requires separate execution approval."
         required: true

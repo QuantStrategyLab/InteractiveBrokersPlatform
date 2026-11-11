@@ -151,8 +151,10 @@ jobs:
       github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
       github.run_attempt == 1 && github.workflow_ref ==
       format('{0}/.github/workflows/sync-cloud-run-env.yml@refs/heads/main', github.repository) &&
-      ((inputs.live_service_maintenance == 'validate' || inputs.live_service_maintenance == 'validate-order-digest') && inputs.dry_run ||
-       (inputs.live_service_maintenance == 'apply' || inputs.live_service_maintenance == 'apply-order-digest') && !inputs.dry_run) &&
+      ((inputs.live_service_maintenance == 'validate' || inputs.live_service_maintenance == 'validate-order-digest' ||
+        inputs.live_service_maintenance == 'validate-account-digest') && inputs.dry_run ||
+       (inputs.live_service_maintenance == 'apply' || inputs.live_service_maintenance == 'apply-order-digest' ||
+        inputs.live_service_maintenance == 'apply-account-digest') && !inputs.dry_run) &&
       !inputs.deploy_image && !inputs.sync_env && !inputs.approve_traffic_shift &&
       !inputs.approve_scheduler_sync && !inputs.runtime_switch_only &&
       !inputs.notification_only && !inputs.notification_readback_only &&
