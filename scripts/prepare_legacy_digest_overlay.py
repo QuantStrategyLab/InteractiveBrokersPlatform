@@ -13,6 +13,7 @@ import tempfile
 
 REBALANCE = "application/rebalance_service.py"
 MAIN = "main.py"
+ADAPTER = "notifications/unified_adapter.py"
 OLD_ROUTE = """    if defer_routine_cycle_to_digest(evidence, submitted_order_count=1 if has_orders else 0):
         return False
 """
@@ -95,8 +96,25 @@ def patch_archive(source):
     return updated
 
 
-def build_verified_image(base):
-    """Build only the two exact source changes using the already authorized runner."""
+def patch_etf_attention(source, reviewed):
+    def functions(text):
+        return {node.name: ast.get_source_segment(text, node) for node in ast.parse(text).body
+                if isinstance(node, ast.FunctionDef)}
+
+    before, after = functions(source), functions(reviewed)
+    if ("daily_check" in before["_notification_evidence"]
+            or "daily_check" not in after["_notification_evidence"]
+            or "RUN_LINK_MISSING" not in after["_cycle_attention_notification"]
+            or "RUN_LINK_MISSING" in before["_cycle_attention_notification"]):
+        raise ValueError("etf_notification_source_changed")
+    for name in ("_notification_evidence", "_cycle_attention_notification"):
+        source = source.replace(before[name], after[name], 1)
+    ast.parse(source)
+    return source
+
+
+def build_verified_image(base, *, etf_attention=False):
+    """Build only the selected source changes over the exact serving image."""
     if not re.fullmatch(r"[a-z0-9-]+-docker.pkg.dev/[a-z0-9_./-]+@sha256:[a-f0-9]{64}", base):
         raise ValueError("legacy_serving_image_not_immutable")
 
@@ -110,10 +128,16 @@ def build_verified_image(base):
     registry = repo.split("/")[0]
     command("gcloud", "auth", "configure-docker", registry, "--quiet")
     command("docker", "pull", base, timeout=180)
-    sources = {name: transform(image_file(base, name) + "\n")
-               for name, transform in ((REBALANCE, patch_rebalance), (MAIN, patch_archive))}
+    if etf_attention:
+        sources = {ADAPTER: patch_etf_attention(image_file(base, ADAPTER), Path(ADAPTER).read_text())}
+        tag_prefix = "etf-attention"
+    else:
+        sources = {name: transform(image_file(base, name) + "\n")
+                   for name, transform in ((REBALANCE, patch_rebalance), (MAIN, patch_archive))}
+        tag_prefix = "legacy-daily-routing"
     combined = "".join(sources.values()).encode()
-    tag = repo + ":legacy-daily-routing-" + hashlib.sha256(combined).hexdigest()[:12]
+    tag_input = base.encode() + combined if etf_attention else combined
+    tag = f"{repo}:{tag_prefix}-" + hashlib.sha256(tag_input).hexdigest()[:12]
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         for name, source in sources.items():

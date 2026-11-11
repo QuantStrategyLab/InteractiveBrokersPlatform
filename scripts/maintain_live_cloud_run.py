@@ -154,7 +154,7 @@ def release_template(request, path, service, active, active_path, legacy_profile
 
 
 def repair(request, path, incident_revision=None, *, order_digest=False, account_digest=False,
-           legacy_profile=None, apply=False):
+           legacy_profile=None, etf_attention=False, apply=False):
     service = request(path)
     route, = service["traffic"]
     active, = [row for row in service["trafficStatuses"] if row.get("percent", 0) > 0]
@@ -164,7 +164,7 @@ def repair(request, path, incident_revision=None, *, order_digest=False, account
             "traffic_not_single_untagged_revision")
     old_path = revision_path(path, active["revision"])
     require(old_path == revision_path(path, route["revision"]), "traffic_readback_mismatch")
-    if not (order_digest or account_digest or legacy_profile):
+    if not (order_digest or account_digest or legacy_profile or etf_attention):
         require(incident_revision and old_path == revision_path(path, incident_revision),
                 "incident_revision_no_longer_serving")
     old = request(old_path)
@@ -173,11 +173,22 @@ def repair(request, path, incident_revision=None, *, order_digest=False, account
     require(re.search(r"@sha256:[a-f0-9]{64}$", container["image"]), "serving_image_not_immutable")
     env = {row["name"]: row for row in container["env"]}
     target = json.loads(env["RUNTIME_TARGET_JSON"]["value"])
-    profile = legacy_profile or (COMPATIBLE_DIGEST_PROFILE if account_digest else PRIMARY_PROFILE if order_digest else PROFILE)
+    profile = legacy_profile or (COMPATIBLE_DIGEST_PROFILE if account_digest or etf_attention else
+                                 PRIMARY_PROFILE if order_digest else PROFILE)
     require(env["RUNTIME_TARGET_ENABLED"].get("value") == "true" and target["execution_mode"] == "live"
             and target["dry_run_only"] is False and target["strategy_profile"] == profile
             and target["service_name"] == path.rsplit("/", 1)[-1], "active_incident_target_mismatch")
-    if legacy_profile:
+    if etf_attention:
+        expected = {**notification_bindings(request, path, target), **DIGEST_ROUTE}
+        require(all(env.get(key, {}).get("value") == value for key, value in expected.items()),
+                "etf_digest_route_changed")
+        require(template.get("labels", {}).get("qsl-notification-patch") != "etf-attention",
+                "etf_attention_already_serving")
+        if apply:
+            container["image"] = build_verified_image(container["image"], etf_attention=True)
+            require(container["image"] != old["containers"][0]["image"], "etf_attention_image_unchanged")
+            template.setdefault("labels", {})["qsl-notification-patch"] = "etf-attention"
+    elif legacy_profile:
         activate_legacy_digest(request, path, target, container, env, apply=apply)
         if apply:
             template.setdefault("labels", {})["qsl-notification-patch"] = "legacy-daily"
@@ -234,16 +245,19 @@ def main():
     legacy_match = re.fullmatch(r"(?:validate|apply)-legacy-(soxl|russell)", mode)
     legacy_profile = LEGACY_DIGEST_PROFILES[legacy_match[1]] if legacy_match else None
     require(legacy_profile or mode in {"validate", "apply", "validate-order-digest", "apply-order-digest",
-                     "validate-account-digest", "apply-account-digest"}, "mode_invalid")
+                     "validate-account-digest", "apply-account-digest", "validate-etf-attention",
+                     "apply-etf-attention"}, "mode_invalid")
     order_digest = mode.endswith("-order-digest")
     account_digest = mode.endswith("-account-digest")
+    etf_attention = mode.endswith("-etf-attention")
     project = os.environ["GCP_PROJECT_ID"]
     region = os.environ["CLOUD_RUN_REGION"]
-    profile = legacy_profile or (COMPATIBLE_DIGEST_PROFILE if account_digest else PRIMARY_PROFILE if order_digest else PROFILE)
+    profile = legacy_profile or (COMPATIBLE_DIGEST_PROFILE if account_digest or etf_attention else
+                                 PRIMARY_PROFILE if order_digest else PROFILE)
     name = resolve_private_service(os.environ["CLOUD_RUN_SERVICE_TARGETS_JSON"], profile)
     require(all(re.fullmatch(r"[a-z0-9-]+", value) for value in (project, region, name)), "resource_binding_invalid")
     incident_revision = None
-    if not (order_digest or account_digest or legacy_profile):
+    if not (order_digest or account_digest or legacy_profile or etf_attention):
         rows = json.loads(gcloud("logging", "read", INCIDENT + f' AND resource.labels.service_name="{name}"',
                                 "--project=" + project, "--limit=30", "--format=json"))
         revisions = {
@@ -265,11 +279,11 @@ def main():
 
     repair(request, f"projects/{project}/locations/{region}/services/{name}", incident_revision,
            order_digest=order_digest, account_digest=account_digest, legacy_profile=legacy_profile,
-           apply=mode.startswith("apply"))
-    change = ("legacy_digest_route" if legacy_profile else "account_digest_route" if account_digest
+           etf_attention=etf_attention, apply=mode.startswith("apply"))
+    change = ("etf_daily_check_attention" if etf_attention else "legacy_digest_route" if legacy_profile else "account_digest_route" if account_digest
               else "routine_orders_to_digest" if order_digest else "memory_limit_1Gi")
     print(json.dumps({"maintenance_verified": True, "mode": mode,
-                      "serving_image_preserved": not bool(legacy_profile and mode.startswith("apply")),
+                      "serving_image_preserved": not bool((legacy_profile or etf_attention) and mode.startswith("apply")),
                       "verified_change": change}))
 
 

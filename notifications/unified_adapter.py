@@ -326,11 +326,30 @@ def send_incident(event, send, *, family, severity=1, store=None):
 
 
 def _notification_evidence(execution):
-    """An explicit gate approval is evidence, not an execution restriction."""
+    """Normalize informational flags only in the notification evidence."""
     flags = execution.get("risk_flags")
-    if (execution.get("risk_gate") == "APPROVE"
-            and isinstance(flags, (list, tuple)) and tuple(flags) == ("risk_gate:passed",)):
+    if not isinstance(flags, (list, tuple)):
+        return execution
+    flags = tuple(flags)
+    approved = execution.get("risk_gate") == "APPROVE"
+    if approved and flags == ("risk_gate:passed",):
         return {**execution, "risk_flags": []}
+    if (execution.get("strategy_profile") == "global_etf_rotation"
+            and execution.get("execution_status") in {"no_action", "no_op"}
+            and execution.get("snapshot_guard_decision") == "proceed"
+            and execution.get("actionable") is False
+            and execution.get("no_op_reason") in (None, "", "no_signal", "proceed")
+            and (flags == ("no_execute",) or (approved and flags == ("no_execute", "risk_gate:passed")))):
+        from notifications.telegram import build_translator
+        from us_equity_strategies.account_sizing import append_account_size_warning
+
+        # The pinned ETF strategy emits this exact signal for its successful
+        # daily check. A bare no_execute flag is also used by protection paths.
+        for locale in ("zh", "en"):
+            translate = build_translator(locale)
+            expected = append_account_size_warning(translate("daily_check"), execution, translator=translate)
+            if execution.get("signal_description") == expected:
+                return {**execution, "risk_flags": [], "no_op_reason": "no_signal"}
     return execution
 
 
@@ -487,7 +506,8 @@ def _cycle_attention_notification(kind, execution, report, diagnostics=""):
     reason = kind
     for key in ("execution_blocked_reason", "no_op_reason"):
         value = execution.get(key)
-        if isinstance(value, str) and re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*(?::[a-zA-Z0-9_]+)?", value) and len(value) <= 160:
+        if (isinstance(value, str) and value not in {"proceed", "no_signal", "no_action", "no_rebalance"}
+                and re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]*(?::[a-zA-Z0-9_]+)?", value) and len(value) <= 160):
             reason = redact_notification_diagnostics(value)
             break
     blocked = kind == "blocked_run"
@@ -529,6 +549,8 @@ def _cycle_attention_notification(kind, execution, report, diagnostics=""):
         "rejected": ("策略风控拒绝本次操作，请查看风控记录", "Strategy risk checks rejected this action; review risk records"),
         "account_brake_source_or_submit_unavailable": ("账户保护数据或提交服务不可用，请查看风控记录", "Account protection source or submission service unavailable; review risk records"),
         "account_brake_submission_not_confirmed": ("账户保护提交未确认，请查看风控记录", "Account protection submission unconfirmed; review risk records"),
+        "missing_risk_approval": ("本轮未取得明确的风控批准，请查看风控记录", "Explicit risk approval was unavailable; review risk records"),
+        "non_positive_total_equity": ("账户净值非正，保护规则限制执行", "Execution restricted because account equity is not positive"),
     }
     explanation = explanations.get(reason.partition(":")[0])
     if explanation:

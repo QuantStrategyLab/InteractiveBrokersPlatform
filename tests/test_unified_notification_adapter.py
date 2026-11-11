@@ -718,6 +718,41 @@ def test_healthy_empty_account_cycle_only_enters_daily_digest(routing):
     assert routing[1].writes
 
 
+@pytest.mark.parametrize("locale", ["zh", "en"])
+@pytest.mark.parametrize("fault", [None, {"execution_blocked_reason": "strategy_risk_rejected"},
+                                    {"risk_flags": ("no_execute", "unknown_flag")},
+                                    {"market_data_retry_required": True},
+                                    {"outcome_unknown": True}, {"risk_gate": "REJECT"}])
+def test_etf_daily_check_routes_to_digest_unless_independent_fault(routing, monkeypatch, locale, fault):
+    from notifications.telegram import build_translator
+    from us_equity_strategies.account_sizing import append_account_size_warning
+
+    monkeypatch.setenv("QSL_ROUTINE_NOTIFICATION_MODE", "daily_digest")
+    execution = {"strategy_profile": "global_etf_rotation", "execution_status": "no_action",
+                 "snapshot_guard_decision": "proceed", "actionable": False, "no_op_reason": "proceed",
+                 "risk_flags": ("no_execute", "risk_gate:passed"), "risk_gate": "APPROVE",
+                 "small_account_warning": True, "portfolio_total_equity": 100,
+                 "min_recommended_equity_usd": 200}
+    translate = build_translator(locale)
+    execution["signal_description"] = append_account_size_warning(translate("daily_check"), execution, translator=translate)
+    execution.update(fault or {})
+    original = deepcopy(execution)
+    assert (adapter._kind(execution) == "routine_cycle") is (fault is None)
+    _, sent = cycle(execution)
+    assert bool(sent) is (fault is not None)
+    payload = next(iter(routing[1].rows.values()))[1]
+    assert {event["event_kind"] for row in payload["runs"] for event in row["notification_events"]} == {
+        adapter._kind(execution)
+    }
+    assert execution == original
+
+
+def test_etf_no_execute_without_positive_daily_check_remains_blocked():
+    assert adapter._kind({"strategy_profile": "global_etf_rotation", "execution_status": "no_action",
+                          "snapshot_guard_decision": "proceed", "actionable": False,
+                          "risk_flags": ("no_execute",), "signal_description": "unknown decision"}) == "blocked_run"
+
+
 @pytest.mark.parametrize("flag", ["false", "true"])
 @pytest.mark.parametrize("locale", ["zh", "en"])
 def test_heartbeat_preserves_redacted_diagnostics_and_original_block(routing, monkeypatch, flag, locale):
