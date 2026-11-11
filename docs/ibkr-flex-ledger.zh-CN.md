@@ -55,6 +55,9 @@ null；存在的 section 按已识别原生记录计数，可为 0。未知子�
 不证明收益可算、数据完整或账户已发布。该路径不调用业务投影 POST，不保存 XML、
 领取句柄或原生账户 ID，也不改变原期间收益发布器及调度。
 
+报表账户集合通过校验、但某条记录的账号不一致时，完整诊断仍失败。错误回执可另带
+`cash_report_accounts`，逐户核对现金段账号、期间和原生 USD 行，只报告固定槽、日期和期末现金可用状态。
+
 继续使用原 `scripts.diagnose_ibkr_flex_ledger`，不经过期间收益发布器，也不要求 QRS
 target、source binding 或同步令牌。无参数调用保持原来的一次生成、一次领取；默认
 `IBKR_FLEX_DIAGNOSTIC_ENABLED` 未精确设为 `true` 时仍不请求。

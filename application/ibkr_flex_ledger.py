@@ -89,7 +89,9 @@ CASH_REPORT_MISSING_CODES = frozenset({"cash_report_structure_ambiguous", "usd_c
     "endingSettledCash_missing_or_invalid"})
 
 
-def _period_cash_facts(statement: ElementTree.Element, *, source_ref: str, period: Mapping[str, Any]) -> dict[str, Any]:
+def build_flex_period_cash_facts(
+    statement: ElementTree.Element, *, source_ref: str, period: Mapping[str, Any]
+) -> dict[str, Any]:
     """Private native period-end cash, never a current spending balance."""
     account = statement.get("accountId", "").strip()
     result = {"schema_version": "ibkr.flex_period_cash.v1", "status": "incomplete",
@@ -638,7 +640,7 @@ def build_flex_ledger(
         "cashflow_source_diagnostic": _cashflow_source_diagnostic(statement),
         "nav_source_diagnostic": _nav_source_diagnostic(statement),
         "cash_report_source_diagnostic": _cash_report_source_diagnostic(statement),
-        "period_cash_facts": _period_cash_facts(statement, source_ref=report.content_sha256, period=period),
+        "period_cash_facts": build_flex_period_cash_facts(statement, source_ref=report.content_sha256, period=period),
         "account_ids": [account_id],
         "currency": declared_currency,
         "account_base_currency": base_currency,

@@ -480,16 +480,23 @@ def diagnose_configured_flex_coverage(
         ledger = None
         if statement is not None:
             # Reuse Activity-report, unique-account and cross-account row checks.
-            ledger = build_flex_ledger(report, expected_account_ids=(account,),
-                                      allowed_report_account_ids=allowed)
-            native_rows = set(CONFIGURED_COVERAGE_SECTIONS) | {
-                name for name in CONFIGURED_COVERAGE_SECTIONS.values() if name is not None}
-            if any(row.get("accountId", "").strip() not in {"", account}
-                   for row in statement.iter() if row.tag in native_rows):
-                error = FlexSourceError("IBKR Flex statement row account scope mismatch",
-                                        endpoint="GetStatement", category="scope")
-                error.safe_diagnostic["nested_account_mismatch"] = True
-                raise error
+            try:
+                ledger = build_flex_ledger(report, expected_account_ids=(account,),
+                                           allowed_report_account_ids=allowed)
+                native_rows = set(CONFIGURED_COVERAGE_SECTIONS) | {
+                    name for name in CONFIGURED_COVERAGE_SECTIONS.values() if name is not None}
+                if any(row.get("accountId", "").strip() not in {"", account}
+                       for row in statement.iter() if row.tag in native_rows):
+                    error = FlexSourceError("IBKR Flex statement row account scope mismatch",
+                                            endpoint="GetStatement", category="scope")
+                    error.safe_diagnostic["nested_account_mismatch"] = True
+                    raise error
+            except FlexSourceError as error:
+                if error.safe_diagnostic.get("nested_account_mismatch") is True:
+                    error.safe_diagnostic["cash_report_accounts"] = _configured_cash_accounts(
+                        report, statements, configured_account_ids,
+                    )
+                raise
             period = {key: ledger["period"][key] for key in ("from", "to")}
             if period["from"] and period["to"] and period["from"] > period["to"]:
                 period = {"from": None, "to": None}
@@ -514,3 +521,28 @@ def diagnose_configured_flex_coverage(
     return {"schema_version": "ibkr_flex_configured_coverage.v1", "status": "observed_source_shape",
             "source_ref": report.content_sha256, "period": accounts["primary"]["period"],
             "coverage": "not_evaluated", "accounts": accounts}
+
+
+def _configured_cash_accounts(report, statements, configured_account_ids):
+    """Check only CashReport after the report-level account scope has been verified."""
+    from application.ibkr_flex_executions import _day
+    from application.ibkr_flex_ledger import build_flex_period_cash_facts
+
+    accounts = {}
+    for slot in CONFIGURED_COVERAGE_SLOTS:
+        account = configured_account_ids[slot]
+        statement = statements.get(account)
+        period = {"from": None, "to": None}
+        facts = {"status": "incomplete", "missing": ["statement_missing"]}
+        if statement is not None:
+            period = {key: _day(statement.get(key + "Date")) for key in period}
+            if period["from"] and period["to"] and period["from"] > period["to"]:
+                period = {"from": None, "to": None}
+            if any(row.get("accountId", "").strip() not in {"", account}
+                   for section in statement.findall("CashReport") for row in section.iter()):
+                facts["missing"] = ["cash_row_account_unverified"]
+            else:
+                cash = build_flex_period_cash_facts(statement, source_ref=report.content_sha256, period=period)
+                facts = {key: cash[key] for key in ("status", "missing")}
+        accounts[slot] = {"statement_present": statement is not None, "period": period, "period_cash": facts}
+    return accounts

@@ -107,6 +107,33 @@ def test_corporate_actions_container_and_row_cannot_cross_account_scope(monkeypa
     assert 'DU000000' not in text
 
 
+def test_scope_failure_preserves_only_independently_verified_cash_sections(monkeypatch, capsys):
+    cash = (
+        b'<CashReport><CashReportCurrency accountId="DU0000002" model="" currency="USD" '
+        b'fromDate="20260101" toDate="20260131" endingCash="7654.9876" endingSettledCash="0"/></CashReport>'
+    )
+    report = REPORT.replace(
+        b'<CashTransactions/>', b'<CashTransactions><CashTransaction accountId="DU0000003"/></CashTransactions>' + cash
+    )
+    status, result, text, session = run(monkeypatch, capsys, report)
+    assert status == 1 and result['nested_account_mismatch']
+    accounts = result['cash_report_accounts']
+    assert accounts['additional-2'] == {
+        'statement_present': True,
+        'period': {'from': '2026-01-01', 'to': '2026-01-31'},
+        'period_cash': {'status': 'available_period_end', 'missing': []},
+    }
+    assert accounts['additional-1']['period_cash']['missing'] == ['statement_missing']
+    assert [name for name, _ in session.calls] == ['SendRequest', 'GetStatement']
+    assert '7654.9876' not in text and 'DU000000' not in text
+
+    wrong_account = cash.replace(b'DU0000002', b'DU0000003')
+    _, result, _, _ = run(monkeypatch, capsys, report.replace(cash, wrong_account))
+    assert result['cash_report_accounts']['additional-2']['period_cash'] == {
+        'status': 'incomplete', 'missing': ['cash_row_account_unverified'],
+    }
+
+
 @pytest.mark.parametrize('change', ['unknown', 'duplicate', 'primary_absent', 'row_mismatch', 'wrong_type'])
 def test_report_scope_and_type_never_relaxed(monkeypatch, capsys, change):
     report = REPORT
@@ -119,6 +146,8 @@ def test_report_scope_and_type_never_relaxed(monkeypatch, capsys, change):
     assert status == 1 and out['missing'] == ['flex_import_failed']
     assert [name for name, _ in session.calls] == ['SendRequest', 'GetStatement']
     assert 'DU000000' not in text and 'PRIVATE_CANARY' not in text
+    if change in {'unknown', 'duplicate', 'primary_absent', 'wrong_type'}:
+        assert 'cash_report_accounts' not in out
 
 
 def test_pending_only_collects_original_request(monkeypatch, capsys):
