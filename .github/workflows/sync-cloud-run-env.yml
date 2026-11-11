@@ -4,14 +4,16 @@ run-name: ${{ inputs.runtime_switch_only && format('Runtime switch {0}', inputs.
 on:
   workflow_dispatch:
     inputs:
-      incident_memory_repair:
-        description: "Memory-only repair for the confirmed live Cloud Run incident."
+      live_service_maintenance:
+        description: "Choose the incident memory repair or primary routine-order routing."
         type: choice
         default: disabled
         options:
           - disabled
           - validate
           - apply
+          - validate-order-digest
+          - apply-order-digest
       dry_run:
         description: "Validate the selected deployment plan without build, cloud writes, traffic or Scheduler changes; false requires separate execution approval."
         required: true
@@ -142,7 +144,7 @@ jobs:
       id-token: write
     uses: ./.github/workflows/sync-cloud-run-env-protected.yml
     with:
-      incident_memory_repair: ${{ inputs.incident_memory_repair }}
+      live_service_maintenance: ${{ inputs.live_service_maintenance }}
       dry_run: ${{ inputs.dry_run }}
       notification_marker_mode: ${{ inputs.notification_marker_mode }}
       approve_marker_probe: ${{ inputs.approve_marker_probe }}

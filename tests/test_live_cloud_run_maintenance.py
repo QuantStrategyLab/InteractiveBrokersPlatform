@@ -3,20 +3,26 @@ import json
 
 import pytest
 
-from scripts.repair_cloud_run_memory import PROFILE, repair
+from scripts.maintain_live_cloud_run import PRIMARY_PROFILE, PROFILE, repair
 
 PATH = "projects/example/locations/example/services/example-service"
 OLD = "example-service-old"
 NEW = "example-service-new"
 
 
-def simulator(*, drift=False):
-    target = {"execution_mode": "live", "dry_run_only": False, "strategy_profile": PROFILE,
+def simulator(*, drift=False, order_digest=False):
+    target = {"execution_mode": "live", "dry_run_only": False, "strategy_profile": PRIMARY_PROFILE if order_digest else PROFILE,
               "service_name": "example-service"}
     container = {"image": "example.invalid/image@sha256:" + "1" * 64,
                  "env": [{"name": "RUNTIME_TARGET_ENABLED", "value": "true"},
                          {"name": "RUNTIME_TARGET_JSON", "value": json.dumps(target)}],
                  "resources": {"limits": {"memory": "512Mi", "cpu": "1"}}}
+    if order_digest:
+        route_env = {"IBKR_UNIFIED_NOTIFICATION_ENABLED": "true", "QSL_ROUTINE_NOTIFICATION_MODE": "daily_digest",
+                     "QSL_DIGEST_ROUTINE_ORDERS": "false", "DIGEST_CANDIDATES_GCS_URI": "gs://test/digest",
+                     "DIGEST_STORE_TARGET": "test-slot", "DIGEST_TARGET_ID": "test-target",
+                     "DIGEST_OPAQUE_ACCOUNT_UID": "test-account", "IBKR_NOTIFICATION_MARKER_GCS_URI": "gs://test/marker"}
+        container["env"].extend({"name": key, "value": value} for key, value in route_env.items())
     template = {"containers": [container], "serviceAccount": "example"}
     route = {"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION", "percent": 100, "revision": OLD}
     service = {"template": template, "traffic": [route], "trafficStatuses": [{"revision": OLD, "percent": 100}],
@@ -78,3 +84,14 @@ def test_candidate_configuration_drift_stops_before_changing_traffic():
     with pytest.raises(ValueError, match="revision_configuration_mismatch"):
         repair(request, PATH, OLD, apply=True)
     assert len(writes) == 2
+
+
+def test_primary_order_routing_changes_only_its_existing_digest_switch():
+    request, writes = simulator(order_digest=True)
+    repair(request, PATH, order_digest=True, apply=True)
+    before = request(PATH + "/revisions/" + OLD)["containers"][0]
+    before.pop("name")
+    entry = next(row for row in before["env"] if row["name"] == "QSL_DIGEST_ROUTINE_ORDERS")
+    assert entry["value"] == "false"
+    entry["value"] = "true"
+    assert writes[1][1]["template"]["containers"] == [before]

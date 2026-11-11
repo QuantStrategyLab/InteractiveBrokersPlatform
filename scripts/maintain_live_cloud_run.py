@@ -1,4 +1,4 @@
-"""Apply the confirmed memory-only repair through the protected deployment job."""
+"""Apply one bounded live maintenance change through the protected deployment job."""
 from __future__ import annotations
 
 import copy
@@ -14,6 +14,7 @@ from scripts.summarize_historical_execution_cloud import resolve_private_service
 
 API = "https://run.googleapis.com/v2/"
 PROFILE = "soxl_soxx_trend_income"
+PRIMARY_PROFILE = "tqqq_growth_income"
 INCIDENT = (
     'resource.type="cloud_run_revision" AND timestamp>="2026-11-10T20:45:00Z" '
     'AND timestamp<"2026-11-10T20:50:00Z" AND severity>=ERROR'
@@ -61,7 +62,7 @@ def wait_for_operation(request, operation):
     require(operation.get("done") and not operation.get("error"), "cloud_run_operation_failed")
 
 
-def repair(request, path, incident_revision, apply=False):
+def repair(request, path, incident_revision=None, *, order_digest=False, apply=False):
     service = request(path)
     route, = service["traffic"]
     active, = [row for row in service["trafficStatuses"] if row.get("percent", 0) > 0]
@@ -70,21 +71,36 @@ def repair(request, path, incident_revision, apply=False):
     require(route["percent"] == active["percent"] == 100 and not route.get("tag") and not active.get("tag"),
             "traffic_not_single_untagged_revision")
     old_path = revision_path(path, active["revision"])
-    require(old_path == revision_path(path, route["revision"]) == revision_path(path, incident_revision),
-            "incident_revision_no_longer_serving")
+    require(old_path == revision_path(path, route["revision"]), "traffic_readback_mismatch")
+    if not order_digest:
+        require(incident_revision and old_path == revision_path(path, incident_revision),
+                "incident_revision_no_longer_serving")
     old = request(old_path)
     template = copy.deepcopy(service["template"])
     verify_configuration(template, old)
     container, = template["containers"]
     require(re.search(r"@sha256:[a-f0-9]{64}$", container["image"]), "serving_image_not_immutable")
-    env = {row["name"]: row.get("value") for row in container["env"]}
-    target = json.loads(env["RUNTIME_TARGET_JSON"])
-    require(env["RUNTIME_TARGET_ENABLED"] == "true" and target["execution_mode"] == "live"
-            and target["dry_run_only"] is False and target["strategy_profile"] == PROFILE
+    env = {row["name"]: row for row in container["env"]}
+    target = json.loads(env["RUNTIME_TARGET_JSON"]["value"])
+    profile = PRIMARY_PROFILE if order_digest else PROFILE
+    require(env["RUNTIME_TARGET_ENABLED"].get("value") == "true" and target["execution_mode"] == "live"
+            and target["dry_run_only"] is False and target["strategy_profile"] == profile
             and target["service_name"] == path.rsplit("/", 1)[-1], "active_incident_target_mismatch")
-    limits = container["resources"]["limits"]
-    require(limits["memory"] == "512Mi", "incident_memory_limit_changed")
-    limits["memory"] = "1Gi"
+    if order_digest:
+        require(env["IBKR_UNIFIED_NOTIFICATION_ENABLED"].get("value") == "true"
+                and env["QSL_ROUTINE_NOTIFICATION_MODE"].get("value") == "daily_digest",
+                "unified_daily_route_missing")
+        require(all(env.get(key, {}).get("value") for key in (
+            "DIGEST_CANDIDATES_GCS_URI", "DIGEST_STORE_TARGET", "DIGEST_TARGET_ID",
+            "DIGEST_OPAQUE_ACCOUNT_UID", "IBKR_NOTIFICATION_MARKER_GCS_URI",
+        )), "primary_daily_route_binding_missing")
+        key = "QSL_DIGEST_ROUTINE_ORDERS"
+        require(env[key] == {"name": key, "value": "false"}, "routine_order_routing_changed")
+        env[key]["value"] = "true"
+    else:
+        limits = container["resources"]["limits"]
+        require(limits["memory"] == "512Mi", "incident_memory_limit_changed")
+        limits["memory"] = "1Gi"
     template.pop("revision", None)
     body = {"name": path, "etag": service["etag"], "template": template}
     request(path + "?updateMask=template&validateOnly=true", "PATCH", body)
@@ -116,20 +132,25 @@ def repair(request, path, incident_revision, apply=False):
 
 
 def main():
-    mode = os.environ["IBKR_OOM_REPAIR"]
-    require(mode in {"validate", "apply"}, "mode_invalid")
+    mode = os.environ["IBKR_LIVE_SERVICE_MAINTENANCE"]
+    require(mode in {"validate", "apply", "validate-order-digest", "apply-order-digest"}, "mode_invalid")
+    order_digest = mode.endswith("-order-digest")
     project = os.environ["GCP_PROJECT_ID"]
     region = os.environ["CLOUD_RUN_REGION"]
-    name = resolve_private_service(os.environ["CLOUD_RUN_SERVICE_TARGETS_JSON"], PROFILE)
+    name = resolve_private_service(os.environ["CLOUD_RUN_SERVICE_TARGETS_JSON"],
+                                   PRIMARY_PROFILE if order_digest else PROFILE)
     require(all(re.fullmatch(r"[a-z0-9-]+", value) for value in (project, region, name)), "resource_binding_invalid")
-    rows = json.loads(gcloud("logging", "read", INCIDENT + f' AND resource.labels.service_name="{name}"',
-                            "--project=" + project, "--limit=30", "--format=json"))
-    revisions = {
-        row["resource"]["labels"]["revision_name"] for row in rows
-        if row["resource"]["labels"].get("location") == region
-        and MEMORY_ERROR in str(row.get("textPayload") or row.get("jsonPayload") or "")
-    }
-    require(len(revisions) == 1, "confirmed_memory_incident_missing")
+    incident_revision = None
+    if not order_digest:
+        rows = json.loads(gcloud("logging", "read", INCIDENT + f' AND resource.labels.service_name="{name}"',
+                                "--project=" + project, "--limit=30", "--format=json"))
+        revisions = {
+            row["resource"]["labels"]["revision_name"] for row in rows
+            if row["resource"]["labels"].get("location") == region
+            and MEMORY_ERROR in str(row.get("textPayload") or row.get("jsonPayload") or "")
+        }
+        require(len(revisions) == 1, "confirmed_memory_incident_missing")
+        incident_revision = revisions.pop()
     token = gcloud("auth", "print-access-token")
 
     def request(path, method="GET", body=None):
@@ -140,16 +161,17 @@ def main():
         require(not result.get("error"), "cloud_run_api_error")
         return result
 
-    repair(request, f"projects/{project}/locations/{region}/services/{name}", revisions.pop(), apply=mode == "apply")
-    print(json.dumps({"memory_repair_verified": True, "mode": mode, "memory_limit": "1Gi",
-                      "serving_image_preserved": True, "runtime_configuration_preserved": True}))
+    repair(request, f"projects/{project}/locations/{region}/services/{name}", incident_revision,
+           order_digest=order_digest, apply=mode.startswith("apply"))
+    print(json.dumps({"maintenance_verified": True, "mode": mode, "serving_image_preserved": True,
+                      "verified_change": "routine_orders_to_digest" if order_digest else "memory_limit_1Gi"}))
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as error:
-        result = {"memory_repair_verified": False, "error_type": type(error).__name__}
+        result = {"maintenance_verified": False, "error_type": type(error).__name__}
         if isinstance(error, ValueError) and len(error.args) == 1 and re.fullmatch(r"[a-z_]+", str(error)):
             result["reason"] = str(error)
         if isinstance(error, HTTPError):
