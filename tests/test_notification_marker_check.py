@@ -869,7 +869,10 @@ def test_job_etag_conflict_does_not_resubmit_or_cleanup():
 
 def test_workflow_isolation_and_no_private_projection_artifact():
     source = (ROOT / '.github/workflows/sync-cloud-run-env-protected.yml').read_text()
-    assert source.count("inputs.notification_marker_mode == 'disabled'") == 2
+    assert source.count("inputs.notification_marker_mode == 'disabled'") == 3
+    repair = source.split('  live-service-maintenance:\n')[1].split('  sync-cloud-run-env:\n')[0]
+    assert "inputs.notification_marker_mode == 'disabled'" in repair
+    assert "environment: ibkr-live" in repair
     read = source.split('  notification-binding-read:\n')[1].split('  notification-marker-probe:\n')[0]
     assert 'id-token:' not in read and 'google-github-actions' not in read
     assert 'path: ${{ runner.temp }}/notification-binding.safe.json' in read
