@@ -234,6 +234,37 @@ def _validated_cash_report(value: object) -> dict[str, Any]:
     }
 
 
+def _validated_cash_report_accounts(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, dict) or set(value) != set(CONFIGURED_COVERAGE_SLOTS):
+        return None
+    accounts = {}
+    for slot in CONFIGURED_COVERAGE_SLOTS:
+        row = value[slot]
+        if not isinstance(row, dict) or type(row.get("statement_present")) is not bool:
+            return None
+        present, period, facts = row["statement_present"], row.get("period"), row.get("period_cash")
+        try:
+            safe_period = {key: date.fromisoformat(period[key]).isoformat() if period[key] is not None else None
+                           for key in ("from", "to")}
+        except (KeyError, TypeError, ValueError):
+            return None
+        if (safe_period != period or (period["from"] and period["to"] and period["from"] > period["to"])
+                or (not present and any(period.values())) or not isinstance(facts, dict)
+                or facts.get("status") not in ("available_period_end", "incomplete")):
+            return None
+        missing = facts.get("missing")
+        allowed = CASH_REPORT_MISSING_CODES if present else {"statement_missing"}
+        if (not isinstance(missing, list)
+                or any(not isinstance(code, str) or code not in allowed for code in missing)
+                or (facts["status"] == "available_period_end") != (not missing)
+                or (not present and missing != ["statement_missing"])
+                or (not missing and not all(period.values()))):
+            return None
+        accounts[slot] = {"statement_present": present, "period": safe_period,
+                          "period_cash": {"status": facts["status"], "missing": sorted(set(missing))}}
+    return accounts
+
+
 def _validated_cashflow_report(value: object) -> dict[str, Any]:
     """Rebuild fixed public field/format counts; never forward dynamic XML keys."""
     invalid = _empty_report(status="error", missing=["flex_cashflow_diagnostic_result_invalid"])
@@ -588,6 +619,14 @@ def main(argv: Sequence[str] = ()) -> int:
     except FlexSourceError as error:
         report = _empty_report(status="error", missing=["flex_import_failed"])
         report.update(_safe_source_failure(error.safe_diagnostic))
+        if coverage and report.get("nested_account_mismatch") is True:
+            accounts = _validated_cash_report_accounts(error.safe_diagnostic.get("cash_report_accounts"))
+            if accounts is not None and (
+                expected_period is None or all(
+                    not row["statement_present"] or row["period"] == expected_period for row in accounts.values()
+                )
+            ):
+                report["cash_report_accounts"] = accounts
     except FlexExecutionsError as error:
         # Only these literal codes belong to this pure diagnostic. No str(error),
         # traceback, class name or native value may enter the public receipt.
