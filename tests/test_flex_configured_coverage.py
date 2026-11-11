@@ -100,6 +100,9 @@ def test_corporate_actions_container_and_row_cannot_cross_account_scope(monkeypa
     report = REPORT.replace(b'<CashTransactions/>', section + b'<CashTransactions/>')
     status, out, text, session = run(monkeypatch, capsys, report)
     assert status == 1 and out['missing'] == ['flex_import_failed']
+    assert out['failure_stage'] == 'verify_report'
+    assert out['source_failure_kind'] == 'scope'
+    assert out['nested_account_mismatch'] is True
     assert [name for name, _ in session.calls] == ['SendRequest', 'GetStatement']
     assert 'DU000000' not in text
 
