@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import time
 from datetime import date, datetime
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from application.ibkr_flex_ledger import build_flex_period_cash_facts
-from application.ibkr_flex_source import _xml_root, verify_report_accounts
+from application.account_facts_target_config import account_selector, parse_additional_target_configs
+from application.ibkr_flex_source import (
+    FlexReportPending, _xml_root, collect_activity_flex_xml, fetch_activity_flex_xml, verify_report_accounts,
+)
 
 _JOB = re.compile(r"projects/[a-z0-9-]+/locations/[a-z0-9-]+/jobs/[a-z0-9-]+")
 _SLOT = re.compile(r"[a-z0-9][a-z0-9_-]{0,40}")
@@ -114,3 +119,43 @@ def publish_digest_cash(report, *, expected_primary, allowed_accounts, job_refs,
                                 if_generation_match=generation, timeout=10, retry=None)
         count += 1
     return count
+
+
+def main():
+    try:
+        env = os.environ
+        primary = account_selector(json.loads(env["IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON"]))
+        if len(primary) != 1 or primary != account_selector(json.loads(env["IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON"])):
+            raise ValueError("digest_cash_primary_invalid")
+        configs = parse_additional_target_configs(env["IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON"])
+        allowed = (*primary, *(value["account_selector"][0] for value in configs.values()))
+        if len(set(allowed)) != 4:
+            raise ValueError("digest_cash_account_scope_mismatch")
+        try:
+            report = fetch_activity_flex_xml(token=env["IBKR_FLEX_TOKEN"], query_id=env["IBKR_FLEX_QUERY_ID"])
+        except FlexReportPending as pending:
+            handle = pending.request
+            for _ in range(5):
+                time.sleep(3)
+                try:
+                    report = collect_activity_flex_xml(handle)
+                    break
+                except FlexReportPending as error:
+                    if error.request != handle:
+                        raise
+            else:
+                raise FlexReportPending(handle) from None
+        count = publish_digest_cash(report, expected_primary=primary, allowed_accounts=allowed,
+                                    job_refs=env["IBKR_FLEX_DIGEST_JOB_REFS"],
+                                    destination=env["DIGEST_CANDIDATES_GCS_URI"])
+        receipt = {"settled_cash_status": "published" if count == 4 else "partial", "settled_cash_accounts": count}
+    except FlexReportPending:
+        receipt = {"settled_cash_status": "flex_pending"}
+    except Exception:
+        receipt = {"settled_cash_status": "read_or_publish_failed"}
+    print(json.dumps(receipt, sort_keys=True))
+    return 0 if receipt["settled_cash_status"] == "published" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
