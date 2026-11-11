@@ -1,0 +1,62 @@
+name: Publish IBKR Digest Settled Cash
+
+on:
+  workflow_dispatch:
+    inputs:
+      read_once:
+        description: Read one configured Flex report and publish private period-end cash
+        type: boolean
+        default: false
+  schedule:
+    # Saturday UTC also collects Friday's completed statement if it was not ready on Friday.
+    - cron: "5 22 * * 1-6"
+
+permissions: {}
+concurrency:
+  group: ibkr-flex-period-return
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      github.repository == 'QuantStrategyLab/InteractiveBrokersPlatform' &&
+      github.ref == 'refs/heads/main' && github.run_attempt == 1 &&
+      (github.event_name == 'schedule' || inputs.read_once) &&
+      vars.IBKR_FLEX_DIGEST_JOB_REFS != '' && vars.IBKR_FLEX_DIGEST_WIF_PROVIDER != '' &&
+      vars.DIGEST_CANDIDATES_GCS_URI != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Require infrastructure variables
+        env:
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${IBKR_DEPLOY_SERVICE_ACCOUNT:-}" ]]; then
+            echo "::error::IBKR_DEPLOY_SERVICE_ACCOUNT is required" >&2
+            exit 2
+          fi
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
+      - run: uv sync --frozen --no-dev
+      - name: Authenticate to the existing digest candidate store
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.IBKR_FLEX_DIGEST_WIF_PROVIDER }}
+          service_account: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+      - name: Generate one Flex report and write bound cash objects
+        run: uv run --no-sync python -m scripts.publish_ibkr_digest_cash
+        env:
+          IBKR_FLEX_TOKEN: ${{ secrets.IBKR_FLEX_TOKEN }}
+          IBKR_FLEX_QUERY_ID: ${{ secrets.IBKR_FLEX_QUERY_ID }}
+          IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON: ${{ secrets.IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON }}
+          IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON }}
+          IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON }}
+          IBKR_FLEX_DIGEST_JOB_REFS: ${{ vars.IBKR_FLEX_DIGEST_JOB_REFS }}
+          DIGEST_CANDIDATES_GCS_URI: ${{ vars.DIGEST_CANDIDATES_GCS_URI }}
