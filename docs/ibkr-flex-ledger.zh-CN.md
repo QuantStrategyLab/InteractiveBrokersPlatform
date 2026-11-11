@@ -49,6 +49,8 @@ additional 配置完整有效，expected 仍必须恰好等于 primary，不新�
 TWR 字段是否存在。账户未出现时日期与 TWR 标记为 null；缺 section 的 record_count 为
 null；存在的 section 按已识别原生记录计数，可为 0。未知子记录另外计数，不输出字段名或值，
 存在未知子记录时不能据此认定该段为空。
+记录内账号与所属报表不一致时，诊断返回 `verify_report` 和 `nested_account_mismatch=true`，
+拒绝整份报表并省略账号与记录内容。
 可选预期期间对每个实际出现的账户校验。输出 `coverage=not_evaluated`，字段存在或记录数
 不证明收益可算、数据完整或账户已发布。该路径不调用业务投影 POST，不保存 XML、
 领取句柄或原生账户 ID，也不改变原期间收益发布器及调度。

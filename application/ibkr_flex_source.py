@@ -486,7 +486,10 @@ def diagnose_configured_flex_coverage(
                 name for name in CONFIGURED_COVERAGE_SECTIONS.values() if name is not None}
             if any(row.get("accountId", "").strip() not in {"", account}
                    for row in statement.iter() if row.tag in native_rows):
-                raise FlexSourceError("IBKR Flex statement row account scope mismatch")
+                error = FlexSourceError("IBKR Flex statement row account scope mismatch",
+                                        endpoint="GetStatement", category="scope")
+                error.safe_diagnostic["nested_account_mismatch"] = True
+                raise error
             period = {key: ledger["period"][key] for key in ("from", "to")}
             if period["from"] and period["to"] and period["from"] > period["to"]:
                 period = {"from": None, "to": None}
