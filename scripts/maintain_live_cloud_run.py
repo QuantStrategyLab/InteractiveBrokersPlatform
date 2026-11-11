@@ -132,6 +132,27 @@ def activate_legacy_digest(request, path, target, container, env, *, apply):
         container["image"] = build_verified_image(container["image"])
 
 
+def release_template(request, path, service, active, active_path, legacy_profile):
+    template = copy.deepcopy(service["template"])
+    prior = None
+    if (legacy_profile == LEGACY_DIGEST_PROFILES["russell"]
+            and template["containers"][0]["image"] != active["containers"][0]["image"]):
+        # Preserve the older, unpromoted image revision. The new candidate
+        # inherits the serving configuration, including its source labels.
+        prior_path = revision_path(path, service["latestCreatedRevision"])
+        require(prior_path != active_path, "legacy_previous_stage_unconfirmed")
+        prior_revision = request(prior_path)
+        verify_configuration(template, prior_revision)
+        prior = (prior_path, prior_revision["uid"])
+        template["containers"][0]["image"] = active["containers"][0]["image"]
+        if "labels" in active:
+            template["labels"] = copy.deepcopy(active["labels"])
+        else:
+            template.pop("labels", None)
+    verify_configuration(template, active)
+    return template, prior
+
+
 def repair(request, path, incident_revision=None, *, order_digest=False, account_digest=False,
            legacy_profile=None, apply=False):
     service = request(path)
@@ -147,8 +168,7 @@ def repair(request, path, incident_revision=None, *, order_digest=False, account
         require(incident_revision and old_path == revision_path(path, incident_revision),
                 "incident_revision_no_longer_serving")
     old = request(old_path)
-    template = copy.deepcopy(service["template"])
-    verify_configuration(template, old)
+    template, prior_stage = release_template(request, path, service, old, old_path, legacy_profile)
     container, = template["containers"]
     require(re.search(r"@sha256:[a-f0-9]{64}$", container["image"]), "serving_image_not_immutable")
     env = {row["name"]: row for row in container["env"]}
@@ -160,7 +180,7 @@ def repair(request, path, incident_revision=None, *, order_digest=False, account
     if legacy_profile:
         activate_legacy_digest(request, path, target, container, env, apply=apply)
         if apply:
-            template["labels"]["qsl-notification-patch"] = "legacy-daily"
+            template.setdefault("labels", {})["qsl-notification-patch"] = "legacy-daily"
     elif account_digest:
         activate_compatible_digest(request, path, target, container, env)
     elif order_digest:
@@ -195,6 +215,8 @@ def repair(request, path, incident_revision=None, *, order_digest=False, account
     ), "candidate_not_ready")
     verify_configuration(template, candidate)
     verify_configuration(staged["template"], candidate)
+    if prior_stage:
+        require(request(prior_stage[0])["uid"] == prior_stage[1], "legacy_previous_stage_missing")
     new_route = {**route, "revision": new_path.rsplit("/", 1)[-1]}
     wait_for_operation(request, request(path + "?updateMask=traffic", "PATCH",
         {"name": path, "etag": staged["etag"], "traffic": [new_route]}))
@@ -203,6 +225,8 @@ def repair(request, path, incident_revision=None, *, order_digest=False, account
     require(current["percent"] == 100 and revision_path(path, current["revision"]) == new_path
             and final["template"] == staged["template"] and final["ingress"] == service["ingress"],
             "promotion_readback_mismatch")
+    if prior_stage:
+        require(request(prior_stage[0])["uid"] == prior_stage[1], "legacy_previous_stage_missing")
 
 
 def main():

@@ -151,3 +151,30 @@ def test_legacy_route_requires_the_same_archive_and_changes_no_trading_fields(mo
         "EXECUTION_REPORT_GCS_URI": archive, "RUNTIME_TARGET_ENABLED": "true",
         "QSL_ROUTINE_NOTIFICATION_MODE": "daily_digest", "QSL_DIGEST_ROUTINE_ORDERS": "true",
     }
+
+
+def test_russell_reuses_serving_settings_and_keeps_the_prior_image_revision():
+    import copy
+    from scripts.maintain_live_cloud_run import LEGACY_DIGEST_PROFILES, release_template
+
+    active = {"containers": [{"image": "old-image", "env": [{"name": "RUNTIME_TARGET_ENABLED", "value": "true"}]}]}
+    staged = copy.deepcopy(active)
+    staged["containers"][0]["image"] = "other-stage-image"
+    staged["labels"] = {"stage": "other"}
+    service = {"template": staged, "latestCreatedRevision": NEW}
+    prior_path = PATH + "/revisions/" + NEW
+
+    def read(path):
+        assert path == prior_path
+        return {**staged, "uid": "prior-stage"}
+
+    template, retained = release_template(
+        read, PATH, service, active, PATH + "/revisions/" + OLD, LEGACY_DIGEST_PROFILES["russell"],
+    )
+    assert template == active
+    assert retained == (prior_path, "prior-stage")
+    assert service["template"]["containers"][0]["image"] == "other-stage-image"
+
+    staged["containers"][0]["env"][0]["value"] = "false"
+    with pytest.raises(ValueError, match="revision_configuration_mismatch"):
+        release_template(read, PATH, service, active, PATH + "/revisions/" + OLD, LEGACY_DIGEST_PROFILES["russell"])
