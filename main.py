@@ -2,16 +2,14 @@
 
 Thin facade over the platform split modules. Public helpers are
 re-exported by explicit name so existing ``import main`` / monkeypatch
-call sites keep working. Mutable process globals resolve through the
-module facade so rebinding inside implementation modules stays visible.
+call sites keep working. A module facade forwards attribute writes to
+the owning implementation module.
 """
 from __future__ import annotations
 
 import sys
 import types
 
-# Reload split modules whenever main is (re)imported so test harnesses
-# that only pop ``main`` still observe fresh env/stubs.
 for _split_module_name in (
     "runtime_wiring",
     "notifications_runtime",
@@ -39,22 +37,41 @@ from runtime_wiring import (
     get_positive_int_env,
     get_non_negative_float_env,
     _env_flag,
+    RUNTIME_SETTINGS,
+    IB_HOST,
+    IB_PORT,
+    IB_CLIENT_ID,
     IB_CONNECT_TIMEOUT_SECONDS,
     IB_CONNECT_ATTEMPTS,
     IB_CONNECT_RETRY_DELAY_SECONDS,
     IB_CLIENT_ID_RETRY_OFFSET,
     IBKR_DRY_RUN_DEADLINE_SECONDS,
     IBKR_DEADLINE_REPORT_GRACE_SECONDS,
+    STRATEGY_PROFILE,
+    STRATEGY_DISPLAY_NAME,
     _normalize_plugin_mounts_strategy,
+    ACCOUNT_GROUP,
+    SERVICE_NAME,
+    ACCOUNT_IDS,
+    PROJECT_ID,
+    EXECUTION_BACKEND,
     QUANTCONNECT_PROJECT_ID,
     QUANTCONNECT_NODE_ID,
+    MARKET,
+    MARKET_CALENDAR,
+    MARKET_CURRENCY,
     MARKET_DATA_SYMBOL_SUFFIX,
     MARKET_EXCHANGE,
+    MARKET_TIMEZONE,
+    STRATEGY_RUNTIME,
     STRATEGY_ENTRYPOINT,
     STRATEGY_SIGNAL_SOURCE,
     STRATEGY_STATUS_ICON,
     SIGNAL_EFFECTIVE_AFTER_TRADING_DAYS,
     FEATURE_RUNTIME_PARAMETERS,
+    STRATEGY_RUNTIME_CONFIG,
+    SAFE_HAVEN,
+    RANKING_POOL,
     CANARY_ASSETS,
     TOP_N,
     SMA_PERIOD,
@@ -65,6 +82,10 @@ from runtime_wiring import (
     FEATURE_RUNTIME_CONFIG_PATH,
     FEATURE_RUNTIME_CONFIG_SOURCE,
     RECONCILIATION_OUTPUT_PATH,
+    PAPER_LIQUIDATE_ONLY,
+    TG_TOKEN,
+    TG_CHAT_ID,
+    NOTIFY_LANG,
     _NOTIFICATION_CHANNEL,
     _NOTIFICATION_WEBHOOK_URL,
     CASH_RESERVE_RATIO,
@@ -77,8 +98,10 @@ from runtime_wiring import (
     HIST_DATA_PACING_SEC,
     SEPARATOR,
     _load_limit_buy_premium_by_symbol,
+    LIMIT_BUY_PREMIUM_BY_SYMBOL,
     t,
     strategy_display_name,
+    RUNTIME_LOG_CONTEXT,
     resolve_reporting_managed_symbols,
     build_strategy_adapters,
     format_market_data_symbol,
@@ -134,6 +157,7 @@ from http_routes import (
     app,
     ensure_event_loop,
     NEW_YORK_TZ,
+    STRATEGY_RUN_LOCK,
     _is_execution_failure,
     log_runtime_event,
     build_execution_report,
@@ -184,22 +208,41 @@ __all__ = [
     'get_positive_int_env',
     'get_non_negative_float_env',
     '_env_flag',
+    'RUNTIME_SETTINGS',
+    'IB_HOST',
+    'IB_PORT',
+    'IB_CLIENT_ID',
     'IB_CONNECT_TIMEOUT_SECONDS',
     'IB_CONNECT_ATTEMPTS',
     'IB_CONNECT_RETRY_DELAY_SECONDS',
     'IB_CLIENT_ID_RETRY_OFFSET',
     'IBKR_DRY_RUN_DEADLINE_SECONDS',
     'IBKR_DEADLINE_REPORT_GRACE_SECONDS',
+    'STRATEGY_PROFILE',
+    'STRATEGY_DISPLAY_NAME',
     '_normalize_plugin_mounts_strategy',
+    'ACCOUNT_GROUP',
+    'SERVICE_NAME',
+    'ACCOUNT_IDS',
+    'PROJECT_ID',
+    'EXECUTION_BACKEND',
     'QUANTCONNECT_PROJECT_ID',
     'QUANTCONNECT_NODE_ID',
+    'MARKET',
+    'MARKET_CALENDAR',
+    'MARKET_CURRENCY',
     'MARKET_DATA_SYMBOL_SUFFIX',
     'MARKET_EXCHANGE',
+    'MARKET_TIMEZONE',
+    'STRATEGY_RUNTIME',
     'STRATEGY_ENTRYPOINT',
     'STRATEGY_SIGNAL_SOURCE',
     'STRATEGY_STATUS_ICON',
     'SIGNAL_EFFECTIVE_AFTER_TRADING_DAYS',
     'FEATURE_RUNTIME_PARAMETERS',
+    'STRATEGY_RUNTIME_CONFIG',
+    'SAFE_HAVEN',
+    'RANKING_POOL',
     'CANARY_ASSETS',
     'TOP_N',
     'SMA_PERIOD',
@@ -210,6 +253,10 @@ __all__ = [
     'FEATURE_RUNTIME_CONFIG_PATH',
     'FEATURE_RUNTIME_CONFIG_SOURCE',
     'RECONCILIATION_OUTPUT_PATH',
+    'PAPER_LIQUIDATE_ONLY',
+    'TG_TOKEN',
+    'TG_CHAT_ID',
+    'NOTIFY_LANG',
     '_NOTIFICATION_CHANNEL',
     '_NOTIFICATION_WEBHOOK_URL',
     'CASH_RESERVE_RATIO',
@@ -222,8 +269,10 @@ __all__ = [
     'HIST_DATA_PACING_SEC',
     'SEPARATOR',
     '_load_limit_buy_premium_by_symbol',
+    'LIMIT_BUY_PREMIUM_BY_SYMBOL',
     't',
     'strategy_display_name',
+    'RUNTIME_LOG_CONTEXT',
     'resolve_reporting_managed_symbols',
     'build_strategy_adapters',
     'format_market_data_symbol',
@@ -246,31 +295,6 @@ __all__ = [
     '_build_notification_delivery_summary',
     'build_account_notification_lines',
     'build_extra_notification_lines',
-    'RUNTIME_SETTINGS',
-    'IB_HOST',
-    'IB_PORT',
-    'IB_CLIENT_ID',
-    'STRATEGY_PROFILE',
-    'STRATEGY_DISPLAY_NAME',
-    'ACCOUNT_GROUP',
-    'SERVICE_NAME',
-    'ACCOUNT_IDS',
-    'PROJECT_ID',
-    'EXECUTION_BACKEND',
-    'MARKET',
-    'MARKET_CALENDAR',
-    'MARKET_CURRENCY',
-    'MARKET_TIMEZONE',
-    'STRATEGY_RUNTIME',
-    'STRATEGY_RUNTIME_CONFIG',
-    'SAFE_HAVEN',
-    'RANKING_POOL',
-    'PAPER_LIQUIDATE_ONLY',
-    'TG_TOKEN',
-    'TG_CHAT_ID',
-    'NOTIFY_LANG',
-    'LIMIT_BUY_PREMIUM_BY_SYMBOL',
-    'RUNTIME_LOG_CONTEXT',
     '_split_env_list',
     'send_tg_message',
     '_platform_notification_prefix',
@@ -295,6 +319,7 @@ __all__ = [
     'app',
     'ensure_event_loop',
     'NEW_YORK_TZ',
+    'STRATEGY_RUN_LOCK',
     '_is_execution_failure',
     'log_runtime_event',
     'build_execution_report',
@@ -330,7 +355,6 @@ __all__ = [
     'handle_live_permission_probe',
     'handle_monitor_dispatch',
     'health',
-    'STRATEGY_RUN_LOCK',
 ]
 
 _IMPL_MODULES = (
@@ -339,36 +363,6 @@ _IMPL_MODULES = (
     _strategy_plugins_runtime,
     _http_routes,
 )
-
-# Keep these off this module's __dict__ so reads see live impl bindings.
-_MUTABLE_PROCESS_GLOBALS = frozenset({
-    'ACCOUNT_GROUP',
-    'ACCOUNT_IDS',
-    'EXECUTION_BACKEND',
-    'IB_CLIENT_ID',
-    'IB_HOST',
-    'IB_PORT',
-    'LIMIT_BUY_PREMIUM_BY_SYMBOL',
-    'MARKET',
-    'MARKET_CALENDAR',
-    'MARKET_CURRENCY',
-    'MARKET_TIMEZONE',
-    'NOTIFY_LANG',
-    'PAPER_LIQUIDATE_ONLY',
-    'PROJECT_ID',
-    'RANKING_POOL',
-    'RUNTIME_LOG_CONTEXT',
-    'RUNTIME_SETTINGS',
-    'SAFE_HAVEN',
-    'SERVICE_NAME',
-    'STRATEGY_DISPLAY_NAME',
-    'STRATEGY_PROFILE',
-    'STRATEGY_RUNTIME',
-    'STRATEGY_RUNTIME_CONFIG',
-    'STRATEGY_RUN_LOCK',
-    'TG_CHAT_ID',
-    'TG_TOKEN',
-})
 
 class _InteractiveBrokersMainFacade(types.ModuleType):
     """Forward attribute writes to the owning implementation module."""
@@ -380,12 +374,6 @@ class _InteractiveBrokersMainFacade(types.ModuleType):
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
     def __setattr__(self, name: str, value):
-        if name in _MUTABLE_PROCESS_GLOBALS:
-            for module in _IMPL_MODULES:
-                if name in module.__dict__:
-                    setattr(module, name, value)
-                    return
-            raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
         super().__setattr__(name, value)
         for module in _IMPL_MODULES:
             if name in module.__dict__:
