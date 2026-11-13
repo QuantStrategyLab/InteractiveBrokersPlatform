@@ -8,7 +8,7 @@ from scripts import build_cloud_run_env_sync_plan as sync_plan
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "sync-cloud-run-env-protected.yml"
-MAIN = ROOT / "main.py"
+RUNTIME_WIRING = ROOT / "runtime_wiring.py"
 
 
 def test_live_gateway_run_deadline_exceeds_cloud_run_timeout() -> None:
@@ -46,7 +46,7 @@ def test_run_deadline_is_plan_scoped_and_warmup_remains_60_seconds() -> None:
 
 def test_precheck_uses_per_service_scheduler_with_bounded_deadline() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    main = MAIN.read_text(encoding="utf-8")
+    runtime_wiring = RUNTIME_WIRING.read_text(encoding="utf-8")
 
     assert 'precheck_job_name="${cloud_run_service%-service}-precheck-scheduler"' in workflow
     assert 'precheck_uri="${service_url}/dry-run"' in workflow
@@ -64,8 +64,14 @@ def test_precheck_uses_per_service_scheduler_with_bounded_deadline() -> None:
     assert 'monitor_job_name="interactive-brokers-monitor-dispatcher-scheduler"' not in workflow
     assert 'shared_env_pairs+=("IBKR_MONITOR_DISPATCH_TARGETS_JSON=' not in workflow
 
-    strategy_deadline = re.search(r'IBKR_DRY_RUN_DEADLINE_SECONDS = get_positive_int_env\([^,]+, (\d+)\)', main)
-    report_grace = re.search(r'IBKR_DEADLINE_REPORT_GRACE_SECONDS = get_positive_int_env\([^,]+, (\d+)\)', main)
+    strategy_deadline = re.search(
+        r'IBKR_DRY_RUN_DEADLINE_SECONDS = get_positive_int_env\([^,]+, (\d+)\)',
+        runtime_wiring,
+    )
+    report_grace = re.search(
+        r'IBKR_DEADLINE_REPORT_GRACE_SECONDS = get_positive_int_env\([^,]+, (\d+)\)',
+        runtime_wiring,
+    )
     assert strategy_deadline is not None
     assert report_grace is not None
     assert 120 > int(strategy_deadline.group(1)) + int(report_grace.group(1))

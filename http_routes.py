@@ -33,6 +33,23 @@ class _MainModuleProxy:
 
 main = _MainModuleProxy()
 
+def _runtime_entrypoint_module():
+    """Return the main facade module; never fall back to this route module."""
+    for key in ("main", "__main__"):
+        mod = sys.modules.get(key)
+        if mod is None:
+            continue
+        if getattr(mod, "__name__", None) in {
+            "http_routes",
+            "runtime_wiring",
+            "notifications_runtime",
+            "strategy_plugins_runtime",
+        }:
+            continue
+        return mod
+    raise RuntimeError("main facade module is not loaded")
+
+
 import hashlib
 import json
 import importlib
@@ -444,7 +461,7 @@ def _handle_request(*, dry_run_only_override: bool | None=None, response_body: s
             from application.settlement_reporting import publish_settlement_notices, settlement_candidate, settlement_receipt_summary
             from notifications.unified_adapter import event_for, persist_candidate
             import sys
-            settlement_store = runtime_settlement_store(sys.modules.get("main") or sys.modules.get("__main__") or sys.modules[__name__])
+            settlement_store = runtime_settlement_store(_runtime_entrypoint_module())
             settlement_observation = settlement_summary(settlement_store)
             publish_settlement_notices(settlement_store, settlement_observation, send=main.send_tg_message, locale=main.NOTIFY_LANG, publish_candidate=lambda row: settlement_candidate(row, event_factory=event_for, persist=persist_candidate))
         report_summary = main._build_cycle_report_summary(cycle_result, execution_summary, reconciliation_record, dry_run=bool(report.get('dry_run')))
@@ -602,7 +619,7 @@ def handle_probe():
 def handle_order_settlement():
     from application.settlement_route import handle_settle
     import sys
-    return handle_settle(sys.modules.get("main") or sys.modules.get("__main__") or sys.modules[__name__])
+    return handle_settle(_runtime_entrypoint_module())
 
 @app.route('/reconcile', methods=['POST'])
 def handle_reconciliation():
