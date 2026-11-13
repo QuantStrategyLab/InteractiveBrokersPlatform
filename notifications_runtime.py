@@ -12,13 +12,22 @@ class _MainModuleProxy:
     """Prefer ``main.<name>`` (facade-aware); fall back during module import."""
 
     def __getattr__(self, name):
-        main_mod = sys.modules.get("main")
-        if main_mod is not None:
-            # Use getattr so ModuleType facades can resolve mutable globals.
+        for key in ("main", "__main__"):
+            main_mod = sys.modules.get(key)
+            if main_mod is None:
+                continue
+            if getattr(main_mod, "__name__", None) in {
+                "http_routes",
+                "runtime_wiring",
+                "notifications_runtime",
+                "strategy_plugins_runtime",
+            }:
+                continue
             try:
+                # Use getattr so ModuleType facades can resolve mutable globals.
                 return getattr(main_mod, name)
             except AttributeError:
-                pass
+                continue
         return getattr(sys.modules[_FALLBACK_MODULE_NAME], name)
 
 
