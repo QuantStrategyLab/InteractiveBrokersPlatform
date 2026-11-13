@@ -164,6 +164,14 @@ def persist_candidate(fact, *, actually_ran=True, dry_run=False, state_store=Non
                           **({"block_reason": block_reason} if block_reason else {})}
         if account_snapshot is not None:
             previous_snapshot = (prior or {}).get("account_snapshot", account_snapshot)
+            empty_stock = {"holdings_scope": "stocks_only", "holdings": [], "holdings_complete": True}
+            for enriched, legacy in ((account_snapshot, previous_snapshot), (previous_snapshot, account_snapshot)):
+                # The old archive projection dropped this explicit empty list.
+                if (isinstance(enriched, dict)
+                        and all(enriched.get(key) == value for key, value in empty_stock.items())
+                        and legacy == {key: value for key, value in enriched.items() if key not in empty_stock}):
+                    previous_snapshot = account_snapshot = enriched
+                    break
             record["account_snapshot"] = account_snapshot if previous_snapshot == account_snapshot else None
         events[fact["dedupe_key"]] = record
         changed = events != old["events"]
@@ -910,6 +918,9 @@ def _archived_account_snapshot(report, selector, started, now):
             {"symbol": row["symbol"], "quantity": float(row["quantity"]), "asset_type": "stock"}
             for row in positions
         ])
+    elif positions == []:
+        # The account-facts projector admits an empty list only with explicit stock coverage.
+        snapshot.update(holdings_scope=POSITIONS_SCOPE, holdings=[], holdings_complete=True)
     return snapshot if len(snapshot) > 1 else None
 
 
