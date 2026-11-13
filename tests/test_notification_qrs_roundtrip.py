@@ -50,7 +50,7 @@ def archive_report(run, orders=()):
     return source
 
 
-def export_archive(monkeypatch, reports, *, seed_unknown=False, target=TARGET):
+def export_archive(monkeypatch, reports, *, seed_unknown=False, target=TARGET, replay=None):
     state, candidates = StateStore(), CandidateStore()
     monkeypatch.setattr(adapter, "_state_store", lambda env=None: state)
     monkeypatch.setattr(adapter, "GCSCandidateStore", lambda *args, **kwargs: candidates)
@@ -72,6 +72,8 @@ def export_archive(monkeypatch, reports, *, seed_unknown=False, target=TARGET):
     monkeypatch.setenv(adapter.FLAG, "true")
     for key, value in env.items():
         monkeypatch.setenv(key, value)
+    if replay:
+        adapter.persist_archived_reports([replay], env, now=NOW + timedelta(hours=2, minutes=21))
     if reports[0]["summary"]["execution_status"] == "completed":
         assert adapter.publish_monitor(kind="healthy_heartbeat", report=reports[0],
             now=NOW + timedelta(hours=2, minutes=21), send=lambda: pytest.fail("healthy monitor must not send"))
@@ -137,6 +139,34 @@ def test_archive_exports_only_in_run_snapshots_for_the_bound_account(qrs, monkey
         }]}
     else:
         assert "account_daily_facts" not in rows[0]
+
+
+@pytest.mark.parametrize("complete", [True, False])
+def test_archive_retains_empty_stock_inventory_only_with_explicit_coverage(qrs, monkeypatch, tmp_path, complete):
+    source, target = archive_snapshot_report("U0000001")
+    source["summary"]["account_facts"].update(broker_reported_positions=[],
+                                            broker_reported_positions_complete=complete)
+    payload = export_archive(monkeypatch, [source], seed_unknown=True, target=target)
+    rows, _ = intake(qrs, tmp_path, payload)
+    snapshot, = rows[0]["account_daily_facts"]["snapshots"]
+    assert snapshot["equity"] == 125.5
+    if complete:
+        assert snapshot["holdings"] == [] and snapshot["holdings_scope"] == "stocks_only"
+        assert snapshot["holdings_complete"] is True
+    else:
+        assert "holdings" not in snapshot and "holdings_complete" not in snapshot
+
+
+def test_empty_stock_snapshot_can_enrich_legacy_archive_observation(qrs, monkeypatch, tmp_path):
+    source, target = archive_snapshot_report("U0000001")
+    source["summary"]["account_facts"]["broker_reported_positions"] = []
+    enriched = deepcopy(source)
+    enriched["summary"]["account_facts"]["broker_reported_positions_complete"] = True
+    latest = export_archive(monkeypatch, [source], seed_unknown=True, target=target, replay=enriched)
+    rows, _ = intake(qrs, tmp_path, latest)
+    assert len(rows) == 1
+    assert rows[0]["order_count"] == 0
+    assert rows[0]["account_daily_facts"]["snapshots"][0]["holdings"] == []
 
 
 def test_archive_snapshot_reaches_the_scheduled_account_renderer(monkeypatch):
