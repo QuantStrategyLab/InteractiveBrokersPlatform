@@ -98,3 +98,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). AI assistants and maintainers follow [AG
 See [LICENSE](LICENSE).
 
 Display/notification naming configuration: [display names](docs/display-names.md).
+
+Telegram delivery uses QPK notification intents and redacted receipts. Runtime
+entrypoints install shared log and stream redaction. Environment-backed bot
+routes resolve credentials only in QPK delivery; existing injected or in-memory
+credentials use QPK's compatibility sender, with no temporary environment mutation.
+Provider errors and credential-bearing request data are excluded from reports.

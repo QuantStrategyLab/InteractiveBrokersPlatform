@@ -427,6 +427,9 @@ def test_send_telegram_message_breaks_market_symbol_auto_links():
         status_code = 200
         text = ""
 
+        def json(self):
+            return {"ok": True}
+
     class FakeRequests:
         @staticmethod
         def post(*args, **kwargs):

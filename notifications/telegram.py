@@ -534,38 +534,12 @@ def _safe_telegram_error_text(value, *, token=None, max_chars=300):
     return text
 
 
-def send_telegram_message(
-    message,
-    *,
-    token,
-    chat_id,
-    requests_module,
-    printer=print,
-):
+def send_telegram_message(message, *, token, chat_id, requests_module, printer=print):
     if not token or not chat_id:
         return False
-
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    try:
-        printer(f"TG:\n{message}", flush=True)
-        response = requests_module.post(
-            url,
-            json={"chat_id": chat_id, "text": _break_telegram_market_symbol_auto_links(message)},
-            timeout=10,
-        )
-        if not 200 <= response.status_code < 300:
-            printer(
-                "Telegram send failed with status "
-                f"{response.status_code}: {_safe_telegram_error_text(response.text, token=token)}",
-                flush=True,
-            )
-            return False
-        load_payload = getattr(response, "json", None)
-        payload = load_payload() if callable(load_payload) else None
-        if isinstance(payload, dict) and payload.get("ok") is False:
-            printer("Telegram send failed: negative API acknowledgement", flush=True)
-            return False
-    except Exception as exc:
-        printer(f"Telegram send failed: {type(exc).__name__}", flush=True)
-        return False
-    return True
+    from .intent_transport import send_intent
+    receipt = send_intent(message, token=token, chat_id=chat_id,
+                          requests_module=requests_module, timeout=10, printer=printer)
+    if not receipt["ok"] and receipt.get("error_type"):
+        printer(f"Telegram send failed: {receipt['error_type']}", flush=True)
+    return receipt["ok"]
