@@ -12,13 +12,22 @@ class _MainModuleProxy:
     """Prefer ``main.<name>`` (facade-aware); fall back during module import."""
 
     def __getattr__(self, name):
-        main_mod = sys.modules.get("main")
-        if main_mod is not None:
-            # Use getattr so ModuleType facades can resolve mutable globals.
+        for key in ("main", "__main__"):
+            main_mod = sys.modules.get(key)
+            if main_mod is None:
+                continue
+            if getattr(main_mod, "__name__", None) in {
+                "http_routes",
+                "runtime_wiring",
+                "notifications_runtime",
+                "strategy_plugins_runtime",
+            }:
+                continue
             try:
+                # Use getattr so ModuleType facades can resolve mutable globals.
                 return getattr(main_mod, name)
             except AttributeError:
-                pass
+                continue
         return getattr(sys.modules[_FALLBACK_MODULE_NAME], name)
 
 
@@ -435,7 +444,7 @@ def _handle_request(*, dry_run_only_override: bool | None=None, response_body: s
             from application.settlement_reporting import publish_settlement_notices, settlement_candidate, settlement_receipt_summary
             from notifications.unified_adapter import event_for, persist_candidate
             import sys
-            settlement_store = runtime_settlement_store(sys.modules[__name__])
+            settlement_store = runtime_settlement_store(sys.modules.get("main") or sys.modules.get("__main__") or sys.modules[__name__])
             settlement_observation = settlement_summary(settlement_store)
             publish_settlement_notices(settlement_store, settlement_observation, send=main.send_tg_message, locale=main.NOTIFY_LANG, publish_candidate=lambda row: settlement_candidate(row, event_factory=event_for, persist=persist_candidate))
         report_summary = main._build_cycle_report_summary(cycle_result, execution_summary, reconciliation_record, dry_run=bool(report.get('dry_run')))
@@ -593,7 +602,7 @@ def handle_probe():
 def handle_order_settlement():
     from application.settlement_route import handle_settle
     import sys
-    return handle_settle(sys.modules[__name__])
+    return handle_settle(sys.modules.get("main") or sys.modules.get("__main__") or sys.modules[__name__])
 
 @app.route('/reconcile', methods=['POST'])
 def handle_reconciliation():

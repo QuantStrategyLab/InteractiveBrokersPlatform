@@ -191,6 +191,14 @@ def resolve_gce_instance_ip(instance_name, zone):
         print(f'GCE resolve failed for {instance_name}: {exc}, using as hostname', flush=True)
     return instance_name
 
+def _publish_ib_host(value):
+    """Keep the main facade IB_HOST binding aligned with runtime_wiring."""
+    global IB_HOST
+    IB_HOST = value
+    main_module = sys.modules.get("main") or sys.modules.get("__main__")
+    if main_module is not None:
+        main_module.__dict__["IB_HOST"] = value
+
 def get_ib_host():
     global IB_HOST
     if IB_HOST:
@@ -201,7 +209,7 @@ def get_ib_host():
         raise main.IBKRGatewayUnavailableError('GCE Gateway zone is required when a Gateway project is configured')
     if zone:
         host = main.resolve_gce_instance_ip(host, zone)
-    IB_HOST = host
+    _publish_ib_host(host)
     return host
 
 def refresh_ib_host():
@@ -215,14 +223,14 @@ def refresh_ib_host():
     try:
         resolved_host = main.resolve_gce_instance_ip(instance_name, zone)
     except main.IBKRGatewayUnavailableError:
-        IB_HOST = None
+        _publish_ib_host(None)
         raise
     except Exception as exc:
         print(f'GCE host refresh failed for {instance_name}: {exc}', flush=True)
         resolved_host = cached_host or instance_name
     if cached_host and resolved_host == instance_name:
         resolved_host = cached_host
-    IB_HOST = resolved_host
+    _publish_ib_host(resolved_host)
     return resolved_host
 
 def get_ib_gateway_mode():

@@ -31,6 +31,15 @@ def runtime_function(name, **overrides):
                      strategy_display_name="Test strategy", build_translator=build_translator,
                      t=build_translator("zh-CN"))
     namespace.update(overrides)
+
+    class _MainProxy:
+        def __getattr__(self, attr):
+            try:
+                return namespace[attr]
+            except KeyError as exc:
+                raise AttributeError(attr) from exc
+
+    namespace["main"] = _MainProxy()
     exec(compile(ast.Module(body=[function], type_ignores=[]), source_name, "exec"), namespace)
     return namespace[name]
 
@@ -55,7 +64,25 @@ def test_startup_alert_is_compact_localized_and_does_not_embed_provider_text(loc
 def test_actual_cycle_exception_handler_emits_no_provider_text(handler_name):
     source = (Path(__file__).resolve().parents[1] / "http_routes.py").read_text()
     function = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name == handler_name)
-    handler = next(n for n in ast.walk(function) if isinstance(n, ast.ExceptHandler) and isinstance(n.type, ast.Name) and n.type.id == "Exception" and n.name == "exc" and any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == "append_runtime_report_error" for c in ast.walk(n)))
+    def _calls_append_runtime_report_error(node):
+        for call in ast.walk(node):
+            if not isinstance(call, ast.Call):
+                continue
+            func = call.func
+            if isinstance(func, ast.Name) and func.id == "append_runtime_report_error":
+                return True
+            if isinstance(func, ast.Attribute) and func.attr == "append_runtime_report_error":
+                return True
+        return False
+
+    handler = next(
+        n for n in ast.walk(function)
+        if isinstance(n, ast.ExceptHandler)
+        and isinstance(n.type, ast.Name)
+        and n.type.id == "Exception"
+        and n.name == "exc"
+        and _calls_append_runtime_report_error(n)
+    )
     emitted = []
     def record(*args, **kwargs):
         # Exception objects themselves remain private inputs, never rendered outputs.
