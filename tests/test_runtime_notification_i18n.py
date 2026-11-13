@@ -14,7 +14,16 @@ def test_chinese_locale_variants_use_chinese(locale):
 
 
 def runtime_function(name, **overrides):
-    tree = ast.parse((Path(__file__).resolve().parents[1] / "main.py").read_text())
+    root = Path(__file__).resolve().parents[1]
+    source_name = {
+        "_runtime_error_notification_message": "notifications_runtime.py",
+        "_runtime_error_notification_targets": "notifications_runtime.py",
+        "_notify_runtime_error": "notifications_runtime.py",
+        "_notify_runtime_error_legacy": "notifications_runtime.py",
+        "_publish_runtime_failure_notification": "notifications_runtime.py",
+        "_publish_runtime_failure_notification_legacy": "notifications_runtime.py",
+    }.get(name, "main.py")
+    tree = ast.parse((root / source_name).read_text())
     function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name)
     namespace = dict(os=os, request=SimpleNamespace(method="GET", path="/main"),
                      NOTIFY_LANG="zh-CN", SERVICE_NAME="Test service", SECRET_NAME="Test secret alias",
@@ -22,7 +31,7 @@ def runtime_function(name, **overrides):
                      strategy_display_name="Test strategy", build_translator=build_translator,
                      t=build_translator("zh-CN"))
     namespace.update(overrides)
-    exec(compile(ast.Module(body=[function], type_ignores=[]), "main.py", "exec"), namespace)
+    exec(compile(ast.Module(body=[function], type_ignores=[]), source_name, "exec"), namespace)
     return namespace[name]
 
 
@@ -44,7 +53,7 @@ def test_startup_alert_is_compact_localized_and_does_not_embed_provider_text(loc
 
 @pytest.mark.parametrize("handler_name", ['_handle_request'])
 def test_actual_cycle_exception_handler_emits_no_provider_text(handler_name):
-    source = (Path(__file__).resolve().parents[1] / "main.py").read_text()
+    source = (Path(__file__).resolve().parents[1] / "http_routes.py").read_text()
     function = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name == handler_name)
     handler = next(n for n in ast.walk(function) if isinstance(n, ast.ExceptHandler) and isinstance(n.type, ast.Name) and n.type.id == "Exception" and n.name == "exc" and any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == "append_runtime_report_error" for c in ast.walk(n)))
     emitted = []

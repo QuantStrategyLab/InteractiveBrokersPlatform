@@ -1,9 +1,17 @@
-"""Platform HTTP entrypoint with explicit named re-exports."""
+"""InteractiveBrokersPlatform HTTP entrypoint.
 
+Thin facade over the platform split modules. Public helpers are
+re-exported by explicit name so existing ``import main`` / monkeypatch
+call sites keep working. Mutable process globals resolve through the
+module facade so rebinding inside implementation modules stays visible.
+"""
 from __future__ import annotations
 
 import sys
+import types
 
+# Reload split modules whenever main is (re)imported so test harnesses
+# that only pop ``main`` still observe fresh env/stubs.
 for _split_module_name in (
     "runtime_wiring",
     "notifications_runtime",
@@ -13,137 +21,10 @@ for _split_module_name in (
     sys.modules.pop(_split_module_name, None)
 del _split_module_name
 
-import hashlib
-import json
-import importlib
-import os
-import re
-import threading
-import time
-from collections.abc import Mapping
-from dataclasses import replace
-from datetime import date, datetime, timedelta
-from zoneinfo import ZoneInfo
-
-import pandas as pd
-import requests
-from flask import Flask, request
-
-try:
-    from quant_platform_kit.cloud import get_compute_discovery
-except ImportError:
-    get_compute_discovery = None
-
-from application.cycle_result import coerce_strategy_cycle_result
-from application.execution_receipt_adapter import (
-    attach_cycle_execution_receipt,
-    attach_terminal_fallback_execution_receipt,
-)
-from application.broker_reconciliation import (
-    IBKRReconciliationReadError,
-    build_reconciliation_candidate,
-    collect_read_only_reconciliation_observations,
-)
-from application.reconciliation_reporting import (
-    build_persistable_reconciliation_report,
-    normalize_reconciliation_request_id,
-    normalize_reconciliation_scheduler_job_sha256,
-)
-from application.runtime_broker_adapters import (
-    IBKRGatewayUnavailableError,
-    IBKRTradingPermissionError,
-    build_runtime_broker_adapters,
-)
-from application.runtime_composer import build_runtime_composer
-from application.runtime_deadline import (
-    RuntimeDeadlineExceeded,
-    classify_runtime_deadline_qualification_caller,
-    classify_runtime_deadline_stage,
-    enforce_runtime_deadline,
-    recycle_current_process_after_response,
-)
-from application import signal_provenance
-from application.runtime_strategy_adapters import (
-    build_runtime_strategy_adapters,
-    fetch_yfinance_historical_candles,
-)
-from application.rebalance_service import run_strategy_core as run_rebalance_cycle
-from application.signal_snapshot import build_signal_snapshot
-from decision_mapper import map_strategy_decision
-from entrypoints.cloud_run import is_market_open_now
-from runtime_execution_policy import (
-    IBKR_FRACTIONAL_EQUITY_API_UNSUPPORTED_SKIP_REASON,
-    dca_execution_unsupported_reason,
-)
-from notifications.telegram import build_strategy_display_name, build_translator, send_telegram_message
-from notifications.unified_adapter import with_run as with_notification_run
-from quant_platform_kit.notifications.strategy_plugin_alerts import (
-    StrategyPluginAlertStateSettings,
-    build_strategy_plugin_alert_context_label as build_alert_context_label,
-    publish_strategy_plugin_alerts as dispatch_strategy_plugin_alerts,
-)
-from quant_platform_kit.common.runtime_assembly import build_runtime_assembly
-from quant_platform_kit.common.execution_commands import build_execution_command_store_from_env
-from quant_platform_kit.common.strategy_release import build_runtime_loaded_receipt
-from quant_platform_kit.common.runtime_reports import (
-    append_runtime_report_error,
-    build_runtime_report_base,
-    finalize_runtime_report,
-    persist_runtime_report,
-)
-from quant_platform_kit.common.strategy_plugins import (
-    build_strategy_plugin_report_payload,
-    load_configured_strategy_plugin_signals,
-    parse_strategy_plugin_mounts,
-)
-from quant_platform_kit.ibkr import (
-    connect_ib as ibkr_connect_ib,
-    ensure_event_loop as ibkr_ensure_event_loop,
-    fetch_historical_price_candles,
-    fetch_historical_price_series,
-    fetch_quote_snapshots as qpk_fetch_quote_snapshots,
-)
-from application.ibkr_market_data import fetch_quote_snapshots_with_expected_error_summary
-from application.ibkr_order_execution import probe_order_write_access, submit_order_intent
-from application.monitor_dispatcher import (
-    dispatch_due_monitor_targets,
-    load_monitor_targets,
-    lookback_minutes_from_env,
-    max_workers_from_env,
-    timeout_seconds_from_env,
-)
-from application.ibkr_portfolio import (
-    IBKRPortfolioSnapshotUnavailableError,
-    fetch_reconciled_paper_portfolio_snapshot,
-    fetch_portfolio_snapshot,
-)
-from application.execution_service import (
-    _SettledCashDeadlineIB,
-    check_order_submitted as application_check_order_submitted,
-    execute_rebalance as application_execute_rebalance,
-    get_market_prices as application_get_market_prices,
-)
-from application.paper_liquidation_service import execute_paper_liquidation
-from application.paper_execution_admission import resolve_paper_execution_admission_enabled
-from application.paper_execution_command_consumer import (
-    consume_due_paper_execution_commands,
-    resolve_paper_execution_command_consumer_enabled,
-)
-from runtime_logging import build_run_id, emit_runtime_log, extract_cloud_trace
-from runtime_config_support import (
-    EXECUTION_BACKEND_GATEWAY,
-    load_platform_runtime_settings,
-    resolve_ib_gateway_ip_mode,
-)
-from strategy_runtime import load_strategy_runtime
-from application.http_routes import (
-    _dispatch_local_monitor,
-    _handle_monitor_dispatch,
-    _handle_probe,
-    _handle_reconciliation,
-    _handle_live_permission_probe,
-    health_impl,
-)
+import http_routes as _http_routes
+import notifications_runtime as _notifications_runtime
+import runtime_wiring as _runtime_wiring
+import strategy_plugins_runtime as _strategy_plugins_runtime
 
 from runtime_wiring import (
     EXPECTED_EXECUTION_GUARD_REASON_PREFIXES,
@@ -158,41 +39,22 @@ from runtime_wiring import (
     get_positive_int_env,
     get_non_negative_float_env,
     _env_flag,
-    RUNTIME_SETTINGS,
-    IB_HOST,
-    IB_PORT,
-    IB_CLIENT_ID,
     IB_CONNECT_TIMEOUT_SECONDS,
     IB_CONNECT_ATTEMPTS,
     IB_CONNECT_RETRY_DELAY_SECONDS,
     IB_CLIENT_ID_RETRY_OFFSET,
     IBKR_DRY_RUN_DEADLINE_SECONDS,
     IBKR_DEADLINE_REPORT_GRACE_SECONDS,
-    STRATEGY_PROFILE,
-    STRATEGY_DISPLAY_NAME,
     _normalize_plugin_mounts_strategy,
-    ACCOUNT_GROUP,
-    SERVICE_NAME,
-    ACCOUNT_IDS,
-    PROJECT_ID,
-    EXECUTION_BACKEND,
     QUANTCONNECT_PROJECT_ID,
     QUANTCONNECT_NODE_ID,
-    MARKET,
-    MARKET_CALENDAR,
-    MARKET_CURRENCY,
     MARKET_DATA_SYMBOL_SUFFIX,
     MARKET_EXCHANGE,
-    MARKET_TIMEZONE,
-    STRATEGY_RUNTIME,
     STRATEGY_ENTRYPOINT,
     STRATEGY_SIGNAL_SOURCE,
     STRATEGY_STATUS_ICON,
     SIGNAL_EFFECTIVE_AFTER_TRADING_DAYS,
     FEATURE_RUNTIME_PARAMETERS,
-    STRATEGY_RUNTIME_CONFIG,
-    SAFE_HAVEN,
-    RANKING_POOL,
     CANARY_ASSETS,
     TOP_N,
     SMA_PERIOD,
@@ -203,10 +65,6 @@ from runtime_wiring import (
     FEATURE_RUNTIME_CONFIG_PATH,
     FEATURE_RUNTIME_CONFIG_SOURCE,
     RECONCILIATION_OUTPUT_PATH,
-    PAPER_LIQUIDATE_ONLY,
-    TG_TOKEN,
-    TG_CHAT_ID,
-    NOTIFY_LANG,
     _NOTIFICATION_CHANNEL,
     _NOTIFICATION_WEBHOOK_URL,
     CASH_RESERVE_RATIO,
@@ -219,10 +77,8 @@ from runtime_wiring import (
     HIST_DATA_PACING_SEC,
     SEPARATOR,
     _load_limit_buy_premium_by_symbol,
-    LIMIT_BUY_PREMIUM_BY_SYMBOL,
     t,
     strategy_display_name,
-    RUNTIME_LOG_CONTEXT,
     resolve_reporting_managed_symbols,
     build_strategy_adapters,
     format_market_data_symbol,
@@ -278,7 +134,6 @@ from http_routes import (
     app,
     ensure_event_loop,
     NEW_YORK_TZ,
-    STRATEGY_RUN_LOCK,
     _is_execution_failure,
     log_runtime_event,
     build_execution_report,
@@ -317,106 +172,6 @@ from http_routes import (
 )
 
 __all__ = [
-    'EXECUTION_BACKEND_GATEWAY',
-    'Flask',
-    'IBKRGatewayUnavailableError',
-    'IBKRPortfolioSnapshotUnavailableError',
-    'IBKRReconciliationReadError',
-    'IBKRTradingPermissionError',
-    'IBKR_FRACTIONAL_EQUITY_API_UNSUPPORTED_SKIP_REASON',
-    'Mapping',
-    'RuntimeDeadlineExceeded',
-    'StrategyPluginAlertStateSettings',
-    'ZoneInfo',
-    '_SettledCashDeadlineIB',
-    '_dispatch_local_monitor',
-    '_handle_live_permission_probe',
-    '_handle_monitor_dispatch',
-    '_handle_probe',
-    '_handle_reconciliation',
-    'append_runtime_report_error',
-    'application_check_order_submitted',
-    'application_execute_rebalance',
-    'application_get_market_prices',
-    'attach_cycle_execution_receipt',
-    'attach_terminal_fallback_execution_receipt',
-    'build_alert_context_label',
-    'build_execution_command_store_from_env',
-    'build_persistable_reconciliation_report',
-    'build_reconciliation_candidate',
-    'build_run_id',
-    'build_runtime_assembly',
-    'build_runtime_broker_adapters',
-    'build_runtime_composer',
-    'build_runtime_loaded_receipt',
-    'build_runtime_report_base',
-    'build_runtime_strategy_adapters',
-    'build_signal_snapshot',
-    'build_strategy_display_name',
-    'build_strategy_plugin_report_payload',
-    'build_translator',
-    'classify_runtime_deadline_qualification_caller',
-    'classify_runtime_deadline_stage',
-    'coerce_strategy_cycle_result',
-    'collect_read_only_reconciliation_observations',
-    'consume_due_paper_execution_commands',
-    'date',
-    'datetime',
-    'dca_execution_unsupported_reason',
-    'dispatch_due_monitor_targets',
-    'dispatch_strategy_plugin_alerts',
-    'emit_runtime_log',
-    'enforce_runtime_deadline',
-    'execute_paper_liquidation',
-    'extract_cloud_trace',
-    'fetch_historical_price_candles',
-    'fetch_historical_price_series',
-    'fetch_portfolio_snapshot',
-    'fetch_quote_snapshots_with_expected_error_summary',
-    'fetch_reconciled_paper_portfolio_snapshot',
-    'fetch_yfinance_historical_candles',
-    'finalize_runtime_report',
-    'get_compute_discovery',
-    'hashlib',
-    'health_impl',
-    'ibkr_connect_ib',
-    'ibkr_ensure_event_loop',
-    'importlib',
-    'is_market_open_now',
-    'json',
-    'load_configured_strategy_plugin_signals',
-    'load_monitor_targets',
-    'load_platform_runtime_settings',
-    'load_strategy_runtime',
-    'lookback_minutes_from_env',
-    'map_strategy_decision',
-    'max_workers_from_env',
-    'normalize_reconciliation_request_id',
-    'normalize_reconciliation_scheduler_job_sha256',
-    'os',
-    'parse_strategy_plugin_mounts',
-    'pd',
-    'persist_runtime_report',
-    'probe_order_write_access',
-    'qpk_fetch_quote_snapshots',
-    're',
-    'recycle_current_process_after_response',
-    'replace',
-    'request',
-    'requests',
-    'resolve_cycle_channel_and_url',
-    'resolve_ib_gateway_ip_mode',
-    'resolve_paper_execution_admission_enabled',
-    'resolve_paper_execution_command_consumer_enabled',
-    'run_rebalance_cycle',
-    'send_telegram_message',
-    'signal_provenance',
-    'submit_order_intent',
-    'threading',
-    'time',
-    'timedelta',
-    'timeout_seconds_from_env',
-    'with_notification_run',
     'EXPECTED_EXECUTION_GUARD_REASON_PREFIXES',
     'get_project_id',
     'get_ib_gateway_ip_mode',
@@ -429,41 +184,22 @@ __all__ = [
     'get_positive_int_env',
     'get_non_negative_float_env',
     '_env_flag',
-    'RUNTIME_SETTINGS',
-    'IB_HOST',
-    'IB_PORT',
-    'IB_CLIENT_ID',
     'IB_CONNECT_TIMEOUT_SECONDS',
     'IB_CONNECT_ATTEMPTS',
     'IB_CONNECT_RETRY_DELAY_SECONDS',
     'IB_CLIENT_ID_RETRY_OFFSET',
     'IBKR_DRY_RUN_DEADLINE_SECONDS',
     'IBKR_DEADLINE_REPORT_GRACE_SECONDS',
-    'STRATEGY_PROFILE',
-    'STRATEGY_DISPLAY_NAME',
     '_normalize_plugin_mounts_strategy',
-    'ACCOUNT_GROUP',
-    'SERVICE_NAME',
-    'ACCOUNT_IDS',
-    'PROJECT_ID',
-    'EXECUTION_BACKEND',
     'QUANTCONNECT_PROJECT_ID',
     'QUANTCONNECT_NODE_ID',
-    'MARKET',
-    'MARKET_CALENDAR',
-    'MARKET_CURRENCY',
     'MARKET_DATA_SYMBOL_SUFFIX',
     'MARKET_EXCHANGE',
-    'MARKET_TIMEZONE',
-    'STRATEGY_RUNTIME',
     'STRATEGY_ENTRYPOINT',
     'STRATEGY_SIGNAL_SOURCE',
     'STRATEGY_STATUS_ICON',
     'SIGNAL_EFFECTIVE_AFTER_TRADING_DAYS',
     'FEATURE_RUNTIME_PARAMETERS',
-    'STRATEGY_RUNTIME_CONFIG',
-    'SAFE_HAVEN',
-    'RANKING_POOL',
     'CANARY_ASSETS',
     'TOP_N',
     'SMA_PERIOD',
@@ -474,10 +210,6 @@ __all__ = [
     'FEATURE_RUNTIME_CONFIG_PATH',
     'FEATURE_RUNTIME_CONFIG_SOURCE',
     'RECONCILIATION_OUTPUT_PATH',
-    'PAPER_LIQUIDATE_ONLY',
-    'TG_TOKEN',
-    'TG_CHAT_ID',
-    'NOTIFY_LANG',
     '_NOTIFICATION_CHANNEL',
     '_NOTIFICATION_WEBHOOK_URL',
     'CASH_RESERVE_RATIO',
@@ -490,10 +222,8 @@ __all__ = [
     'HIST_DATA_PACING_SEC',
     'SEPARATOR',
     '_load_limit_buy_premium_by_symbol',
-    'LIMIT_BUY_PREMIUM_BY_SYMBOL',
     't',
     'strategy_display_name',
-    'RUNTIME_LOG_CONTEXT',
     'resolve_reporting_managed_symbols',
     'build_strategy_adapters',
     'format_market_data_symbol',
@@ -516,6 +246,31 @@ __all__ = [
     '_build_notification_delivery_summary',
     'build_account_notification_lines',
     'build_extra_notification_lines',
+    'RUNTIME_SETTINGS',
+    'IB_HOST',
+    'IB_PORT',
+    'IB_CLIENT_ID',
+    'STRATEGY_PROFILE',
+    'STRATEGY_DISPLAY_NAME',
+    'ACCOUNT_GROUP',
+    'SERVICE_NAME',
+    'ACCOUNT_IDS',
+    'PROJECT_ID',
+    'EXECUTION_BACKEND',
+    'MARKET',
+    'MARKET_CALENDAR',
+    'MARKET_CURRENCY',
+    'MARKET_TIMEZONE',
+    'STRATEGY_RUNTIME',
+    'STRATEGY_RUNTIME_CONFIG',
+    'SAFE_HAVEN',
+    'RANKING_POOL',
+    'PAPER_LIQUIDATE_ONLY',
+    'TG_TOKEN',
+    'TG_CHAT_ID',
+    'NOTIFY_LANG',
+    'LIMIT_BUY_PREMIUM_BY_SYMBOL',
+    'RUNTIME_LOG_CONTEXT',
     '_split_env_list',
     'send_tg_message',
     '_platform_notification_prefix',
@@ -540,7 +295,6 @@ __all__ = [
     'app',
     'ensure_event_loop',
     'NEW_YORK_TZ',
-    'STRATEGY_RUN_LOCK',
     '_is_execution_failure',
     'log_runtime_event',
     'build_execution_report',
@@ -576,7 +330,68 @@ __all__ = [
     'handle_live_permission_probe',
     'handle_monitor_dispatch',
     'health',
+    'STRATEGY_RUN_LOCK',
 ]
+
+_IMPL_MODULES = (
+    _runtime_wiring,
+    _notifications_runtime,
+    _strategy_plugins_runtime,
+    _http_routes,
+)
+
+# Keep these off this module's __dict__ so reads see live impl bindings.
+_MUTABLE_PROCESS_GLOBALS = frozenset({
+    'ACCOUNT_GROUP',
+    'ACCOUNT_IDS',
+    'EXECUTION_BACKEND',
+    'IB_CLIENT_ID',
+    'IB_HOST',
+    'IB_PORT',
+    'LIMIT_BUY_PREMIUM_BY_SYMBOL',
+    'MARKET',
+    'MARKET_CALENDAR',
+    'MARKET_CURRENCY',
+    'MARKET_TIMEZONE',
+    'NOTIFY_LANG',
+    'PAPER_LIQUIDATE_ONLY',
+    'PROJECT_ID',
+    'RANKING_POOL',
+    'RUNTIME_LOG_CONTEXT',
+    'RUNTIME_SETTINGS',
+    'SAFE_HAVEN',
+    'SERVICE_NAME',
+    'STRATEGY_DISPLAY_NAME',
+    'STRATEGY_PROFILE',
+    'STRATEGY_RUNTIME',
+    'STRATEGY_RUNTIME_CONFIG',
+    'STRATEGY_RUN_LOCK',
+    'TG_CHAT_ID',
+    'TG_TOKEN',
+})
+
+class _InteractiveBrokersMainFacade(types.ModuleType):
+    """Forward attribute writes to the owning implementation module."""
+
+    def __getattr__(self, name: str):
+        for module in _IMPL_MODULES:
+            if name in module.__dict__:
+                return module.__dict__[name]
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    def __setattr__(self, name: str, value):
+        if name in _MUTABLE_PROCESS_GLOBALS:
+            for module in _IMPL_MODULES:
+                if name in module.__dict__:
+                    setattr(module, name, value)
+                    return
+            raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+        super().__setattr__(name, value)
+        for module in _IMPL_MODULES:
+            if name in module.__dict__:
+                setattr(module, name, value)
+
+sys.modules[__name__].__class__ = _InteractiveBrokersMainFacade
 
 if __name__ == "__main__":
     import os

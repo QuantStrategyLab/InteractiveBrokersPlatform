@@ -9,12 +9,16 @@ _FALLBACK_MODULE_NAME = __name__
 
 
 class _MainModuleProxy:
-    """Prefer ``main.<name>`` after re-exports; fall back during module import."""
+    """Prefer ``main.<name>`` (facade-aware); fall back during module import."""
 
     def __getattr__(self, name):
         main_mod = sys.modules.get("main")
-        if main_mod is not None and name in getattr(main_mod, "__dict__", {}):
-            return main_mod.__dict__[name]
+        if main_mod is not None:
+            # Use getattr so ModuleType facades can resolve mutable globals.
+            try:
+                return getattr(main_mod, name)
+            except AttributeError:
+                pass
         return getattr(sys.modules[_FALLBACK_MODULE_NAME], name)
 
 
