@@ -93,9 +93,18 @@ def test_actual_cycle_exception_handler_emits_no_provider_text(handler_name):
                      _publish_runtime_failure_notification=record,
                      _runtime_error_notification_message=runtime_function("_runtime_error_notification_message"),
                      t=build_translator("zh-CN"), traceback=SimpleNamespace(format_exc=lambda: "Traceback PRIVATE_CYCLE_SENTINEL"))
+
+    class _MainProxy:
+        def __getattr__(self, attr):
+            try:
+                return namespace[attr]
+            except KeyError as exc:
+                raise AttributeError(attr) from exc
+
+    namespace["main"] = _MainProxy()
     body = ast.parse("def exercise():\n    pass").body[0]
     body.body = handler.body
-    exec(compile(ast.fix_missing_locations(ast.Module(body=[body], type_ignores=[])), "main.py", "exec"), namespace)
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[body], type_ignores=[])), "http_routes.py", "exec"), namespace)
     assert namespace["exercise"]() == ("Error", 500)
     assert "PRIVATE_CYCLE_SENTINEL" not in repr(emitted)
     assert "Traceback" not in repr(emitted)
