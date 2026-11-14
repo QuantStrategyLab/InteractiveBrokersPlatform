@@ -4,6 +4,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 import json
 import os
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -141,4 +142,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except HTTPError as error:
+        raise SystemExit(f"Metadata API request failed (HTTP {error.code}).") from None
+    except (URLError, OSError, KeyError, ValueError):
+        raise SystemExit("Unable to complete the metadata inventory.") from None
