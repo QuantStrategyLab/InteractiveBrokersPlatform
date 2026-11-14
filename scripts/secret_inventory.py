@@ -62,13 +62,12 @@ def selectors_for_project(project, project_number, token):
     return selectors, regions
 
 
-def classify(versions, aliases, selectors, reads, cutoff, audit_covered):
+def classify(versions, aliases, selectors, reads, cutoff):
     existing = sorted(
         (v for v in versions if v["state"] in {"ENABLED", "DISABLED"}),
         key=lambda v: int(v["name"].rsplit("/", 1)[-1]), reverse=True,
     )
     pinned = set(aliases.values()) | selectors
-    unresolved = selectors - {"latest"} - set(aliases) - {v for v in selectors if v.isdecimal()}
     results = Counter()
     for index, version in enumerate(existing):
         number = version["name"].rsplit("/", 1)[-1]
@@ -76,10 +75,8 @@ def classify(versions, aliases, selectors, reads, cutoff, audit_covered):
             results["retained"] += 1
         elif datetime.fromisoformat(version["createTime"]) >= cutoff:
             results["retained"] += 1
-        elif unresolved or not audit_covered:
-            results["needs_evidence"] += 1
         else:
-            results["review_candidates"] += 1
+            results["needs_evidence"] += 1
     return results
 
 
@@ -102,48 +99,46 @@ def access_audit(project, token, cutoff, secret):
     return reads, False
 
 
+def check_secret_permissions(url, token):
+    forbidden = ["secrets.delete", "secrets.update", "secrets.setIamPolicy", "versions.access", "versions.add",
+                 "versions.disable", "versions.enable", "versions.destroy"]
+    permissions = ["secretmanager." + name for name in forbidden]
+    result = request(url + ":testIamPermissions", token, json.dumps({"permissions": permissions}).encode())
+    if result.get("permissions"):
+        raise RuntimeError("Inventory identity has unexpected Secret Manager permissions.")
+
+
 def main():
     project = os.environ["INVENTORY_PROJECT"]
     token = os.environ["INVENTORY_ACCESS_TOKEN"]
     resource = f"projects/{project}"
-    policy = request(f"https://cloudresourcemanager.googleapis.com/v1/{resource}:getIamPolicy", token, b"{}")
-    audit_enabled = any(
-        config["logType"] == "DATA_READ" and not config.get("exemptedMembers")
-        for entry in policy.get("auditConfigs", ())
-        if entry["service"] in {"secretmanager.googleapis.com", "allServices"}
-        for config in entry.get("auditLogConfigs", ())
-    )
     selectors, regions = selectors_for_project(project, os.environ["INVENTORY_PROJECT_NUMBER"], token)
     base = f"https://secretmanager.googleapis.com/v1/{resource}"
     secrets = list(list_pages(f"{base}/secrets", "secrets", token))
     cutoff = datetime.now(timezone.utc) - timedelta(days=30)
     summary = Counter()
+    incomplete_audits = 0
     for secret in secrets:
         name = secret["name"].rsplit("/", 1)[-1]
         versions_url = "https://secretmanager.googleapis.com/v1/" + secret["name"]
+        check_secret_permissions(versions_url, token)
         versions = list(list_pages(versions_url + "/versions", "versions", token))
-        reads, complete = (Counter(), False)
+        reads = Counter()
         if sum(v["state"] in {"ENABLED", "DISABLED"} for v in versions) > 2:
             reads, complete = access_audit(project, token, cutoff, name)
+            incomplete_audits += not complete
         summary.update(classify(versions, {k: str(v) for k, v in secret.get("versionAliases", {}).items()},
-                                selectors[name], reads, cutoff, audit_enabled and complete))
-    if secrets:
-        permission_names = ["secrets.delete", "versions.access", "versions.add", "versions.disable",
-                            "versions.enable", "versions.destroy"]
-        permissions = ["secretmanager." + name for name in permission_names]
-        result = request("https://secretmanager.googleapis.com/v1/" + secrets[0]["name"] + ":testIamPermissions",
-                         token, json.dumps({"permissions": permissions}).encode())
-        if result.get("permissions"):
-            raise RuntimeError("Inventory identity has unexpected Secret Manager permissions")
+                                selectors[name], reads, cutoff))
     report = {
         "secrets": len(secrets), "cloud_run_regions": len(regions), "retained": summary["retained"],
-        "needs_more_evidence": summary["needs_evidence"], "review_candidates": summary["review_candidates"],
+        "needs_more_evidence": summary["needs_evidence"], "incomplete_audit_queries": incomplete_audits,
+        "secret_permission_checks": len(secrets),
     }
     print(json.dumps(report))
     with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as output:
         output.write("### Secret metadata inventory\n\n")
         output.writelines(f"- {key.replace('_', ' ')}: {value}\n" for key, value in report.items())
-        output.write("\nReview candidates require separate consumer and rollback checks.\n")
+        output.write("\nUnreferenced older versions require independent audit and rollback evidence before retirement.\n")
 
 
 if __name__ == "__main__":
