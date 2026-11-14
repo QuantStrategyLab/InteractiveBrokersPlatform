@@ -2,9 +2,10 @@ import json
 from datetime import date
 
 import pytest
-from google.api_core.exceptions import NotFound, PreconditionFailed
+from google.api_core.exceptions import Forbidden, NotFound, PreconditionFailed
 
 from application.ibkr_flex_source import FlexReport, FlexSourceError
+from scripts import publish_ibkr_digest_cash as publisher
 from scripts.publish_ibkr_digest_cash import _publish_cash_object, project_digest_cash
 
 
@@ -98,8 +99,12 @@ def test_same_statement_date_revision_preserves_both_sources_and_legacy_value():
 
     assert _publish_cash_object(bucket, prefix, slot, old, version1)
     bucket.fail_latest = True
-    with pytest.raises(PreconditionFailed):
+    with pytest.raises(publisher.DigestCashStageError) as raised:
         _publish_cash_object(bucket, prefix, slot, revised, version2)
+    assert publisher._safe_failure(raised.value) == {
+        "settled_cash_status": "failed", "stage": "latest_write",
+        "error_kind": "upstream_request_failed", "http_status": 412,
+    }
     assert json.loads(bucket.objects[latest][1]) == old
 
     bucket.fail_latest = False
@@ -117,3 +122,46 @@ def test_same_statement_date_revision_preserves_both_sources_and_legacy_value():
     older = {**old, "statement_date": "2026-10-14"}
     assert not _publish_cash_object(bucket, prefix, slot, older, "c" * 64)
     assert json.loads(bucket.objects[latest][1]) == revised
+
+
+def test_main_logs_only_safe_flex_fields(monkeypatch, capsys):
+    primary, *_ = BINDINGS
+    for key, value in (
+        ("IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON", json.dumps([primary])),
+        ("IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON", json.dumps([primary])),
+        ("IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS_JSON", "{}"),
+        ("IBKR_FLEX_TOKEN", "private-token"),
+        ("IBKR_FLEX_QUERY_ID", "12345"),
+    ):
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(publisher, "parse_additional_target_configs", lambda _: {
+        slot: {"account_selector": [account]} for account, (slot, _, _) in BINDINGS.items()
+        if account != primary
+    })
+    error = FlexSourceError("private vendor message", endpoint="SendRequest", category="provider", code="1012")
+    error.safe_diagnostic["cash_report_accounts"] = [primary]
+
+    def fail(**kwargs):
+        raise error
+
+    monkeypatch.setattr(publisher, "fetch_activity_flex_xml", fail)
+    assert publisher.main() == 1
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert json.loads(captured.out) == {
+        "settled_cash_status": "failed", "stage": "flex_read",
+        "source_endpoint": "SendRequest", "source_failure_kind": "provider", "provider_error_code": "1012",
+    }
+
+
+def test_archive_permission_failure_is_distinct_from_flex(monkeypatch):
+    def forbidden(self, body, **kwargs):
+        raise Forbidden("private bucket and object name")
+
+    monkeypatch.setattr(_MemoryBlob, "upload_from_string", forbidden)
+    with pytest.raises(publisher.DigestCashStageError) as raised:
+        _publish_cash_object(_MemoryBucket(), "private/prefix", "slot-0", _project(_report())["slot-0"], "a" * 64)
+    assert publisher._safe_failure(raised.value) == {
+        "settled_cash_status": "failed", "stage": "archive_write",
+        "error_kind": "upstream_request_failed", "http_status": 403,
+    }
