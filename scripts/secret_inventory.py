@@ -133,12 +133,14 @@ def main():
         "secrets": len(secrets), "cloud_run_regions": len(regions), "retained": summary["retained"],
         "needs_more_evidence": summary["needs_evidence"], "incomplete_audit_queries": incomplete_audits,
         "secret_permission_checks": len(secrets),
+        "estimated_monthly_savings_ceiling_usd": round(summary["needs_evidence"] * 0.06, 2),
     }
     print(json.dumps(report))
     with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as output:
         output.write("### Secret metadata inventory\n\n")
         output.writelines(f"- {key.replace('_', ' ')}: {value}\n" for key, value in report.items())
-        output.write("\nUnreferenced older versions require independent audit and rollback evidence before retirement.\n")
+        output.write("\nThe savings ceiling assumes one billed location per candidate. "
+                     "Candidates require audit and rollback evidence before retirement.\n")
 
 
 if __name__ == "__main__":
