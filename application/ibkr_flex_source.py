@@ -89,7 +89,9 @@ def _read_response(session: requests.Session, endpoint: str, params: dict[str, s
 
 
 def _xml_root(body: bytes, *, endpoint: str) -> ElementTree.Element:
-    if not body or b"<!DOCTYPE" in body.upper() or b"<!ENTITY" in body.upper():
+    # Reject UTF-16/32 before parsing: their NUL bytes can bypass the ASCII
+    # DTD/entity guard, including during GetStatement before export validation.
+    if not body or b"\x00" in body or b"<!DOCTYPE" in body.upper() or b"<!ENTITY" in body.upper():
         raise FlexSourceError(f"IBKR Flex {endpoint} returned unsupported XML", endpoint=endpoint, category="xml")
     try:
         return ElementTree.fromstring(body)

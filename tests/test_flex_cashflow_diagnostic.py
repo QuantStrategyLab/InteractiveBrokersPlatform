@@ -112,7 +112,7 @@ def test_workflow_keeps_the_existing_read_only_lane():
     assert 'cashflow_source_only:' in text and '--cashflow-read-once' in text
     assert 'group: ibkr-flex-period-return' in text and 'cancel-in-progress: false' in text
     assert 'conflicting_diagnostic_modes' in text
-    for forbidden in ('publish_ibkr_flex_period_return', 'SYNC_TOKEN', 'upload-artifact', 'id-token:', 'gcloud'):
+    for forbidden in ('publish_ibkr_flex_period_return', 'SYNC_TOKEN', 'id-token:', 'gcloud'):
         assert forbidden not in text
 
 
@@ -164,3 +164,9 @@ def test_cli_applies_explicit_period_only_in_new_readonly_mode(monkeypatch, caps
     monkeypatch.setenv('IBKR_FLEX_CASHFLOW_REQUEST_TO', '2026-01-30')
     assert cli.main(('--cashflow-read-once',)) == 1
     assert json.loads(capsys.readouterr().out)['missing'] == ['requested_period_mismatch']
+
+
+def test_legacy_diagnostic_modes_do_not_upload_amounts():
+    text = Path('.github/workflows/diagnose-ibkr-flex-readonly.yml').read_text()
+    assert "success() && inputs.export_amounts && steps.read.outcome == 'success'" in text
+    assert '"$EXECUTION_SOURCE_ONLY" "$EXPORT_AMOUNTS"; do' in text
