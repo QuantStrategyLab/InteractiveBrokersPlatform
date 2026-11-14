@@ -35,3 +35,23 @@ receiver must still authorize that exact source. A deployment does not enroll a
 new receiver source. Named-report/manual recovery keeps the protected configured
 revision; serving resolution rejects named reports. This code does not update
 GitHub settings, receiver bindings or deployment state.
+
+## Grouping scheduled calls
+
+`config/cloud-run-scheduled-dispatch.yaml` is shared by the digest candidate
+group and the account-facts probe group. Deploy each group as a separate
+Workflows resource with its own identity and one Scheduler job. Keep the same
+cron, time zone and zero automatic retries. Set `DISPATCH_TARGETS` through
+deployment configuration. Each entry has a short diagnostic `label` and either
+`kind: job` with a fully qualified `job` resource, or `kind: service` with an
+internal Cloud Run `audience` URL that serves `/probe`. Cloud Run targets keep
+their own runtime identity and configuration.
+
+Use an invoker binding on each exact target, and scope Scheduler's identity
+to starting the corresponding workflow. Requests run in parallel. The
+workflow records dispatch outcomes by label. For a batch job, dispatch
+acceptance must be followed by a successful child execution and candidate
+readback. For a probe, the HTTP result is followed by the normal account-facts
+readback. Observe each group through its next planned window before retiring
+the previous Schedulers. Restore the prior Scheduler definitions if rollback
+is required. Never group live execution or broker session controls here.
