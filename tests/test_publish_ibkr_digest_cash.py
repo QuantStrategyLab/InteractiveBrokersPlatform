@@ -1,9 +1,11 @@
+import json
 from datetime import date
 
 import pytest
+from google.api_core.exceptions import NotFound, PreconditionFailed
 
 from application.ibkr_flex_source import FlexReport, FlexSourceError
-from scripts.publish_ibkr_digest_cash import project_digest_cash
+from scripts.publish_ibkr_digest_cash import _publish_cash_object, project_digest_cash
 
 
 BINDINGS = {f"U000000{i}": (f"slot-{i}", f"opaque-{i}", f"target-{i}") for i in range(4)}
@@ -52,3 +54,66 @@ def test_multiday_report_uses_the_period_end_date():
     result = _project(FlexReport(content_sha256="a" * 64, content=raw))
     assert len(result) == 4
     assert {record["statement_date"] for record in result.values()} == {"2026-10-15"}
+
+
+class _MemoryBucket:
+    def __init__(self):
+        self.objects = {}
+        self.fail_latest = False
+
+    def blob(self, key):
+        return _MemoryBlob(self, key)
+
+
+class _MemoryBlob:
+    def __init__(self, bucket, key):
+        self.bucket = bucket
+        self.key = key
+        self.metadata = None
+
+    def reload(self, **kwargs):
+        if self.key not in self.bucket.objects:
+            raise NotFound("missing")
+        self.generation, _, self.metadata = self.bucket.objects[self.key]
+
+    def download_as_bytes(self, *, if_generation_match, **kwargs):
+        assert self.generation == if_generation_match
+        return self.bucket.objects[self.key][1].encode()
+
+    def upload_from_string(self, body, *, if_generation_match, **kwargs):
+        generation = self.bucket.objects.get(self.key, (0,))[0]
+        if generation != if_generation_match or (self.bucket.fail_latest and "/versions/" not in self.key):
+            raise PreconditionFailed("generation changed")
+        self.bucket.objects[self.key] = (generation + 1, body, self.metadata)
+
+
+def test_same_statement_date_revision_preserves_both_sources_and_legacy_value():
+    bucket = _MemoryBucket()
+    prefix, slot = "test/ibkr/flex-cash", "slot-0"
+    latest = f"{prefix}/{slot}.json"
+    old = _project(_report())[slot]
+    revised = {**old, "amount": "23.40"}
+    bucket.objects[latest] = (7, json.dumps(old), None)
+    version1, version2 = "a" * 64, "b" * 64
+
+    assert _publish_cash_object(bucket, prefix, slot, old, version1)
+    bucket.fail_latest = True
+    with pytest.raises(PreconditionFailed):
+        _publish_cash_object(bucket, prefix, slot, revised, version2)
+    assert json.loads(bucket.objects[latest][1]) == old
+
+    bucket.fail_latest = False
+    assert _publish_cash_object(bucket, prefix, slot, revised, version2)
+    assert _publish_cash_object(bucket, prefix, slot, revised, version2)
+    assert bucket.objects[latest][0] == 9
+    assert bucket.objects[latest][2] == {"flex_source_sha256": version2}
+    assert json.loads(bucket.objects[latest][1]) == revised
+    for version, content in (("legacy-gcs-7", old), (version1, old), (version2, revised)):
+        key = f"{prefix}/versions/{slot}/2026-10-15/{version}.json"
+        generation, body, _ = bucket.objects[key]
+        assert generation == 1
+        assert json.loads(body) == content
+
+    older = {**old, "statement_date": "2026-10-14"}
+    assert not _publish_cash_object(bucket, prefix, slot, older, "c" * 64)
+    assert json.loads(bucket.objects[latest][1]) == revised
