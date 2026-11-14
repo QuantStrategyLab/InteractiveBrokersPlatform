@@ -91,10 +91,15 @@ def access_audit(project, token, cutoff, secret):
     )
     endpoint = "https://logging.googleapis.com/v2/entries:list"
     payload = {"resourceNames": [f"projects/{project}"], "filter": query, "pageSize": 1000}
-    result = request(endpoint, token, json.dumps(payload).encode())
-    reads = Counter(entry["protoPayload"]["resourceName"].rsplit("/", 1)[-1]
-                    for entry in result.get("entries", ()))
-    return reads, not result.get("nextPageToken")
+    reads = Counter()
+    for _ in range(20):
+        result = request(endpoint, token, json.dumps(payload).encode())
+        reads.update(entry["protoPayload"]["resourceName"].rsplit("/", 1)[-1]
+                     for entry in result.get("entries", ()))
+        if not result.get("nextPageToken"):
+            return reads, True
+        payload["pageToken"] = result["nextPageToken"]
+    return reads, False
 
 
 def main():
