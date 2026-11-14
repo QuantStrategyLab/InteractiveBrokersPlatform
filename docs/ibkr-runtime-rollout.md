@@ -814,3 +814,46 @@ checksum belongs in an issue, PR, public log or job summary. A rerun or preexist
 local export directory is refused; concurrent approved reads cannot overwrite
 one another. An interrupted/failed run uploads nothing. Pricing, recovery and
 runtime qualification remain unproved and separately gated.
+
+
+## Inert P01 local authorization and provenance contracts
+
+`scripts/recovery_authorization_gate.py` is an unreferenced, TEST_ONLY local
+simulation. It has no command-line execution entry, workflow caller, transport,
+provider adapter, provisioner, private channel or durable control store. Its only
+accepted schema is `TEST_ONLY_P01_V1`, with literal `<PROJECT_ID>` and visibly
+FAKE identities. It does not implement or assert a supported deployment protocol.
+
+The pure validator compares authority, envelope and fake authenticated-metadata
+observations against separate harness pins. It checks exact repository, workflow,
+ref, run, first attempt, run/workflow/operator/reader/source revisions, image,
+Environment, target, recipient/certificate pin, nonce, generation, request,
+artifact and mode. Digests bind the opaque TEST_ONLY ciphertext, envelope and
+payload separately. Time uses deterministic integer seconds in a fake epoch;
+unknown fields, duplicate JSON keys, non-finite values, absent C0 proofs,
+caller approval booleans, tampering, stale evidence and wrong producers deny.
+Opaque fake ciphertext is not a cryptographic validity or decryption test.
+Even the consistent result is `SIMULATION_ONLY`, with `execution_authorized`,
+`authentic_provenance` and `private_delivery` all false.
+
+`FakeGate` models one intent, terminal unknown results, nonce consumption and
+latest-decision/deadline checks before and after a simulated step. Fake clients
+and reconstructed gate objects share an in-memory `FakeStore`; a thread lock
+models atomic creation within that process only. No cross-process or cross-host
+durability, authenticated issuer, policy enforcement or real restart reliability
+is established. A missing claim, PLAN_ONLY/disabled/superseded decision, expiry,
+clock regression, changed current main/operator or lost intent blocks. Results
+never remove the intent or renew an allowance. This model cannot perform an
+operation or implement compensation.
+
+The installed strict operator==runSHA and main trust contract, traffic/health,
+resourceVersion and single distinct compensation behavior remain unchanged.
+No operator revision is selected or rebound here. Real execution remains blocked
+on appointed configuration provisioner and Environment administrator; target,
+policy and identity ownership proof; authenticated recipient and certificate
+custody; a supported private channel and receipt store; an independently approved
+authentic issuer/control-store protocol; separately approved version selection;
+fresh runtime and budget evidence; and fresh, exact action authorities and
+absolute deadlines. C0 ownership and C2 private-channel prerequisites remain
+unresolved. Offline tests, source publication and merge cannot satisfy them or
+reactivate any historical recovery authority or deadline.
