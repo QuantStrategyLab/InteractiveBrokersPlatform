@@ -20,6 +20,7 @@ _JOB = re.compile(r"projects/[a-z0-9-]+/locations/[a-z0-9-]+/jobs/[a-z0-9-]+")
 _SLOT = re.compile(r"[a-z0-9][a-z0-9_-]{0,40}")
 _AMOUNT = re.compile(r"-?[0-9]+(?:\.[0-9]+)?")
 _SCHEMA = "ibkr_digest_settled_cash.v1"
+_SOURCE_VERSION = "flex_source_sha256"
 
 
 def _bindings(job_refs, destination, session):
@@ -82,12 +83,60 @@ def project_digest_cash(report, *, expected_primary, allowed_accounts, bindings,
     return payloads
 
 
+def _archive_cash(bucket, prefix, slot, payload, version):
+    from google.api_core.exceptions import PreconditionFailed
+
+    key = f"{prefix}/versions/{slot}/{payload['statement_date']}/{version}.json"
+    try:
+        bucket.blob(key).upload_from_string(
+            json.dumps(payload, sort_keys=True), content_type="application/json",
+            if_generation_match=0, timeout=10, retry=None,
+        )
+    except PreconditionFailed:
+        # A successful earlier run already saved this version.
+        pass
+
+
+def _publish_cash_object(bucket, prefix, slot, payload, source_version):
+    from google.api_core.exceptions import NotFound
+
+    blob = bucket.blob(f"{prefix}/{slot}.json")
+    try:
+        blob.reload(timeout=10, retry=None)
+    except NotFound:
+        generation = 0
+        current = None
+        previous_version = None
+    else:
+        generation = int(blob.generation)
+        current = json.loads(blob.download_as_bytes(if_generation_match=generation, timeout=10, retry=None))
+        if (current["target_id"], current["opaque_account_uid"]) != (payload["target_id"], payload["opaque_account_uid"]):
+            raise ValueError("digest_cash_stored_binding_mismatch")
+        previous_version = (blob.metadata or {}).get(_SOURCE_VERSION)
+
+    _archive_cash(bucket, prefix, slot, payload, source_version)
+    if current is not None:
+        if current["statement_date"] > payload["statement_date"]:
+            return False
+        if current == payload and previous_version == source_version:
+            return True
+        if previous_version is None:
+            # Preserve the old financial evidence without assigning it a Flex source it never recorded.
+            _archive_cash(bucket, prefix, slot, current, f"legacy-gcs-{generation}")
+
+    blob.metadata = {**(blob.metadata or {}), _SOURCE_VERSION: source_version}
+    blob.upload_from_string(json.dumps(payload, sort_keys=True), content_type="application/json",
+                            if_generation_match=generation, timeout=10, retry=None)
+    return True
+
+
 def publish_digest_cash(report, *, expected_primary, allowed_accounts, job_refs, destination):
     import google.auth
-    from google.api_core.exceptions import NotFound
     from google.auth.transport.requests import AuthorizedSession
     from google.cloud import storage
 
+    if not re.fullmatch(r"[a-f0-9]{64}", report.content_sha256):
+        raise ValueError("digest_cash_source_version_invalid")
     destination = destination.rstrip("/")
     uri = urlsplit(destination)
     if uri.scheme != "gs" or not uri.netloc or not uri.path.strip("/") or uri.query or uri.fragment:
@@ -98,27 +147,9 @@ def publish_digest_cash(report, *, expected_primary, allowed_accounts, job_refs,
     payloads = project_digest_cash(report, expected_primary=expected_primary, allowed_accounts=allowed_accounts, bindings=bindings,
                                    latest_day=datetime.now(ZoneInfo("America/New_York")).date())
     bucket = storage.Client(credentials=credentials, project=project).bucket(uri.netloc)
-    count = 0
-    for slot, payload in payloads.items():
-        blob = bucket.blob(f"{uri.path.strip('/')}/ibkr/flex-cash/{slot}.json")
-        try:
-            blob.reload(timeout=10, retry=None)
-        except NotFound:
-            generation = 0
-        else:
-            generation = int(blob.generation)
-            current = json.loads(blob.download_as_bytes(if_generation_match=generation, timeout=10, retry=None))
-            if (current["target_id"], current["opaque_account_uid"]) != (payload["target_id"], payload["opaque_account_uid"]):
-                raise ValueError("digest_cash_stored_binding_mismatch")
-            if current["statement_date"] > payload["statement_date"]:
-                continue
-            if current == payload:
-                count += 1
-                continue
-        blob.upload_from_string(json.dumps(payload, sort_keys=True), content_type="application/json",
-                                if_generation_match=generation, timeout=10, retry=None)
-        count += 1
-    return count
+    prefix = f"{uri.path.strip('/')}/ibkr/flex-cash"
+    return sum(_publish_cash_object(bucket, prefix, slot, payload, report.content_sha256)
+               for slot, payload in payloads.items())
 
 
 def main():
