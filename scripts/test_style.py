@@ -1,8 +1,9 @@
 """Regression tests for the documentation checker.
 
-The checker is copied into 26 repositories, so a rule that silently stops
-working fails 26 times at once and nobody notices. Each test here pins one
-decision that was easy to get wrong:
+This checker runs against every repository that adopts the rule set, from one
+copy or many, so a rule that silently stops working fails everywhere at once
+and nobody notices. Each test here pins one decision that was easy to get
+wrong:
 
   * the leak heuristics must not report the placeholder forms the guide asks
     for, or the report fills with non-defects and gets ignored
@@ -17,9 +18,11 @@ Run with `python scripts/test_style.py`.
 from __future__ import annotations
 
 import importlib.util
+import io
 import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 _spec = importlib.util.spec_from_file_location(
@@ -56,6 +59,11 @@ class CheckerTestCase(unittest.TestCase):
     def messages(self, report: check_style.Report, category: str) -> list[str]:
         return [m for c, m in report.findings if c == category]
 
+    def run_main(self, *extra: str) -> tuple[int, str]:
+        with redirect_stdout(io.StringIO()) as captured:
+            code = check_style.main(["--root", str(self.root), "--phase", "2", *extra])
+        return code, captured.getvalue()
+
 
 class NamingTest(CheckerTestCase):
     def test_underscore_is_flagged(self):
@@ -63,6 +71,15 @@ class NamingTest(CheckerTestCase):
         report = self.report()
         check_style.check_naming(self.root, report)
         self.assertTrue(any("underscores" in m for m in self.messages(report, "naming")))
+
+    def test_github_templates_keep_their_underscore(self):
+        # GitHub only reads pull_request_template.md / issue_template.md with the
+        # underscore; renaming them to hyphens disables the template.
+        self.write(".github/pull_request_template.md", "## Summary\n")
+        self.write(".github/issue_template.md", "---\nname: bug\n---\n")
+        report = self.report()
+        check_style.check_naming(self.root, report)
+        self.assertEqual(self.messages(report, "naming"), [])
 
     def test_date_is_flagged_outside_record_paths(self):
         self.write("docs/2026-10-30-release.md", "# x\n")
@@ -81,6 +98,18 @@ class NamingTest(CheckerTestCase):
         report = self.report()
         check_style.check_naming(self.root, report)
         self.assertTrue(any(".en.md is not a suffix" in m for m in self.messages(report, "naming")))
+
+    def test_root_proposal_has_its_owner_requested_name(self):
+        self.write("PROPOSAL.md", "# Proposed governance change\n")
+        report = self.report()
+        check_style.check_naming(self.root, report)
+        self.assertEqual(self.messages(report, "naming"), [])
+
+    def test_nested_proposal_still_requires_lowercase(self):
+        self.write("docs/PROPOSAL.md", "# x\n")
+        report = self.report()
+        check_style.check_naming(self.root, report)
+        self.assertTrue(any("lowercase" in m for m in self.messages(report, "naming")))
 
     def test_uppercase_convention_is_allowed(self):
         self.write("SECURITY.md", "# x\n")
@@ -114,6 +143,35 @@ class LeakTest(CheckerTestCase):
     def test_real_bucket_is_reported(self):
         found = self.findings("Default root `gs://acme-prod-inputs/research/v2/input/`.\n")
         self.assertTrue(any("non-placeholder bucket" in m for m in found))
+
+    def test_placeholder_subdomain_is_not_reported(self):
+        # Section 13 asks for a placeholder where a deployed subdomain would
+        # appear. Reporting the guide's own recommended form is how a check
+        # teaches people to ignore it.
+        for text in (
+            "Open https://YOUR_SUBDOMAIN.workers.dev/admin.\n",
+            "Set the host to https://your-subdomain.workers.dev.\n",
+            "The example uses https://xxx.workers.dev.\n",
+            "Deploy to https://<subdomain>.workers.dev.\n",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(self.findings(text), [])
+
+    def test_real_subdomain_is_reported(self):
+        found = self.findings("Open https://pigbibi.workers.dev/admin.\n")
+        self.assertTrue(any("personal subdomain" in m for m in found))
+
+    def test_subdomain_in_a_fenced_block_is_an_example(self):
+        # The guide shows forbidden shapes inside fenced blocks. Installing a
+        # predicate on the rule must not start reporting those examples, or a
+        # narrowing fix silently widens what blocks.
+        text = (
+            "Do not publish a real host:\n\n"
+            "```markdown\n"
+            "Do not publish https://demo.workers.dev as a real host.\n"
+            "```\n"
+        )
+        self.assertEqual(self.findings(text), [])
 
     def test_sha_in_url_is_not_reported(self):
         text = (
@@ -325,6 +383,129 @@ class PhaseTest(CheckerTestCase):
         report = self.report(phase=2)
         check_style.check_naming(self.root, report)
         self.assertTrue(report.blocking_findings())
+
+
+class AdvisoryModeTest(CheckerTestCase):
+    """Adoption has to be possible before compliance.
+
+    A repository adds the check while it still has findings. If that pull
+    request goes red, the check is removed instead of the findings fixed, and
+    the repository ends up with neither.
+    """
+
+    def test_advisory_reports_the_findings_it_would_have_blocked_on(self):
+        self.write("docs/hk_equity_runtime.md", "# x\n")
+        code, output = self.run_main("--advisory")
+        self.assertEqual(code, 0)
+        self.assertIn("underscores", output)
+        self.assertIn("advisory run", output)
+
+    def test_without_advisory_the_same_findings_still_fail(self):
+        self.write("docs/hk_equity_runtime.md", "# x\n")
+        code, _ = self.run_main()
+        self.assertEqual(code, 1)
+
+
+class VisibilityTest(CheckerTestCase):
+    """The publication rules govern publishing, not existence.
+
+    A private repository publishes nothing, and a deployment document may need
+    the real host name to be usable — an OAuth callback URL with a placeholder
+    in it cannot be configured. Blocking there would force a document to be
+    wrong in order to pass.
+    """
+
+    def deploy_doc(self) -> None:
+        self.write(
+            "docs/deployment.md",
+            "Callback: https://invoice.pigbibi.workers.dev/auth/github/callback\n"
+            "Data lives in /home/ubuntu/app/data.\n",
+        )
+
+    def test_public_repository_blocks_published_identifiers(self):
+        self.deploy_doc()
+        _, output = self.run_main("--visibility", "public")
+        self.assertTrue(
+            any(line.startswith("ERROR") and "personal subdomain" in line
+                for line in output.splitlines())
+        )
+
+    def test_private_repository_reports_them_without_blocking(self):
+        self.deploy_doc()
+        _, output = self.run_main("--visibility", "private")
+        self.assertFalse(
+            any(line.startswith("ERROR") and "personal subdomain" in line
+                for line in output.splitlines())
+        )
+        self.assertTrue(
+            any(line.startswith("NOTE") and "personal subdomain" in line
+                for line in output.splitlines())
+        )
+        self.assertIn("private repository", output)
+
+    def test_the_default_is_public(self):
+        # Forgetting the flag must not switch a leak rule off.
+        self.deploy_doc()
+        _, output = self.run_main()
+        self.assertIn("(public)", output)
+        self.assertTrue(
+            any(line.startswith("ERROR") and "personal subdomain" in line
+                for line in output.splitlines())
+        )
+
+    def test_private_still_blocks_a_missing_security_policy(self):
+        # Visibility narrows the publication rules only; it is not a blanket
+        # exemption for everything the checker knows.
+        _, output = self.run_main("--visibility", "private")
+        self.assertTrue(
+            any(line.startswith("ERROR") and "SECURITY.md" in line
+                for line in output.splitlines())
+        )
+
+
+
+
+class ExampleMentionTest(CheckerTestCase):
+    """Rules must not fire on text that is showing what not to do.
+
+    Both cases below came from real repositories: a reference page documenting
+    how to attach an image, and a design guide listing the filler words it
+    forbids. Each was blocked by the rule it was teaching the reader to obey.
+    """
+
+    def test_a_link_inside_inline_code_is_an_example(self):
+        self.write(
+            "docs/pr-attachments.md",
+            "# t\n\nReference it as `![alt](./settings-after.png)` to place it inline.\n",
+        )
+        report = self.report()
+        # The temporary directory is not resolved; check_links resolves the
+        # target, so an unresolved root would look like a sibling checkout.
+        check_style.check_links(self.root.resolve(), report)
+        self.assertEqual(self.messages(report, "links"), [])
+
+    def test_a_real_broken_link_is_still_reported(self):
+        self.write("docs/page.md", "# t\n\nSee [the settings](./settings-after.png).\n")
+        report = self.report()
+        check_style.check_links(self.root.resolve(), report)
+        self.assertEqual(len(self.messages(report, "links")), 1)
+
+    def test_a_quoted_word_list_is_not_marketing_language(self):
+        self.write(
+            "docs/design.md",
+            '# t\n\n* **NO filler verbs.** "Elevate", "Seamless", "Unleash"'
+            " \u2192 concrete verbs only.\n",
+        )
+        report = self.report()
+        check_style.check_language(self.root, report)
+        self.assertEqual(self.messages(report, "language"), [])
+
+    def test_one_quoted_word_is_still_a_claim(self):
+        # The exemption is about lists. A single quoted word is a word used.
+        self.write("docs/page.md", "# t\n\nOur 'Seamless' onboarding flow.\n")
+        report = self.report()
+        check_style.check_language(self.root, report)
+        self.assertEqual(len(self.messages(report, "language")), 1)
 
 
 if __name__ == "__main__":
