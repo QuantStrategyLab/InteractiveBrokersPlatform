@@ -225,6 +225,25 @@ class InternalNoteTest(CheckerTestCase):
         check_style.check_internal_paths(self.root, report)
         self.assertTrue(any("plan/handoff directory" in m for m in self.messages(report, "content")))
 
+    def test_changes_directory_and_obsolete_engineering_rule_are_reported(self):
+        self.write(".gitignore", GITIGNORE_BLOCK + "!.github/engineering.md\n")
+        self.write("docs/changes/task/change-card.md", "# x\n")
+        report = self.report()
+        check_style.check_internal_paths(self.root, report)
+        self.assertTrue(any("engineering.md" in m for m in self.messages(report, "hygiene")))
+        self.assertTrue(any("plan/handoff directory" in m for m in self.messages(report, "content")))
+
+    def test_acceptance_policy_blocks_public_only(self):
+        self.write(".gitignore", GITIGNORE_BLOCK)
+        self.write("docs/acceptance-policy.md", "# policy\n")
+        pub = self.report(phase=2)
+        check_style.check_internal_paths(self.root, pub)
+        self.assertTrue(any(cat == "publish" for cat, _ in pub.blocking_findings()))
+        _, output = self.run_main("--visibility", "private")
+        self.assertTrue(
+            any(line.startswith("NOTE") and "acceptance-policy.md" in line for line in output.splitlines())
+        )
+
 
 class AgentFileTest(CheckerTestCase):
     def test_missing_agents_md_is_reported(self):
@@ -272,6 +291,19 @@ class AgentFileTest(CheckerTestCase):
         report = self.report()
         check_style.check_agent_files(self.root, report)
         self.assertTrue(any("@AGENTS.md" in m for m in self.messages(report, "agents")))
+
+    def test_retired_engineering_doc_and_long_agents_are_reported(self):
+        long_body = "# rules\n" + "\n".join(f"line {i}" for i in range(125)) + "\n" + check_style.CONTENT_BOUNDARY + "\n"
+        self.write("AGENTS.md", long_body)
+        self.write("CLAUDE.md", "@AGENTS.md\n")
+        self.write(".github/engineering.md", "# legacy\n")
+        self.git("init", "--quiet")
+        self.git("add", "AGENTS.md", "CLAUDE.md")
+        report = self.report()
+        check_style.check_agent_files(self.root, report)
+        found = self.messages(report, "agents")
+        self.assertTrue(any("engineering.md is retired" in m for m in found))
+        self.assertTrue(any("exceeds 120 lines" in m for m in found))
 
 
 class LanguageTest(CheckerTestCase):
@@ -465,6 +497,34 @@ class VisibilityTest(CheckerTestCase):
 
 
 
+class ReadmeHygieneTest(CheckerTestCase):
+    def test_readme_patch_prose_phase_heading_and_post_license_block(self):
+        self.write(
+            "README.md",
+            "# Demo\n\n## P0-P6 Runtime Authority\n\nIn this PR the gate remains unchanged.\n\n## License\n\nMIT\n\n## Weekly secret scan\n\nExtra\n",
+        )
+        self.write(
+            "README.zh-CN.md",
+            "# 示例\n\n## 许可证\n\nMIT\n\n## 每周密钥扫描\n\nExtra\n",
+        )
+        report = self.report(phase=2)
+        check_style.check_readme(self.root, report)
+        blocking = [m for c, m in report.blocking_findings() if c == "content"]
+        self.assertTrue(any("phase code heading" in m for m in blocking))
+        self.assertTrue(any("In this PR" in m for m in blocking))
+        self.assertTrue(any("after License" in m and "README.md" in m for m in blocking))
+        self.assertTrue(any("after License" in m and "README.zh-CN.md" in m for m in blocking))
+
+    def test_clean_readme_and_fenced_examples_pass(self):
+        self.write(
+            "README.md",
+            "# Demo\n\nUses `remains unchanged` in code.\n\n```markdown\nIn this PR\n```\n\n## Weekly secret scan\n\nRuns weekly.\n\n## License\n\nMIT\n",
+        )
+        report = self.report(phase=2)
+        check_style.check_readme(self.root, report)
+        self.assertEqual(report.blocking_findings(), [])
+
+
 class ExampleMentionTest(CheckerTestCase):
     """Rules must not fire on text that is showing what not to do.
 
@@ -506,6 +566,31 @@ class ExampleMentionTest(CheckerTestCase):
         report = self.report()
         check_style.check_language(self.root, report)
         self.assertEqual(len(self.messages(report, "language")), 1)
+
+
+class GitVisibilityTest(CheckerTestCase):
+    def test_gitignored_notes_do_not_block_while_staged_notes_do(self):
+        self.write(".gitignore", GITIGNORE_BLOCK)
+        self.write("AGENTS.md", "# rules\n\n" + check_style.CONTENT_BOUNDARY + "\n")
+        self.write("CLAUDE.md", "@AGENTS.md\n")
+        self.write("SECURITY.md", "# Security\n")
+        self.git("init", "--quiet")
+        self.git("config", "user.name", "Test User")
+        self.git("config", "user.email", "test@example.com")
+        self.git("add", ".gitignore", "AGENTS.md", "CLAUDE.md", "SECURITY.md", "README.md")
+
+        self.write("docs/changes/task/change-card.md", "# Card\n")
+        self.write("docs/plans/draft.md", "# Draft\n")
+        self.write("docs/acceptance-policy.md", "# Policy\n")
+
+        code, output = self.run_main()
+        self.assertEqual(code, 0, msg=output)
+
+        self.git("add", "-f", "docs/changes/task/change-card.md", "docs/acceptance-policy.md")
+        blocked_code, blocked_output = self.run_main()
+        self.assertEqual(blocked_code, 1, msg=blocked_output)
+        self.assertIn("docs/changes/task/change-card.md", blocked_output)
+        self.assertIn("docs/acceptance-policy.md", blocked_output)
 
 
 if __name__ == "__main__":
