@@ -184,6 +184,15 @@ jobs:
           export IBKR_RUNTIME_DAILY_BUSINESS_DATE
           uv run --no-sync python -m scripts.publish_primary_day_once
 
+      - name: Notify control-plane on scheduled account-facts failure
+        if: ${{ failure() && github.event_name == 'schedule' }}
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          GLOBAL_TELEGRAM_CHAT_ID: ${{ secrets.GLOBAL_TELEGRAM_CHAT_ID }}
+          TARGET_NAME: ${{ matrix.target }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 scripts/notify_account_facts_failure.py
+
   paused-refresh-preflight:
     name: Inspect or back up archived paused IBKR account-facts state
     if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.account_facts_target == 'paused-refresh-preflight' || inputs.account_facts_target == 'paused-refresh-state-backup') }}

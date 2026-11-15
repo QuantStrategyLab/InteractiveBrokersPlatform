@@ -886,14 +886,30 @@ def publish_risk_attention(decision, publish, *, profile, reasons=(), recovery_p
         return {"sent": 0, "skipped": 0, "failed": 1}
 
 
-def _archived_account_snapshot(report, selector, started, now):
+def is_probe_report(report):
+    if not isinstance(report, Mapping) or report.get("dry_run") is not True:
+        return False
+    summary = report.get("summary") if isinstance(report.get("summary"), Mapping) else {}
+    diagnostics = report.get("diagnostics") if isinstance(report.get("diagnostics"), Mapping) else {}
+    if "execution_status" in summary or "notification_digest" in summary:
+        return False
+    return (
+        {"buying_power", "total_equity", "positions_count"}.issubset(summary)
+        or any(isinstance(e, Mapping) and e.get("stage") == "health_probe" for e in (report.get("errors") or ()))
+        or "reconciliation_scheduler_job_sha256" in diagnostics
+        or "maintenance_cash_observation" in diagnostics
+    )
+
+
+def _archived_account_snapshot(report, selector, started, now, *, allow_live_probe=False):
     from scripts.publish_account_facts_from_report import (
         POSITIONS_SCOPE, SNAPSHOT_SCHEMA, _ACCOUNT_ID, _ProjectionError,
         _decimal_text, _observed_timestamp, _project_positions,
     )
 
     facts = (report.get("summary") or {}).get("account_facts")
-    if (report["dry_run"] or not isinstance(facts, Mapping) or facts.get("schema_version") != SNAPSHOT_SCHEMA
+    if ((report["dry_run"] and not (allow_live_probe and is_probe_report(report)))
+            or not isinstance(facts, Mapping) or facts.get("schema_version") != SNAPSHOT_SCHEMA
             or len(selector) != 1 or not _ACCOUNT_ID.fullmatch(selector[0]) or facts.get("account_ids") != selector):
         return None
     try:
@@ -934,6 +950,7 @@ def persist_archived_reports(reports, env, *, now=None):
         raise ValueError("candidate_target_invalid")
     current = now or datetime.now(timezone.utc)
     from datetime import timedelta
+    probe_reports, exec_reports = [], []
     for report in reports:
         source_target = report.get("runtime_target")
         stamp = datetime.fromisoformat(str(report.get("started_at", "")).replace("Z", "+00:00"))
@@ -946,6 +963,21 @@ def persist_archived_reports(reports, env, *, now=None):
                 or report.get("status") not in {"ok", "completed", "success", "error", "aborted", "failed", "skipped"}
                 or target["dry_run_only"] is True and report["dry_run"] is False):
             raise ValueError("candidate_source_invalid")
+        if is_probe_report(report):
+            probe_reports.append((report, stamp))
+        else:
+            exec_reports.append((report, stamp))
+
+    probe_snapshot = None
+    if not target["dry_run_only"]:
+        for report, stamp in probe_reports:
+            snap = _archived_account_snapshot(
+                report, target["account_selector"], stamp, current, allow_live_probe=True,
+            )
+            if snap and (probe_snapshot is None or snap["as_of"] > probe_snapshot["as_of"]):
+                probe_snapshot = snap
+
+    for report, stamp in exec_reports:
         summary = report.get("summary") or {}
         facts = summary.get("notification_digest") or {}
         kind = ("order_submitted" if verified_pending_summary(report) or verified_order_summary(report) else
@@ -982,9 +1014,9 @@ def persist_archived_reports(reports, env, *, now=None):
         def validate_receipt(source):
             return attach_execution_receipt(dict(source), source.get("execution_receipt"))["execution_receipt"]
         block_reason = _latest_notification_block_reason([report], validate_receipt)
-        snapshot = _archived_account_snapshot(report, target["account_selector"], stamp, current)
+        snapshot = _archived_account_snapshot(report, target["account_selector"], stamp, current) or probe_snapshot
         if not _checked_candidate(_with_routine_observations(event.to_candidate(), report), env=env, actually_ran=True,
                                   dry_run=report["dry_run"], block_reason=block_reason, account_snapshot=snapshot):
             raise CandidatePersistenceError("notification_candidate_write_unconfirmed")
-    return {"status": "projected", "uploaded": True, "runs": len(reports)}
+    return {"status": "projected", "uploaded": bool(exec_reports), "runs": len(exec_reports)}
 
