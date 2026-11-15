@@ -467,3 +467,105 @@ def test_persist_candidate_updates_borrowed_probe_without_dropping_snapshot():
         account_snapshot_borrowed=True,
     ) is True
     assert store.payload["runs"][0]["account_daily_facts"]["snapshots"] == [own]
+
+
+def test_persist_candidate_preserves_authoritative_snapshot_conflict_across_replay():
+    from quant_platform_kit.notifications.unified_contract import NotificationEvent
+    import notifications.unified_adapter as adapter
+
+    class State:
+        def __init__(self):
+            self.data = {}
+        def read(self, key):
+            return self.data.get(key, (None, None))
+        def compare_and_set(self, key, version, value):
+            if self.read(key)[0] != version:
+                return False
+            self.data[key] = ((version or 0) + 1, value)
+            return True
+
+    class Candidates:
+        def __init__(self):
+            self.payload = None
+        def publish(self, key, revision, payload):
+            self.payload = payload
+            return True
+
+    state, store = State(), Candidates()
+    env = {"DIGEST_STORE_TARGET": "synthetic-slot"}
+    event = NotificationEvent(
+        "routine_cycle",
+        datetime(2026, 10, 16, 1, tzinfo=timezone.utc),
+        platform_id="ibkr",
+        opaque_account_uid="synthetic-uid",
+        target_id="synthetic-target",
+        strategy_profile="core",
+        source_run_id="live-exec-conflict",
+    )
+    snap_a = {"as_of": "2026-10-16T01:00:05+00:00", "equity": 100.0, "equity_currency": "USD"}
+    snap_b = {"as_of": "2026-10-16T01:05:05+00:00", "equity": 200.0, "equity_currency": "USD"}
+
+    assert adapter.persist_candidate(
+        event.to_candidate(), state_store=state, candidate_store=store, env=env,
+        account_snapshot=snap_a, account_snapshot_borrowed=False,
+    ) is True
+    assert store.payload["runs"][0]["account_daily_facts"]["snapshots"] == [snap_a]
+
+    assert adapter.persist_candidate(
+        event.to_candidate(), state_store=state, candidate_store=store, env=env,
+        account_snapshot=snap_b, account_snapshot_borrowed=False,
+    ) is True
+    assert "account_daily_facts" not in store.payload["runs"][0]
+
+    assert adapter.persist_candidate(
+        event.to_candidate(), state_store=state, candidate_store=store, env=env,
+        account_snapshot=snap_b, account_snapshot_borrowed=False,
+    ) is True
+    assert "account_daily_facts" not in store.payload["runs"][0]
+
+
+def test_carryover_selects_latest_observation_time_over_archive_metadata(monkeypatch):
+    import json
+    import quant_platform_kit.common.runtime_heartbeat_policy as policy
+    from notifications.digest_snapshot.digest_archive import emit
+
+    target = {**TARGET, "platform_id": "ibkr", "account_selector": ["U00000001"], "dry_run_only": False}
+    env = dict(
+        QSL_ROUTINE_NOTIFICATION_MODE="daily_digest",
+        RUNTIME_TARGET_ENABLED="true",
+        RUNTIME_TARGET_JSON=json.dumps(target),
+        DIGEST_STORE_TARGET="synthetic-slot",
+        DIGEST_OPAQUE_ACCOUNT_UID="synthetic-uid",
+        DIGEST_TARGET_ID="synthetic-target",
+        EXECUTION_REPORT_GCS_URI="gs://synthetic-reports/archive",
+        DIGEST_CANDIDATES_GCS_URI="gs://synthetic-reports/candidates",
+        DIGEST_NOTIFICATION_SCHEDULE_JSON=json.dumps({"scheduler": {"main_time": "0 20 * * 1-5", "timezone": "UTC"}}),
+    )
+    older = _probe_report(
+        started_at="2026-10-12T18:00:00Z",
+        observed_at="2026-10-12T18:00:05Z",
+        finished_at="2026-10-12T18:01:00Z",
+        equity="111.00",
+    )
+    newer = _probe_report(
+        started_at="2026-10-13T18:00:00Z",
+        observed_at="2026-10-13T18:00:05Z",
+        finished_at="2026-10-13T18:01:00Z",
+        equity="222.00",
+    )
+    monkeypatch.setattr(policy, "filter_due_targets", lambda *args, **kwargs: ([], True))
+
+    def read(args):
+        if args[0] == "ls":
+            return [
+                {"url": "gs://synthetic-reports/archive/ibkr/core/2026-10/oct12.json",
+                 "metadata": {"updated": "2026-10-14T10:00:00Z"}},
+                {"url": "gs://synthetic-reports/archive/ibkr/core/2026-10/oct13.json",
+                 "metadata": {"updated": "2026-10-13T18:01:10Z"}},
+            ]
+        return older if args[1].endswith("oct12.json") else newer
+
+    uploads = []
+    emit(env, now=NOW, read=read, upload=lambda *args: uploads.append(args))
+    row = json.loads(uploads[0][1])["runs"][0]
+    assert row["account_daily_facts"]["snapshots"][0]["equity"] == 222.0

@@ -172,31 +172,37 @@ def persist_candidate(fact, *, actually_ran=True, dry_run=False, state_store=Non
                 record = {**prior, "event": merged,
                           **({"conflict": True} if conflict else {}),
                           **({"block_reason": block_reason} if block_reason else {})}
+        prior_has_snapshot = isinstance(prior, Mapping) and "account_snapshot" in prior
         prior_snapshot = (prior or {}).get("account_snapshot")
         prior_borrowed = bool((prior or {}).get("account_snapshot_borrowed"))
         if account_snapshot is None:
-            if prior_snapshot is not None:
+            if prior_has_snapshot:
                 record["account_snapshot"] = prior_snapshot
-                if prior_borrowed:
+                if prior_borrowed and prior_snapshot is not None:
                     record["account_snapshot_borrowed"] = True
                 else:
                     record.pop("account_snapshot_borrowed", None)
         else:
             previous_snapshot = prior_snapshot
             empty_stock = {"holdings_scope": "stocks_only", "holdings": [], "holdings_complete": True}
-            for enriched, legacy in ((account_snapshot, previous_snapshot), (previous_snapshot, account_snapshot)):
-                # The old archive projection dropped this explicit empty list.
-                if (isinstance(enriched, dict) and isinstance(legacy, dict)
-                        and all(enriched.get(key) == value for key, value in empty_stock.items())
-                        and legacy == {key: value for key, value in enriched.items() if key not in empty_stock}):
-                    previous_snapshot = account_snapshot = enriched
-                    break
-            if previous_snapshot is None:
+            if isinstance(previous_snapshot, dict):
+                for enriched, legacy in ((account_snapshot, previous_snapshot), (previous_snapshot, account_snapshot)):
+                    # The old archive projection dropped this explicit empty list.
+                    if (isinstance(enriched, dict) and isinstance(legacy, dict)
+                            and all(enriched.get(key) == value for key, value in empty_stock.items())
+                            and legacy == {key: value for key, value in enriched.items() if key not in empty_stock}):
+                        previous_snapshot = account_snapshot = enriched
+                        break
+            if not prior_has_snapshot:
                 record["account_snapshot"] = account_snapshot
                 if account_snapshot_borrowed:
                     record["account_snapshot_borrowed"] = True
                 else:
                     record.pop("account_snapshot_borrowed", None)
+            elif previous_snapshot is None:
+                # Preserve an already-recorded authoritative snapshot conflict across replays.
+                record["account_snapshot"] = None
+                record.pop("account_snapshot_borrowed", None)
             elif previous_snapshot == account_snapshot:
                 record["account_snapshot"] = account_snapshot
                 if prior_borrowed and account_snapshot_borrowed:
