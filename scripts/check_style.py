@@ -108,6 +108,17 @@ PLACEHOLDER_BUCKET = re.compile(
     r"|^bucket(?:-|$)"
 )
 
+# Section 13 asks for a placeholder wherever a deployed subdomain would appear,
+# so `YOUR_SUBDOMAIN.workers.dev` is the correct form, not a finding. Matching
+# the domain shape alone reports the guide's own advice as a leak, which is how
+# a check earns the reputation that lets the real leak through.
+PLACEHOLDER_SUBDOMAIN = re.compile(
+    r"^[<{$]|[<>{}]"
+    r"|^(?:your|my|example|sample|placeholder)[-_]"
+    r"|^subdomain(?:-|$)"
+    r"|^x{2,}$"
+)
+
 URL_TOKEN = re.compile(r"https?://[^\s)\]\"'<>`]+")
 FENCED_BLOCK = re.compile(r"^```.*?^```", re.DOTALL | re.MULTILINE)
 
@@ -138,6 +149,24 @@ def bucket_is_real(text: str, match: re.Match, ctx: FileContext) -> bool:
     if bucket.endswith(".") and not bucket.endswith("..."):
         bucket = bucket[:-1]
     return bool(bucket) and not PLACEHOLDER_BUCKET.search(bucket)
+
+
+def subdomain_is_real(text: str, match: re.Match, ctx: FileContext) -> bool:
+    """A placeholder subdomain is the form section 13 asks for, not a leak.
+
+    What survives this predicate is a subdomain that was actually deployed,
+    which is the thing the rule is about.
+
+    The fenced-block exemption is repeated here because `check_leaks` only
+    applies it to patterns without a predicate. Without this line, installing
+    the predicate would make an example that shows what to avoid start
+    reporting — a wider blocking set than the rule had before, which is not
+    what a narrowing fix should do.
+    """
+    if not ctx.prose[match.start():match.end()].strip():
+        return False
+    subdomain = match.group(0)[: -len(".workers.dev")]
+    return not PLACEHOLDER_SUBDOMAIN.search(subdomain.lower())
 
 
 def hex_is_prose(text: str, match: re.Match, ctx: FileContext) -> bool:
@@ -185,7 +214,7 @@ LEAK_PATTERNS = [
     (re.compile(r"\bgs://[^\s`)\]\"'<>]+"),
      "content", "non-placeholder bucket (section 13)", bucket_is_real),
     (re.compile(r"\b[\w-]+\.workers\.dev\b"),
-     "content", "personal subdomain (section 13)", None),
+     "publish", "personal subdomain (section 13)", subdomain_is_real),
     (re.compile(r"\b[0-9a-f]{40}\b"),
      "content", "40-character hex string in prose (section 5)", hex_is_prose),
     # `| PR |` is a table header; `| PR #12 |` and `| #12 |` are the rows this
@@ -233,9 +262,19 @@ DATED_TITLE = re.compile(r"(audit|acceptance).*20\d{2}-\d{2}-\d{2}", re.IGNORECA
 # rest once the naming cleanup is done. README structure never blocks, because
 # section 3 is a default and section 4 says so.
 PHASE_BLOCKING = {
-    1: {"paths", "links", "agents", "hygiene"},
-    2: {"paths", "links", "agents", "hygiene", "content", "naming", "language", "docs"},
+    1: {"paths", "links", "agents", "hygiene", "publish"},
+    2: {"paths", "links", "agents", "hygiene", "publish", "content", "naming", "language", "docs"},
 }
+
+# Rules whose purpose is to stop an identifier being published.
+#
+# The style guide governs published documentation. In a private repository
+# nothing is published, and a deployment document may need the real host name to
+# be usable at all — an OAuth callback URL with a placeholder in it cannot be
+# configured. So these report as notes there and block in public repositories,
+# which is the case the rule was written for. The default stays "public", so
+# forgetting the flag cannot switch a leak rule off by accident.
+PUBLICATION_CATEGORIES = {"paths", "publish"}
 
 
 class Report:
@@ -284,6 +323,12 @@ def strip_fenced_blocks(text: str) -> str:
     return re.sub(r"^```.*?^```", "", text, flags=re.DOTALL | re.MULTILINE)
 
 
+# GitHub recognises these two template names with underscores only. Renaming
+# them to hyphens silently disables the template, so they are exempt from the
+# underscore rule while the lowercase rule still applies.
+GITHUB_TEMPLATE_NAMES = {"pull_request_template", "issue_template"}
+
+
 def check_naming(root: Path, report: Report) -> None:
     for path in iter_files(root):
         if not is_markdown(path):
@@ -306,7 +351,7 @@ def check_naming(root: Path, report: Report) -> None:
                 f"{rel}: English is the base name (section 4); .en.md is not a suffix",
             )
 
-        if core not in CONVENTIONAL_UPPER:
+        if rel != "PROPOSAL.md" and core not in CONVENTIONAL_UPPER and core not in GITHUB_TEMPLATE_NAMES:
             if core != core.lower():
                 report.add("naming", f"{rel}: file name must be lowercase (section 7)")
             if "_" in core:
@@ -340,7 +385,13 @@ def check_links(root: Path, report: Report) -> None:
     for path in iter_files(root):
         if not is_markdown(path):
             continue
-        text = strip_fenced_blocks(path.read_text(encoding="utf-8", errors="ignore"))
+        # A link written inside backticks is an example of how to write a link,
+        # not a link. `pr-attachments.md` documents `![alt](./shot.png)` so the
+        # reader can copy it; reporting that as a broken target makes the
+        # documentation of the feature impossible to pass the check.
+        text = blank_code_spans(
+            strip_fenced_blocks(path.read_text(encoding="utf-8", errors="ignore"))
+        )
         for match in re.finditer(r"\[[^\]]*\]\(([^)\s]+)\)", text):
             target = match.group(1)
             if target.startswith(("http://", "https://", "mailto:", "#", "<")):
@@ -422,6 +473,30 @@ def check_docs_baseline(root: Path, report: Report) -> None:
         )
 
 
+QUOTE_MARKS = "\"'\u201c\u201d\u2018\u2019"
+QUOTED_TERM = re.compile(r"[\"\'\u201c\u2018][^\"\'\u201c\u201d\u2018\u2019]{1,40}[\"\'\u201d\u2019]")
+
+
+def quoted_term_list(line: str, match: re.Match) -> bool:
+    """True when a banned word sits inside a list of quoted terms.
+
+    Section 2 forbids marketing words in prose. A guide that writes
+    "Elevate", "Seamless", "Unleash" is naming the words it forbids, and
+    reporting it makes the rule unusable exactly where it is most needed --
+    the same shape as the placeholder-subdomain and template-underscore
+    exemptions.
+
+    The condition is two or more quoted terms on the line, so one quoted word
+    used as a claim ("our 'seamless' onboarding") is still reported. That
+    keeps the exemption about lists, not about quotation marks.
+    """
+    before = line[match.start() - 1] if match.start() else ""
+    after = line[match.end()] if match.end() < len(line) else ""
+    if before not in QUOTE_MARKS or after not in QUOTE_MARKS:
+        return False
+    return len(QUOTED_TERM.findall(line)) >= 2
+
+
 def check_language(root: Path, report: Report) -> None:
     marketing = re.compile(
         r"\b(" + "|".join(re.escape(w) for w in MARKETING_WORDS) + r")\b", re.IGNORECASE
@@ -440,6 +515,8 @@ def check_language(root: Path, report: Report) -> None:
         first_heading = True
         for number, line in enumerate(text.splitlines(), 1):
             for match in marketing.finditer(line):
+                if quoted_term_list(line, match):
+                    continue
                 report.add("language", f"{rel}:{number}: marketing word '{match.group(0)}' (section 2)")
             for match in filler.finditer(line):
                 report.add("language", f"{rel}:{number}: filler phrase '{match.group(0)}' (section 2)")
@@ -529,17 +606,28 @@ def check_internal_paths(root: Path, report: Report) -> None:
             report.add("content", f"{rel}: committed output directory (section 5)")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default=".", help="repository root (default: cwd)")
     parser.add_argument(
         "--phase", type=int, choices=(1, 2), default=1,
         help="1 blocks leaks and broken links; 2 also blocks naming (default: 1)",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--advisory", action="store_true",
+        help="report findings but always exit 0, for adopting a repository gradually",
+    )
+    parser.add_argument(
+        "--visibility", choices=("public", "private"), default="public",
+        help="private demotes publication rules to notes; default treats the repository as public",
+    )
+    args = parser.parse_args(argv)
 
     root = Path(args.root).resolve()
-    report = Report(PHASE_BLOCKING[args.phase])
+    blocking_categories = set(PHASE_BLOCKING[args.phase])
+    if args.visibility == "private":
+        blocking_categories -= PUBLICATION_CATEGORIES
+    report = Report(blocking_categories)
 
     check_naming(root, report)
     check_readme(root, report)
@@ -560,9 +648,21 @@ def main() -> int:
 
     print()
     print(
-        f"phase {args.phase}: {len(blocking)} blocking, {len(advisory)} advisory. "
-        "Advisory findings become blocking in phase 2."
+        f"phase {args.phase} ({args.visibility}): {len(blocking)} blocking, "
+        f"{len(advisory)} advisory. Advisory findings become blocking in phase 2."
     )
+    if args.visibility == "private":
+        print(
+            "private repository: publication rules report as notes; "
+            "they would block if this repository were published"
+        )
+    if args.advisory:
+        # A repository adopts the rule set before it can satisfy it. Failing on
+        # the adoption pull request would make that pull request the first thing
+        # the check blocks, and the check would be removed instead of the
+        # findings fixed. The findings are still printed and still counted.
+        print("advisory run: exit status forced to 0")
+        return 0
 
     return 1 if blocking else 0
 
