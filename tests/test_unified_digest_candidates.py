@@ -245,7 +245,7 @@ def test_off_schedule_dry_run_suppressed_on_live_target_and_uses_7day_carryover(
         "run_id": "dry-weekend",
         "started_at": "2026-10-15T20:00:00Z",
         "finished_at": "2026-10-15T20:01:00Z",
-        "summary": {"execution_status": "dry_run_completed", "notification_digest": cycle_evidence({"execution_status": "dry_run_completed"}, [])},
+        "summary": {"execution_status": "dry_run_completed", "notification_digest": cycle_evidence({"execution_status": "dry_run_completed"}, [], dry_run=True)},
     }
     prior_probe = _probe_report(
         started_at="2026-10-13T18:00:00Z",
@@ -328,3 +328,142 @@ def test_notify_account_facts_failure_redacts_private_details():
     assert "SECRET_TOK" not in msg
     assert "Bearer xyz" not in msg
     assert "additional-1" in msg
+
+
+def test_failed_off_schedule_dry_run_is_preserved_not_suppressed_as_idle(monkeypatch):
+    import json
+    import notifications.unified_adapter as adapter
+    import quant_platform_kit.common.runtime_heartbeat_policy as policy
+    from notifications.digest_snapshot.digest_archive import emit
+
+    class State:
+        def __init__(self):
+            self.data = {}
+
+        def read(self, key):
+            return self.data.get(key, (None, None))
+
+        def compare_and_set(self, key, version, value):
+            if self.read(key)[0] != version:
+                return False
+            self.data[key] = ((version or 0) + 1, value)
+            return True
+
+    class Candidates:
+        def __init__(self):
+            self.payload = None
+
+        def publish(self, key, revision, payload):
+            self.payload = payload
+            return True
+
+    state, store = State(), Candidates()
+    monkeypatch.setattr(adapter, "_state_store", lambda env=None: state)
+    monkeypatch.setattr(adapter, "GCSCandidateStore", lambda *args, **kwargs: store)
+
+    target = {**TARGET, "platform_id": "ibkr", "account_selector": ["U00000001"], "dry_run_only": False}
+    env = dict(
+        IBKR_UNIFIED_NOTIFICATION_ENABLED="true",
+        QSL_ROUTINE_NOTIFICATION_MODE="daily_digest",
+        RUNTIME_TARGET_ENABLED="true",
+        RUNTIME_TARGET_JSON=json.dumps(target),
+        DIGEST_STORE_TARGET="synthetic-slot",
+        DIGEST_OPAQUE_ACCOUNT_UID="synthetic-uid",
+        DIGEST_TARGET_ID="synthetic-target",
+        EXECUTION_REPORT_GCS_URI="gs://synthetic-reports/archive",
+        DIGEST_CANDIDATES_GCS_URI="gs://synthetic-reports/candidates",
+        DIGEST_NOTIFICATION_SCHEDULE_JSON=json.dumps({"scheduler": {"main_time": "0 20 * * 1-5", "timezone": "UTC"}}),
+    )
+    failed_dry_run = {
+        "schema_version": "runtime_report.v1",
+        "platform": "ibkr",
+        "strategy_profile": "core",
+        "service_name": "test-service",
+        "runtime_target": target,
+        "dry_run": True,
+        "status": "error",
+        "run_id": "dry-weekend-failed",
+        "started_at": "2026-10-15T20:00:00Z",
+        "finished_at": "2026-10-15T20:01:00Z",
+        "summary": {
+            "execution_status": "error",
+            "notification_digest": cycle_evidence({"execution_status": "error"}, [], dry_run=True),
+        },
+    }
+    monkeypatch.setattr(policy, "filter_due_targets", lambda *args, **kwargs: ([], True))
+
+    def read(args):
+        if args[0] == "ls":
+            return [{"url": "gs://synthetic-reports/archive/ibkr/core/2026-10/weekend-failed.json",
+                     "metadata": {"updated": "2026-10-15T20:01:10Z"}}]
+        return failed_dry_run
+
+    result = emit(env, now=NOW, read=read)
+    assert result == {"status": "projected", "uploaded": True, "runs": 1}
+    row = store.payload["runs"][0]
+    assert row["actually_ran"] is True
+    assert row["status"] == "alert"
+    assert row["source_run_id"] == "dry-weekend-failed"
+
+
+def test_persist_candidate_updates_borrowed_probe_without_dropping_snapshot():
+    from quant_platform_kit.notifications.unified_contract import NotificationEvent
+    import notifications.unified_adapter as adapter
+
+    class State:
+        def __init__(self):
+            self.data = {}
+        def read(self, key):
+            return self.data.get(key, (None, None))
+        def compare_and_set(self, key, version, value):
+            if self.read(key)[0] != version:
+                return False
+            self.data[key] = ((version or 0) + 1, value)
+            return True
+
+    class Candidates:
+        def __init__(self):
+            self.payload = None
+        def publish(self, key, revision, payload):
+            self.payload = payload
+            return True
+
+    state, store = State(), Candidates()
+    env = {"DIGEST_STORE_TARGET": "synthetic-slot"}
+    event = NotificationEvent(
+        "routine_cycle",
+        datetime(2026, 10, 16, 1, tzinfo=timezone.utc),
+        platform_id="ibkr",
+        opaque_account_uid="synthetic-uid",
+        target_id="synthetic-target",
+        strategy_profile="core",
+        source_run_id="live-exec-1",
+    )
+    snap1 = {"as_of": "2026-10-16T00:00:05+00:00", "equity": 100.0, "equity_currency": "USD"}
+    snap2 = {"as_of": "2026-10-16T00:05:05+00:00", "equity": 105.0, "equity_currency": "USD"}
+    own = {"as_of": "2026-10-16T01:00:05+00:00", "equity": 110.0, "equity_currency": "USD"}
+
+    assert adapter.persist_candidate(
+        event.to_candidate(), state_store=state, candidate_store=store, env=env,
+        account_snapshot=snap1, account_snapshot_borrowed=True,
+    ) is True
+    assert store.payload["runs"][0]["account_daily_facts"]["snapshots"] == [snap1]
+
+    # A newer borrowed probe snapshot replaces the older borrowed one rather than blanking to None.
+    assert adapter.persist_candidate(
+        event.to_candidate(), state_store=state, candidate_store=store, env=env,
+        account_snapshot=snap2, account_snapshot_borrowed=True,
+    ) is True
+    assert store.payload["runs"][0]["account_daily_facts"]["snapshots"] == [snap2]
+
+    # An authoritative own snapshot supersedes any borrowed one, and later borrowed probes do not overwrite it.
+    assert adapter.persist_candidate(
+        event.to_candidate(), state_store=state, candidate_store=store, env=env,
+        account_snapshot=own, account_snapshot_borrowed=False,
+    ) is True
+    assert adapter.persist_candidate(
+        event.to_candidate(), state_store=state, candidate_store=store, env=env,
+        account_snapshot={"as_of": "2026-10-16T01:30:05+00:00", "equity": 120.0, "equity_currency": "USD"},
+        account_snapshot_borrowed=True,
+    ) is True
+    assert store.payload["runs"][0]["account_daily_facts"]["snapshots"] == [own]

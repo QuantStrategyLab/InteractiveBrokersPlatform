@@ -106,8 +106,18 @@ def _state_store(env=None):
     return GCSMarkerStore(values.get("IBKR_NOTIFICATION_MARKER_GCS_URI", ""))
 
 
+def _snapshot_as_of_stamp(snapshot):
+    if not isinstance(snapshot, Mapping) or not isinstance(snapshot.get("as_of"), str):
+        return None
+    try:
+        stamp = datetime.fromisoformat(snapshot["as_of"].replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return stamp if stamp.tzinfo is not None else None
+
+
 def persist_candidate(fact, *, actually_ran=True, dry_run=False, state_store=None, candidate_store=None, env=None,
-                      block_reason=None, settlement=None, account_snapshot=None):
+                      block_reason=None, settlement=None, account_snapshot=None, account_snapshot_borrowed=False):
     """Persist event/run identity and bridge the existing candidate producer."""
     from scripts.project_digest_candidates import merge_routine_observation_counts, project_notification_events
     if actually_ran is not True:
@@ -162,17 +172,64 @@ def persist_candidate(fact, *, actually_ran=True, dry_run=False, state_store=Non
                 record = {**prior, "event": merged,
                           **({"conflict": True} if conflict else {}),
                           **({"block_reason": block_reason} if block_reason else {})}
-        if account_snapshot is not None:
-            previous_snapshot = (prior or {}).get("account_snapshot", account_snapshot)
+        prior_snapshot = (prior or {}).get("account_snapshot")
+        prior_borrowed = bool((prior or {}).get("account_snapshot_borrowed"))
+        if account_snapshot is None:
+            if prior_snapshot is not None:
+                record["account_snapshot"] = prior_snapshot
+                if prior_borrowed:
+                    record["account_snapshot_borrowed"] = True
+                else:
+                    record.pop("account_snapshot_borrowed", None)
+        else:
+            previous_snapshot = prior_snapshot
             empty_stock = {"holdings_scope": "stocks_only", "holdings": [], "holdings_complete": True}
             for enriched, legacy in ((account_snapshot, previous_snapshot), (previous_snapshot, account_snapshot)):
                 # The old archive projection dropped this explicit empty list.
-                if (isinstance(enriched, dict)
+                if (isinstance(enriched, dict) and isinstance(legacy, dict)
                         and all(enriched.get(key) == value for key, value in empty_stock.items())
                         and legacy == {key: value for key, value in enriched.items() if key not in empty_stock}):
                     previous_snapshot = account_snapshot = enriched
                     break
-            record["account_snapshot"] = account_snapshot if previous_snapshot == account_snapshot else None
+            if previous_snapshot is None:
+                record["account_snapshot"] = account_snapshot
+                if account_snapshot_borrowed:
+                    record["account_snapshot_borrowed"] = True
+                else:
+                    record.pop("account_snapshot_borrowed", None)
+            elif previous_snapshot == account_snapshot:
+                record["account_snapshot"] = account_snapshot
+                if prior_borrowed and account_snapshot_borrowed:
+                    record["account_snapshot_borrowed"] = True
+                else:
+                    record.pop("account_snapshot_borrowed", None)
+            elif prior_borrowed and not account_snapshot_borrowed:
+                record["account_snapshot"] = account_snapshot
+                record.pop("account_snapshot_borrowed", None)
+                source_run_id = fact.get("source_run_id")
+                for key_id, entry in list(events.items()):
+                    if (isinstance(entry, dict) and entry.get("account_snapshot_borrowed") is True
+                            and (entry.get("event") or {}).get("source_run_id") == source_run_id):
+                        updated = {**entry, "account_snapshot": account_snapshot}
+                        updated.pop("account_snapshot_borrowed", None)
+                        events[key_id] = updated
+            elif not prior_borrowed and account_snapshot_borrowed:
+                record["account_snapshot"] = previous_snapshot
+                record.pop("account_snapshot_borrowed", None)
+            elif prior_borrowed and account_snapshot_borrowed:
+                prev_stamp = _snapshot_as_of_stamp(previous_snapshot)
+                curr_stamp = _snapshot_as_of_stamp(account_snapshot)
+                chosen = account_snapshot if (prev_stamp is None or (curr_stamp is not None and curr_stamp >= prev_stamp)) else previous_snapshot
+                record["account_snapshot"] = chosen
+                record["account_snapshot_borrowed"] = True
+                source_run_id = fact.get("source_run_id")
+                for key_id, entry in list(events.items()):
+                    if (isinstance(entry, dict) and entry.get("account_snapshot_borrowed") is True
+                            and (entry.get("event") or {}).get("source_run_id") == source_run_id):
+                        events[key_id] = {**entry, "account_snapshot": chosen}
+            else:
+                record["account_snapshot"] = None
+                record.pop("account_snapshot_borrowed", None)
         events[fact["dedupe_key"]] = record
         changed = events != old["events"]
         value = {"revision": old["revision"] + int(changed), "events": events}
@@ -974,7 +1031,7 @@ def persist_archived_reports(reports, env, *, now=None):
             snap = _archived_account_snapshot(
                 report, target["account_selector"], stamp, current, allow_live_probe=True,
             )
-            if snap and (probe_snapshot is None or snap["as_of"] > probe_snapshot["as_of"]):
+            if snap and (probe_snapshot is None or (_snapshot_as_of_stamp(snap) or stamp) > (_snapshot_as_of_stamp(probe_snapshot) or stamp)):
                 probe_snapshot = snap
 
     for report, stamp in exec_reports:
@@ -1014,9 +1071,12 @@ def persist_archived_reports(reports, env, *, now=None):
         def validate_receipt(source):
             return attach_execution_receipt(dict(source), source.get("execution_receipt"))["execution_receipt"]
         block_reason = _latest_notification_block_reason([report], validate_receipt)
-        snapshot = _archived_account_snapshot(report, target["account_selector"], stamp, current) or probe_snapshot
+        own_snapshot = _archived_account_snapshot(report, target["account_selector"], stamp, current)
+        snapshot = own_snapshot or probe_snapshot
+        borrowed = own_snapshot is None and snapshot is not None
         if not _checked_candidate(_with_routine_observations(event.to_candidate(), report), env=env, actually_ran=True,
-                                  dry_run=report["dry_run"], block_reason=block_reason, account_snapshot=snapshot):
+                                  dry_run=report["dry_run"], block_reason=block_reason, account_snapshot=snapshot,
+                                  account_snapshot_borrowed=borrowed):
             raise CandidatePersistenceError("notification_candidate_write_unconfirmed")
     return {"status": "projected", "uploaded": bool(exec_reports), "runs": len(exec_reports)}
 

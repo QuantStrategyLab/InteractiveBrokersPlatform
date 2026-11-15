@@ -191,7 +191,44 @@ jobs:
           GLOBAL_TELEGRAM_CHAT_ID: ${{ secrets.GLOBAL_TELEGRAM_CHAT_ID }}
           TARGET_NAME: ${{ matrix.target }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: python3 scripts/notify_account_facts_failure.py
+        run: |
+          set -euo pipefail
+          if [ -f scripts/notify_account_facts_failure.py ]; then
+            python3 scripts/notify_account_facts_failure.py
+          else
+            python3 - <<'PY'
+          import json, os, re
+          from urllib.error import HTTPError, URLError
+          from urllib.request import Request, urlopen
+
+          def redact(value):
+              text = str(value or "").strip()
+              for pattern, repl in (
+                  (r"gs://[^\s'\"<>]+", "[gcs-redacted]"),
+                  (r"bot[0-9]{6,}:[A-Za-z0-9_-]+", "bot[redacted]"),
+                  (r"Bearer\s+\S+", "Bearer [redacted]"),
+                  (r"\bU\d{5,}\b", "[account-redacted]"),
+              ):
+                  text = re.sub(pattern, repl, text, flags=re.IGNORECASE if "Bearer" in pattern else 0)
+              return text
+
+          bot_credential = os.environ.get("TELEGRAM_TOKEN", "").strip()
+          chat_id = os.environ.get("GLOBAL_TELEGRAM_CHAT_ID", "").strip()
+          if not bot_credential or not chat_id:
+              print("telegram_alert_skipped: missing credentials", flush=True)
+          else:
+              target = redact(os.environ.get("TARGET_NAME", "")) or "unknown-target"
+              run_url = redact(os.environ.get("RUN_URL", "")) or "unknown-run"
+              text = f"⚠️ IBKR account-facts 定时同步失败\nTarget: {target}\nRun: {run_url}"
+              body = json.dumps({"chat_id": chat_id, "text": text, "disable_web_page_preview": True}).encode("utf-8")
+              req = Request(f"https://api.telegram.org/bot{bot_credential}/sendMessage", data=body, headers={"Content-Type": "application/json"}, method="POST")
+              try:
+                  with urlopen(req, timeout=15):
+                      pass
+              except (HTTPError, URLError, OSError, TimeoutError) as exc:
+                  print(f"telegram_alert_failed: {type(exc).__name__}", flush=True)
+          PY
+          fi
 
   paused-refresh-preflight:
     name: Inspect or back up archived paused IBKR account-facts state

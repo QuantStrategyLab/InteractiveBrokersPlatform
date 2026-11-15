@@ -118,8 +118,9 @@ def emit(env, *, now=None, read=_read, upload=None):
                 snap = _archived_account_snapshot(
                     source, target["account_selector"], source_stamp, current, allow_live_probe=True,
                 )
-                if snap and (carryover_snapshot is None or snap["as_of"] > carryover_snapshot["as_of"]):
-                    carryover_snapshot = snap
+                if snap and datetime.fromisoformat(snap["as_of"].replace("Z", "+00:00")) < end:
+                    if carryover_snapshot is None or datetime.fromisoformat(snap["as_of"].replace("Z", "+00:00")) > datetime.fromisoformat(carryover_snapshot["as_of"].replace("Z", "+00:00")):
+                        carryover_snapshot = snap
             if is_probe_report(source):
                 probe_reports.append(source)
             else:
@@ -128,14 +129,40 @@ def emit(env, *, now=None, read=_read, upload=None):
             lookback_entries.append((source_stamp, uri))
 
     schedule_raw = env.get("DIGEST_NOTIFICATION_SCHEDULE_JSON", "").strip()
-    if reports and target.get("dry_run_only") is False and all(r.get("dry_run") is True for r in reports) and schedule_raw:
-        from quant_platform_kit.common.runtime_heartbeat_policy import filter_due_targets
-        due, evaluated = filter_due_targets(
-            [json.loads(schedule_raw)], since=start, now=end - timedelta(microseconds=1),
-            publication_grace=timedelta(0), warning_logger=lambda message: None,
-        )
-        if evaluated and not due:
-            reports = []
+    if reports and target.get("dry_run_only") is False and schedule_raw:
+        from collections.abc import Mapping
+        from notifications.unified_adapter import _kind
+
+        def _is_healthy_dry_run(report):
+            summary = report.get("summary")
+            if not isinstance(summary, Mapping):
+                return False
+            facts = summary.get("notification_digest")
+            receipt = report.get("execution_receipt")
+            if isinstance(receipt, Mapping) and receipt.get("outcome") not in {
+                None, "no_action", "no_signal", "no_rebalance", "dry_run", "completed",
+            }:
+                return False
+            return (
+                report.get("dry_run") is True
+                and report.get("status") in {"ok", "completed", "success"}
+                and isinstance(facts, Mapping)
+                and facts.get("schema_version") == "qsl.notification_cycle.v1"
+                and facts.get("dry_run") is True
+                and _kind(
+                    {**summary, "errors": (report.get("error_summary") or {}).get("errors") or report.get("errors")},
+                    dry_run=True,
+                ) == "routine_cycle"
+            )
+
+        if all(_is_healthy_dry_run(r) for r in reports):
+            from quant_platform_kit.common.runtime_heartbeat_policy import filter_due_targets
+            due, evaluated = filter_due_targets(
+                [json.loads(schedule_raw)], since=start, now=end - timedelta(microseconds=1),
+                publication_grace=timedelta(0), warning_logger=lambda message: None,
+            )
+            if evaluated and not due:
+                reports = []
 
     if not reports:
         if not schedule_raw:
@@ -155,7 +182,7 @@ def emit(env, *, now=None, read=_read, upload=None):
                     snap = _archived_account_snapshot(
                         source, target["account_selector"], source_stamp, current, allow_live_probe=True,
                     )
-                    if snap is not None:
+                    if snap is not None and datetime.fromisoformat(snap["as_of"].replace("Z", "+00:00")) < end:
                         return snap
                 return None
 
