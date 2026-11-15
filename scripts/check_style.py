@@ -241,6 +241,10 @@ INTERNAL_NOTE_GITIGNORE = [
     "docs/plans/",
     "docs/handoffs/",
     "docs/superpowers/",
+    "docs/changes/",
+    "docs/acceptance-policy.md",
+    ".claude/",
+    ".codex/",
     ".local/",
     "ops-notes/",
     "*.local.md",
@@ -249,7 +253,7 @@ INTERNAL_NOTE_GITIGNORE = [
 
 # Directories whose contents are working material, never reader-facing docs.
 INTERNAL_NOTE_DIRS = re.compile(
-    r"(^|/)(docs/plans|docs/handoffs|docs/superpowers|docs/audits)/"
+    r"(^|/)(docs/plans|docs/handoffs|docs/superpowers|docs/audits|docs/changes)/"
 )
 
 DATED_TITLE = re.compile(r"(audit|acceptance).*20\d{2}-\d{2}-\d{2}", re.IGNORECASE)
@@ -292,7 +296,57 @@ class Report:
         return [f for f in self.findings if f[0] not in self.blocking]
 
 
+def git_visible_files(root: Path) -> set[Path] | None:
+    """Return tracked and unignored working-tree files when root is a Git checkout."""
+    if not (root / ".git").exists():
+        return None
+    res = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        cwd=root,
+        capture_output=True,
+        check=False,
+    )
+    if res.returncode != 0:
+        return None
+    visible: set[Path] = set()
+    for raw in res.stdout.split(b"\0"):
+        if not raw:
+            continue
+        rel = raw.decode("utf-8", errors="surrogateescape")
+        candidate = root / rel
+        if candidate.is_file():
+            visible.add(candidate)
+    return visible
+
+
+def is_untracked_gitignored(root: Path, rel_path: str) -> bool:
+    """Return True only when rel_path has no tracked/unignored files and is gitignored."""
+    if not (root / ".git").exists():
+        return False
+    listed = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", rel_path],
+        cwd=root,
+        capture_output=True,
+        check=False,
+    )
+    if listed.returncode == 0 and listed.stdout.strip(b"\0"):
+        return False
+    ignored = subprocess.run(
+        ["git", "check-ignore", "-q", "--", rel_path],
+        cwd=root,
+        check=False,
+    )
+    return ignored.returncode == 0
+
+
 def iter_files(root: Path):
+    visible = git_visible_files(root)
+    if visible is not None:
+        for path in sorted(visible):
+            if any(part in SKIP_DIRS for part in path.parts):
+                continue
+            yield path
+        return
     for path in sorted(root.rglob("*")):
         if any(part in SKIP_DIRS for part in path.parts):
             continue
@@ -361,24 +415,64 @@ def check_naming(root: Path, report: Report) -> None:
             report.add("naming", f"{rel}: dates belong in history, not file names (section 7)")
 
 
+RE_PATCH_PROSE = re.compile(
+    r"\b(this change|this pr|in this pr|this policy pr|remains? unchanged)\b",
+    re.IGNORECASE,
+)
+RE_PHASE_HEADING = re.compile(r"^#{1,4}\s+.*\bP0[–-]P\d+\b", re.MULTILINE)
+RE_LICENSE_HEADING = re.compile(r"^##\s+(?:License|许可证)\s*$")
+RE_H2_HEADING = re.compile(r"^##\s+\S+")
+MAX_AGENTS_LINES = 120
+
+
 def check_readme(root: Path, report: Report) -> None:
     readme = root / "README.md"
     if not readme.exists():
         report.add("readme", "README.md is missing")
-        return
-    text = readme.read_text(encoding="utf-8", errors="ignore")
-    headings = [h.strip().lower() for h in re.findall(r"^#{2,3}\s+(.+)$", text, re.MULTILINE)]
-    missing = [
-        section for section in README_OUTLINE
-        if not any(section in heading for heading in headings)
-    ]
-    if missing:
-        report.add(
-            "readme",
-            "README.md: section 3 outline not followed — missing "
-            + ", ".join(missing)
-            + " (a default, not a requirement)",
-        )
+    else:
+        text = readme.read_text(encoding="utf-8", errors="ignore")
+        headings = [h.strip().lower() for h in re.findall(r"^#{2,3}\s+(.+)$", text, re.MULTILINE)]
+        missing = [
+            section for section in README_OUTLINE
+            if not any(section in heading for heading in headings)
+        ]
+        if missing:
+            report.add(
+                "readme",
+                "README.md: section 3 outline not followed — missing "
+                + ", ".join(missing)
+                + " (a default, not a requirement)",
+            )
+
+    for name in ("README.md", "README.zh-CN.md"):
+        path = root / name
+        if not path.exists():
+            continue
+        raw = path.read_text(encoding="utf-8", errors="ignore")
+        prose = blank_fenced_blocks(raw)
+        masked = blank_code_spans(prose)
+        seen_license = False
+        for lineno, (prose_line, masked_line) in enumerate(
+            zip(prose.splitlines(), masked.splitlines()), 1
+        ):
+            match = RE_PATCH_PROSE.search(masked_line)
+            if match:
+                report.add(
+                    "content",
+                    f"{name}:{lineno}: PR-diff narration '{match.group(0)}' belongs in PR description, not README (section 2)",
+                )
+            if RE_PHASE_HEADING.match(prose_line):
+                report.add(
+                    "content",
+                    f"{name}:{lineno}: phase code heading belongs outside reader-facing README (section 5)",
+                )
+            if RE_LICENSE_HEADING.match(prose_line):
+                seen_license = True
+            elif seen_license and RE_H2_HEADING.match(prose_line):
+                report.add(
+                    "content",
+                    f"{name}:{lineno}: top-level section after License belongs above License (section 3)",
+                )
 
 
 def check_links(root: Path, report: Report) -> None:
@@ -439,9 +533,22 @@ def check_agent_files(root: Path, report: Report) -> None:
         if content != "@AGENTS.md":
             report.add("agents", "CLAUDE.md must contain the single line @AGENTS.md")
 
+    if (root / ".github" / "engineering.md").exists() and not is_untracked_gitignored(
+        root, ".github/engineering.md"
+    ):
+        report.add(
+            "agents",
+            ".github/engineering.md is retired; consolidate rules in AGENTS.md",
+        )
+
     agents = root / "AGENTS.md"
     if agents.exists():
         text = agents.read_text(encoding="utf-8", errors="ignore")
+        if len(text.splitlines()) > MAX_AGENTS_LINES:
+            report.add(
+                "agents",
+                f"AGENTS.md exceeds {MAX_AGENTS_LINES} lines; keep agent rules concise",
+            )
         if CONTENT_BOUNDARY not in text:
             report.add(
                 "agents",
@@ -594,6 +701,18 @@ def check_internal_paths(root: Path, report: Report) -> None:
         report.add(
             "hygiene",
             ".gitignore: internal note paths not ignored — " + ", ".join(missing),
+        )
+    if "!.github/engineering.md" in text:
+        report.add(
+            "hygiene",
+            ".gitignore: remove obsolete !.github/engineering.md unignore rule",
+        )
+    if (root / "docs" / "acceptance-policy.md").exists() and not is_untracked_gitignored(
+        root, "docs/acceptance-policy.md"
+    ):
+        report.add(
+            "publish",
+            "docs/acceptance-policy.md: internal acceptance policy stays out of public repositories (section 5)",
         )
 
     for path in iter_files(root):
