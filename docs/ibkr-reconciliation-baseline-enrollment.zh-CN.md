@@ -1,3 +1,5 @@
+[English](ibkr-reconciliation-baseline-enrollment.md) | 简体中文
+
 # IBKR 旧实盘基线：审核材料生成
 
 本流程仅适用于已明确进入 `RECONCILE_ONLY` 的冻结基线恢复。

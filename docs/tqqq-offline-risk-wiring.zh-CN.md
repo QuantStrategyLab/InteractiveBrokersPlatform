@@ -1,3 +1,5 @@
+[English](tqqq-offline-risk-wiring.md) | 简体中文
+
 # TQQQ 风险政策、资金合同与状态账本的离线接线
 
 `application.tqqq_offline_risk.run_tqqq_offline_risk` 把一个 TQQQ 人工账户合同接入已有 UES 风险与配置草稿链。它只提供 `initialize`、`read`、`persist`、`preflight` 四个动作，不注册进 main、composer、生产策略分派或下单入口。
@@ -14,7 +16,7 @@
 ## 调用方必须明确提供
 
 1. `runtime`：一个明确 dry-run、cash-only、options disabled 的人工 `LoadedStrategyRuntime`；profile 固定为 `tqqq_growth_income`，target、账户范围、账户列表、有效执行现金保留比例必须一致。固定现金保留额须显式提供并与 runtime 一致；资金合同须覆盖 max(比例 × 净值, 固定底线)，保留额由原现金适配器扣除一次。未定值不按零补齐。
-2. `portfolio_snapshot`：人工原生形状的账户快照。`packet.facts` 必须与当前平台生产函数的投影完全相同；明确全现金的人工场景可另附 `inventory_evidence`，通过独立完整性证明后使用研究投影，详见[券商事实与接线](tqqq-broker-facts.zh-CN.md)。原生期权库存必须明确为空，缺失或非空都不能被 stocks-only 投影隐去。原生现金证据的账户/币种/标签须与快照的 cash_balances 对齐；已结算金额须另有原生 `SettledCash` 或下文明确绑定的人工 Web ledger 来源，不能由 `CashBalance` 代替。
+2. `portfolio_snapshot`：人工原生形状的账户快照。`packet.facts` 必须与当前平台生产函数的投影完全相同；明确全现金的人工场景可另附 `inventory_evidence`，通过独立完整性证明后使用研究投影（具体券商事实与缺口须由对应受保护记录核实）。原生期权库存必须明确为空，缺失或非空都不能被 stocks-only 投影隐去。原生现金证据的账户/币种/标签须与快照的 cash_balances 对齐；已结算金额须另有原生 `SettledCash` 或下文明确绑定的人工 Web ledger 来源，不能由 `CashBalance` 代替。
 3. `packet`：原 UES facts/account_contract、cash_evidence、execution_rules、moments、composition、risk_inputs、definition_bytes、request_id、Kelly 数学合同。当前只装配一个 TQQQ 策略及其明确证券组成；不扩为多个平台或其他策略。
 4. `event_context`：原三档完整事件政策、风险观察、日初基准、外部流量、高水位、费用后持仓周期，以及如适用的减仓和恢复证据。预算/期限/阈值、曲线或任何必需规则缺失时交 gaps。
 5. `journal`、`binding`：明确离线根目录及原 `PortfolioEventJournal`，外部保存的精确 checkpoint；初始化另需完整显式初态证明。身份必须恰为当前账户范围、当前 TQQQ 组合和当前事件政策，不能拿同账户的其他链替代。
@@ -218,7 +220,7 @@ ISO 日日期且必须早于冻结截止日，不接受当前未完成日或未�
 
 也可明确提供 `schema_version="qsl.security_drawdown_reference.v1"`，将上述`net_returns`
 替换为`returns`。该类型是独立证券的提供商调整收盘价代理，`context`不含账户scope；
-其分红、成本及资金流字段必须按`tqqq-risk-policy-draft.zh-CN.md`的证券口径声明。
+其分红、成本及资金流字段必须按 `qsl.security_drawdown_reference.v1` 的对应证券口径声明。
 源和账户均须`valuation_sampling=DAILY_CLOSE`，币种与日历匹配，账户侧仍为费用后净财富。
 策略与基准比较路径也须同时明确`valuation_sampling=DAILY_CLOSE`；只声明一侧、null、盘中
 或不同采样均拒绝，不能用日日期标签推定收盘。原账户净财富参照若声明采样，同样与账户
@@ -284,4 +286,4 @@ PYTHONPATH=. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv-offline/bin/python -m pytest
 
 本包到“离线 TQQQ 接线和拒绝路径可验证，缺项不授予配置权限”结束。仍需真实账户有效政策与批准来源、资金/费用/数量适用证据、可信初态/checkpoint 发行方、实际存储资格，以及未来获准消费者与生效读回；这些不由本次合成验证替代。B5 的原不采用决定保持。
 
-资金取舍待填写[风险政策确认草案](tqqq-risk-policy-draft.zh-CN.md)；事实来源与缺口见[券商事实](tqqq-broker-facts.zh-CN.md)。草案不是批准或启用凭据。
+资金取舍、受保护风险政策与券商事实缺口须由对应受保护记录确认；离线接线与草案本身不是批准或启用凭据。

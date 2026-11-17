@@ -1,3 +1,5 @@
+[English](ibkr-valuation-correction.md) | 简体中文
+
 # IBKR 策略快照估值边界
 
 策略快照对普通股票使用 IBKR 当前缓存 `portfolio()` 行中的 `marketValue`，并以 `account + conId` 与 `positions()` 的持仓严格配对；数量和币种也必须一致。缺失、非有限、身份不匹配或不同币种的市值会阻断快照，不以平均成本代替。
