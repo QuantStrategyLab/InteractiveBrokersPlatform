@@ -33,6 +33,7 @@ from application.broker_reconciliation import (
     load_read_only_open_trades,
 )
 from quant_platform_kit.common.cash_sweep import should_sell_cash_sweep_to_fund_whole_share_buy
+from quant_platform_kit.common.models import ExecutionReport, QuoteSnapshot
 from quant_platform_kit.common.small_account_compatibility import (
     apply_small_account_cash_compatibility,
     build_small_account_allocation_drift_notes,
@@ -62,6 +63,15 @@ def get_market_prices(
 
 
 def _serialize_quote_snapshot(snapshot, *, symbol: str | None = None) -> dict:
+    if isinstance(snapshot, QuoteSnapshot):
+        return {
+            "symbol": str(snapshot.symbol or symbol or "").strip().upper(),
+            "as_of": str(snapshot.as_of or ""),
+            "last_price": float(snapshot.last_price or 0.0),
+            "bid_price": snapshot.bid_price,
+            "ask_price": snapshot.ask_price,
+            "currency": str(snapshot.currency or "").strip(),
+        }
     return {
         "symbol": str(getattr(snapshot, "symbol", "") or symbol or "").strip().upper(),
         "as_of": str(getattr(snapshot, "as_of", "") or ""),
@@ -327,9 +337,11 @@ class _SettledCashDeadlineIB:
     def qualifyContracts(self, contract):
         # The pinned executor qualifies once more. Reuse the prepared contract
         # without pumping another request after the final intent was reserved.
-        if self._contract is None or any(
-            getattr(contract, field) != getattr(self._contract, field)
-            for field in ("symbol", "secType", "currency", "exchange")
+        if self._contract is None or (
+            contract.symbol != self._contract.symbol
+            or contract.secType != self._contract.secType
+            or contract.currency != self._contract.currency
+            or contract.exchange != self._contract.exchange
         ):
             raise RuntimeError("settled_cash_unprepared_contract")
         contract.update(self._contract)
@@ -510,13 +522,19 @@ def _iter_open_orders(ib) -> list[Any]:
         raise _PendingOrdersUnavailableError("all-client open-order snapshot unavailable") from None
 
 
-def _extract_open_order_symbol(order_like: Any) -> str | None:
+def _extract_open_order_contract(order_like: Any) -> Any:
     contract = getattr(order_like, "contract", None)
-    if contract is None and hasattr(order_like, "order"):
-        contract = getattr(order_like.order, "contract", None)
+    if contract is None:
+        order = getattr(order_like, "order", None)
+        contract = getattr(order, "contract", None)
+    return contract
+
+
+def _extract_open_order_symbol(order_like: Any) -> str | None:
+    contract = _extract_open_order_contract(order_like)
     symbol = getattr(contract, "symbol", None)
-    if symbol is None and hasattr(order_like, "symbol"):
-        symbol = getattr(order_like, "symbol")
+    if symbol is None:
+        symbol = getattr(order_like, "symbol", None)
     symbol_text = str(symbol or "").strip().upper()
     return symbol_text or None
 
@@ -552,9 +570,7 @@ def _observe_pending_orders(ib, symbols: set[str], *, account_ids=None) -> _Pend
         account_id = _extract_open_order_account(order_like)
         symbol = _extract_open_order_symbol(order_like)
         if selected_account_ids and account_id is None:
-            contract = getattr(order_like, "contract", None)
-            if contract is None:
-                contract = getattr(getattr(order_like, "order", None), "contract", None)
+            contract = _extract_open_order_contract(order_like)
             if (
                 symbol
                 and symbol not in symbols
@@ -612,7 +628,7 @@ def _normalize_date_like(value: Any) -> str | None:
     if value in {None, ""}:
         return None
     ts = pd.Timestamp(value)
-    if getattr(ts, "tzinfo", None) is not None:
+    if ts.tzinfo is not None:
         ts = ts.tz_convert(None)
     else:
         ts = ts.tz_localize(None)
@@ -975,11 +991,11 @@ def _execute_option_order_intents(
             )
         report = submit_order_intent(ib, order_intent)
         _, status_msg = check_order_submitted(report, translator=translator)
-        status = str(getattr(report, "status", "") or "")
+        status, broker_order_id, _, _ = _extract_execution_report_fields(report)
         order_payload = {
             **payload,
             "status": status,
-            "broker_order_id": getattr(report, "broker_order_id", None),
+            "broker_order_id": broker_order_id,
         }
         outcome = _record_order_outcome(
             execution_summary,
@@ -1368,16 +1384,35 @@ def _planned_buy_order_quantity(
     return qty, False
 
 
+def _extract_execution_report_fields(
+    report: Any,
+) -> tuple[str, Any, Any, Any]:
+    if isinstance(report, ExecutionReport):
+        return (
+            str(report.status or ""),
+            report.broker_order_id,
+            report.filled_quantity,
+            report.average_fill_price,
+        )
+    return (
+        str(getattr(report, "status", "") or ""),
+        getattr(report, "broker_order_id", None),
+        getattr(report, "filled_quantity", None),
+        getattr(report, "average_fill_price", None),
+    )
+
+
 def _projected_sell_release_value_for_report(report, *, fallback_price=0.0, fallback_quantity=0.0) -> float:
-    status = str(getattr(report, "status", "") or "")
+    status, _broker_order_id, raw_filled_quantity, raw_average_fill_price = _extract_execution_report_fields(report)
     if status not in {"Filled", "PartiallyFilled", "Partial"}:
         return 0.0
-    filled_quantity = float(getattr(report, "filled_quantity", 0.0) or 0.0)
+    filled_quantity = float(raw_filled_quantity or 0.0)
     if status == "Filled" and filled_quantity <= 0.0:
-        filled_quantity = float(getattr(report, "quantity", 0.0) or fallback_quantity or 0.0)
+        raw_quantity = report.quantity if isinstance(report, ExecutionReport) else getattr(report, "quantity", 0.0)
+        filled_quantity = float(raw_quantity or fallback_quantity or 0.0)
     if filled_quantity <= 0.0:
         return 0.0
-    fill_price = float(getattr(report, "average_fill_price", 0.0) or 0.0)
+    fill_price = float(raw_average_fill_price or 0.0)
     if fill_price <= 0.0:
         fill_price = max(0.0, float(fallback_price or 0.0))
     if fill_price <= 0.0:
@@ -1391,130 +1426,215 @@ def _finalize_result(trade_logs, execution_summary, *, return_summary: bool):
     return trade_logs
 
 
-def execute_rebalance(
-    ib,
-    target_weights,
-    positions,
-    account_values,
+_UNSET: Any = object()
+
+
+@dataclass(frozen=True, slots=True)
+class RebalanceExecutionOptions:
+    """Configuration options controlling one IBKR rebalance execution cycle."""
+
+    cash_reserve_ratio: float
+    rebalance_threshold_ratio: float
+    limit_buy_premium: float
+    sell_settle_delay_sec: float
+    strategy_profile: str | None = None
+    account_group: str | None = None
+    service_name: str | None = None
+    account_ids: Any = None
+    dry_run_only: bool = False
+    execution_mode: str | None = None
+    cash_reserve_floor_usd: float = 0.0
+    quantity_step: float = 1.0
+    min_order_notional: float = 50.0
+    safe_haven_cash_substitute_threshold_usd: float = DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD
+    market_currency: str = "USD"
+    limit_buy_premium_by_symbol: dict[str, float] | None = None
+    execution_lock_dir: str | Path | None = None
+    return_summary: bool = False
+    cash_only_execution: bool = True
+    paper_execution_admission_enabled: bool = False
+    runtime_release_receipt: Any = None
+    expected_strategy_release: Any = None
+
+
+@dataclass(slots=True)
+class _RebalanceAllocationPlan:
+    strategy_symbols: tuple[str, ...]
+    risk_symbols: tuple[str, ...]
+    income_symbols: tuple[str, ...]
+    safe_haven_symbols: tuple[str, ...]
+    safe_haven_symbol: str | None
+    target_weights: dict[str, float]
+    approved_target_caps: dict[str, float]
+    option_order_intents: tuple[dict[str, Any], ...]
+    option_underliers: tuple[str, ...]
+    has_executable_option_plan: bool
+    trade_date: str | None
+    snapshot_date: str | None
+    resolved_execution_mode: str
+    normalized_account_ids: tuple[str, ...]
+    order_account_id: str | None
+    equity: float
+    reserved: float
+    investable: float
+    threshold: float
+    order_quantity_step: float
+    minimum_order_notional: float
+    all_symbols: set[str]
+    account_new_risk_buy_blocked: bool
+    account_new_risk_reason_codes: tuple[str, ...]
+    execution_summary: dict[str, Any]
+    early_logs: list[str] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _RebalanceQuoteCollection:
+    prices: dict[str, float]
+    quote_snapshots: list[dict[str, Any]]
+    fallback_symbols: tuple[str, ...]
+    fallback_source: str
+
+
+@dataclass(frozen=True, slots=True)
+class _DriftNotesContext:
+    reference_target_mv: dict[str, float]
+    current_mv: dict[str, float]
+    current_quantities: dict[str, float]
+    prices: dict[str, float]
+    equity: float
+    investable_buying_power: float
+
+
+@dataclass(frozen=True, slots=True)
+class _RebalanceOrderOutcome:
+    trade_logs: list[str]
+    buying_power: float = 0.0
+    finalized_early: bool = False
+    drift_context: _DriftNotesContext | None = None
+
+
+def _resolve_rebalance_options(
+    options: RebalanceExecutionOptions | None,
+    **overrides: Any,
+) -> RebalanceExecutionOptions:
+    provided = {key: value for key, value in overrides.items() if value is not _UNSET}
+    if options is not None:
+        return replace(options, **provided) if provided else options
+    missing = [
+        name
+        for name in (
+            "cash_reserve_ratio",
+            "rebalance_threshold_ratio",
+            "limit_buy_premium",
+            "sell_settle_delay_sec",
+        )
+        if name not in provided
+    ]
+    if missing:
+        joined = ", ".join(repr(name) for name in missing)
+        raise TypeError(f"execute_rebalance() missing required keyword-only argument(s): {joined}")
+    return RebalanceExecutionOptions(**provided)
+
+
+def _sum_safe_haven_weight(
+    target_weights: dict[str, float],
+    safe_haven_symbols: tuple[str, ...],
+) -> float:
+    return float(
+        sum(
+            float(target_weights.get(str(symbol or "").strip().upper(), 0.0) or 0.0)
+            for symbol in safe_haven_symbols
+        )
+    )
+
+
+def _build_claimed_submitter(
     *,
-    fetch_quote_snapshots,
     submit_order_intent,
-    order_intent_cls,
-    translator,
-    strategy_symbols=None,
-    signal_metadata=None,
-    acquire_execution_claim=None,
-    account_execution_session=None,
-    strategy_profile=None,
-    account_group=None,
-    service_name=None,
-    account_ids=None,
-    dry_run_only=False,
-    execution_mode=None,
-    cash_reserve_ratio,
-    rebalance_threshold_ratio,
-    limit_buy_premium,
-    sell_settle_delay_sec,
-    cash_reserve_floor_usd=0.0,
-    quantity_step=1.0,
-    min_order_notional=50.0,
-    safe_haven_cash_substitute_threshold_usd=DEFAULT_SAFE_HAVEN_CASH_SUBSTITUTE_THRESHOLD_USD,
-    market_currency="USD",
-    limit_buy_premium_by_symbol=None,
-    execution_lock_dir=None,
-    return_summary=False,
-    cash_only_execution=True,
-    paper_execution_admission_enabled=False,
-    runtime_release_receipt=None,
-    expected_strategy_release=None,
+    account_values,
+    signal_metadata: dict[str, Any],
+    acquire_execution_claim,
+    account_execution_session,
+    options: RebalanceExecutionOptions,
 ):
-    """Execute trades to reach target weights."""
-    del target_weights
-    if not dry_run_only:
-        delegate_submit = submit_order_intent
+    """Build the explicit broker order submitter with claim, session, and breaker gates."""
+    if options.dry_run_only:
+        return submit_order_intent
 
-        def submit_claimed_order(ib, order_intent, **kwargs):
-            from quant_platform_kit.common import execution_state as contract
+    def submit_claimed_order(ib, order_intent, **kwargs):
+        from quant_platform_kit.common import execution_state as contract
 
-            session_type = getattr(contract, "AccountSubmissionSession", ())
-            if (not isinstance(account_execution_session, session_type)
-                    or account_execution_session.contract_version != "account_submission.v1"):
-                raise RuntimeError("IBKR account submission session/contract required")
-            if (
-                account_execution_session.broker != "ibkr"
-                or account_execution_session.release_id != contract.submission_release_digest(runtime_release_receipt)
-                or account_execution_session.intent_id != contract.submission_intent_digest(signal_metadata, strategy_profile)
-                or account_execution_session.profile != strategy_profile
-            ):
-                raise RuntimeError("IBKR account session intent/release binding mismatch")
-            if acquire_execution_claim is None or not acquire_execution_claim():
-                # N13 T1 consult-only: local claim still wins; ignore decision.
-                consult_t1_live_submit(identity_held=False, dry_run_bypass=False)
-                raise RuntimeError("IBKR execution claim required; refusing broker submission")
-            # Shadow consult after successful claim; deny must not block submit.
-            consult_t1_live_submit(identity_held=True, dry_run_bypass=False)
-            new_risk = str(order_intent.side).strip().lower() == "buy" and is_account_new_risk_gate_enabled()
-            if new_risk:
-                latest = evaluate_persistent_account_new_risk_admission(
-                    account_values, signal_metadata=signal_metadata, session=account_execution_session,
-                )
-                if new_risk_buy_prohibited(latest):
-                    raise RuntimeError("IBKR persistent account breaker prohibits new risk")
-            # Settlement preparation must finish before reserving the exact intent.
-            grant = (None if isinstance(ib, _SettledCashDeadlineIB)
-                     else account_execution_session.reserve(order_intent, new_risk=new_risk))
-            return delegate_submit(
-                ib, order_intent, account_execution_session=account_execution_session,
-                execution_grant=grant, **kwargs,
+        session_type = getattr(contract, "AccountSubmissionSession", ())
+        if (
+            not isinstance(account_execution_session, session_type)
+            or account_execution_session.contract_version != "account_submission.v1"
+        ):
+            raise RuntimeError("IBKR account submission session/contract required")
+        if (
+            account_execution_session.broker != "ibkr"
+            or account_execution_session.release_id != contract.submission_release_digest(options.runtime_release_receipt)
+            or account_execution_session.intent_id
+            != contract.submission_intent_digest(signal_metadata, options.strategy_profile)
+            or account_execution_session.profile != options.strategy_profile
+        ):
+            raise RuntimeError("IBKR account session intent/release binding mismatch")
+        if acquire_execution_claim is None or not acquire_execution_claim():
+            # N13 T1 consult-only: local claim still wins; ignore decision.
+            consult_t1_live_submit(identity_held=False, dry_run_bypass=False)
+            raise RuntimeError("IBKR execution claim required; refusing broker submission")
+        # Shadow consult after successful claim; deny must not block submit.
+        consult_t1_live_submit(identity_held=True, dry_run_bypass=False)
+        new_risk = str(order_intent.side).strip().lower() == "buy" and is_account_new_risk_gate_enabled()
+        if new_risk:
+            latest = evaluate_persistent_account_new_risk_admission(
+                account_values,
+                signal_metadata=signal_metadata,
+                session=account_execution_session,
             )
+            if new_risk_buy_prohibited(latest):
+                raise RuntimeError("IBKR persistent account breaker prohibits new risk")
+        # Settlement preparation must finish before reserving the exact intent.
+        grant = (
+            None
+            if isinstance(ib, _SettledCashDeadlineIB)
+            else account_execution_session.reserve(order_intent, new_risk=new_risk)
+        )
+        return submit_order_intent(
+            ib,
+            order_intent,
+            account_execution_session=account_execution_session,
+            execution_grant=grant,
+            **kwargs,
+        )
 
-        submit_order_intent = submit_claimed_order
-    signal_metadata = signal_metadata or {}
-    _require_tqqq_effective_date(signal_metadata, strategy_profile=strategy_profile)
-    allocation = _resolve_weight_allocation(signal_metadata)
-    target_weights = dict(allocation["targets"])
-    approved_target_caps = _require_live_risk_authority(
-        signal_metadata,
-        allocation,
-        strategy_profile=strategy_profile,
-        account_ids=account_ids,
-    )
-    option_order_intents = _normalize_option_order_intents(signal_metadata)
-    option_underliers = _option_intent_underliers(option_order_intents)
-    has_executable_option_plan = _has_executable_option_plan(option_order_intents)
-    if has_executable_option_plan:
-        raise RuntimeError("IBKR live option intents lack final RiskEngine order limits")
-    strategy_symbols = tuple(allocation["strategy_symbols"])
-    trade_date = str(signal_metadata.get("trade_date") or "").strip() or None
-    snapshot_date = _normalize_date_like(signal_metadata.get("snapshot_as_of"))
-    resolved_execution_mode = _resolve_execution_mode(
-        dry_run_only=dry_run_only,
-        execution_mode=execution_mode,
-    )
-    safe_haven_symbols = tuple(allocation["safe_haven_symbols"])
-    safe_haven_symbol = safe_haven_symbols[0] if safe_haven_symbols else None
-    equity = account_values.get("equity", 0)
-    normalized_account_ids = _normalize_account_ids(account_ids)
-    order_account_id = _resolve_order_account_id(normalized_account_ids)
-    quote_snapshots_by_symbol: dict[str, dict] = {}
+    return submit_claimed_order
 
-    def record_quote_snapshot(symbol, snapshot) -> None:
-        payload = _serialize_quote_snapshot(snapshot, symbol=symbol)
-        symbol = payload.get("symbol")
-        if symbol:
-            quote_snapshots_by_symbol[symbol] = payload
 
-    execution_summary = {
+def _init_execution_summary(
+    *,
+    resolved_execution_mode: str,
+    normalized_account_ids: tuple[str, ...],
+    order_account_id: str | None,
+    trade_date: str | None,
+    snapshot_date: str | None,
+    safe_haven_symbol: str | None,
+    option_order_intents: tuple[dict[str, Any], ...],
+    option_underliers: tuple[str, ...],
+    signal_metadata: dict[str, Any],
+    account_values,
+    options: RebalanceExecutionOptions,
+) -> dict[str, Any]:
+    return {
         "mode": resolved_execution_mode,
-        "strategy_profile": strategy_profile,
-        "account_group": account_group,
+        "strategy_profile": options.strategy_profile,
+        "account_group": options.account_group,
         "account_ids": list(normalized_account_ids),
         "order_account_id": order_account_id,
-        "service_name": service_name,
+        "service_name": options.service_name,
         "trade_date": trade_date,
         "snapshot_as_of": snapshot_date,
         "safe_haven_symbol": safe_haven_symbol,
-        "market_currency": str(market_currency or "USD").strip().upper(),
+        "market_currency": str(options.market_currency or "USD").strip().upper(),
         "target_stock_weight": signal_metadata.get("target_stock_weight"),
         "realized_stock_weight": signal_metadata.get("realized_stock_weight"),
         "target_safe_haven_weight": signal_metadata.get("safe_haven_weight"),
@@ -1537,7 +1657,7 @@ def execute_rebalance(
         "no_op_reason": None,
         "cash_reserve_dollars": 0.0,
         "safe_haven_cash_substitute_threshold_usd": float(
-            max(0.0, float(safe_haven_cash_substitute_threshold_usd or 0.0))
+            max(0.0, float(options.safe_haven_cash_substitute_threshold_usd or 0.0))
         ),
         "safe_haven_cash_substituted_symbols": [],
         "small_account_whole_share_substituted_symbols": [],
@@ -1560,6 +1680,109 @@ def execute_rebalance(
         "lock_path": None,
         "paper_execution_admission": {},
     }
+
+
+def _apply_account_new_risk_gate(
+    target_weights: dict[str, float],
+    *,
+    account_values,
+    signal_metadata: dict[str, Any],
+    account_execution_session,
+    execution_summary: dict[str, Any],
+    dry_run_only: bool,
+) -> tuple[dict[str, float], bool, tuple[str, ...]]:
+    if not is_account_new_risk_gate_enabled():
+        set_cycle_snapshot(None)
+        return target_weights, False, ()
+    # Inner dry-run previews without a session retain their diagnostic
+    # purpose; they make no persistence claim. Native cycles always restore
+    # the journal, including no-target and dry-run cycles with a store.
+    admission = evaluate_account_values_new_risk_admission(account_values, signal_metadata=signal_metadata)
+    if dry_run_only and account_execution_session is None:
+        execution_summary["persistent_breaker_status"] = "NOT_PROVEN"
+    else:
+        admission = evaluate_persistent_account_new_risk_admission(
+            account_values,
+            signal_metadata=signal_metadata,
+            session=account_execution_session,
+        )
+    account_new_risk_buy_blocked = new_risk_buy_prohibited(admission)
+    account_new_risk_reason_codes = tuple(admission.reason_codes)
+    portfolio = build_portfolio_from_account_values(account_values, signal_metadata=signal_metadata)
+    cycle_snapshot = build_snapshot_from_portfolio(portfolio)
+    set_cycle_snapshot(cycle_snapshot)
+    attention_counts = maybe_publish_attention_for_admission(
+        admission,
+        portfolio=portfolio,
+        snapshot=cycle_snapshot,
+    )
+    print(
+        "[Attention notify] "
+        f"sent={attention_counts.get('sent', 0)} "
+        f"skipped={attention_counts.get('skipped', 0)} "
+        f"failed={attention_counts.get('failed', 0)}",
+        flush=True,
+    )
+    scaled_weights = scale_targets_for_admission(target_weights, admission, snapshot=cycle_snapshot)
+    if admission.combined_scale is not None:
+        print(
+            f"[Envelope scale] combined_scale={admission.combined_scale} "
+            "subject_to_stoploss_exit_authority",
+            flush=True,
+        )
+    return scaled_weights, account_new_risk_buy_blocked, account_new_risk_reason_codes
+
+
+def _resolve_rebalance_allocation(
+    *,
+    positions,
+    account_values,
+    signal_metadata: dict[str, Any],
+    account_execution_session,
+    translator,
+    options: RebalanceExecutionOptions,
+) -> _RebalanceAllocationPlan:
+    """Validate authority, resolve target weights, and apply account risk-gate scaling."""
+    _require_tqqq_effective_date(signal_metadata, strategy_profile=options.strategy_profile)
+    allocation = _resolve_weight_allocation(signal_metadata)
+    target_weights = dict(allocation["targets"])
+    approved_target_caps = _require_live_risk_authority(
+        signal_metadata,
+        allocation,
+        strategy_profile=options.strategy_profile,
+        account_ids=options.account_ids,
+    )
+    option_order_intents = _normalize_option_order_intents(signal_metadata)
+    option_underliers = _option_intent_underliers(option_order_intents)
+    has_executable_option_plan = _has_executable_option_plan(option_order_intents)
+    if has_executable_option_plan:
+        raise RuntimeError("IBKR live option intents lack final RiskEngine order limits")
+    strategy_symbols = tuple(allocation["strategy_symbols"])
+    trade_date = str(signal_metadata.get("trade_date") or "").strip() or None
+    snapshot_date = _normalize_date_like(signal_metadata.get("snapshot_as_of"))
+    resolved_execution_mode = _resolve_execution_mode(
+        dry_run_only=options.dry_run_only,
+        execution_mode=options.execution_mode,
+    )
+    safe_haven_symbols = tuple(allocation["safe_haven_symbols"])
+    safe_haven_symbol = safe_haven_symbols[0] if safe_haven_symbols else None
+    normalized_account_ids = _normalize_account_ids(options.account_ids)
+    order_account_id = _resolve_order_account_id(normalized_account_ids)
+
+    execution_summary = _init_execution_summary(
+        resolved_execution_mode=resolved_execution_mode,
+        normalized_account_ids=normalized_account_ids,
+        order_account_id=order_account_id,
+        trade_date=trade_date,
+        snapshot_date=snapshot_date,
+        safe_haven_symbol=safe_haven_symbol,
+        option_order_intents=option_order_intents,
+        option_underliers=option_underliers,
+        signal_metadata=signal_metadata,
+        account_values=account_values,
+        options=options,
+    )
+
     equity = float(account_values.get("equity", 0) or 0.0)
     cash_only_deleverage_mode = bool(signal_metadata.get("cash_only_deleverage_mode"))
     if equity <= 0:
@@ -1567,82 +1790,122 @@ def execute_rebalance(
             float(details.get("quantity") or 0.0) * float(details.get("avg_cost") or 0.0)
             for details in dict(positions or {}).values()
         )
-        if cash_only_execution and gross_positions > 0.0:
+        if options.cash_only_execution and gross_positions > 0.0:
             equity = gross_positions
             cash_only_deleverage_mode = True
         else:
             execution_summary["execution_status"] = "blocked"
             execution_summary["no_op_reason"] = "no_equity"
-            return _finalize_result([translator("no_equity")], execution_summary, return_summary=return_summary)
+            return _RebalanceAllocationPlan(
+                strategy_symbols=strategy_symbols,
+                risk_symbols=tuple(allocation["risk_symbols"]),
+                income_symbols=tuple(allocation["income_symbols"]),
+                safe_haven_symbols=safe_haven_symbols,
+                safe_haven_symbol=safe_haven_symbol,
+                target_weights=target_weights,
+                approved_target_caps=approved_target_caps,
+                option_order_intents=option_order_intents,
+                option_underliers=option_underliers,
+                has_executable_option_plan=has_executable_option_plan,
+                trade_date=trade_date,
+                snapshot_date=snapshot_date,
+                resolved_execution_mode=resolved_execution_mode,
+                normalized_account_ids=normalized_account_ids,
+                order_account_id=order_account_id,
+                equity=equity,
+                reserved=0.0,
+                investable=0.0,
+                threshold=0.0,
+                order_quantity_step=float(options.quantity_step or 1.0),
+                minimum_order_notional=max(0.0, float(options.min_order_notional or 0.0)),
+                all_symbols=set(),
+                account_new_risk_buy_blocked=False,
+                account_new_risk_reason_codes=(),
+                execution_summary=execution_summary,
+                early_logs=[translator("no_equity")],
+            )
     execution_summary["cash_only_deleverage_mode"] = cash_only_deleverage_mode
 
-    account_new_risk_buy_blocked = False
-    account_new_risk_reason_codes: tuple[str, ...] = ()
-    if is_account_new_risk_gate_enabled():
-        # Inner dry-run previews without a session retain their diagnostic
-        # purpose; they make no persistence claim. Native cycles always restore
-        # the journal, including no-target and dry-run cycles with a store.
-        admission = evaluate_account_values_new_risk_admission(account_values, signal_metadata=signal_metadata)
-        if dry_run_only and account_execution_session is None:
-            execution_summary["persistent_breaker_status"] = "NOT_PROVEN"
-        else:
-            admission = evaluate_persistent_account_new_risk_admission(
-                account_values, signal_metadata=signal_metadata, session=account_execution_session,
-            )
-        account_new_risk_buy_blocked = new_risk_buy_prohibited(admission)
-        account_new_risk_reason_codes = tuple(admission.reason_codes)
-        portfolio = build_portfolio_from_account_values(account_values, signal_metadata=signal_metadata)
-        cycle_snapshot = build_snapshot_from_portfolio(portfolio)
-        set_cycle_snapshot(cycle_snapshot)
-        attention_counts = maybe_publish_attention_for_admission(
-            admission,
-            portfolio=portfolio,
-            snapshot=cycle_snapshot,
-        )
-        print(
-            "[Attention notify] "
-            f"sent={attention_counts.get('sent', 0)} "
-            f"skipped={attention_counts.get('skipped', 0)} "
-            f"failed={attention_counts.get('failed', 0)}",
-            flush=True,
-        )
-        target_weights = scale_targets_for_admission(target_weights, admission, snapshot=cycle_snapshot)
-        if admission.combined_scale is not None:
-            print(
-                f"[Envelope scale] combined_scale={admission.combined_scale} "
-                "subject_to_stoploss_exit_authority",
-                flush=True,
-            )
-    else:
-        set_cycle_snapshot(None)
+    target_weights, account_new_risk_buy_blocked, account_new_risk_reason_codes = _apply_account_new_risk_gate(
+        target_weights,
+        account_values=account_values,
+        signal_metadata=signal_metadata,
+        account_execution_session=account_execution_session,
+        execution_summary=execution_summary,
+        dry_run_only=options.dry_run_only,
+    )
 
     reserved = max(
-        float(equity) * float(cash_reserve_ratio or 0.0),
-        max(0.0, float(cash_reserve_floor_usd or 0.0)),
+        float(equity) * float(options.cash_reserve_ratio or 0.0),
+        max(0.0, float(options.cash_reserve_floor_usd or 0.0)),
     )
     investable = equity - reserved
     target_weights, substituted_safe_haven_symbols = _apply_safe_haven_cash_substitution_to_weights(
         target_weights,
         safe_haven_symbols=safe_haven_symbols,
         investable=investable,
-        threshold_usd=safe_haven_cash_substitute_threshold_usd,
+        threshold_usd=options.safe_haven_cash_substitute_threshold_usd,
     )
     execution_summary["safe_haven_cash_substituted_symbols"] = list(substituted_safe_haven_symbols)
     if safe_haven_symbols:
-        execution_summary["realized_safe_haven_weight"] = float(
-            sum(
-                float(target_weights.get(str(symbol or "").strip().upper(), 0.0) or 0.0)
-                for symbol in safe_haven_symbols
-            )
+        execution_summary["realized_safe_haven_weight"] = _sum_safe_haven_weight(
+            target_weights,
+            safe_haven_symbols,
         )
-    threshold = equity * rebalance_threshold_ratio
-    order_quantity_step = float(quantity_step or 1.0)
-    minimum_order_notional = max(0.0, float(min_order_notional or 0.0))
+    threshold = equity * options.rebalance_threshold_ratio
+    order_quantity_step = float(options.quantity_step or 1.0)
+    minimum_order_notional = max(0.0, float(options.min_order_notional or 0.0))
     execution_summary["cash_reserve_dollars"] = float(reserved)
 
     all_symbols = set(target_weights.keys()) | set(positions.keys())
     if strategy_symbols:
         all_symbols = all_symbols & set(strategy_symbols)
+
+    return _RebalanceAllocationPlan(
+        strategy_symbols=strategy_symbols,
+        risk_symbols=tuple(allocation["risk_symbols"]),
+        income_symbols=tuple(allocation["income_symbols"]),
+        safe_haven_symbols=safe_haven_symbols,
+        safe_haven_symbol=safe_haven_symbol,
+        target_weights=target_weights,
+        approved_target_caps=approved_target_caps,
+        option_order_intents=option_order_intents,
+        option_underliers=option_underliers,
+        has_executable_option_plan=has_executable_option_plan,
+        trade_date=trade_date,
+        snapshot_date=snapshot_date,
+        resolved_execution_mode=resolved_execution_mode,
+        normalized_account_ids=normalized_account_ids,
+        order_account_id=order_account_id,
+        equity=equity,
+        reserved=reserved,
+        investable=investable,
+        threshold=threshold,
+        order_quantity_step=order_quantity_step,
+        minimum_order_notional=minimum_order_notional,
+        all_symbols=all_symbols,
+        account_new_risk_buy_blocked=account_new_risk_buy_blocked,
+        account_new_risk_reason_codes=account_new_risk_reason_codes,
+        execution_summary=execution_summary,
+    )
+
+
+def _collect_rebalance_quotes(
+    ib,
+    symbols: set[str],
+    *,
+    signal_metadata: dict[str, Any],
+    fetch_quote_snapshots,
+    dry_run_only: bool,
+) -> _RebalanceQuoteCollection:
+    """Fetch market quotes, serialize snapshots, and apply snapshot price fallbacks."""
+    quote_snapshots_by_symbol: dict[str, dict[str, Any]] = {}
+
+    def record_quote_snapshot(symbol, snapshot) -> None:
+        payload = _serialize_quote_snapshot(snapshot, symbol=symbol)
+        resolved_symbol = payload.get("symbol")
+        if resolved_symbol:
+            quote_snapshots_by_symbol[resolved_symbol] = payload
 
     snapshot_price_fallbacks = _normalize_price_fallbacks(signal_metadata)
     price_fallback_source = str(signal_metadata.get("price_fallback_source") or "").strip() or (
@@ -1650,80 +1913,124 @@ def execute_rebalance(
     )
     prices = get_market_prices(
         ib,
-        all_symbols,
+        symbols,
         fetch_quote_snapshots=fetch_quote_snapshots,
         quote_recorder=record_quote_snapshot,
     )
-    prices, snapshot_price_fallback_symbols = _apply_snapshot_price_fallbacks(
+    prices, fallback_symbols = _apply_snapshot_price_fallbacks(
         prices,
-        all_symbols,
+        symbols,
         dry_run_only=dry_run_only,
         snapshot_price_fallbacks=snapshot_price_fallbacks,
     )
-    execution_summary["snapshot_price_fallback_used"] = bool(snapshot_price_fallback_symbols)
-    execution_summary["snapshot_price_fallback_symbols"] = list(snapshot_price_fallback_symbols)
-    execution_summary["snapshot_price_fallback_count"] = len(snapshot_price_fallback_symbols)
-    execution_summary["price_fallback_used"] = bool(snapshot_price_fallback_symbols)
-    execution_summary["price_fallback_symbols"] = list(snapshot_price_fallback_symbols)
-    execution_summary["price_fallback_count"] = len(snapshot_price_fallback_symbols)
-    execution_summary["price_fallback_source"] = price_fallback_source if snapshot_price_fallback_symbols else None
-    execution_summary["quote_snapshot"] = {
-        "quotes": list(quote_snapshots_by_symbol.values()),
-    }
-    if snapshot_price_fallback_symbols:
-        execution_summary["price_source_mode"] = f"mixed_market_quote_{price_fallback_source}"
+    return _RebalanceQuoteCollection(
+        prices=prices,
+        quote_snapshots=list(quote_snapshots_by_symbol.values()),
+        fallback_symbols=fallback_symbols,
+        fallback_source=price_fallback_source,
+    )
 
-    current_mv = {}
-    for symbol in all_symbols:
-        qty = positions.get(symbol, {}).get("quantity", 0)
-        price = prices.get(symbol, 0)
-        current_mv[symbol] = qty * price
+
+def _record_quote_collection_summary(
+    execution_summary: dict[str, Any],
+    quote_collection: _RebalanceQuoteCollection,
+) -> None:
+    fallback_symbols = quote_collection.fallback_symbols
+    has_fallback = bool(fallback_symbols)
+    execution_summary["snapshot_price_fallback_used"] = has_fallback
+    execution_summary["snapshot_price_fallback_symbols"] = list(fallback_symbols)
+    execution_summary["snapshot_price_fallback_count"] = len(fallback_symbols)
+    execution_summary["price_fallback_used"] = has_fallback
+    execution_summary["price_fallback_symbols"] = list(fallback_symbols)
+    execution_summary["price_fallback_count"] = len(fallback_symbols)
+    execution_summary["price_fallback_source"] = quote_collection.fallback_source if has_fallback else None
+    execution_summary["quote_snapshot"] = {
+        "quotes": quote_collection.quote_snapshots,
+    }
+    if has_fallback:
+        execution_summary["price_source_mode"] = f"mixed_market_quote_{quote_collection.fallback_source}"
+
+
+def _append_small_account_allocation_drift_notes(
+    execution_summary: dict[str, Any],
+    trade_logs: list[str],
+    *,
+    translator,
+    context: _DriftNotesContext,
+) -> None:
+    if execution_summary.get("execution_status") == "blocked":
+        return
+    if execution_summary.get("small_account_allocation_drift_notes"):
+        return
+    submitted_orders = (
+        tuple(execution_summary.get("orders_submitted") or ())
+        + tuple(execution_summary.get("orders_pending") or ())
+        + tuple(execution_summary.get("orders_filled") or ())
+        + tuple(execution_summary.get("orders_partially_filled") or ())
+    )
+    notes = build_small_account_allocation_drift_notes(
+        target_values=context.reference_target_mv,
+        current_values=context.current_mv,
+        current_quantities=context.current_quantities,
+        prices=context.prices,
+        submitted_orders=submitted_orders,
+        total_value=float(context.equity or 0.0),
+        cash_value=context.investable_buying_power,
+    )
+    if not notes:
+        return
+    execution_summary["small_account_allocation_drift_notes"] = list(notes)
+    trade_logs.extend(format_small_account_allocation_drift_notes(notes, translator=translator))
+
+
+def _prepare_post_quote_targets(
+    *,
+    positions,
+    account_values,
+    allocation_plan: _RebalanceAllocationPlan,
+    prices: dict[str, float],
+    translator,
+) -> tuple[dict[str, float], dict[str, float], dict[str, float], list[str], str, _DriftNotesContext]:
+    execution_summary = allocation_plan.execution_summary
+    target_weights = allocation_plan.target_weights
+    current_mv = {
+        symbol: positions.get(symbol, {}).get("quantity", 0) * prices.get(symbol, 0)
+        for symbol in allocation_plan.all_symbols
+    }
     current_quantities = {
         symbol: float(positions.get(symbol, {}).get("quantity", 0.0) or 0.0)
-        for symbol in all_symbols
+        for symbol in allocation_plan.all_symbols
     }
-
-    target_mv = {symbol: investable * weight for symbol, weight in target_weights.items()}
-    drift_target_symbols = tuple(
+    target_mv = {symbol: allocation_plan.investable * weight for symbol, weight in target_weights.items()}
+    candidate_symbols = tuple(
         dict.fromkeys(
             str(symbol or "").strip().upper()
-            for symbol in tuple(allocation["risk_symbols"]) + tuple(allocation["income_symbols"])
+            for symbol in allocation_plan.risk_symbols + allocation_plan.income_symbols
             if str(symbol or "").strip()
         )
     )
-    if not drift_target_symbols:
-        drift_target_symbols = tuple(
-            symbol for symbol in target_mv if str(symbol or "").strip().upper() not in safe_haven_symbols
+    if not candidate_symbols:
+        candidate_symbols = tuple(
+            str(symbol or "").strip().upper()
+            for symbol in target_mv
+            if str(symbol or "").strip().upper() not in allocation_plan.safe_haven_symbols
         )
     small_account_reference_target_mv = {
         symbol: target_mv.get(symbol, 0.0)
-        for symbol in drift_target_symbols
+        for symbol in candidate_symbols
         if symbol in target_mv
     }
-    small_account_candidate_symbols = tuple(
-        dict.fromkeys(
-            str(symbol or "").strip().upper()
-            for symbol in tuple(allocation["risk_symbols"]) + tuple(allocation["income_symbols"])
-            if str(symbol or "").strip()
-        )
-    )
-    if not small_account_candidate_symbols:
-        small_account_candidate_symbols = tuple(
-            str(symbol or "").strip().upper()
-            for symbol in target_mv
-            if str(symbol or "").strip().upper() not in safe_haven_symbols
-        )
     small_account_compatibility = apply_small_account_cash_compatibility(
         target_mv,
         prices,
-        candidate_symbols=small_account_candidate_symbols,
-        safe_haven_cash_symbols=safe_haven_symbols,
-        quantity_step=order_quantity_step,
+        candidate_symbols=candidate_symbols,
+        safe_haven_cash_symbols=allocation_plan.safe_haven_symbols,
+        quantity_step=allocation_plan.order_quantity_step,
         cash_substitute_limit_usd=SMALL_ACCOUNT_SAFE_HAVEN_CASH_SUBSTITUTE_LIMIT_USD,
     )
     target_mv = dict(small_account_compatibility.targets)
     for symbol, value in target_mv.items():
-        cap = approved_target_caps.get(symbol)
+        cap = allocation_plan.approved_target_caps.get(symbol)
         if cap is None or not math.isfinite(float(value)) or float(value) > cap + 0.01:
             raise RuntimeError("IBKR target exceeds RiskEngine order limit")
     small_account_substituted_symbols = small_account_compatibility.whole_share_substituted_symbols
@@ -1734,12 +2041,10 @@ def execute_rebalance(
     )
     for symbol in small_account_safe_haven_cash_substituted_symbols:
         target_weights[symbol] = 0.0
-    if safe_haven_symbols:
-        execution_summary["realized_safe_haven_weight"] = float(
-            sum(
-                float(target_weights.get(str(symbol or "").strip().upper(), 0.0) or 0.0)
-                for symbol in safe_haven_symbols
-            )
+    if allocation_plan.safe_haven_symbols:
+        execution_summary["realized_safe_haven_weight"] = _sum_safe_haven_weight(
+            target_weights,
+            allocation_plan.safe_haven_symbols,
         )
     execution_summary["small_account_whole_share_substituted_symbols"] = list(
         small_account_substituted_symbols
@@ -1752,128 +2057,62 @@ def execute_rebalance(
     execution_summary["small_account_whole_share_cash_notes"] = list(
         small_account_compatibility.cash_substitution_notes
     )
-    trade_logs = []
-    trade_logs.extend(
+    trade_logs = list(
         format_small_account_cash_substitution_notes(
             small_account_compatibility.cash_substitution_notes,
             translator=translator,
         )
     )
-
-    def append_small_account_allocation_drift_notes():
-        if execution_summary.get("execution_status") == "blocked":
-            return
-        if execution_summary.get("small_account_allocation_drift_notes"):
-            return
-        submitted_orders = tuple(execution_summary.get("orders_submitted") or ()) + tuple(
-            execution_summary.get("orders_pending") or ()
-        ) + tuple(
-            execution_summary.get("orders_filled") or ()
-        ) + tuple(execution_summary.get("orders_partially_filled") or ())
-        notes = build_small_account_allocation_drift_notes(
-            target_values=small_account_reference_target_mv,
-            current_values=current_mv,
-            current_quantities=current_quantities,
-            prices=prices,
-            submitted_orders=submitted_orders,
-            total_value=float(equity or 0.0),
-            cash_value=_investable_buying_power(
-                float(account_values.get("buying_power", 0.0) or 0.0),
-                reserved,
-            ),
-        )
-        if not notes:
-            return
-        execution_summary["small_account_allocation_drift_notes"] = list(notes)
-        trade_logs.extend(format_small_account_allocation_drift_notes(notes, translator=translator))
-
     target_hash = _build_target_hash(target_weights)
-    execution_summary["target_vs_current"] = _build_target_diff_rows(target_weights, current_mv, equity)
-    if paper_execution_admission_enabled:
-        paper_admission = evaluate_ibkr_paper_execution_admission(
-            signal_metadata=signal_metadata,
-            strategy_profile=strategy_profile,
-            account_scope=account_group,
-            positions=positions,
-            prices=prices,
-            target_market_values=target_mv,
-            option_order_intents=option_order_intents,
-            runtime_release_receipt=runtime_release_receipt,
-            expected_strategy_release=expected_strategy_release,
-        )
-        execution_summary["paper_execution_admission"] = paper_admission
-        if not paper_admission["broker_write_allowed"]:
-            reason = "paper_execution_admission_blocked"
-            execution_summary["execution_status"] = "blocked"
-            execution_summary["no_op_reason"] = reason
-            execution_summary["skipped_reasons"].append(reason)
-            trade_logs.append(translator("failed", reason=reason))
-            return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
-    if equity > 0:
-        current_safe_haven_mv = current_mv.get(safe_haven_symbol, 0.0) if safe_haven_symbol else 0.0
-        execution_summary["current_safe_haven_weight"] = float(current_safe_haven_mv / equity)
-        execution_summary["current_stock_weight"] = float(
-            (sum(current_mv.values()) - current_safe_haven_mv) / equity
-        )
-
-    try:
-        pending_observation = _observe_pending_orders(
-            ib,
-            set(all_symbols) | set(option_underliers),
-            account_ids=normalized_account_ids,
-        )
-    except _PendingOrdersUnavailableError:
-        reason = "pending_orders_unavailable"
-        execution_summary["execution_status"] = "blocked"
-        execution_summary["no_op_reason"] = reason
-        execution_summary["skipped_reasons"].append(reason)
-        trade_logs.append(translator("failed", reason=reason))
-        return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
-    pending_symbols = pending_observation.symbols
-    if pending_symbols:
-        reason = f"pending_orders_detected:{','.join(pending_symbols)}"
-        execution_summary["execution_status"] = "blocked"
-        execution_summary["no_op_reason"] = reason
-        execution_summary["skipped_reasons"].append(reason)
-        trade_logs.append(
-            translator(
-                "pending_orders_detected",
-                profile=_display_text(strategy_profile, fallback="<unknown>"),
-                symbols=",".join(pending_symbols),
-            )
-        )
-        return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
-    if pending_observation.cash_risk_unknown:
-        # Reuse the existing BUY gate, without vetoing otherwise-qualified
-        # reductions. The normal claim, lock and sell limits still apply.
-        account_new_risk_buy_blocked = True
-        account_new_risk_reason_codes = (
-            *account_new_risk_reason_codes,
-            "PENDING_ORDER_CASH_RISK_UNKNOWN",
-        )
-        execution_summary["pending_order_cash_risk_unknown"] = True
-
-    settled_cash = (
-        _settled_cash_for_currency(ib, currency=market_currency, account_ids=normalized_account_ids)
-        if cash_only_execution else None
+    execution_summary["target_vs_current"] = _build_target_diff_rows(
+        target_weights,
+        current_mv,
+        allocation_plan.equity,
     )
-    settled_cash_ledger_unverified = cash_only_execution and settled_cash is None
-    if settled_cash_ledger_unverified:
-        account_new_risk_buy_blocked = True
-        account_new_risk_reason_codes = (
-            *account_new_risk_reason_codes,
-            "SETTLED_CASH_LEDGER_UNVERIFIED",
-        )
-        execution_summary["settled_cash_ledger_status"] = "UNKNOWN"
-    elif cash_only_execution:
-        execution_summary["settled_cash_ledger_status"] = "OBSERVED"
+    drift_context = _DriftNotesContext(
+        reference_target_mv=small_account_reference_target_mv,
+        current_mv=current_mv,
+        current_quantities=current_quantities,
+        prices=prices,
+        equity=allocation_plan.equity,
+        investable_buying_power=_investable_buying_power(
+            float(account_values.get("buying_power", 0.0) or 0.0),
+            allocation_plan.reserved,
+        ),
+    )
+    return current_mv, current_quantities, target_mv, trade_logs, target_hash, drift_context
 
+
+def _record_blocked_step(
+    execution_summary: dict[str, Any],
+    trade_logs: list[str],
+    *,
+    reason: str,
+    translator,
+    log_message: str | None = None,
+) -> None:
+    execution_summary["execution_status"] = "blocked"
+    execution_summary["no_op_reason"] = reason
+    execution_summary["skipped_reasons"].append(reason)
+    trade_logs.append(log_message if log_message is not None else translator("failed", reason=reason))
+
+
+def _append_execution_detail_logs(
+    trade_logs: list[str],
+    *,
+    allocation_plan: _RebalanceAllocationPlan,
+    quote_collection: _RebalanceQuoteCollection,
+    current_mv: dict[str, float],
+    signal_metadata: dict[str, Any],
+    translator,
+    dry_run_only: bool,
+) -> None:
     trade_logs.append(
         " | ".join(
             [
                 translator(
                     "execution_profile_detail",
-                    profile=_display_text(strategy_profile, fallback="<unknown>"),
+                    profile=_display_text(allocation_plan.execution_summary["strategy_profile"], fallback="<unknown>"),
                 ),
                 translator(
                     "regime_detail",
@@ -1893,70 +2132,105 @@ def execute_rebalance(
                 ),
                 translator(
                     "snapshot_as_of_detail",
-                    value=_display_text(snapshot_date, fallback="<none>"),
+                    value=_display_text(allocation_plan.snapshot_date, fallback="<none>"),
                 ),
                 translator(
                     "trade_date_detail",
-                    value=_display_text(trade_date, fallback="<none>"),
+                    value=_display_text(allocation_plan.trade_date, fallback="<none>"),
                 ),
             ]
         )
     )
-    if snapshot_price_fallback_symbols:
+    if quote_collection.fallback_symbols:
         trade_logs.append(
             translator(
                 "dry_run_snapshot_prices" if dry_run_only else "price_fallback_prices",
-                count=len(snapshot_price_fallback_symbols),
-                symbols=_format_symbol_preview(snapshot_price_fallback_symbols),
+                count=len(quote_collection.fallback_symbols),
+                symbols=_format_symbol_preview(quote_collection.fallback_symbols),
             )
         )
-    trade_logs.extend(_format_target_lines(target_weights, current_mv, equity, translator=translator))
+    trade_logs.extend(
+        _format_target_lines(
+            allocation_plan.target_weights,
+            current_mv,
+            allocation_plan.equity,
+            translator=translator,
+        )
+    )
 
+
+def _cash_sweep_sale_quantity_to_fund_buy(
+    *,
+    max_quantity: int,
+    candidate_symbols: tuple[str, ...],
+    safe_haven_symbol: str | None,
+    cash_sweep_price: float,
+    investable_anticipated_buying_power: float,
+    target_mv: dict[str, float],
+    current_mv: dict[str, float],
+    threshold: float,
+    prices: dict[str, float],
+    options: RebalanceExecutionOptions,
+) -> int:
+    if max_quantity <= 0 or not safe_haven_symbol or cash_sweep_price <= 0.0:
+        return 0
+    base_buying_power = max(0.0, float(investable_anticipated_buying_power))
+    funding_needs = []
+    for symbol in candidate_symbols:
+        underweight_value = target_mv[symbol] - current_mv.get(symbol, 0.0)
+        if underweight_value <= threshold:
+            continue
+        ask = prices.get(symbol)
+        if not ask or ask <= 0.0:
+            continue
+        funding_needs.append(
+            (
+                underweight_value,
+                _limit_buy_price(
+                    symbol,
+                    ask,
+                    options.limit_buy_premium,
+                    options.limit_buy_premium_by_symbol,
+                ),
+            )
+        )
+    if should_sell_cash_sweep_to_fund_whole_share_buy(
+        float(max_quantity),
+        cash_sweep_price,
+        base_buying_power,
+        funding_needs,
+    ):
+        return int(max_quantity)
+    return 0
+
+
+def _plan_rebalance_directions(
+    *,
+    positions,
+    allocation_plan: _RebalanceAllocationPlan,
+    current_mv: dict[str, float],
+    target_mv: dict[str, float],
+    prices: dict[str, float],
+    investable_anticipated_buying_power: float,
+    pending_cash_risk_unknown: bool,
+    settled_cash_ledger_unverified: bool,
+    execution_summary: dict[str, Any],
+    trade_logs: list[str],
+    translator,
+    options: RebalanceExecutionOptions,
+    drift_context: _DriftNotesContext,
+) -> tuple[int, bool]:
     missing_price_symbols: list[str] = []
     insufficient_buying_power_symbols: list[str] = []
     min_notional_symbols: list[str] = []
     quantity_zero_symbols: list[str] = []
-    anticipated_buying_power = (
-        max(0.0, settled_cash or 0.0) if cash_only_execution
-        else get_available_buying_power(
-            ib, account_values.get("buying_power", 0), account_ids=normalized_account_ids,
-            currency=market_currency, cash_only_execution=False,
-        )
-    )
-    investable_anticipated_buying_power = _investable_buying_power(anticipated_buying_power, reserved)
+    threshold = allocation_plan.threshold
+    safe_haven_symbol = allocation_plan.safe_haven_symbol
     cash_sweep_quantity = 0
     cash_sweep_price = float(prices.get(safe_haven_symbol, 0.0) or 0.0) if safe_haven_symbol else 0.0
-    dry_run_sale_proceeds = 0.0
-
-    def cash_sweep_sale_quantity_to_fund_buy(max_quantity: int, candidate_symbols: tuple[str, ...]) -> int:
-        if max_quantity <= 0 or not safe_haven_symbol or cash_sweep_price <= 0.0:
-            return 0
-        base_buying_power = max(0.0, float(investable_anticipated_buying_power))
-        funding_needs = []
-        for symbol in candidate_symbols:
-            underweight_value = target_mv[symbol] - current_mv.get(symbol, 0.0)
-            if underweight_value <= threshold:
-                continue
-            ask = prices.get(symbol)
-            if not ask or ask <= 0.0:
-                continue
-            funding_needs.append(
-                (
-                    underweight_value,
-                    _limit_buy_price(symbol, ask, limit_buy_premium, limit_buy_premium_by_symbol),
-                )
-            )
-        if should_sell_cash_sweep_to_fund_whole_share_buy(
-            float(max_quantity),
-            cash_sweep_price,
-            base_buying_power,
-            funding_needs,
-        ):
-            return int(max_quantity)
-        return 0
 
     has_sell_plan = False
-    for symbol in all_symbols:
+    for symbol in allocation_plan.all_symbols:
         current = current_mv.get(symbol, 0.0)
         target = target_mv.get(symbol, 0.0)
         if current <= target + threshold:
@@ -1970,7 +2244,7 @@ def execute_rebalance(
             target_value=target,
             price=price,
             position_quantity=positions.get(symbol, {}).get("quantity", 0),
-            quantity_step=order_quantity_step,
+            quantity_step=allocation_plan.order_quantity_step,
         )
         if qty > 0:
             has_sell_plan = True
@@ -1982,9 +2256,9 @@ def execute_rebalance(
         for symbol in target_mv
         if symbol != safe_haven_symbol
         and (target_mv[symbol] - current_mv.get(symbol, 0.0)) > threshold
-        and abs(target_mv[symbol] - current_mv.get(symbol, 0.0)) > minimum_order_notional
+        and abs(target_mv[symbol] - current_mv.get(symbol, 0.0)) > allocation_plan.minimum_order_notional
     ]
-    if account_new_risk_buy_blocked:
+    if allocation_plan.account_new_risk_buy_blocked:
         funding_buy_candidates = []
     if (
         not has_sell_plan
@@ -1993,9 +2267,17 @@ def execute_rebalance(
         and cash_sweep_price > 0.0
         and float(positions.get(safe_haven_symbol, {}).get("quantity", 0.0) or 0.0) > 0.0
     ):
-        cash_sweep_quantity = cash_sweep_sale_quantity_to_fund_buy(
-            int(float(positions.get(safe_haven_symbol, {}).get("quantity", 0.0) or 0.0)),
-            tuple(funding_buy_candidates),
+        cash_sweep_quantity = _cash_sweep_sale_quantity_to_fund_buy(
+            max_quantity=int(float(positions.get(safe_haven_symbol, {}).get("quantity", 0.0) or 0.0)),
+            candidate_symbols=tuple(funding_buy_candidates),
+            safe_haven_symbol=safe_haven_symbol,
+            cash_sweep_price=cash_sweep_price,
+            investable_anticipated_buying_power=investable_anticipated_buying_power,
+            target_mv=target_mv,
+            current_mv=current_mv,
+            threshold=threshold,
+            prices=prices,
+            options=options,
         )
         if cash_sweep_quantity > 0:
             has_sell_plan = True
@@ -2013,15 +2295,20 @@ def execute_rebalance(
         if buy_value <= 0:
             insufficient_buying_power_symbols.append(symbol)
             continue
-        if buy_value < minimum_order_notional:
+        if buy_value < allocation_plan.minimum_order_notional:
             min_notional_symbols.append(symbol)
             continue
-        limit_price = _limit_buy_price(symbol, price, limit_buy_premium, limit_buy_premium_by_symbol)
+        limit_price = _limit_buy_price(
+            symbol,
+            price,
+            options.limit_buy_premium,
+            options.limit_buy_premium_by_symbol,
+        )
         qty, _forced_whole_share = _planned_buy_order_quantity(
             symbol,
             buy_value=buy_value,
             limit_price=limit_price,
-            quantity_step=order_quantity_step,
+            quantity_step=allocation_plan.order_quantity_step,
             investable_buying_power=investable_anticipated_buying_power,
             held_quantity=max(0.0, float(positions.get(symbol, {}).get("quantity", 0.0) or 0.0)),
         )
@@ -2030,12 +2317,15 @@ def execute_rebalance(
             break
         quantity_zero_symbols.append(symbol)
 
-    if (has_buy_plan and not dry_run_only
-            and "PERSISTENT_BREAKER_UNAVAILABLE" in account_new_risk_reason_codes):
+    if (
+        has_buy_plan
+        and not options.dry_run_only
+        and "PERSISTENT_BREAKER_UNAVAILABLE" in allocation_plan.account_new_risk_reason_codes
+    ):
         raise RuntimeError("IBKR persistent breaker session/contract unavailable; refusing new risk")
 
     if (
-        (pending_observation.cash_risk_unknown or settled_cash_ledger_unverified)
+        (pending_cash_risk_unknown or settled_cash_ledger_unverified)
         and any(target_mv[s] > current_mv.get(s, 0.0) + threshold for s in target_mv)
         and not has_sell_plan
     ):
@@ -2047,10 +2337,15 @@ def execute_rebalance(
         execution_summary["no_op_reason"] = reason
         execution_summary["account_new_risk_buy_blocked"] = True
         execution_summary["account_new_risk_block_reason"] = reason
-        execution_summary["account_new_risk_reason_codes"] = list(account_new_risk_reason_codes)
+        execution_summary["account_new_risk_reason_codes"] = list(allocation_plan.account_new_risk_reason_codes)
         execution_summary["skipped_reasons"].append(reason)
-        trade_logs.append(translator("buy_deferred", detail="[Account new-risk gate] " + ", ".join(account_new_risk_reason_codes)))
-        return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
+        trade_logs.append(
+            translator(
+                "buy_deferred",
+                detail="[Account new-risk gate] " + ", ".join(allocation_plan.account_new_risk_reason_codes),
+            )
+        )
+        return cash_sweep_quantity, True
 
     if not has_sell_plan and not has_buy_plan:
         reason = "target_diff_below_threshold"
@@ -2074,8 +2369,8 @@ def execute_rebalance(
             symbols = ",".join(sorted(dict.fromkeys(quantity_zero_symbols)))
             reason = f"quantity_zero:{symbols}"
 
-        if not (reason == "target_diff_below_threshold" and has_executable_option_plan):
-            _record_unsupported_option_intents(execution_summary, option_order_intents)
+        if not (reason == "target_diff_below_threshold" and allocation_plan.has_executable_option_plan):
+            _record_unsupported_option_intents(execution_summary, allocation_plan.option_order_intents)
             if execution_summary["option_orders_skipped"] and reason == "target_diff_below_threshold":
                 reason = "option_orders_skipped"
         execution_summary["execution_status"] = status
@@ -2084,132 +2379,208 @@ def execute_rebalance(
             execution_summary["skipped_reasons"].append(reason)
             if status == "blocked":
                 trade_logs.append(translator("failed", reason=reason))
-        if not (reason == "target_diff_below_threshold" and has_executable_option_plan):
-            append_small_account_allocation_drift_notes()
-            return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
-
-    same_day_filled_symbols = _collect_same_day_filled_symbols(
-        ib,
-        set(all_symbols) | set(option_underliers),
-        trade_date,
-        account_ids=normalized_account_ids,
-    )
-    if same_day_filled_symbols:
-        reason = f"same_day_fills_detected:{','.join(same_day_filled_symbols)}"
-        execution_summary["execution_status"] = "blocked"
-        execution_summary["no_op_reason"] = reason
-        execution_summary["skipped_reasons"].append(reason)
-        trade_logs.append(
-            translator(
-                "same_day_fills_detected",
-                profile=_display_text(strategy_profile, fallback="<unknown>"),
-                mode=resolved_execution_mode,
-                symbols=",".join(same_day_filled_symbols),
-                trade_date=_display_text(trade_date, fallback="<none>"),
+        if not (reason == "target_diff_below_threshold" and allocation_plan.has_executable_option_plan):
+            _append_small_account_allocation_drift_notes(
+                execution_summary,
+                trade_logs,
+                translator=translator,
+                context=drift_context,
             )
-        )
-        return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
+            return cash_sweep_quantity, True
 
+    return cash_sweep_quantity, False
+
+
+def _acquire_cycle_execution_lock(
+    *,
+    allocation_plan: _RebalanceAllocationPlan,
+    target_hash: str,
+    trade_logs: list[str],
+    translator,
+    options: RebalanceExecutionOptions,
+) -> bool:
+    execution_summary = allocation_plan.execution_summary
     lock_path = _resolve_execution_lock_path(
-        strategy_profile=strategy_profile,
-        account_group=account_group,
-        service_name=service_name,
-        trade_date=trade_date,
-        snapshot_date=snapshot_date,
-        execution_mode=resolved_execution_mode,
-        execution_lock_dir=execution_lock_dir,
+        strategy_profile=options.strategy_profile,
+        account_group=options.account_group,
+        service_name=options.service_name,
+        trade_date=allocation_plan.trade_date,
+        snapshot_date=allocation_plan.snapshot_date,
+        execution_mode=allocation_plan.resolved_execution_mode,
+        execution_lock_dir=options.execution_lock_dir,
     )
     lock_payload = _build_execution_lock_payload(
-        strategy_profile=strategy_profile,
-        account_group=account_group,
-        service_name=service_name,
-        account_ids=normalized_account_ids,
-        trade_date=trade_date,
-        snapshot_date=snapshot_date,
+        strategy_profile=options.strategy_profile,
+        account_group=options.account_group,
+        service_name=options.service_name,
+        account_ids=allocation_plan.normalized_account_ids,
+        trade_date=allocation_plan.trade_date,
+        snapshot_date=allocation_plan.snapshot_date,
         target_hash=target_hash,
-        execution_mode=resolved_execution_mode,
+        execution_mode=allocation_plan.resolved_execution_mode,
     )
     if not _try_create_execution_lock(lock_path, lock_payload):
         existing = _read_execution_lock(lock_path) or {}
         reason = (
-            f"same_day_execution_locked:mode={resolved_execution_mode}:"
+            f"same_day_execution_locked:mode={allocation_plan.resolved_execution_mode}:"
             f"target_hash={existing.get('target_hash', '<unknown>')}"
         )
-        execution_summary["execution_status"] = "blocked"
-        execution_summary["no_op_reason"] = reason
-        execution_summary["skipped_reasons"].append(reason)
         execution_summary["lock_path"] = str(lock_path)
-        trade_logs.append(
-            translator(
+        _record_blocked_step(
+            execution_summary,
+            trade_logs,
+            reason=reason,
+            translator=translator,
+            log_message=translator(
                 "same_day_execution_locked",
-                profile=_display_text(strategy_profile, fallback="<unknown>"),
-                mode=resolved_execution_mode,
-                trade_date=_display_text(trade_date, fallback="<none>"),
-                snapshot_date=_display_text(snapshot_date, fallback="<none>"),
+                profile=_display_text(options.strategy_profile, fallback="<unknown>"),
+                mode=allocation_plan.resolved_execution_mode,
+                trade_date=_display_text(allocation_plan.trade_date, fallback="<none>"),
+                snapshot_date=_display_text(allocation_plan.snapshot_date, fallback="<none>"),
                 target_hash=_display_text(existing.get("target_hash"), fallback="<unknown>"),
                 lock_path=str(lock_path),
-            )
+            ),
         )
-        return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
+        return False
     execution_summary["lock_path"] = str(lock_path)
     trade_logs.append(
         translator(
             "execution_lock_acquired",
-            mode=resolved_execution_mode,
-            trade_date=_display_text(trade_date, fallback="<none>"),
-            snapshot_date=_display_text(snapshot_date, fallback="<none>"),
+            mode=allocation_plan.resolved_execution_mode,
+            trade_date=_display_text(allocation_plan.trade_date, fallback="<none>"),
+            snapshot_date=_display_text(allocation_plan.snapshot_date, fallback="<none>"),
             lock_path=str(lock_path),
         )
     )
     execution_summary["execution_status"] = "executing"
+    return True
 
+
+def _record_submitted_equity_order(
+    execution_summary: dict[str, Any],
+    trade_logs: list[str],
+    report: Any,
+    *,
+    symbol: str,
+    side: str,
+    quantity: float,
+    order_account_id: str | None,
+    translator,
+    limit_price: float | None = None,
+) -> str:
+    status, broker_order_id, filled_quantity, average_fill_price = _extract_execution_report_fields(report)
+    order_payload: dict[str, Any] = {
+        "symbol": symbol,
+        "side": side,
+        "quantity": quantity,
+        "status": status,
+        "broker_order_id": broker_order_id,
+        "account_id": order_account_id,
+        "filled_quantity": filled_quantity,
+        "average_fill_price": average_fill_price,
+    }
+    if limit_price is not None:
+        order_payload["limit_price"] = limit_price
+    outcome = _record_order_outcome(execution_summary, order_payload, status=status)
+    if outcome == "unknown":
+        trade_logs.append(translator("failed", reason="broker_order_outcome_unknown"))
+        return outcome
+    _, status_msg = check_order_submitted(report, translator=translator)
+    if side == "sell":
+        log_prefix = translator("market_sell", symbol=symbol, qty=format_quantity(quantity))
+    else:
+        log_prefix = translator(
+            "limit_buy",
+            symbol=symbol,
+            qty=format_quantity(quantity),
+            price=f"{float(limit_price or 0.0):.2f}",
+        )
+    trade_logs.append(f"{log_prefix} {status_msg}")
+    return outcome
+
+
+def _resolve_sell_quantity(
+    *,
+    symbol: str,
+    current: float,
+    target: float,
+    price: float | None,
+    position_quantity: float,
+    threshold: float,
+    quantity_step: float,
+    safe_haven_symbol: str | None,
+    cash_sweep_quantity: int,
+    execution_summary: dict[str, Any],
+    pending_sell_release_symbols: list[str],
+) -> float | int:
+    is_cash_sweep = symbol == safe_haven_symbol and cash_sweep_quantity > 0
+    if not is_cash_sweep and current <= target + threshold:
+        return 0
+    if not price:
+        execution_summary["orders_skipped"].append({"symbol": symbol, "side": "sell", "reason": "missing_price"})
+        execution_summary["skipped_reasons"].append(f"missing_price:{symbol}")
+        return 0
+    qty = _sell_order_quantity(
+        current_value=current,
+        target_value=target,
+        price=price,
+        position_quantity=position_quantity,
+        quantity_step=quantity_step,
+    )
+    if is_cash_sweep:
+        qty = max(int(cash_sweep_quantity), int(qty))
+    if qty <= 0:
+        if current > target + threshold:
+            pending_sell_release_symbols.append(symbol)
+        execution_summary["orders_skipped"].append({"symbol": symbol, "side": "sell", "reason": "quantity_zero"})
+        return 0
+    return qty
+
+
+def _execute_sell_orders(
+    ib,
+    *,
+    positions,
+    allocation_plan: _RebalanceAllocationPlan,
+    current_mv: dict[str, float],
+    target_mv: dict[str, float],
+    prices: dict[str, float],
+    cash_sweep_quantity: int,
+    claimed_submitter,
+    order_intent_cls,
+    translator,
+    trade_logs: list[str],
+    dry_run_only: bool,
+) -> tuple[bool, float, float, list[str], bool]:
+    execution_summary = allocation_plan.execution_summary
     sell_executed = False
     projected_sell_release_value = 0.0
+    dry_run_sale_proceeds = 0.0
     pending_sell_release_symbols: list[str] = []
-    for symbol in all_symbols:
+
+    for symbol in allocation_plan.all_symbols:
         current = current_mv.get(symbol, 0)
         target = target_mv.get(symbol, 0)
         price = prices.get(symbol)
-        if symbol == safe_haven_symbol and cash_sweep_quantity > 0:
-            if not price:
-                execution_summary["orders_skipped"].append({"symbol": symbol, "side": "sell", "reason": "missing_price"})
-                execution_summary["skipped_reasons"].append(f"missing_price:{symbol}")
-                continue
-            regular_qty = _sell_order_quantity(
-                current_value=current,
-                target_value=target,
-                price=price,
-                position_quantity=positions.get(symbol, {}).get("quantity", 0),
-                quantity_step=order_quantity_step,
-            )
-            qty = max(int(cash_sweep_quantity), int(regular_qty))
-            if qty <= 0:
-                if current > target + threshold:
-                    pending_sell_release_symbols.append(symbol)
-                execution_summary["orders_skipped"].append({"symbol": symbol, "side": "sell", "reason": "quantity_zero"})
-                continue
-        elif current > target + threshold:
-            if not price:
-                execution_summary["orders_skipped"].append({"symbol": symbol, "side": "sell", "reason": "missing_price"})
-                execution_summary["skipped_reasons"].append(f"missing_price:{symbol}")
-                continue
-            qty = _sell_order_quantity(
-                current_value=current,
-                target_value=target,
-                price=price,
-                position_quantity=positions.get(symbol, {}).get("quantity", 0),
-                quantity_step=order_quantity_step,
-            )
-            if qty <= 0:
-                pending_sell_release_symbols.append(symbol)
-                execution_summary["orders_skipped"].append({"symbol": symbol, "side": "sell", "reason": "quantity_zero"})
-                continue
-        else:
+        qty = _resolve_sell_quantity(
+            symbol=symbol,
+            current=current,
+            target=target,
+            price=price,
+            position_quantity=positions.get(symbol, {}).get("quantity", 0),
+            threshold=allocation_plan.threshold,
+            quantity_step=allocation_plan.order_quantity_step,
+            safe_haven_symbol=allocation_plan.safe_haven_symbol,
+            cash_sweep_quantity=cash_sweep_quantity,
+            execution_summary=execution_summary,
+            pending_sell_release_symbols=pending_sell_release_symbols,
+        )
+        if qty <= 0:
             continue
 
         held_quantity = float(positions.get(symbol, {}).get("quantity", 0.0) or 0.0)
         if (
-            symbol not in allocation["strategy_symbols"]
+            symbol not in allocation_plan.strategy_symbols
             or not math.isfinite(float(qty))
             or float(qty) <= 0.0
             or float(qty) > held_quantity + 1e-9
@@ -2217,10 +2588,13 @@ def execute_rebalance(
             or float(price) <= 0.0
         ):
             raise RuntimeError("IBKR live sell exceeds approved position or has invalid pricing")
-        if account_new_risk_buy_blocked:
+        if allocation_plan.account_new_risk_buy_blocked:
             from quant_platform_kit.risk.account_new_risk_gate import is_proven_risk_reducing_order
+
             if not is_proven_risk_reducing_order(held_quantity, "sell", qty, pending_quantity=0.0):
-                execution_summary["orders_skipped"].append({"symbol": symbol, "side": "sell", "reason": "risk_reduction_unproven"})
+                execution_summary["orders_skipped"].append(
+                    {"symbol": symbol, "side": "sell", "reason": "risk_reduction_unproven"}
+                )
                 continue
         if dry_run_only:
             execution_summary["orders_submitted"].append(
@@ -2229,34 +2603,32 @@ def execute_rebalance(
             trade_logs.append(f"DRY_RUN sell {symbol} {format_quantity(qty)}")
             dry_run_sale_proceeds += float(qty) * float(price)
             continue
-        report = submit_order_intent(
+        report = claimed_submitter(
             ib,
             order_intent_cls(
                 symbol=symbol,
                 side="sell",
                 quantity=qty,
-                account_id=order_account_id,
+                account_id=allocation_plan.order_account_id,
             ),
-            **({"reduction_position": held_quantity, "reduction_pending_quantity": 0.0}
-               if account_new_risk_buy_blocked else {}),
+            **(
+                {"reduction_position": held_quantity, "reduction_pending_quantity": 0.0}
+                if allocation_plan.account_new_risk_buy_blocked
+                else {}
+            ),
         )
-        status = str(getattr(report, "status", "") or "")
-        order_payload = {
-            "symbol": symbol,
-            "side": "sell",
-            "quantity": qty,
-            "status": status,
-            "broker_order_id": getattr(report, "broker_order_id", None),
-            "account_id": order_account_id,
-            "filled_quantity": getattr(report, "filled_quantity", None),
-            "average_fill_price": getattr(report, "average_fill_price", None),
-        }
-        outcome = _record_order_outcome(execution_summary, order_payload, status=status)
+        outcome = _record_submitted_equity_order(
+            execution_summary,
+            trade_logs,
+            report,
+            symbol=symbol,
+            side="sell",
+            quantity=qty,
+            order_account_id=allocation_plan.order_account_id,
+            translator=translator,
+        )
         if outcome == "unknown":
-            trade_logs.append(translator("failed", reason="broker_order_outcome_unknown"))
-            return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
-        _, status_msg = check_order_submitted(report, translator=translator)
-        trade_logs.append(translator("market_sell", symbol=symbol, qty=format_quantity(qty)) + f" {status_msg}")
+            return sell_executed, projected_sell_release_value, dry_run_sale_proceeds, pending_sell_release_symbols, True
         if outcome != "failed":
             sell_executed = True
             projected_sell_release_value += _projected_sell_release_value_for_report(
@@ -2265,75 +2637,101 @@ def execute_rebalance(
                 fallback_quantity=qty,
             )
 
-    if cash_only_execution:
+    return sell_executed, projected_sell_release_value, dry_run_sale_proceeds, pending_sell_release_symbols, False
+
+
+def _refresh_post_sell_buying_power(
+    ib,
+    *,
+    account_values,
+    allocation_plan: _RebalanceAllocationPlan,
+    anticipated_buying_power: float,
+    sell_executed: bool,
+    dry_run_sale_proceeds: float,
+    options: RebalanceExecutionOptions,
+) -> float:
+    if options.cash_only_execution:
         # A sale fill or ACK does not establish settlement. A fresh observation
         # supplies the budget; projected proceeds never supply spending authority.
         observed = _settled_cash_for_currency(
-            ib, currency=market_currency, account_ids=normalized_account_ids,
+            ib,
+            currency=options.market_currency,
+            account_ids=allocation_plan.normalized_account_ids,
         )
-        buying_power = max(0.0, observed or 0.0)
         if observed is None:
-            execution_summary["settled_cash_ledger_status"] = "UNKNOWN"
-    elif dry_run_only:
-        buying_power = max(0.0, anticipated_buying_power + dry_run_sale_proceeds)
-    else:
-        if sell_executed:
-            time.sleep(sell_settle_delay_sec)
-            buying_power = get_available_buying_power(
-                ib, account_values.get("buying_power", 0), account_ids=normalized_account_ids,
-                currency=market_currency, cash_only_execution=False,
-            )
-        else:
-            buying_power = anticipated_buying_power
-    investable_buying_power = _investable_buying_power(buying_power, reserved)
-    execution_summary["projected_sell_release_value"] = float(projected_sell_release_value)
-    pending_sell_release_symbols = list(dict.fromkeys(pending_sell_release_symbols))
-    buy_needed_symbols = [
-        symbol
-        for symbol, target in target_mv.items()
-        if current_mv.get(symbol, 0.0) < float(target or 0.0) - threshold
-    ]
-    buys_blocked_reason = None
+            allocation_plan.execution_summary["settled_cash_ledger_status"] = "UNKNOWN"
+        return max(0.0, observed or 0.0)
+    if options.dry_run_only:
+        return max(0.0, anticipated_buying_power + dry_run_sale_proceeds)
+    if sell_executed:
+        time.sleep(options.sell_settle_delay_sec)
+        return get_available_buying_power(
+            ib,
+            account_values.get("buying_power", 0),
+            account_ids=allocation_plan.normalized_account_ids,
+            currency=options.market_currency,
+            cash_only_execution=False,
+        )
+    return anticipated_buying_power
+
+
+def _resolve_buy_block_reason(
+    ib,
+    *,
+    signal_metadata: dict[str, Any],
+    allocation_plan: _RebalanceAllocationPlan,
+    current_mv: dict[str, float],
+    target_mv: dict[str, float],
+    prices: dict[str, float],
+    investable_buying_power: float,
+    pending_sell_release_symbols: list[str],
+    buy_needed_symbols: list[str],
+    trade_logs: list[str],
+    translator,
+    options: RebalanceExecutionOptions,
+) -> str | None:
+    execution_summary = allocation_plan.execution_summary
     if bool(signal_metadata.get("small_account_warning")) and buy_needed_symbols:
-        buys_blocked_reason = "small_account_below_recommended_equity"
+        reason = "small_account_below_recommended_equity"
         execution_summary["small_account_buy_blocked"] = True
-        execution_summary["small_account_buy_block_reason"] = buys_blocked_reason
-        execution_summary["skipped_reasons"].append(buys_blocked_reason)
+        execution_summary["small_account_buy_block_reason"] = reason
+        execution_summary["skipped_reasons"].append(reason)
         trade_logs.append(
             translator(
                 "buy_deferred_small_account",
-                portfolio_equity=f"{float(equity or 0.0):,.2f}",
+                portfolio_equity=f"{float(allocation_plan.equity or 0.0):,.2f}",
                 min_recommended_equity=f"{float(signal_metadata.get('min_recommended_equity_usd') or 0.0):,.2f}",
             )
         )
-    elif account_new_risk_buy_blocked and buy_needed_symbols:
-        buys_blocked_reason = "account_new_risk_gate"
+        return reason
+    if allocation_plan.account_new_risk_buy_blocked and buy_needed_symbols:
+        reason = "account_new_risk_gate"
         execution_summary["account_new_risk_buy_blocked"] = True
-        execution_summary["account_new_risk_block_reason"] = buys_blocked_reason
-        execution_summary["account_new_risk_reason_codes"] = list(account_new_risk_reason_codes)
-        execution_summary["skipped_reasons"].append(buys_blocked_reason)
-        reason_text = ", ".join(account_new_risk_reason_codes) or "NEW_RISK_PROHIBITED"
+        execution_summary["account_new_risk_block_reason"] = reason
+        execution_summary["account_new_risk_reason_codes"] = list(allocation_plan.account_new_risk_reason_codes)
+        execution_summary["skipped_reasons"].append(reason)
+        reason_text = ", ".join(allocation_plan.account_new_risk_reason_codes) or "NEW_RISK_PROHIBITED"
         trade_logs.append(
             translator(
                 "buy_deferred",
                 detail=f"[Account new-risk gate] {reason_text}",
             )
         )
-    if buys_blocked_reason is None and cash_only_execution and pending_sell_release_symbols and buy_needed_symbols:
+        return reason
+    if options.cash_only_execution and pending_sell_release_symbols and buy_needed_symbols:
         if _rotation_guard_should_block_buys(
             pending_sell_release_symbols=pending_sell_release_symbols,
             buy_needed_symbols=buy_needed_symbols,
             current_mv=current_mv,
             target_mv=target_mv,
-            threshold=threshold,
+            threshold=allocation_plan.threshold,
             investable_buying_power=investable_buying_power,
             prices=prices,
-            limit_buy_premium=limit_buy_premium,
-            limit_buy_premium_by_symbol=limit_buy_premium_by_symbol,
-            quantity_step=order_quantity_step,
-            minimum_order_notional=minimum_order_notional,
+            limit_buy_premium=options.limit_buy_premium,
+            limit_buy_premium_by_symbol=options.limit_buy_premium_by_symbol,
+            quantity_step=allocation_plan.order_quantity_step,
+            minimum_order_notional=allocation_plan.minimum_order_notional,
         ):
-            buys_blocked_reason = "pending_sell_release"
             release_symbols = _format_symbol_preview(tuple(pending_sell_release_symbols))
             execution_summary["pending_sell_release_symbols"] = list(pending_sell_release_symbols)
             execution_summary["skipped_reasons"].append(
@@ -2345,14 +2743,14 @@ def execute_rebalance(
                     symbols=release_symbols,
                 )
             )
-    if buys_blocked_reason is None and cash_only_execution:
+            return "pending_sell_release"
+    if options.cash_only_execution:
         raw_cash = _cash_value_for_currency(
             list(ib.accountValues() or ()),
-            currency=market_currency,
-            account_ids=normalized_account_ids,
+            currency=options.market_currency,
+            account_ids=allocation_plan.normalized_account_ids,
         )
         if raw_cash is not None and float(raw_cash) < 0.0 and buy_needed_symbols:
-            buys_blocked_reason = "negative_cash"
             execution_summary["skipped_reasons"].append(f"negative_cash:{float(raw_cash):.2f}")
             trade_logs.append(
                 translator(
@@ -2360,7 +2758,29 @@ def execute_rebalance(
                     cash=f"{float(raw_cash):,.2f}",
                 )
             )
+            return "negative_cash"
+    return None
 
+
+def _execute_buy_orders(
+    ib,
+    *,
+    positions,
+    allocation_plan: _RebalanceAllocationPlan,
+    current_mv: dict[str, float],
+    target_mv: dict[str, float],
+    prices: dict[str, float],
+    investable_buying_power: float,
+    buy_needed_symbols: list[str],
+    buys_blocked_reason: str | None,
+    claimed_submitter,
+    order_intent_cls,
+    translator,
+    trade_logs: list[str],
+    options: RebalanceExecutionOptions,
+) -> bool:
+    execution_summary = allocation_plan.execution_summary
+    threshold = allocation_plan.threshold
     for symbol, target in target_mv.items():
         if buys_blocked_reason:
             if symbol in buy_needed_symbols:
@@ -2369,149 +2789,435 @@ def execute_rebalance(
                 )
             continue
         current = current_mv.get(symbol, 0)
-        if current < target - threshold:
-            if cash_only_execution:
-                refresh_started = time.monotonic()
-                # A previous order may take longer than the freshness bound.
-                # Refresh each candidate without resetting the shared budget.
-                observed = _settled_cash_for_currency(
-                    ib, currency=market_currency, account_ids=normalized_account_ids,
-                )
-                investable_buying_power = min(
-                    investable_buying_power,
-                    _investable_buying_power(max(0.0, observed or 0.0), reserved),
-                )
-                if observed is None or observed <= 0:
-                    reason = "settled_cash_ledger_unverified" if observed is None else "insufficient_settled_cash"
-                    if observed is None:
-                        execution_summary["settled_cash_ledger_status"] = "UNKNOWN"
-                    execution_summary["orders_skipped"].append({"symbol": symbol, "side": "buy", "reason": reason})
-                    execution_summary["skipped_reasons"].append(f"{reason}:{symbol}")
-                    continue
-            buy_value = min(target - current, investable_buying_power * 0.95)
-            price = prices.get(symbol)
-            if not price:
-                execution_summary["orders_skipped"].append({"symbol": symbol, "side": "buy", "reason": "missing_price"})
-                execution_summary["skipped_reasons"].append(f"missing_price:{symbol}")
-                continue
-            if buy_value < minimum_order_notional:
-                execution_summary["orders_skipped"].append({"symbol": symbol, "side": "buy", "reason": "min_notional"})
-                continue
-
-            limit_price = _limit_buy_price(symbol, price, limit_buy_premium, limit_buy_premium_by_symbol)
-            held_quantity = max(0.0, float(positions.get(symbol, {}).get("quantity", 0.0) or 0.0))
-            qty, _forced_whole_share = _planned_buy_order_quantity(
-                symbol,
-                buy_value=buy_value,
-                limit_price=limit_price,
-                quantity_step=order_quantity_step,
-                investable_buying_power=investable_buying_power,
-                held_quantity=held_quantity,
+        if current >= target - threshold:
+            continue
+        refresh_started = 0.0
+        if options.cash_only_execution:
+            refresh_started = time.monotonic()
+            # A previous order may take longer than the freshness bound.
+            # Refresh each candidate without resetting the shared budget.
+            observed = _settled_cash_for_currency(
+                ib,
+                currency=options.market_currency,
+                account_ids=allocation_plan.normalized_account_ids,
             )
-            if qty <= 0:
-                execution_summary["orders_skipped"].append({"symbol": symbol, "side": "buy", "reason": "quantity_zero"})
+            investable_buying_power = min(
+                investable_buying_power,
+                _investable_buying_power(max(0.0, observed or 0.0), allocation_plan.reserved),
+            )
+            if observed is None or observed <= 0:
+                reason = "settled_cash_ledger_unverified" if observed is None else "insufficient_settled_cash"
+                if observed is None:
+                    execution_summary["settled_cash_ledger_status"] = "UNKNOWN"
+                execution_summary["orders_skipped"].append({"symbol": symbol, "side": "buy", "reason": reason})
+                execution_summary["skipped_reasons"].append(f"{reason}:{symbol}")
                 continue
+        buy_value = min(target - current, investable_buying_power * 0.95)
+        price = prices.get(symbol)
+        if not price:
+            execution_summary["orders_skipped"].append({"symbol": symbol, "side": "buy", "reason": "missing_price"})
+            execution_summary["skipped_reasons"].append(f"missing_price:{symbol}")
+            continue
+        if buy_value < allocation_plan.minimum_order_notional:
+            execution_summary["orders_skipped"].append({"symbol": symbol, "side": "buy", "reason": "min_notional"})
+            continue
 
+        limit_price = _limit_buy_price(
+            symbol,
+            price,
+            options.limit_buy_premium,
+            options.limit_buy_premium_by_symbol,
+        )
+        held_quantity = max(0.0, float(positions.get(symbol, {}).get("quantity", 0.0) or 0.0))
+        qty, _forced_whole_share = _planned_buy_order_quantity(
+            symbol,
+            buy_value=buy_value,
+            limit_price=limit_price,
+            quantity_step=allocation_plan.order_quantity_step,
+            investable_buying_power=investable_buying_power,
+            held_quantity=held_quantity,
+        )
+        if qty <= 0:
+            execution_summary["orders_skipped"].append({"symbol": symbol, "side": "buy", "reason": "quantity_zero"})
+            continue
+
+        order_cost = float(qty) * float(limit_price)
+        if order_cost > investable_buying_power:
+            qty = _floor_order_quantity(
+                investable_buying_power / limit_price,
+                quantity_step=allocation_plan.order_quantity_step,
+            )
             order_cost = float(qty) * float(limit_price)
-            if order_cost > investable_buying_power:
-                qty = _floor_order_quantity(
-                    investable_buying_power / limit_price,
-                    quantity_step=order_quantity_step,
-                )
-                order_cost = float(qty) * float(limit_price)
-            if qty <= 0 or order_cost > investable_buying_power:
-                execution_summary["orders_skipped"].append(
-                    {"symbol": symbol, "side": "buy", "reason": "insufficient_buying_power"}
-                )
-                execution_summary["skipped_reasons"].append(f"insufficient_buying_power:{symbol}")
-                continue
+        if qty <= 0 or order_cost > investable_buying_power:
+            execution_summary["orders_skipped"].append(
+                {"symbol": symbol, "side": "buy", "reason": "insufficient_buying_power"}
+            )
+            execution_summary["skipped_reasons"].append(f"insufficient_buying_power:{symbol}")
+            continue
 
-            remaining_approved = approved_target_caps[symbol] - float(current_mv.get(symbol, 0.0) or 0.0)
-            if (
-                symbol not in allocation["strategy_symbols"]
-                or not math.isfinite(float(qty))
-                or not math.isfinite(float(limit_price))
-                or float(qty) <= 0.0
-                or float(limit_price) <= 0.0
-                or order_cost > remaining_approved + 1e-6
-            ):
-                raise RuntimeError("IBKR live buy exceeds the approved RiskEngine order limit")
-            if cash_only_execution and not 0 <= time.monotonic() - refresh_started <= SETTLED_CASH_MAX_AGE_SECONDS:
-                execution_summary["settled_cash_ledger_status"] = "UNKNOWN"
-                execution_summary["orders_skipped"].append({"symbol": symbol, "side": "buy", "reason": "settled_cash_stale"})
-                execution_summary["skipped_reasons"].append(f"settled_cash_stale:{symbol}")
-                continue
-            if dry_run_only:
-                execution_summary["orders_submitted"].append(
-                    {
-                        "symbol": symbol,
-                        "side": "buy",
-                        "quantity": qty,
-                        "limit_price": limit_price,
-                        "status": "dry_run",
-                    }
-                )
-                trade_logs.append(f"DRY_RUN buy {symbol} {format_quantity(qty)} @{limit_price:.2f}")
-                investable_buying_power -= qty * limit_price
-                continue
-            intent = order_intent_cls(
-                symbol=symbol,
-                side="buy",
-                quantity=qty,
-                order_type="limit",
-                limit_price=limit_price,
-                time_in_force="DAY",
-                account_id=order_account_id,
+        remaining_approved = allocation_plan.approved_target_caps[symbol] - float(current_mv.get(symbol, 0.0) or 0.0)
+        if (
+            symbol not in allocation_plan.strategy_symbols
+            or not math.isfinite(float(qty))
+            or not math.isfinite(float(limit_price))
+            or float(qty) <= 0.0
+            or float(limit_price) <= 0.0
+            or order_cost > remaining_approved + 1e-6
+        ):
+            raise RuntimeError("IBKR live buy exceeds the approved RiskEngine order limit")
+        if options.cash_only_execution and not 0 <= time.monotonic() - refresh_started <= SETTLED_CASH_MAX_AGE_SECONDS:
+            execution_summary["settled_cash_ledger_status"] = "UNKNOWN"
+            execution_summary["orders_skipped"].append({"symbol": symbol, "side": "buy", "reason": "settled_cash_stale"})
+            execution_summary["skipped_reasons"].append(f"settled_cash_stale:{symbol}")
+            continue
+        if options.dry_run_only:
+            execution_summary["orders_submitted"].append(
+                {
+                    "symbol": symbol,
+                    "side": "buy",
+                    "quantity": qty,
+                    "limit_price": limit_price,
+                    "status": "dry_run",
+                }
             )
-            if cash_only_execution:
-                with _SettledCashDeadlineIB(
-                    ib, refresh_started=refresh_started, account_id=order_account_id,
-                    currency=market_currency, buying_power=investable_buying_power,
-                    reserved=reserved, quantity_step=order_quantity_step,
-                    minimum_order_notional=minimum_order_notional,
-                ) as settled_ib:
-                    report = submit_order_intent(settled_ib, intent)
-                    investable_buying_power = min(investable_buying_power, settled_ib.remaining_buying_power)
-                    if settled_ib.prepared_quantity is not None:
-                        qty = settled_ib.prepared_quantity
-            else:
-                report = submit_order_intent(ib, intent)
-            status = str(getattr(report, "status", "") or "")
-            order_payload = {
-                "symbol": symbol,
-                "side": "buy",
-                "quantity": qty,
-                "limit_price": limit_price,
-                "status": status,
-                "broker_order_id": getattr(report, "broker_order_id", None),
-                "account_id": order_account_id,
-                "filled_quantity": getattr(report, "filled_quantity", None),
-                "average_fill_price": getattr(report, "average_fill_price", None),
-            }
-            outcome = _record_order_outcome(execution_summary, order_payload, status=status)
-            if outcome == "unknown":
-                trade_logs.append(translator("failed", reason="broker_order_outcome_unknown"))
-                return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
-            _, status_msg = check_order_submitted(report, translator=translator)
-            trade_logs.append(
-                translator("limit_buy", symbol=symbol, qty=format_quantity(qty), price=f"{limit_price:.2f}") + f" {status_msg}"
+            trade_logs.append(f"DRY_RUN buy {symbol} {format_quantity(qty)} @{limit_price:.2f}")
+            investable_buying_power -= qty * limit_price
+            continue
+        intent = order_intent_cls(
+            symbol=symbol,
+            side="buy",
+            quantity=qty,
+            order_type="limit",
+            limit_price=limit_price,
+            time_in_force="DAY",
+            account_id=allocation_plan.order_account_id,
+        )
+        if options.cash_only_execution:
+            with _SettledCashDeadlineIB(
+                ib,
+                refresh_started=refresh_started,
+                account_id=allocation_plan.order_account_id,
+                currency=options.market_currency,
+                buying_power=investable_buying_power,
+                reserved=allocation_plan.reserved,
+                quantity_step=allocation_plan.order_quantity_step,
+                minimum_order_notional=allocation_plan.minimum_order_notional,
+            ) as settled_ib:
+                report = claimed_submitter(settled_ib, intent)
+                investable_buying_power = min(investable_buying_power, settled_ib.remaining_buying_power)
+                if settled_ib.prepared_quantity is not None:
+                    qty = settled_ib.prepared_quantity
+        else:
+            report = claimed_submitter(ib, intent)
+        outcome = _record_submitted_equity_order(
+            execution_summary,
+            trade_logs,
+            report,
+            symbol=symbol,
+            side="buy",
+            quantity=qty,
+            order_account_id=allocation_plan.order_account_id,
+            translator=translator,
+            limit_price=limit_price,
+        )
+        if outcome == "unknown":
+            return True
+        if outcome != "failed":
+            investable_buying_power -= qty * limit_price
+    return False
+
+
+def _execute_rebalance_orders(
+    ib,
+    *,
+    positions,
+    account_values,
+    signal_metadata: dict[str, Any],
+    allocation_plan: _RebalanceAllocationPlan,
+    quote_collection: _RebalanceQuoteCollection,
+    claimed_submitter,
+    order_intent_cls,
+    translator,
+    options: RebalanceExecutionOptions,
+) -> _RebalanceOrderOutcome:
+    """Apply small-account compatibility, run broker safety checks, and execute orders."""
+    execution_summary = allocation_plan.execution_summary
+    _record_quote_collection_summary(execution_summary, quote_collection)
+    prices = quote_collection.prices
+    current_mv, _current_quantities, target_mv, trade_logs, target_hash, drift_context = (
+        _prepare_post_quote_targets(
+            positions=positions,
+            account_values=account_values,
+            allocation_plan=allocation_plan,
+            prices=prices,
+            translator=translator,
+        )
+    )
+    if options.paper_execution_admission_enabled:
+        paper_admission = evaluate_ibkr_paper_execution_admission(
+            signal_metadata=signal_metadata,
+            strategy_profile=options.strategy_profile,
+            account_scope=options.account_group,
+            positions=positions,
+            prices=prices,
+            target_market_values=target_mv,
+            option_order_intents=allocation_plan.option_order_intents,
+            runtime_release_receipt=options.runtime_release_receipt,
+            expected_strategy_release=options.expected_strategy_release,
+        )
+        execution_summary["paper_execution_admission"] = paper_admission
+        if not paper_admission["broker_write_allowed"]:
+            _record_blocked_step(
+                execution_summary,
+                trade_logs,
+                reason="paper_execution_admission_blocked",
+                translator=translator,
             )
-            if outcome != "failed":
-                investable_buying_power -= qty * limit_price
+            return _RebalanceOrderOutcome(trade_logs=trade_logs, finalized_early=True)
+
+    if allocation_plan.equity > 0:
+        safe_haven_symbol = allocation_plan.safe_haven_symbol
+        current_safe_haven_mv = current_mv.get(safe_haven_symbol, 0.0) if safe_haven_symbol else 0.0
+        execution_summary["current_safe_haven_weight"] = float(current_safe_haven_mv / allocation_plan.equity)
+        execution_summary["current_stock_weight"] = float(
+            (sum(current_mv.values()) - current_safe_haven_mv) / allocation_plan.equity
+        )
+
+    try:
+        pending_observation = _observe_pending_orders(
+            ib,
+            set(allocation_plan.all_symbols) | set(allocation_plan.option_underliers),
+            account_ids=allocation_plan.normalized_account_ids,
+        )
+    except _PendingOrdersUnavailableError:
+        _record_blocked_step(
+            execution_summary,
+            trade_logs,
+            reason="pending_orders_unavailable",
+            translator=translator,
+        )
+        return _RebalanceOrderOutcome(trade_logs=trade_logs, finalized_early=True)
+    if pending_observation.symbols:
+        pending_symbols_csv = ",".join(pending_observation.symbols)
+        _record_blocked_step(
+            execution_summary,
+            trade_logs,
+            reason=f"pending_orders_detected:{pending_symbols_csv}",
+            translator=translator,
+            log_message=translator(
+                "pending_orders_detected",
+                profile=_display_text(options.strategy_profile, fallback="<unknown>"),
+                symbols=pending_symbols_csv,
+            ),
+        )
+        return _RebalanceOrderOutcome(trade_logs=trade_logs, finalized_early=True)
+    if pending_observation.cash_risk_unknown:
+        # Reuse the existing BUY gate, without vetoing otherwise-qualified
+        # reductions. The normal claim, lock and sell limits still apply.
+        allocation_plan.account_new_risk_buy_blocked = True
+        allocation_plan.account_new_risk_reason_codes = (
+            *allocation_plan.account_new_risk_reason_codes,
+            "PENDING_ORDER_CASH_RISK_UNKNOWN",
+        )
+        execution_summary["pending_order_cash_risk_unknown"] = True
+
+    settled_cash = (
+        _settled_cash_for_currency(
+            ib,
+            currency=options.market_currency,
+            account_ids=allocation_plan.normalized_account_ids,
+        )
+        if options.cash_only_execution
+        else None
+    )
+    settled_cash_ledger_unverified = options.cash_only_execution and settled_cash is None
+    if settled_cash_ledger_unverified:
+        allocation_plan.account_new_risk_buy_blocked = True
+        allocation_plan.account_new_risk_reason_codes = (
+            *allocation_plan.account_new_risk_reason_codes,
+            "SETTLED_CASH_LEDGER_UNVERIFIED",
+        )
+        execution_summary["settled_cash_ledger_status"] = "UNKNOWN"
+    elif options.cash_only_execution:
+        execution_summary["settled_cash_ledger_status"] = "OBSERVED"
+
+    _append_execution_detail_logs(
+        trade_logs,
+        allocation_plan=allocation_plan,
+        quote_collection=quote_collection,
+        current_mv=current_mv,
+        signal_metadata=signal_metadata,
+        translator=translator,
+        dry_run_only=options.dry_run_only,
+    )
+
+    anticipated_buying_power = (
+        max(0.0, settled_cash or 0.0)
+        if options.cash_only_execution
+        else get_available_buying_power(
+            ib,
+            account_values.get("buying_power", 0),
+            account_ids=allocation_plan.normalized_account_ids,
+            currency=options.market_currency,
+            cash_only_execution=False,
+        )
+    )
+    investable_anticipated_buying_power = _investable_buying_power(
+        anticipated_buying_power,
+        allocation_plan.reserved,
+    )
+    cash_sweep_quantity, plan_ended_early = _plan_rebalance_directions(
+        positions=positions,
+        allocation_plan=allocation_plan,
+        current_mv=current_mv,
+        target_mv=target_mv,
+        prices=prices,
+        investable_anticipated_buying_power=investable_anticipated_buying_power,
+        pending_cash_risk_unknown=pending_observation.cash_risk_unknown,
+        settled_cash_ledger_unverified=settled_cash_ledger_unverified,
+        execution_summary=execution_summary,
+        trade_logs=trade_logs,
+        translator=translator,
+        options=options,
+        drift_context=drift_context,
+    )
+    if plan_ended_early:
+        return _RebalanceOrderOutcome(trade_logs=trade_logs, finalized_early=True)
+
+    same_day_filled_symbols = _collect_same_day_filled_symbols(
+        ib,
+        set(allocation_plan.all_symbols) | set(allocation_plan.option_underliers),
+        allocation_plan.trade_date,
+        account_ids=allocation_plan.normalized_account_ids,
+    )
+    if same_day_filled_symbols:
+        filled_csv = ",".join(same_day_filled_symbols)
+        _record_blocked_step(
+            execution_summary,
+            trade_logs,
+            reason=f"same_day_fills_detected:{filled_csv}",
+            translator=translator,
+            log_message=translator(
+                "same_day_fills_detected",
+                profile=_display_text(options.strategy_profile, fallback="<unknown>"),
+                mode=allocation_plan.resolved_execution_mode,
+                symbols=filled_csv,
+                trade_date=_display_text(allocation_plan.trade_date, fallback="<none>"),
+            ),
+        )
+        return _RebalanceOrderOutcome(trade_logs=trade_logs, finalized_early=True)
+
+    if not _acquire_cycle_execution_lock(
+        allocation_plan=allocation_plan,
+        target_hash=target_hash,
+        trade_logs=trade_logs,
+        translator=translator,
+        options=options,
+    ):
+        return _RebalanceOrderOutcome(trade_logs=trade_logs, finalized_early=True)
+
+    (
+        sell_executed,
+        projected_sell_release_value,
+        dry_run_sale_proceeds,
+        pending_sell_release_symbols,
+        sell_unknown,
+    ) = _execute_sell_orders(
+        ib,
+        positions=positions,
+        allocation_plan=allocation_plan,
+        current_mv=current_mv,
+        target_mv=target_mv,
+        prices=prices,
+        cash_sweep_quantity=cash_sweep_quantity,
+        claimed_submitter=claimed_submitter,
+        order_intent_cls=order_intent_cls,
+        translator=translator,
+        trade_logs=trade_logs,
+        dry_run_only=options.dry_run_only,
+    )
+    if sell_unknown:
+        return _RebalanceOrderOutcome(trade_logs=trade_logs, finalized_early=True)
+
+    buying_power = _refresh_post_sell_buying_power(
+        ib,
+        account_values=account_values,
+        allocation_plan=allocation_plan,
+        anticipated_buying_power=anticipated_buying_power,
+        sell_executed=sell_executed,
+        dry_run_sale_proceeds=dry_run_sale_proceeds,
+        options=options,
+    )
+    investable_buying_power = _investable_buying_power(buying_power, allocation_plan.reserved)
+    execution_summary["projected_sell_release_value"] = float(projected_sell_release_value)
+    deduped_pending_releases = list(dict.fromkeys(pending_sell_release_symbols))
+    buy_needed_symbols = [
+        symbol
+        for symbol, target in target_mv.items()
+        if current_mv.get(symbol, 0.0) < float(target or 0.0) - allocation_plan.threshold
+    ]
+    buys_blocked_reason = _resolve_buy_block_reason(
+        ib,
+        signal_metadata=signal_metadata,
+        allocation_plan=allocation_plan,
+        current_mv=current_mv,
+        target_mv=target_mv,
+        prices=prices,
+        investable_buying_power=investable_buying_power,
+        pending_sell_release_symbols=deduped_pending_releases,
+        buy_needed_symbols=buy_needed_symbols,
+        trade_logs=trade_logs,
+        translator=translator,
+        options=options,
+    )
+    buy_unknown = _execute_buy_orders(
+        ib,
+        positions=positions,
+        allocation_plan=allocation_plan,
+        current_mv=current_mv,
+        target_mv=target_mv,
+        prices=prices,
+        investable_buying_power=investable_buying_power,
+        buy_needed_symbols=buy_needed_symbols,
+        buys_blocked_reason=buys_blocked_reason,
+        claimed_submitter=claimed_submitter,
+        order_intent_cls=order_intent_cls,
+        translator=translator,
+        trade_logs=trade_logs,
+        options=options,
+    )
+    if buy_unknown:
+        return _RebalanceOrderOutcome(trade_logs=trade_logs, finalized_early=True)
 
     buying_power = _execute_option_order_intents(
         ib,
-        option_order_intents,
-        submit_order_intent=submit_order_intent,
+        allocation_plan.option_order_intents,
+        submit_order_intent=claimed_submitter,
         order_intent_cls=order_intent_cls,
         translator=translator,
         execution_summary=execution_summary,
         trade_logs=trade_logs,
-        dry_run_only=dry_run_only,
-        order_account_id=order_account_id,
+        dry_run_only=options.dry_run_only,
+        order_account_id=allocation_plan.order_account_id,
         buying_power=buying_power,
     )
+    return _RebalanceOrderOutcome(
+        trade_logs=trade_logs,
+        buying_power=buying_power,
+        finalized_early=False,
+        drift_context=drift_context,
+    )
 
+
+def _build_rebalance_summary(
+    execution_summary: dict[str, Any],
+    *,
+    trade_logs: list[str],
+    translator,
+    buying_power: float,
+    drift_context: _DriftNotesContext | None = None,
+) -> dict[str, Any]:
+    """Finalize rebalance execution status, residual cash estimate, and drift notes."""
     has_terminal_order = bool(
         execution_summary["orders_submitted"]
         or execution_summary["orders_filled"]
@@ -2544,5 +3250,138 @@ def execute_rebalance(
     else:
         execution_summary["execution_status"] = "no_op"
     execution_summary["residual_cash_estimate"] = float(max(buying_power, 0.0))
-    append_small_account_allocation_drift_notes()
-    return _finalize_result(trade_logs, execution_summary, return_summary=return_summary)
+    if drift_context is not None:
+        _append_small_account_allocation_drift_notes(
+            execution_summary,
+            trade_logs,
+            translator=translator,
+            context=drift_context,
+        )
+    return execution_summary
+
+
+def execute_rebalance(
+    ib,
+    target_weights,
+    positions,
+    account_values,
+    *,
+    fetch_quote_snapshots,
+    submit_order_intent,
+    order_intent_cls,
+    translator,
+    strategy_symbols=None,
+    signal_metadata=None,
+    acquire_execution_claim=None,
+    account_execution_session=None,
+    strategy_profile=_UNSET,
+    account_group=_UNSET,
+    service_name=_UNSET,
+    account_ids=_UNSET,
+    dry_run_only=_UNSET,
+    execution_mode=_UNSET,
+    cash_reserve_ratio=_UNSET,
+    rebalance_threshold_ratio=_UNSET,
+    limit_buy_premium=_UNSET,
+    sell_settle_delay_sec=_UNSET,
+    cash_reserve_floor_usd=_UNSET,
+    quantity_step=_UNSET,
+    min_order_notional=_UNSET,
+    safe_haven_cash_substitute_threshold_usd=_UNSET,
+    market_currency=_UNSET,
+    limit_buy_premium_by_symbol=_UNSET,
+    execution_lock_dir=_UNSET,
+    return_summary=_UNSET,
+    cash_only_execution=_UNSET,
+    paper_execution_admission_enabled=_UNSET,
+    runtime_release_receipt=_UNSET,
+    expected_strategy_release=_UNSET,
+    options: RebalanceExecutionOptions | None = None,
+):
+    """Execute trades to reach target weights."""
+    del target_weights, strategy_symbols
+    resolved_options = _resolve_rebalance_options(
+        options,
+        strategy_profile=strategy_profile,
+        account_group=account_group,
+        service_name=service_name,
+        account_ids=account_ids,
+        dry_run_only=dry_run_only,
+        execution_mode=execution_mode,
+        cash_reserve_ratio=cash_reserve_ratio,
+        rebalance_threshold_ratio=rebalance_threshold_ratio,
+        limit_buy_premium=limit_buy_premium,
+        sell_settle_delay_sec=sell_settle_delay_sec,
+        cash_reserve_floor_usd=cash_reserve_floor_usd,
+        quantity_step=quantity_step,
+        min_order_notional=min_order_notional,
+        safe_haven_cash_substitute_threshold_usd=safe_haven_cash_substitute_threshold_usd,
+        market_currency=market_currency,
+        limit_buy_premium_by_symbol=limit_buy_premium_by_symbol,
+        execution_lock_dir=execution_lock_dir,
+        return_summary=return_summary,
+        cash_only_execution=cash_only_execution,
+        paper_execution_admission_enabled=paper_execution_admission_enabled,
+        runtime_release_receipt=runtime_release_receipt,
+        expected_strategy_release=expected_strategy_release,
+    )
+    normalized_signal_metadata = signal_metadata or {}
+    claimed_submitter = _build_claimed_submitter(
+        submit_order_intent=submit_order_intent,
+        account_values=account_values,
+        signal_metadata=normalized_signal_metadata,
+        acquire_execution_claim=acquire_execution_claim,
+        account_execution_session=account_execution_session,
+        options=resolved_options,
+    )
+    allocation_plan = _resolve_rebalance_allocation(
+        positions=positions,
+        account_values=account_values,
+        signal_metadata=normalized_signal_metadata,
+        account_execution_session=account_execution_session,
+        translator=translator,
+        options=resolved_options,
+    )
+    if allocation_plan.early_logs is not None:
+        return _finalize_result(
+            allocation_plan.early_logs,
+            allocation_plan.execution_summary,
+            return_summary=resolved_options.return_summary,
+        )
+    quote_collection = _collect_rebalance_quotes(
+        ib,
+        allocation_plan.all_symbols,
+        signal_metadata=normalized_signal_metadata,
+        fetch_quote_snapshots=fetch_quote_snapshots,
+        dry_run_only=resolved_options.dry_run_only,
+    )
+    order_outcome = _execute_rebalance_orders(
+        ib,
+        positions=positions,
+        account_values=account_values,
+        signal_metadata=normalized_signal_metadata,
+        allocation_plan=allocation_plan,
+        quote_collection=quote_collection,
+        claimed_submitter=claimed_submitter,
+        order_intent_cls=order_intent_cls,
+        translator=translator,
+        options=resolved_options,
+    )
+    if order_outcome.finalized_early:
+        return _finalize_result(
+            order_outcome.trade_logs,
+            allocation_plan.execution_summary,
+            return_summary=resolved_options.return_summary,
+        )
+    summary = _build_rebalance_summary(
+        allocation_plan.execution_summary,
+        trade_logs=order_outcome.trade_logs,
+        translator=translator,
+        buying_power=order_outcome.buying_power,
+        drift_context=order_outcome.drift_context,
+    )
+    return _finalize_result(
+        order_outcome.trade_logs,
+        summary,
+        return_summary=resolved_options.return_summary,
+    )
