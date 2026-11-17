@@ -5,7 +5,7 @@ The existing Deploy workflow admits only inventory services that already exist.
 initialization channel for the four references `S07-C01` through `S07-C04`.
 It never updates an existing service, inventory, traffic allocation, Scheduler,
 IAM policy, Secret value or trading switch. Source naming remains governed by
-[the naming contract](naming-trading-diff.zh-CN.md).
+[the display-name contract](display-names.md).
 
 ## Protection and inputs
 
