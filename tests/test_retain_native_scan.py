@@ -24,7 +24,7 @@ class NativeRetentionTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name).resolve()
         subprocess.run(["git", "init", "-q", str(self.root)], check=True, capture_output=True)
         tree = subprocess.run(["git", "mktree"], cwd=self.root, input="", text=True,
                               check=True, capture_output=True).stdout.strip()
@@ -54,6 +54,8 @@ class NativeRetentionTests(unittest.TestCase):
             "elif kind == 'fifo': os.mkfifo(target)\n"
             "elif kind == 'oversized': target.write_text(' ' * 1000001)\n"
             "elif kind == 'deep': target.write_text('[' * 20000 + ']' * 20000)\n"
+            "elif kind == 'depth_limit': target.write_text('[' * 17 + ']' * 17)\n"
+            "elif kind == 'quoted_brackets': target.write_text('[{\"Match\": \"' + '[' * 32 + '\\\\\"' + ']' * 32 + '\"}]')\n"
             "elif kind == 'nonfinite': target.write_text('[NaN]')\n"
             "elif kind == 'overflow': target.write_text('[1e400]')\n"
             "if os.environ.get('SYNTHETIC_CAPTURE_ERROR'): (target.parent / 'scanner-exit.txt').mkdir()\n"
@@ -161,13 +163,20 @@ class NativeRetentionTests(unittest.TestCase):
 
     def test_clean_exit_with_unusable_report_fails_collection(self):
         for report in ("missing", "malformed", "object", "symlink", "fifo", "oversized",
-                       "deep", "nonfinite", "overflow"):
+                       "deep", "depth_limit", "nonfinite", "overflow"):
             with self.subTest(report=report):
                 self.output = self.root / report
                 result = self.invoke(report=report)
                 self.assertEqual(result.returncode, 1)
                 self.assertEqual((self.output / "scanner-exit.txt").read_text(), "0\n")
                 self.assertFalse(json.loads((self.output / "capture.json").read_text())["capture_complete"])
+
+    def test_brackets_inside_string_values_do_not_trip_depth_limit(self):
+        result = self.invoke(code=1, report="quoted_brackets")
+        self.assertEqual(result.returncode, 1)
+        receipt = json.loads((self.output / "capture.json").read_text())
+        self.assertTrue(receipt["capture_complete"])
+        self.assertEqual(receipt["report"]["findings"], 1)
 
     def test_missing_native_executable_does_not_fabricate_a_process_exit(self):
         self.binary.unlink()
