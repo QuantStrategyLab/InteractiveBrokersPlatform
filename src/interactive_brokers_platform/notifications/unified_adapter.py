@@ -119,7 +119,10 @@ def _snapshot_as_of_stamp(snapshot):
 def persist_candidate(fact, *, actually_ran=True, dry_run=False, state_store=None, candidate_store=None, env=None,
                       block_reason=None, settlement=None, account_snapshot=None, account_snapshot_borrowed=False):
     """Persist event/run identity and bridge the existing candidate producer."""
-    from scripts.project_digest_candidates import merge_routine_observation_counts, project_notification_events
+    from interactive_brokers_platform.notifications.digest_candidate_projection import (
+        merge_routine_observation_counts,
+        project_notification_events,
+    )
     if actually_ran is not True:
         raise CandidatePersistenceError("notification_candidate_business_run_required")
     if fact.get("coverage_status") != "known" or not fact.get("dedupe_key"):
@@ -965,7 +968,7 @@ def is_probe_report(report):
 
 
 def _archived_account_snapshot(report, selector, started, now, *, allow_live_probe=False):
-    from scripts.publish_account_facts_from_report import (
+    from interactive_brokers_platform.application.account_facts_projection import (
         POSITIONS_SCOPE, SNAPSHOT_SCHEMA, _ACCOUNT_ID, _ProjectionError,
         _decimal_text, _observed_timestamp, _project_positions,
     )
@@ -1072,7 +1075,9 @@ def persist_archived_reports(reports, env, *, now=None):
                 digest = facts.get("order_execution_digest")
                 if isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest):
                     event = replace(event, order_execution_digest=digest)
-        from scripts.project_digest_candidates import _latest_notification_block_reason
+        from interactive_brokers_platform.notifications.digest_candidate_projection import (
+            _latest_notification_block_reason,
+        )
         from quant_platform_kit.common.execution_receipts import attach_execution_receipt
         def validate_receipt(source):
             return attach_execution_receipt(dict(source), source.get("execution_receipt"))["execution_receipt"]
