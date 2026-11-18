@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from application.ibkr_cash_observations import (
+from interactive_brokers_platform.application.ibkr_cash_observations import (
     build_cash_observations, inspect_cash_observations, build_cash_schedule_observations,
     capture_cash_schedule_rows, inspect_cash_schedule_observations,
 )
@@ -156,7 +156,7 @@ def test_absent_and_empty_schedule_do_not_imply_a_zero_balance():
 
 
 def test_native_cash_source_details_preserve_precision_and_model_scope_without_model_identifier():
-    from application.ibkr_cash_observations import capture_cash_observation_rows, build_cash_source_details, inspect_cash_source_details
+    from interactive_brokers_platform.application.ibkr_cash_observations import capture_cash_observation_rows, build_cash_source_details, inspect_cash_source_details
     rows = capture_cash_observation_rows([
         SimpleNamespace(account='DU123', currency='USD', tag='CashBalance', value='1.234567890123456789', modelCode=''),
         SimpleNamespace(account='DU123', currency='USD', tag='SettledCash', value='4.50', modelCode='PRIVATE_MODEL'),
@@ -177,7 +177,7 @@ def test_native_cash_source_details_preserve_precision_and_model_scope_without_m
 
 
 def test_duplicate_and_invalid_cash_never_claim_source_scope():
-    from application.ibkr_cash_observations import capture_cash_observation_rows, build_cash_source_details
+    from interactive_brokers_platform.application.ibkr_cash_observations import capture_cash_observation_rows, build_cash_source_details
     rows = [SimpleNamespace(account='DU123', currency='USD', tag='CashBalance', value='10', modelCode=code)
             for code in ('', 'MODEL')]
     rows.append(SimpleNamespace(account='DU123', currency='USD', tag='SettledCash', value='bad', modelCode=''))
@@ -189,7 +189,7 @@ def test_duplicate_and_invalid_cash_never_claim_source_scope():
 
 
 def test_invalid_or_orphan_source_details_do_not_claim_source_scope():
-    from application.ibkr_cash_observations import inspect_cash_source_details
+    from interactive_brokers_platform.application.ibkr_cash_observations import inspect_cash_source_details
     cash = attachment()
     details = {'observed_at': TIME, 'fields': [{'currency':'USD', 'source_tag':'CashBalance',
         'source_method':['PRIVATE'], 'model_scope':'no_model_code',
@@ -203,7 +203,7 @@ def test_invalid_or_orphan_source_details_do_not_claim_source_scope():
 
 
 def test_source_details_reject_cash_attachment_when_selected_cash_disagrees():
-    from application.ibkr_cash_observations import inspect_cash_source_details
+    from interactive_brokers_platform.application.ibkr_cash_observations import inspect_cash_source_details
     cash = attachment()
     details = {'observed_at': TIME, 'fields': [{'currency': 'USD', 'source_tag': 'CashBalance',
         'source_method': 'account_values_cache', 'model_scope': 'no_model_code',

@@ -7,9 +7,9 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-import application.execution_receipt_adapter as execution_receipt_adapter
-import application.http_routes as http_routes
-from application.cycle_result import StrategyCycleResult
+import interactive_brokers_platform.application.execution_receipt_adapter as execution_receipt_adapter
+import interactive_brokers_platform.application.http_routes as http_routes
+from interactive_brokers_platform.application.cycle_result import StrategyCycleResult
 
 
 @pytest.fixture(autouse=True)

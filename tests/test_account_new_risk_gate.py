@@ -13,7 +13,7 @@ from quant_platform_kit.risk.account_new_risk_gate import (
     NewRiskDisposition,
 )
 
-from application.account_new_risk_gate_support import (
+from interactive_brokers_platform.application.account_new_risk_gate_support import (
     ACCOUNT_NEW_RISK_GATE_ENV,
     apply_combined_scale_to_target_weights,
     build_account_new_risk_snapshot,
@@ -28,8 +28,8 @@ from application.account_new_risk_gate_support import (
     reset_attention_sent_keys_for_tests,
     set_cycle_snapshot,
 )
-from application.ibkr_order_execution import submit_order_intent
-from application.rebalance_service import _snapshot_to_portfolio_view, _strategy_portfolio_view
+from interactive_brokers_platform.application.ibkr_order_execution import submit_order_intent
+from interactive_brokers_platform.application.rebalance_service import _snapshot_to_portfolio_view, _strategy_portfolio_view
 
 
 @pytest.fixture(autouse=True)
@@ -100,7 +100,7 @@ def test_healthy_equity_without_explicit_snapshot_allows_new_risk():
         "peak_equity_usd": 100_000.0,
     }
     with mock.patch(
-        "application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
+        "interactive_brokers_platform.application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
         return_value=None,
     ):
         result = evaluate_portfolio_new_risk_admission(portfolio)
@@ -124,7 +124,7 @@ def test_store_critical_production_drift_prohibits_new_risk():
         "peak_equity_usd": 100_000.0,
     }
     with mock.patch(
-        "application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
+        "interactive_brokers_platform.application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
         return_value="critical",
     ) as store_mock:
         result = evaluate_portfolio_new_risk_admission(portfolio)
@@ -139,7 +139,7 @@ def test_store_probe_failure_is_fail_soft_not_invented_ban():
         "peak_equity_usd": 100_000.0,
     }
     with mock.patch(
-        "application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
+        "interactive_brokers_platform.application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
         return_value=None,
     ):
         result = evaluate_portfolio_new_risk_admission(portfolio)
@@ -171,7 +171,7 @@ def test_explicit_daily_loss_at_limit_prohibits_buy():
         },
     }
     with mock.patch(
-        "application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
+        "interactive_brokers_platform.application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
         return_value=None,
     ):
         snapshot = build_snapshot_from_portfolio(portfolio)
@@ -191,7 +191,7 @@ def test_unconfigured_daily_loss_limit_omits_axis():
         "account_new_risk_snapshot": {"daily_loss_usd": float("nan")},
     }
     with mock.patch(
-        "application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
+        "interactive_brokers_platform.application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
         return_value=None,
     ):
         result = evaluate_portfolio_new_risk_admission(portfolio)
@@ -207,7 +207,7 @@ def test_configured_limit_without_daily_loss_fact_fails_closed():
         "account_new_risk_snapshot": {"max_daily_loss_usd": 100.0},
     }
     with mock.patch(
-        "application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
+        "interactive_brokers_platform.application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
         return_value=None,
     ):
         result = evaluate_portfolio_new_risk_admission(portfolio)
@@ -253,7 +253,7 @@ def test_durable_circuit_breaker_open_prohibits_new_risk():
 )
 def test_rebalance_snapshot_risk_state_reaches_new_risk_gate(monkeypatch, metadata, reason):
     monkeypatch.setattr(
-        "application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
+        "interactive_brokers_platform.application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
         lambda **kwargs: None,
     )
     snapshot = SimpleNamespace(positions=(), total_equity=5000.0, buying_power=5000.0,
@@ -322,7 +322,7 @@ def test_submit_order_intent_rejects_buy_when_gate_prohibits():
     )
     ib = SimpleNamespace()
     with mock.patch(
-        "application.ibkr_order_execution._submit_order_intent",
+        "interactive_brokers_platform.application.ibkr_order_execution._submit_order_intent",
     ) as submit_mock:
         report = submit_order_intent(
             ib,
@@ -347,7 +347,7 @@ def test_submit_order_intent_does_not_scale_buy_quantity():
     )
     expected = SimpleNamespace(status="Submitted")
     with mock.patch(
-        "application.ibkr_order_execution._submit_order_intent",
+        "interactive_brokers_platform.application.ibkr_order_execution._submit_order_intent",
         return_value=expected,
     ) as submit_mock:
         submit_order_intent(
@@ -369,7 +369,7 @@ def test_submit_order_intent_allows_sell_when_gate_prohibits():
     ib = SimpleNamespace()
     expected = SimpleNamespace(status="Submitted")
     with mock.patch(
-        "application.ibkr_order_execution._submit_order_intent",
+        "interactive_brokers_platform.application.ibkr_order_execution._submit_order_intent",
         return_value=expected,
     ) as submit_mock:
         submit_order_intent(
@@ -394,7 +394,7 @@ def test_submit_order_intent_skips_gate_when_disabled():
     expected = SimpleNamespace(status="Submitted")
     with mock.patch.dict(os.environ, {ACCOUNT_NEW_RISK_GATE_ENV: "0"}, clear=False):
         with mock.patch(
-            "application.ibkr_order_execution._submit_order_intent",
+            "interactive_brokers_platform.application.ibkr_order_execution._submit_order_intent",
             return_value=expected,
         ) as submit_mock:
             submit_order_intent(
@@ -457,7 +457,7 @@ def test_attention_notify_on_new_risk_prohibit_dedupes(monkeypatch):
 def test_invalid_risk_projection_is_json_safe_and_preserves_independent_brake():
     # Rule A ignores invalid cached drawdown: measured 0.2 trips the brake while invalid volatility still fails closed.
     import json
-    from application.account_new_risk_gate_support import build_account_new_risk_snapshot, evaluate_portfolio_new_risk_admission
+    from interactive_brokers_platform.application.account_new_risk_gate_support import build_account_new_risk_snapshot, evaluate_portfolio_new_risk_admission
     portfolio = {"total_equity": 40000, "peak_equity_usd": 50000, "drawdown_from_peak": float("nan"), "realized_vol": float("nan")}
     projection = build_account_new_risk_snapshot(portfolio)
     json.dumps(projection, allow_nan=False)
@@ -471,7 +471,7 @@ def test_invalid_risk_projection_is_json_safe_and_preserves_independent_brake():
 
 
 def test_invalid_vol_prohibits_without_zero_scale():
-    from application.account_new_risk_gate_support import evaluate_portfolio_new_risk_admission
+    from interactive_brokers_platform.application.account_new_risk_gate_support import evaluate_portfolio_new_risk_admission
     result = evaluate_portfolio_new_risk_admission({"total_equity": 40000, "realized_vol": "bad"})
     assert result.risk_input_invalid and not result.hard_brake_triggered
     assert result.combined_scale is None
@@ -479,7 +479,7 @@ def test_invalid_vol_prohibits_without_zero_scale():
 
 def test_submit_rejects_unproven_reduction_and_allows_short_cover():
     set_cycle_snapshot(InjectedReconciliationSnapshot(observation_status="COMPLETE", reconciliation_status="VERIFIED", circuit_breaker_state="CLOSED", equity_usd=None))
-    with mock.patch("application.ibkr_order_execution._submit_order_intent", return_value=SimpleNamespace(status="Submitted")) as submit:
+    with mock.patch("interactive_brokers_platform.application.ibkr_order_execution._submit_order_intent", return_value=SimpleNamespace(status="Submitted")) as submit:
         rejected = submit_order_intent(SimpleNamespace(), OrderIntent(symbol="SPY", side="sell", quantity=2), reduction_position=1, reduction_pending_quantity=0)
         assert rejected.status == "rejected"
         rejected = submit_order_intent(SimpleNamespace(), OrderIntent(symbol="SPY", side="buy", quantity=1), reduction_position=-2, reduction_pending_quantity=None)

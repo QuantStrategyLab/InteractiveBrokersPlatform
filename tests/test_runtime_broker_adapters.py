@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from application.runtime_broker_adapters import (
+from interactive_brokers_platform.application.runtime_broker_adapters import (
     IBKRGatewayUnavailableError,
     IBKRTradingPermissionError,
     build_runtime_broker_adapters,
@@ -561,7 +561,7 @@ def _paper_facts_harness(snapshots):
 def test_paper_portfolio_view_preserves_only_projected_native_facts():
     import copy
 
-    from application.account_facts import build_ibkr_account_facts
+    from interactive_brokers_platform.application.account_facts import build_ibkr_account_facts
 
     snapshot = _paper_facts_snapshot()
     before = copy.deepcopy(snapshot)
@@ -603,7 +603,7 @@ def test_paper_portfolio_view_keeps_legacy_shape_when_native_facts_are_unknown(i
 
 
 def test_paper_portfolio_view_optional_projector_failure_does_not_change_legacy_result(monkeypatch):
-    from application import runtime_broker_adapters as broker_adapters
+    from interactive_brokers_platform.application import runtime_broker_adapters as broker_adapters
 
     def failed(_snapshot):
         raise RuntimeError("synthetic-private-projector-failure")
@@ -619,8 +619,8 @@ def test_paper_portfolio_view_optional_projector_failure_does_not_change_legacy_
 
 
 def test_paper_cycle_preserves_native_facts_without_extra_fetch_or_fact_logging():
-    from application.account_facts import build_ibkr_account_facts
-    from application.cycle_result import coerce_strategy_cycle_result
+    from interactive_brokers_platform.application.account_facts import build_ibkr_account_facts
+    from interactive_brokers_platform.application.cycle_result import coerce_strategy_cycle_result
 
     snapshot = _paper_facts_snapshot()
     _adapters, _ib, observed, cycle = _paper_facts_harness([snapshot])
@@ -646,7 +646,7 @@ def test_paper_cycle_preserves_native_facts_without_extra_fetch_or_fact_logging(
 def test_paper_cycle_uses_only_last_existing_retry_snapshot(last_state):
     from datetime import timedelta
 
-    from application.account_facts import build_ibkr_account_facts
+    from interactive_brokers_platform.application.account_facts import build_ibkr_account_facts
 
     first = _paper_facts_snapshot(empty=True)
     last = _paper_facts_snapshot(empty=last_state == "empty")
@@ -681,7 +681,7 @@ def test_paper_cycle_legacy_view_or_invalid_optional_shape_does_not_synthesize_f
 
 @pytest.mark.parametrize("legacy_shape", ["missing_fields", "invalid_time", "invalid_cash", "wrong_currency", "complete"])
 def test_paper_cycle_does_not_trust_legacy_sidecar_claiming_native_schema(legacy_shape):
-    from application.account_facts import build_ibkr_account_facts
+    from interactive_brokers_platform.application.account_facts import build_ibkr_account_facts
 
     facts = build_ibkr_account_facts(_paper_facts_snapshot())
     if legacy_shape == "missing_fields":
@@ -726,7 +726,7 @@ def test_paper_cycle_native_fetch_failure_propagates_and_disconnects_without_exe
 def test_paper_cycle_facts_still_require_original_report_selector_guard(
     selector, expected_present, strategy_module_factory, monkeypatch,
 ):
-    from application.cycle_result import coerce_strategy_cycle_result
+    from interactive_brokers_platform.application.cycle_result import coerce_strategy_cycle_result
 
     strategy_module = strategy_module_factory(IBKR_DRY_RUN_ONLY="true")
     monkeypatch.setattr(
@@ -766,11 +766,11 @@ def persistent_real_caller(tmp_path, monkeypatch, strategy_module_factory):
     """Actual main -> adapter -> executor -> platform/QPK -> fake placeOrder."""
     from dataclasses import replace
     from functools import partial
-    from application import execution_service as service
-    from application.ibkr_order_execution import submit_order_intent as platform_submit
+    from interactive_brokers_platform.application import execution_service as service
+    from interactive_brokers_platform.application.ibkr_order_execution import submit_order_intent as platform_submit
     from quant_platform_kit.common import execution_state as contract
     from quant_platform_kit.common.models import OrderIntent
-    from notifications.telegram import build_translator
+    from interactive_brokers_platform.notifications.telegram import build_translator
     from ib_insync.contract import Stock
     from ib_insync.order import LimitOrder, MarketOrder
 
@@ -810,7 +810,7 @@ def persistent_real_caller(tmp_path, monkeypatch, strategy_module_factory):
     ib = FakeIB()
     monkeypatch.setattr(service.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(service, "maybe_publish_attention_for_admission", lambda *_a, **_kw: {})
-    monkeypatch.setattr("application.account_new_risk_gate_support.resolve_production_drift_status_from_store", lambda **_kw: None)
+    monkeypatch.setattr("interactive_brokers_platform.application.account_new_risk_gate_support.resolve_production_drift_status_from_store", lambda **_kw: None)
     monkeypatch.setattr(module, "submit_order_intent", lambda _ib, intent, **kwargs: platform_submit(
         _ib, intent, wait_seconds=0,
         stock_factory=Stock,

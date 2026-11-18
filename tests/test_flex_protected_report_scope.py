@@ -8,8 +8,8 @@ import sys
 
 import pytest
 
-from application import ibkr_flex_source as source
-from application.account_facts_target_config import (
+from interactive_brokers_platform.application import ibkr_flex_source as source
+from interactive_brokers_platform.application.account_facts_target_config import (
     AccountFactsTargetConfigError, account_selector, parse_additional_target_configs, single_line_text,
 )
 from scripts import diagnose_ibkr_flex_ledger as cli
@@ -149,11 +149,15 @@ def test_report_cannot_expand_a_valid_approved_scope(monkeypatch, capsys):
 def test_diagnostic_and_pure_config_import_do_not_load_publishers_or_console_url():
     code = """
 import sys
-from application.account_facts_target_config import parse_additional_target_configs
+from interactive_brokers_platform.application.account_facts_target_config import parse_additional_target_configs
 from scripts import diagnose_ibkr_flex_ledger
 assert not any(k.startswith('scripts.publish_') for k in sys.modules)
 assert 'scripts.console_config' not in sys.modules
 """
-    env = dict(os.environ, QSL_CONSOLE_BASE_URL="invalid-private-origin", PYTHONPATH=str(Path.cwd()))
+    env = dict(
+        os.environ,
+        QSL_CONSOLE_BASE_URL="invalid-private-origin",
+        PYTHONPATH=os.pathsep.join((str(Path.cwd() / "src"), str(Path.cwd()))),
+    )
     result = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, result.stderr

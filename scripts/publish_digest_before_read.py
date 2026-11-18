@@ -62,7 +62,7 @@ class ArchiveReader:
 
 
 def _emit(env, *, now, read):
-    from notifications.digest_snapshot.digest_archive import emit
+    from interactive_brokers_platform.notifications.digest_snapshot.digest_archive import emit
     return emit(env, now=now, read=read)
 
 

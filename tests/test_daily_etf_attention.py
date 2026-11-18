@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import pytest
 
-from notifications import unified_adapter as adapter
+from interactive_brokers_platform.notifications import unified_adapter as adapter
 
 
 @pytest.fixture(autouse=True)

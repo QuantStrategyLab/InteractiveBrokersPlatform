@@ -3,7 +3,7 @@ import types
 
 import pytest
 
-from strategy_loader import (
+from interactive_brokers_platform.strategy_loader import (
     load_strategy_entrypoint_for_profile,
     load_strategy_runtime_adapter_for_profile,
 )

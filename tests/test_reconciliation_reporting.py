@@ -9,7 +9,7 @@ import pytest
 from quant_platform_kit.common.broker_reconciliation import build_broker_reconciliation_evidence
 from quant_platform_kit.common.runtime_reports import persist_runtime_report
 
-from application.reconciliation_reporting import build_persistable_reconciliation_report
+from interactive_brokers_platform.application.reconciliation_reporting import build_persistable_reconciliation_report
 
 
 def _digest(character: str) -> str:
@@ -193,7 +193,7 @@ def test_persistent_pin_main_raw_flow_roundtrip_preserves_unknowns(
 
 def test_log_comparison_distinguishes_coverage_from_digest_flags():
     from types import SimpleNamespace
-    from application.reconciliation_reporting import reconciliation_log_comparison
+    from interactive_brokers_platform.application.reconciliation_reporting import reconciliation_log_comparison
 
     fields = ('positions_match', 'cash_match', 'open_orders_match',
               'recent_executions_match', 'local_execution_ledger_match')

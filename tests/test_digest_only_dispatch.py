@@ -3,15 +3,15 @@ from unittest import TestCase
 from unittest.mock import patch
 from types import SimpleNamespace
 
-from notifications import unified_adapter as adapter
-from notifications.events import RenderedNotification
+from interactive_brokers_platform.notifications import unified_adapter as adapter
+from interactive_brokers_platform.notifications.events import RenderedNotification
 from quant_platform_kit.notifications.unified_contract import NotificationEvent
 from quant_platform_kit.notifications.digest_routing import immediate_plugin_signals
 from scripts.project_digest_candidates import merge_routine_observation_counts, project_notification_events
 from scripts import execution_report_heartbeat as heartbeat
-from application import rebalance_service
-from application.runtime_dependencies import IBKRRebalanceConfig
-from application.runtime_reporting_adapters import IBKRRuntimeReportingAdapters, confirmed_gcs_report_uri
+from interactive_brokers_platform.application import rebalance_service
+from interactive_brokers_platform.application.runtime_dependencies import IBKRRebalanceConfig
+from interactive_brokers_platform.application.runtime_reporting_adapters import IBKRRuntimeReportingAdapters, confirmed_gcs_report_uri
 from quant_platform_kit.common.runtime_reports import RuntimeReportPersistResult
 
 
@@ -377,7 +377,7 @@ class DigestOnlyDispatch(TestCase):
 
 
 def test_pre_ack_order_statuses_remain_urgent():
-    from notifications.unified_adapter import _known_pending_orders, _kind
+    from interactive_brokers_platform.notifications.unified_adapter import _known_pending_orders, _kind
     keys = ("orders_filled", "orders_pending", "orders_partially_filled", "option_orders_filled", "option_orders_pending", "option_orders_partially_filled")
     for status in ("PendingSubmit", "ApiPending", "ApiPendingSubmit"):
         evidence = {key: [] for key in keys}

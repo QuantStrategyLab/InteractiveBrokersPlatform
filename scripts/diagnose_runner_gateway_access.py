@@ -75,7 +75,7 @@ def command(args, reason):
 
 
 def read_group(ctx, rows, run):
-    from runtime_config_support import (first_non_empty, load_account_group_config,
+    from interactive_brokers_platform.runtime_config_support import (first_non_empty, load_account_group_config,
         resolve_account_group, resolve_execution_backend, resolve_ib_gateway_mode, resolve_ib_gateway_port)
 
     def secret(name, version="latest"):

@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from application.execution_service import (
+from interactive_brokers_platform.application.execution_service import (
     _planned_buy_order_quantity, _projected_sell_release_value_for_report,
     _sell_order_quantity,
 )

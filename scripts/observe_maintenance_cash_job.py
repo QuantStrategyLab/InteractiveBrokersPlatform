@@ -147,7 +147,7 @@ def inspect_report(report, uri, expected, *, job, execution, started, now, names
     if not started <= begin <= observed <= end <= now + timedelta(minutes=5) or begin < now - timedelta(minutes=10):
         raise pilot.ReleaseError("job_report_time_unverified")
     cash = publisher._project_cash(facts.get("cash"))
-    from application.ibkr_cash_observations import TAGS, inspect_cash_observations
+    from interactive_brokers_platform.application.ibkr_cash_observations import TAGS, inspect_cash_observations
     selected = [row for row in cash if row["currency"] == "USD"]
     fields = inspect_cash_observations(facts.get("broker_cash_observations"), observed_at=facts["observed_at"],
         selected_cash=selected[0] if len(selected) == 1 else None)
@@ -211,7 +211,7 @@ def inspect_report(report, uri, expected, *, job, execution, started, now, names
         if (type(count) is not int or not 0 <= count <= 1000000 or not isinstance(orders, list) or len(orders) != count
                 or any(not isinstance(row, dict) or row.get("account") not in expected["expected_account_selector"] for row in orders)):
             raise pilot.ReleaseError("funding_orders_unverified")
-        from application.ibkr_cash_observations import _decimal
+        from interactive_brokers_platform.application.ibkr_cash_observations import _decimal
         rules = funding.get("contract_rules")
         if (not isinstance(rules, dict) or rules.get("status") not in {"OBSERVED", "UNAVAILABLE"}
                 or rules.get("symbol") != "TQQQ" or rules.get("currency") != "USD"):

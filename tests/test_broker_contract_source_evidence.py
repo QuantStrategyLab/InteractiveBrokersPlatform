@@ -1,13 +1,14 @@
 """Artificial source fields and guarded, status-only protected-read wiring."""
 from copy import deepcopy
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-from application.broker_contract_source_evidence import GAPS, inspect_broker_contract_sources
+from interactive_brokers_platform.application.broker_contract_source_evidence import GAPS, inspect_broker_contract_sources
 from scripts import diagnose_account_facts_identity as diagnostic
 from scripts import publish_account_facts_from_report as publisher
 from tests.test_diagnose_account_facts_identity import NOW, PRIVATE, _environment, _metadata, _report
@@ -85,7 +86,7 @@ def test_zero_orders_success_and_unrecognized_claims_do_not_grant_financial_auth
 
 
 def test_schedule_attachment_is_status_only_and_does_not_satisfy_scalar_settled_cash(monkeypatch):
-    from application.ibkr_cash_observations import SCHEDULE_SCHEMA
+    from interactive_brokers_platform.application.ibkr_cash_observations import SCHEDULE_SCHEMA
     _, report, _ = report_fixture(monkeypatch)
     facts = report["summary"]["account_facts"]
     facts["broker_cash_schedule_observations"] = dict(schema_version=SCHEDULE_SCHEMA,
@@ -139,7 +140,7 @@ def test_explicit_mode_reuses_one_guarded_report_read_and_does_not_disguise_unve
 
 
 def test_source_projection_failure_emits_no_partial_private_values(monkeypatch, capsys):
-    from application import broker_contract_source_evidence as projection
+    from interactive_brokers_platform.application import broker_contract_source_evidence as projection
     expected, report, metadata = report_fixture(monkeypatch)
     monkeypatch.setattr(publisher, "_latest_report_uri", lambda **kwargs: expected["expected_report_prefix"]+"/r.json")
     monkeypatch.setattr(publisher, "_load_gcs_report", lambda *args, **kwargs: report)
@@ -178,14 +179,16 @@ socket.socket = forbidden
 socket.getaddrinfo = forbidden
 subprocess.run = forbidden
 urllib.request.urlopen = forbidden
-from application.broker_contract_source_evidence import inspect_broker_contract_sources
+from interactive_brokers_platform.application.broker_contract_source_evidence import inspect_broker_contract_sources
 from scripts.diagnose_account_facts_identity import main
 out = inspect_broker_contract_sources({'schema_version':'runtime_report.v1','summary':{}})
 assert out['whole_account_pending_state'] == 'UNKNOWN'
 assert not out['execution_authorized']
 """
     monkeypatch.undo()
-    result = subprocess.run([sys.executable, '-S', '-c', code], capture_output=True, text=True, timeout=30)
+    root = Path(__file__).resolve().parents[1]
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join((str(root / "src"), str(root))))
+    result = subprocess.run([sys.executable, '-S', '-c', code], env=env, capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
 
 

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from application.runtime_target_manifest import (
+from interactive_brokers_platform.application.runtime_target_manifest import (
     RuntimeTargetManifestError,
     build_github_actions_matrix,
     load_runtime_target_manifest,

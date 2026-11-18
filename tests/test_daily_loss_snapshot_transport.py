@@ -3,8 +3,8 @@ from dataclasses import replace
 
 import pytest
 
-from application import account_new_risk_gate_support as gate
-from application.rebalance_service import _snapshot_to_portfolio_view
+from interactive_brokers_platform.application import account_new_risk_gate_support as gate
+from interactive_brokers_platform.application.rebalance_service import _snapshot_to_portfolio_view
 from tests.test_snapshot_risk_fact_transport import native_snapshot, healthy_projection
 from tests.test_persistent_drawdown_breaker import session_at
 

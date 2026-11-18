@@ -12,8 +12,8 @@ from unittest.mock import patch
 
 import pytest
 
-from notifications import unified_adapter as adapter
-from notifications.digest_snapshot.digest_archive import emit
+from interactive_brokers_platform.notifications import unified_adapter as adapter
+from interactive_brokers_platform.notifications.digest_snapshot.digest_archive import emit
 from quant_platform_kit.notifications.digest_candidates import cycle_evidence
 from tests.test_unified_notification_adapter import (
     NOW, TARGET, CandidateStore, StateStore, event, healthy_receipt_report,

@@ -10,8 +10,10 @@ ROOT = Path(__file__).resolve().parents[1]
 QPK_SRC = ROOT.parent / "QuantPlatformKit" / "src"
 if str(QPK_SRC) not in sys.path:
     sys.path.insert(0, str(QPK_SRC))
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+SRC = ROOT / "src"
+for _candidate in (ROOT, SRC):
+    if str(_candidate) not in sys.path:
+        sys.path.insert(0, str(_candidate))
 
 from quant_platform_kit.common.execution_capabilities import FRACTIONAL_SHARE_EXECUTION_CAPABILITY  # noqa: E402
 from quant_platform_kit.common.strategies import PlatformCapabilityMatrix, StrategyCatalog, StrategyDefinition  # noqa: E402
@@ -48,7 +50,7 @@ _FAKE_CAPABILITY_MATRIX = PlatformCapabilityMatrix(
     supported_capabilities=frozenset({"broker_client"}),
 )
 
-_fake_registry = types.ModuleType("strategy_registry")
+_fake_registry = types.ModuleType("interactive_brokers_platform.strategy_registry")
 _fake_registry.PLATFORM_CAPABILITY_MATRIX = _FAKE_CAPABILITY_MATRIX
 _fake_registry.STRATEGY_CATALOG = _FAKE_CATALOG
 
@@ -56,17 +58,17 @@ _fake_registry.STRATEGY_CATALOG = _FAKE_CATALOG
 class RuntimeExecutionPolicyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls._original_registry = sys.modules.get("strategy_registry")
-        sys.modules["strategy_registry"] = _fake_registry
-        policy = importlib.import_module("runtime_execution_policy")
+        cls._original_registry = sys.modules.get("interactive_brokers_platform.strategy_registry")
+        sys.modules["interactive_brokers_platform.strategy_registry"] = _fake_registry
+        policy = importlib.import_module("interactive_brokers_platform.runtime_execution_policy")
         cls._policy = importlib.reload(policy)
 
     @classmethod
     def tearDownClass(cls) -> None:
         if cls._original_registry is None:
-            sys.modules.pop("strategy_registry", None)
+            sys.modules.pop("interactive_brokers_platform.strategy_registry", None)
         else:
-            sys.modules["strategy_registry"] = cls._original_registry
+            sys.modules["interactive_brokers_platform.strategy_registry"] = cls._original_registry
 
     def test_dca_profiles_are_blocked_on_ibkr(self) -> None:
         for profile in ("nasdaq_sp500_smart_dca", "ibit_smart_dca"):

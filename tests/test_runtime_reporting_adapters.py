@@ -9,7 +9,7 @@ if str(ROOT) not in sys.path:
 
 from quant_platform_kit.common import build_runtime_assembly, build_runtime_target  # noqa: E402
 from quant_platform_kit.common.runtime_reports import build_runtime_report_base  # noqa: E402
-from application.runtime_reporting_adapters import build_runtime_reporting_adapters  # noqa: E402
+from interactive_brokers_platform.application.runtime_reporting_adapters import build_runtime_reporting_adapters  # noqa: E402
 
 
 def test_runtime_reporting_adapters_start_run_builds_report_with_runtime_target(monkeypatch):

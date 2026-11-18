@@ -111,7 +111,7 @@ def _path_tier(path):
     if normalized.startswith(("docs/", "tests/")):
         return "low"
     root = normalized.split("/", 1)[0]
-    if root in {"application", "entrypoints", "strategy", "strategies", "infra", "terraform"}:
+    if root in {"src", "application", "entrypoints", "strategy", "strategies", "infra", "terraform"}:
         return "high"
     if re.search(r"(?:^|[/_.-])(?:auth|accounts?|bindings?|brokers?|credentials?|deploy(?:ment)?|"
                  r"docker(?:file)?|compose|env|execution|executors?|iam|keys?|orders?|"

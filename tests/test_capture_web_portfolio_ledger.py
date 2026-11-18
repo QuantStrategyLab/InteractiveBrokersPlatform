@@ -237,4 +237,4 @@ def test_transport_auth_errors_sanitized_no_retry(error, reason):
 
 def test_no_runtime_registration():
     root = Path(__file__).resolve().parents[1]
-    assert "capture_web_portfolio_ledger" not in (root / "main.py").read_text()
+    assert "capture_web_portfolio_ledger" not in (root / "src/interactive_brokers_platform/main.py").read_text()

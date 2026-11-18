@@ -6,9 +6,9 @@ from xml.etree import ElementTree as ET
 
 import pytest
 
-from application.flex_daily import runner, state, storage
-from application.flex_daily.__main__ import pull_outcome
-from application.flex_daily.storage import Conflict
+from interactive_brokers_platform.application.flex_daily import runner, state, storage
+from interactive_brokers_platform.application.flex_daily.__main__ import pull_outcome
+from interactive_brokers_platform.application.flex_daily.storage import Conflict
 from tests.test_flex_daily_cloud import Memory, config, report
 
 START = '2026-11-03'

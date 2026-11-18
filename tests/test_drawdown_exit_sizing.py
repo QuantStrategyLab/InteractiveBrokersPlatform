@@ -3,10 +3,10 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from application import account_new_risk_gate_support as gate
-from application import execution_service
+from interactive_brokers_platform.application import account_new_risk_gate_support as gate
+from interactive_brokers_platform.application import execution_service
 from quant_platform_kit.common.models import ExecutionReport, OrderIntent
-from notifications.telegram import build_translator
+from interactive_brokers_platform.notifications.telegram import build_translator
 from tests.test_execution_service import _signal_metadata, execute_rebalance
 from tests.test_persistent_drawdown_breaker import preview, session_at
 

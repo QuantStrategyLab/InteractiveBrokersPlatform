@@ -4,7 +4,7 @@ from datetime import date
 import pytest
 from google.api_core.exceptions import Forbidden, NotFound, PreconditionFailed
 
-from application.ibkr_flex_source import FlexReport, FlexSourceError
+from interactive_brokers_platform.application.ibkr_flex_source import FlexReport, FlexSourceError
 from scripts import publish_ibkr_digest_cash as publisher
 from scripts.publish_ibkr_digest_cash import _publish_cash_object, project_digest_cash
 

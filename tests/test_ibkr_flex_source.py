@@ -1,6 +1,6 @@
 import pytest
 
-from application import ibkr_flex_source as source
+from interactive_brokers_platform.application import ibkr_flex_source as source
 
 
 REFERENCE = "987654321098765"

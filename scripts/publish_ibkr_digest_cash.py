@@ -11,9 +11,9 @@ from datetime import date, datetime
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
-from application.ibkr_flex_ledger import build_flex_period_cash_facts
-from application.account_facts_target_config import account_selector, parse_additional_target_configs
-from application.ibkr_flex_source import (
+from interactive_brokers_platform.application.ibkr_flex_ledger import build_flex_period_cash_facts
+from interactive_brokers_platform.application.account_facts_target_config import account_selector, parse_additional_target_configs
+from interactive_brokers_platform.application.ibkr_flex_source import (
     FlexReportPending, FlexSourceError, _xml_root, collect_activity_flex_xml, fetch_activity_flex_xml, verify_report_accounts,
 )
 
@@ -103,7 +103,7 @@ def project_digest_cash(report, *, expected_primary, allowed_accounts, bindings,
     root = _xml_root(report.content, endpoint="GetStatement")
     if (root.get("type") or "").strip() not in {"", "AF"}:
         raise ValueError("digest_cash_activity_report_required")
-    from application.ibkr_flex_executions import _day
+    from interactive_brokers_platform.application.ibkr_flex_executions import _day
 
     payloads = {}
     for statement in root.findall("./FlexStatements/FlexStatement"):

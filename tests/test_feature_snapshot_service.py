@@ -29,7 +29,7 @@ def _skip_if_missing_pandas() -> None:
 class FeatureSnapshotServiceTest(unittest.TestCase):
     def test_load_feature_snapshot_reads_csv(self):
         _skip_if_missing_pandas()
-        from application.feature_snapshot_service import load_feature_snapshot
+        from interactive_brokers_platform.application.feature_snapshot_service import load_feature_snapshot
 
         with TemporaryDirectory() as tmp_dir:
             path = Path(tmp_dir) / "snapshot.csv"
@@ -41,7 +41,7 @@ class FeatureSnapshotServiceTest(unittest.TestCase):
 
     def test_load_feature_snapshot_rejects_unknown_format(self):
         _skip_if_missing_pandas()
-        from application.feature_snapshot_service import load_feature_snapshot
+        from interactive_brokers_platform.application.feature_snapshot_service import load_feature_snapshot
 
         with TemporaryDirectory() as tmp_dir:
             path = Path(tmp_dir) / "snapshot.txt"
@@ -52,7 +52,7 @@ class FeatureSnapshotServiceTest(unittest.TestCase):
 
     def test_load_feature_snapshot_guarded_fails_closed_when_missing(self):
         _skip_if_missing_pandas()
-        from application.feature_snapshot_service import load_feature_snapshot_guarded
+        from interactive_brokers_platform.application.feature_snapshot_service import load_feature_snapshot_guarded
 
         result = load_feature_snapshot_guarded(
             "/tmp/definitely-missing-snapshot.csv",
@@ -66,7 +66,7 @@ class FeatureSnapshotServiceTest(unittest.TestCase):
 
     def test_load_feature_snapshot_guarded_fails_closed_when_stale(self):
         _skip_if_missing_pandas()
-        from application.feature_snapshot_service import load_feature_snapshot_guarded
+        from interactive_brokers_platform.application.feature_snapshot_service import load_feature_snapshot_guarded
 
         with TemporaryDirectory() as tmp_dir:
             path = Path(tmp_dir) / "snapshot.csv"
@@ -84,7 +84,7 @@ class FeatureSnapshotServiceTest(unittest.TestCase):
 
     def test_load_feature_snapshot_guarded_requires_manifest_when_requested(self):
         _skip_if_missing_pandas()
-        from application.feature_snapshot_service import load_feature_snapshot_guarded
+        from interactive_brokers_platform.application.feature_snapshot_service import load_feature_snapshot_guarded
 
         with TemporaryDirectory() as tmp_dir:
             path = Path(tmp_dir) / "snapshot.csv"
@@ -106,7 +106,7 @@ class FeatureSnapshotServiceTest(unittest.TestCase):
 
     def test_load_feature_snapshot_guarded_validates_manifest_checksums(self):
         _skip_if_missing_pandas()
-        from application.feature_snapshot_service import load_feature_snapshot_guarded
+        from interactive_brokers_platform.application.feature_snapshot_service import load_feature_snapshot_guarded
 
         with TemporaryDirectory() as tmp_dir:
             snapshot_path = Path(tmp_dir) / "snapshot.csv"
@@ -148,7 +148,7 @@ class FeatureSnapshotServiceTest(unittest.TestCase):
 
     def test_load_feature_snapshot_downloads_gcs_csv(self):
         _skip_if_missing_pandas()
-        from application.feature_snapshot_service import load_feature_snapshot
+        from interactive_brokers_platform.application.feature_snapshot_service import load_feature_snapshot
 
         with TemporaryDirectory():
             source_uri = "gs://unit-test-bucket/snapshots/tech_pullback.csv"
@@ -158,14 +158,14 @@ class FeatureSnapshotServiceTest(unittest.TestCase):
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_text("symbol,sector,mom_6_1\nAAA,tech,0.1\n", encoding="utf-8")
 
-            with patch("application.feature_snapshot_service._download_gcs_object", side_effect=fake_download):
+            with patch("interactive_brokers_platform.application.feature_snapshot_service._download_gcs_object", side_effect=fake_download):
                 frame = load_feature_snapshot(source_uri)
 
         self.assertEqual(frame.to_dict(orient="records"), [{"symbol": "AAA", "sector": "tech", "mom_6_1": 0.1}])
 
     def test_load_feature_snapshot_guarded_downloads_gcs_snapshot_and_manifest(self):
         _skip_if_missing_pandas()
-        from application.feature_snapshot_service import load_feature_snapshot_guarded
+        from interactive_brokers_platform.application.feature_snapshot_service import load_feature_snapshot_guarded
 
         with TemporaryDirectory() as tmp_dir:
             config_path = Path(tmp_dir) / "config.json"
@@ -205,7 +205,7 @@ class FeatureSnapshotServiceTest(unittest.TestCase):
                     return
                 raise AssertionError(f"unexpected uri: {uri}")
 
-            with patch("application.feature_snapshot_service._download_gcs_object", side_effect=fake_download):
+            with patch("interactive_brokers_platform.application.feature_snapshot_service._download_gcs_object", side_effect=fake_download):
                 result = load_feature_snapshot_guarded(
                     snapshot_uri,
                     run_as_of="2026-04-01",

@@ -27,7 +27,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from application.broker_reconciliation_candidate import (
+from interactive_brokers_platform.application.broker_reconciliation_candidate import (
     SourceReceiptExpectation, initial_private_source_sha256, validate_reconciliation_candidate_sources,
 )
 from scripts.build_reconciliation_baseline_candidate import (

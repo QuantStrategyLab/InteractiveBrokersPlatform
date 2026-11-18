@@ -8,7 +8,7 @@ zero but stored nothing under `raw/` and `derived/` is not accepted.
 Usage:
     python scripts/check_flex_daily_acceptance.py --status status.json --objects names.txt
 
-`status.json` holds the JSON line printed by `python -m application.flex_daily pull`.
+`status.json` holds the JSON line printed by `python -m interactive_brokers_platform.application.flex_daily pull`.
 `names.txt` lists object names, one per line, for example the output of
 `gcloud storage ls --recursive gs://<bucket>/raw/ gs://<bucket>/derived/`.
 """

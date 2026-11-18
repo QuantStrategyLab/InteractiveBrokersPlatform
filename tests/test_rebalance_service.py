@@ -8,12 +8,12 @@ from tests.conftest import synthetic_account_submission
 
 import pytest
 
-from application.execution_service import execute_rebalance
-from application.reconciliation_service import build_reconciliation_record
-from application.runtime_broker_adapters import build_runtime_broker_adapters
+from interactive_brokers_platform.application.execution_service import execute_rebalance
+from interactive_brokers_platform.application.reconciliation_service import build_reconciliation_record
+from interactive_brokers_platform.application.runtime_broker_adapters import build_runtime_broker_adapters
 from quant_platform_kit.common.execution_state import ExecutionMarkerStore
 
-from application.rebalance_service import (
+from interactive_brokers_platform.application.rebalance_service import (
     _record_execution_marker,
     _resolve_reconciliation_mode,
     _should_suppress_noop_notification,
@@ -22,19 +22,19 @@ from application.rebalance_service import (
     _strategy_dashboard_text,
     run_strategy_core,
 )
-from application.runtime_dependencies import IBKRRebalanceConfig
-from notifications.renderers import (
+from interactive_brokers_platform.application.runtime_dependencies import IBKRRebalanceConfig
+from interactive_brokers_platform.notifications.renderers import (
     _build_notification_trade_lines,
     build_dashboard,
     render_trade_notification,
 )
-from notifications.telegram import build_translator
+from interactive_brokers_platform.notifications.telegram import build_translator
 
 
 def _run_with_synthetic_account_nlv(*, account_nlv, **kwargs):
     """Exercise runtime ports with explicitly qualified synthetic account NAV."""
-    from application.rebalance_service import _legacy_portfolio_snapshot
-    from application.runtime_dependencies import IBKRRebalanceRuntime
+    from interactive_brokers_platform.application.rebalance_service import _legacy_portfolio_snapshot
+    from interactive_brokers_platform.application.runtime_dependencies import IBKRRebalanceRuntime
     from quant_platform_kit.common.port_adapters import CallableNotificationPort, CallablePortfolioPort
 
     read_portfolio = kwargs.pop("get_current_portfolio")
@@ -530,7 +530,7 @@ def test_trade_notification_localizes_compact_signal_state_for_zh_and_en():
 
 def test_run_strategy_core_passes_signal_metadata_to_execution(monkeypatch):
     from datetime import datetime, timezone
-    from notifications import unified_adapter as adapter
+    from interactive_brokers_platform.notifications import unified_adapter as adapter
     from quant_platform_kit.notifications.unified_contract import NotificationEvent
     candidates = []
     monkeypatch.setattr(adapter, "event_for", lambda kind, **kwargs: NotificationEvent(
@@ -1056,7 +1056,7 @@ def test_no_target_preserves_independent_account_brake(tmp_path):
 
 def test_run_strategy_core_prefers_structured_noop_status_in_zh(monkeypatch):
     from datetime import datetime, timezone
-    from notifications import unified_adapter as adapter
+    from interactive_brokers_platform.notifications import unified_adapter as adapter
     from quant_platform_kit.notifications.unified_contract import NotificationEvent
     candidates = []
     monkeypatch.setattr(adapter, "event_for", lambda kind, **kwargs: NotificationEvent(
@@ -1269,7 +1269,7 @@ def test_cycle_requires_claim_before_actual_submit(claim_cycle, case, side):
 def test_cycle_success_claim_precedes_one_submit_and_blocks_repeat(claim_cycle):
     # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
     state = claim_cycle
-    from application.rebalance_service import _build_execution_marker_key
+    from interactive_brokers_platform.application.rebalance_service import _build_execution_marker_key
 
     config = replace(state.config, execution_dedup_enabled=True)
     key = _build_execution_marker_key(config=config, signal_metadata=state.metadata)
@@ -1359,7 +1359,7 @@ def test_reconciliation_unknown_target_without_summary_is_noop():
 
 def test_runtime_cycle_notification_is_quiet_for_success_but_keeps_attention():
     from types import SimpleNamespace
-    from application.rebalance_service import _should_publish_execution_notification
+    from interactive_brokers_platform.application.rebalance_service import _should_publish_execution_notification
 
     config = SimpleNamespace(dry_run_only=False, notify_no_trade_cycles=False, notification_attention_reason_codes=())
     healthy = {"execution_status": "no_op", "orders_submitted": []}
@@ -1391,7 +1391,7 @@ def test_runtime_cycle_notification_is_quiet_for_success_but_keeps_attention():
 
 def test_successful_dry_run_orders_are_not_real_trade_notifications():
     from types import SimpleNamespace
-    from application.rebalance_service import _should_publish_execution_notification
+    from interactive_brokers_platform.application.rebalance_service import _should_publish_execution_notification
 
     config = SimpleNamespace(dry_run_only=True, notify_no_trade_cycles=False, notification_attention_reason_codes=())
     assert not _should_publish_execution_notification(
@@ -1476,7 +1476,7 @@ def test_persistent_runner_no_order_zero_new_registration(persistent_runner):
 
 def test_account_brake_reduction_uses_journal_grant_and_guarded_wrapper():
     from unittest.mock import MagicMock
-    from application.rebalance_service import execute_account_brake_reduction
+    from interactive_brokers_platform.application.rebalance_service import execute_account_brake_reduction
     from quant_platform_kit.common.execution_state import AccountSubmissionSession
     from quant_platform_kit.common.models import OrderIntent
     session = MagicMock(spec=AccountSubmissionSession)
@@ -1502,9 +1502,9 @@ def test_no_target_brake_through_real_session_and_guarded_wrapper(tmp_path, monk
     from quant_platform_kit.common.account_domain import account_domain_key
     from quant_platform_kit.common.account_identity import BrokerAccountIdentity
     from quant_platform_kit.common.execution_state import AccountSubmissionError, AccountSubmissionSession, ExecutionMarkerStore, submission_release_digest
-    from application.runtime_dependencies import IBKRRebalanceConfig
+    from interactive_brokers_platform.application.runtime_dependencies import IBKRRebalanceConfig
     from quant_platform_kit.common.models import OrderIntent
-    from application.ibkr_order_execution import submit_order_intent as guarded_submit
+    from interactive_brokers_platform.application.ibkr_order_execution import submit_order_intent as guarded_submit
 
     domain = {"identity": {"environment": "LIVE", "platform_id": "ibkr", "server": "test", "account_id_fingerprint": "sha256:" + "1" * 64, "lifecycle_id": "one"},
               "policy": {"capital_kind": "OWN_REAL", "product": "BROKERAGE", "phase": "LIVE", "account_type": "CASH", "style": "INTRADAY", "preference": "CAPITAL_PRESERVATION", "currency": "USD", "source": "synthetic", "effective_at": "2026-10-01T00:00:00Z", "valid_until": "2026-11-01T00:00:00Z", "version": "one"}}
@@ -1519,7 +1519,7 @@ def test_no_target_brake_through_real_session_and_guarded_wrapper(tmp_path, monk
     session.record_account_equity(snapshot=snapshot, cash_flow=0, baseline_confirmed=True)
     session.record_account_equity(snapshot={**snapshot, "equity": 8000, "valuation_at": "2026-10-30T01:00:00Z"}, cash_flow=0)
     submitted = []
-    monkeypatch.setattr("application.ibkr_order_execution._submit_order_intent", lambda _ib, intent, **kwargs: submitted.append(intent) or SimpleNamespace(status="Submitted", broker_order_id="synthetic", filled_quantity=0, average_fill_price=0))
+    monkeypatch.setattr("interactive_brokers_platform.application.ibkr_order_execution._submit_order_intent", lambda _ib, intent, **kwargs: submitted.append(intent) or SimpleNamespace(status="Submitted", broker_order_id="synthetic", filled_quantity=0, average_fill_price=0))
     monkeypatch.setattr(platform, "submit_order_intent", guarded_submit)
     class FakeIB:
         def isConnected(self): return True

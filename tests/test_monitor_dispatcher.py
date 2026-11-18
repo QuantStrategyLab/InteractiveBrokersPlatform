@@ -2,7 +2,7 @@ import datetime as dt
 
 import pytest
 
-from application.monitor_dispatcher import (
+from interactive_brokers_platform.application.monitor_dispatcher import (
     dispatch_due_monitor_targets,
     due_monitor_dispatches,
     load_monitor_targets,

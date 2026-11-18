@@ -9,7 +9,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from quant_platform_kit.common import build_runtime_target  # noqa: E402
-from application.runtime_composer import IBKRRuntimeComposer  # noqa: E402
+from interactive_brokers_platform.application.runtime_composer import IBKRRuntimeComposer  # noqa: E402
 
 
 def test_runtime_composer_builds_runtime_and_config_from_local_builders():

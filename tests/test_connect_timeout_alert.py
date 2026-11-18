@@ -8,8 +8,10 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+SRC = ROOT / "src"
+for _candidate in (ROOT, SRC):
+    if str(_candidate) not in sys.path:
+        sys.path.insert(0, str(_candidate))
 QPK_SRC = ROOT.parent / "QuantPlatformKit" / "src"
 if str(QPK_SRC) not in sys.path:
     sys.path.insert(0, str(QPK_SRC))
@@ -79,7 +81,7 @@ def install_stub_modules():
     ib_insync_module.MarketOrder = type("MarketOrder", (), {})
     ib_insync_module.LimitOrder = type("LimitOrder", (), {})
 
-    strategy_runtime_module = types.ModuleType("strategy_runtime")
+    strategy_runtime_module = types.ModuleType("interactive_brokers_platform.strategy_runtime")
     strategy_runtime_module.load_strategy_runtime = lambda *_args, **_kwargs: types.SimpleNamespace(
         entrypoint=lambda **_kwargs: None,
         required_inputs=frozenset({"portfolio_snapshot"}),
@@ -96,7 +98,7 @@ def install_stub_modules():
         evaluate=lambda **_kwargs: None,
     )
 
-    runtime_config_support_module = types.ModuleType("runtime_config_support")
+    runtime_config_support_module = types.ModuleType("interactive_brokers_platform.runtime_config_support")
     runtime_config_support_module.load_platform_runtime_settings = lambda **_kwargs: types.SimpleNamespace(
         project_id=None,
         execution_backend="gateway",
@@ -163,6 +165,8 @@ def install_stub_modules():
         "ib_insync": ib_insync_module,
         "strategy_runtime": strategy_runtime_module,
         "runtime_config_support": runtime_config_support_module,
+        "interactive_brokers_platform.strategy_runtime": strategy_runtime_module,
+        "interactive_brokers_platform.runtime_config_support": runtime_config_support_module,
     }
     original = {name: sys.modules.get(name) for name in modules}
     preexisting_modules = set(sys.modules)
@@ -171,18 +175,13 @@ def install_stub_modules():
         yield
     finally:
         project_module_prefixes = (
-            "application",
-            "decision_mapper",
-            "entrypoints",
-            "main",
-            "notifications",
+            "interactive_brokers_platform",
             "quant_platform_kit",
-            "runtime_logging",
         )
         for name in list(sys.modules):
             if name in preexisting_modules:
                 continue
-            if name == "main" or name.startswith(project_module_prefixes):
+            if name == "interactive_brokers_platform" or name.startswith(project_module_prefixes):
                 sys.modules.pop(name, None)
         for name, previous in original.items():
             if previous is None:
@@ -194,8 +193,8 @@ def install_stub_modules():
 class IBRKConnectTimeoutAlertTests(unittest.TestCase):
     def test_handle_request_sends_ibkr_connect_timeout_notification(self):
         with install_stub_modules():
-            sys.modules.pop("main", None)
-            module = importlib.import_module("main")
+            sys.modules.pop("interactive_brokers_platform.main", None)
+            module = importlib.import_module("interactive_brokers_platform.main")
             observed = {"messages": []}
 
             module.is_market_open_now = lambda **_kwargs: True

@@ -28,7 +28,7 @@ class StartupHealthPending(ValueError):
 
 
 def print_startup_conditions(rows: list) -> None:
-    from notifications.redaction import redact_notification_diagnostics
+    from interactive_brokers_platform.notifications.redaction import redact_notification_diagnostics
 
     healthy = [row for row in rows if row.get("type") == "ContainerHealthy"]
     if any(row.get("status") == "False" for row in healthy):

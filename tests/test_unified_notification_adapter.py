@@ -7,9 +7,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from notifications import unified_adapter as adapter
+from interactive_brokers_platform.notifications import unified_adapter as adapter
 from quant_platform_kit.notifications.unified_contract import NotificationEvent, CandidatePersistenceError
-from notifications.events import NotificationPublisher, RenderedNotification
+from interactive_brokers_platform.notifications.events import NotificationPublisher, RenderedNotification
 from scripts.project_digest_candidates import project_notification_events
 
 NOW = datetime(2026, 10, 16, 20, 0, tzinfo=timezone.utc)
@@ -315,7 +315,7 @@ def test_binding_mismatch_does_not_fall_back_to_another_accounts_aliases(routing
 
 
 def test_new_risk_caller_preserves_its_admission_and_uses_durable_dedupe(routing):
-    from application.account_new_risk_gate_support import maybe_publish_attention_for_admission
+    from interactive_brokers_platform.application.account_new_risk_gate_support import maybe_publish_attention_for_admission
     from quant_platform_kit.risk.account_new_risk_gate import NewRiskAdmissionResult, NewRiskDisposition
     admission = NewRiskAdmissionResult(NewRiskDisposition.NEW_RISK_PROHIBITED, ("EQUITY_UNKNOWN_FAIL_CLOSED",))
     original = deepcopy(admission)
@@ -526,7 +526,7 @@ def test_daily_drill_real_checker_routes_healthy_dry_run_evidence(routing, monke
 
 def test_archive_opt_in_bridges_existing_full_window_producer_without_double_count(routing, monkeypatch):
     import os
-    from notifications.digest_snapshot.digest_archive import emit
+    from interactive_brokers_platform.notifications.digest_snapshot.digest_archive import emit
     payload = healthy_receipt_report()
     env = {**os.environ, "RUNTIME_TARGET_ENABLED": "true", "EXECUTION_REPORT_GCS_URI": "gs://synthetic/archive",
            "DIGEST_CANDIDATES_GCS_URI": "gs://synthetic/candidates"}
@@ -581,7 +581,7 @@ def test_primary_runtime_failure_sender_is_also_deduped(routing, monkeypatch, st
 
 def test_archive_accepts_actual_report_platform_path_and_keeps_dry_runs_separate(routing, monkeypatch):
     import os
-    from notifications.digest_snapshot.digest_archive import emit
+    from interactive_brokers_platform.notifications.digest_snapshot.digest_archive import emit
     payload = healthy_receipt_report()
     payload.update(platform="interactive_brokers", dry_run=True)
     payload["summary"]["notification_digest"]["dry_run"] = True
@@ -724,7 +724,7 @@ def test_healthy_empty_account_cycle_only_enters_daily_digest(routing):
                                     {"market_data_retry_required": True},
                                     {"outcome_unknown": True}, {"risk_gate": "REJECT"}])
 def test_etf_daily_check_routes_to_digest_unless_independent_fault(routing, monkeypatch, locale, fault):
-    from notifications.telegram import build_translator
+    from interactive_brokers_platform.notifications.telegram import build_translator
     from us_equity_strategies.account_sizing import append_account_size_warning
 
     monkeypatch.setenv("QSL_ROUTINE_NOTIFICATION_MODE", "daily_digest")

@@ -52,7 +52,7 @@ def _payload(*, observed_at: datetime, **overrides: object) -> dict[str, object]
 def _sources_for_evidences(evidences):
     """Synthetic independently designated records, never broker observations."""
     from dataclasses import asdict
-    from application.broker_reconciliation_candidate import SourceReceiptExpectation, SOURCE_RECEIPT_RECORD_SCHEMA_VERSION
+    from interactive_brokers_platform.application.broker_reconciliation_candidate import SourceReceiptExpectation, SOURCE_RECEIPT_RECORD_SCHEMA_VERSION
     expectations = []
     records = []
     for index, evidence in enumerate(evidences, start=1):
@@ -167,7 +167,7 @@ def _archive_inputs(directory, evidences):
     import json
     import zipfile
     from dataclasses import asdict, replace
-    from application.broker_reconciliation import IBKRReconciliationCandidate
+    from interactive_brokers_platform.application.broker_reconciliation import IBKRReconciliationCandidate
 
     directory.mkdir(parents=True, exist_ok=True)
     designated = _sources_for_evidences(evidences)

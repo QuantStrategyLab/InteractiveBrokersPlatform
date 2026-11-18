@@ -6,7 +6,7 @@ import unittest
 
 from quant_platform_kit.execution_kernel import ExecutionMode
 
-from application.execution_kernel_adapter import consult_t1_live_submit
+from interactive_brokers_platform.application.execution_kernel_adapter import consult_t1_live_submit
 
 
 class ExecutionKernelAdapterTests(unittest.TestCase):

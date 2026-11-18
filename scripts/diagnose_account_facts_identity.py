@@ -11,7 +11,12 @@ import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
+
+_SRC_DIR = Path(__file__).resolve().parents[1] / "src"
+if _SRC_DIR.is_dir() and str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
 
 try:
     from scripts import publish_account_facts_from_report as publisher
@@ -885,7 +890,7 @@ def main(argv: Sequence[str] | None = None, *, now: datetime | None = None) -> i
             gaps=["BROKER_SOURCE_IDENTITY_TIME_OR_READ_UNVERIFIED"])
         if passed:
             try:
-                from application.broker_contract_source_evidence import inspect_broker_contract_sources
+                from interactive_brokers_platform.application.broker_contract_source_evidence import inspect_broker_contract_sources
                 result["broker_contract_source_evidence"] = inspect_broker_contract_sources(report)
             except Exception:
                 result["broker_contract_source_evidence"] = dict(status="NOT_EVALUATED",

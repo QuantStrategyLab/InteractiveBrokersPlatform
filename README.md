@@ -1,6 +1,29 @@
 # InteractiveBrokersPlatform
 
-The pinned HK strategy policy has no selectable profiles. New selection of `hk_global_etf_tactical_rotation` and `hk_low_vol_dividend_quality_snapshot` is rejected, including dry-run switch plans. Historical catalog metadata and adapters remain available. US strategy pins and existing deployment configuration are unchanged.
+InteractiveBrokersPlatform is QuantStrategyLab's Interactive Brokers multi-market execution runtime. It runs US and HK equity profiles through IBKR runtime services, under dry-run, paper, and live controls. It is an execution layer, not a strategy research repository: strategy logic comes from `UsEquityStrategies` / `HkEquityStrategies`, and snapshot or validation artifacts come from `UsEquitySnapshotPipelines` / `HkEquitySnapshotPipelines` when a profile requires them.
+
+[Chinese README](README.zh-CN.md)
+
+> Investing involves risk. This project does not provide investment advice and is for education, research, and engineering review only.
+
+## What this repository is
+
+This repository provides the `interactive_brokers_platform` package under `src/interactive_brokers_platform/`: WSGI service entry points (`interactive_brokers_platform.main:app`), broker and portfolio adapters, order execution and reconciliation services, strategy runtime loading, and notification delivery. Strategy rules and snapshot generation live in the upstream strategy and snapshot pipeline repositories rather than inside this runtime package.
+
+## Runtime boundary
+
+- Loads only runtime-enabled strategy profiles exposed by the strategy packages.
+- Handles broker/API connectivity, dry-run checks, notifications, and deployment settings.
+- Must keep credentials in GitHub Secrets, cloud secret stores, or the broker-specific secret system, never in Git.
+- Should start with dry-run or paper mode before any live order path is enabled.
+
+## Direct vs snapshot-backed profiles
+
+Direct runtime profiles can usually run from market history or portfolio state. Snapshot-backed profiles need a current artifact bundle from the matching snapshot pipeline before this platform should execute them. The platform should not invent strategy eligibility; it should consume the status and artifacts published by the strategy and snapshot repositories.
+
+## HK strategy policy
+
+The pinned HK strategy policy has no selectable profiles. New selection of `hk_global_etf_tactical_rotation` and `hk_low_vol_dividend_quality_snapshot` is rejected, including dry-run switch plans. Historical catalog metadata and adapters remain available while existing US strategy pins and deployment configuration remain active.
 
 ## Account risk facts in runtime reports
 
@@ -26,23 +49,6 @@ reports can also lack it. A consumer must treat an absent receipt as
 `NOT_REPORTED` and not ready; absence does not establish why the evidence is
 missing. This reporting state does not alter the separate execution gate.
 
-[Chinese README](README.zh-CN.md)
-
-InteractiveBrokersPlatform is QuantStrategyLab's Interactive Brokers multi-market execution runtime. It runs US and HK equity profiles through IBKR runtime services, under dry-run, paper, and live controls. It is an execution layer, not a strategy research repository: strategy logic comes from `UsEquityStrategies` / `HkEquityStrategies`, and snapshot or validation artifacts come from `UsEquitySnapshotPipelines` / `HkEquitySnapshotPipelines` when a profile requires them.
-
-> Investing involves risk. This project does not provide investment advice and is for education, research, and engineering review only.
-
-## Runtime boundary
-
-- Loads only runtime-enabled strategy profiles exposed by the strategy packages.
-- Handles broker/API connectivity, dry-run checks, notifications, and deployment settings.
-- Must keep credentials in GitHub Secrets, cloud secret stores, or the broker-specific secret system, never in Git.
-- Should start with dry-run or paper mode before any live order path is enabled.
-
-## Direct vs snapshot-backed profiles
-
-Direct runtime profiles can usually run from market history or portfolio state. Snapshot-backed profiles need a current artifact bundle from the matching snapshot pipeline before this platform should execute them. The platform should not invent strategy eligibility; it should consume the status and artifacts published by the strategy and snapshot repositories.
-
 ## Deploy safely
 
 1. Configure secrets and runtime variables outside Git.
@@ -53,6 +59,7 @@ Direct runtime profiles can usually run from market history or portfolio state. 
 
 ## Repository layout
 
+- `src/interactive_brokers_platform/`: importable platform package (`main.py`, `application/`, `entrypoints/`, `notifications/`, `strategy/`, and runtime support modules).
 - `config/`: public non-sensitive runtime-target manifest.
 - `tests/`: unit, contract, and regression tests.
 - `docs/`: runbooks, design notes, evidence, and integration contracts.
@@ -82,6 +89,7 @@ uv run --no-sync python scripts/check_qpk_pin_consistency.py
 - [`docs/ibkr-paper-top50-switch.md`](docs/ibkr-paper-top50-switch.md)
 - [`docs/ibkr-runtime-rollout.md`](docs/ibkr-runtime-rollout.md)
 - [`docs/runtime-target-manifest.md`](docs/runtime-target-manifest.md): public runtime-target manifest contract, add/remove steps, and next-phase workflow wiring boundary
+- [`docs/display-names.md`](docs/display-names.md): display and notification naming configuration
 
 ## Community and security
 
@@ -96,5 +104,3 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). AI assistants and maintainers follow [AG
 ## License
 
 See [LICENSE](LICENSE).
-
-Display/notification naming configuration: [display names](docs/display-names.md).

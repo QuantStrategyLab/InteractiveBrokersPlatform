@@ -29,7 +29,7 @@ from quant_platform_kit.common.reconciliation_recovery import (
     evaluate_reconciliation_recovery_activation,
 )
 
-from application.broker_reconciliation_candidate import SourceReceiptExpectation, initial_private_source_sha256
+from interactive_brokers_platform.application.broker_reconciliation_candidate import SourceReceiptExpectation, initial_private_source_sha256
 from scripts.build_reconciliation_baseline_candidate import (
     _load_payload, extract_reconciliation_evidence,
     load_authenticated_source_inputs, validate_authenticated_candidate,
@@ -332,7 +332,7 @@ def read_trusted_current_receipt(env: Mapping[str, str]) -> tuple[dict[str, Any]
     """Reuse the protected runtime binding and GitHub receipt provenance checks."""
     from scripts.diagnose_ibkr_flex_runtime_binding import configuration, observe
     from scripts.build_reconciliation_baseline_candidate import _archive_payload
-    from application.broker_reconciliation_candidate import (
+    from interactive_brokers_platform.application.broker_reconciliation_candidate import (
         SourceReceiptExpectation, canonical_source_receipt_records_json,
     )
     slots, targets, project, region = configuration(env)

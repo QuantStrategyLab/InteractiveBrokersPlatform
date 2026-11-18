@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from application.paper_execution_admission import (
+from interactive_brokers_platform.application.paper_execution_admission import (
     PAPER_EXECUTION_COMMAND_SIGNAL_FIELD,
     evaluate_ibkr_paper_execution_admission,
     resolve_paper_execution_admission_enabled,
