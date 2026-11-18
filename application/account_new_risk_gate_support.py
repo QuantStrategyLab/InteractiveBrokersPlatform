@@ -69,16 +69,16 @@ def _coerce_optional_float(value: object) -> float | None:
     return number
 
 
-def _risk_input(value: object) -> float | str | None:
+def _risk_input(value: object, *, treat_none_as_invalid: bool = False) -> float | str | None:
     """Preserve invalidity without putting non-finite numbers into JSON."""
     if value is None:
-        return None
+        return "INVALID_RISK_INPUT" if treat_none_as_invalid else None
     number = _coerce_optional_float(value)
     return number if number is not None else "INVALID_RISK_INPUT"
 
 
-def _positive_limit_or_none(value: object) -> float | None:
-    """Accept only finite positive limits; never invent a production default."""
+def _positive_float_or_none(value: object) -> float | None:
+    """Accept only finite positive numbers; never invent a production default."""
     number = _coerce_optional_float(value)
     if number is None or number <= 0.0:
         return None
@@ -89,35 +89,48 @@ def _mapping_or_empty(value: object) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
 
-def _resolve_equity_usd(portfolio: Mapping[str, Any], execution: Mapping[str, Any] | None) -> float | None:
-    for key in ("account_equity_usd", "total_equity", "total_strategy_equity", "equity"):
+_EQUITY_PORTFOLIO_KEYS = (
+    "account_equity_usd",
+    "total_equity",
+    "total_strategy_equity",
+    "equity",
+)
+
+
+def _resolve_equity_usd(
+    portfolio: Mapping[str, Any],
+    projection: Mapping[str, Any],
+    execution: Mapping[str, Any] | None,
+) -> float | None:
+    for key in _EQUITY_PORTFOLIO_KEYS:
         if key in portfolio:
-            equity = _coerce_optional_float(portfolio[key])
-            return equity if equity is not None and equity > 0.0 else None
+            return _positive_float_or_none(portfolio[key])
+    if "equity_usd" in projection:
+        return _positive_float_or_none(projection["equity_usd"])
     if execution is not None:
-        equity = _coerce_optional_float(execution.get("portfolio_total_equity"))
-        if equity is not None and equity > 0.0:
-            return equity
+        return _positive_float_or_none(execution.get("portfolio_total_equity"))
     return None
 
 
-def _portfolio_metadata(portfolio: Mapping[str, Any]) -> Mapping[str, Any]:
-    metadata = portfolio.get("metadata")
-    return metadata if isinstance(metadata, Mapping) else {}
+def _copy_drawdown_timestamp(target: dict[str, Any], source: Mapping[str, Any]) -> None:
+    """Keep a drawdown reading paired only with its own observation timestamp."""
+    target.pop(_DRAWDOWN_TIMESTAMP_KEY, None)
+    if _DRAWDOWN_TIMESTAMP_KEY in source:
+        target[_DRAWDOWN_TIMESTAMP_KEY] = source[_DRAWDOWN_TIMESTAMP_KEY]
 
 
 def _resolve_unknown_pending(portfolio: Mapping[str, Any], projection: Mapping[str, Any]) -> bool:
     """Any explicit unsafe or unknown signal blocks, regardless of its source."""
     return any(
         source["unknown_pending_orders"] is not False
-        for source in (portfolio, _portfolio_metadata(portfolio), projection)
+        for source in (portfolio, _mapping_or_empty(portfolio.get("metadata")), projection)
         if "unknown_pending_orders" in source
     )
 
 
 def _resolve_durable_breaker_open(portfolio: Mapping[str, Any], projection: Mapping[str, Any]) -> bool:
     """Only an explicit durable OPEN state trips the breaker; absence is never OPEN."""
-    for source in (projection, portfolio, _portfolio_metadata(portfolio)):
+    for source in (projection, portfolio, _mapping_or_empty(portfolio.get("metadata"))):
         if "durable_circuit_breaker_state" not in source:
             continue
         value = source["durable_circuit_breaker_state"]
@@ -137,17 +150,8 @@ def build_account_new_risk_snapshot(
     by a strategy projection. Missing optional axes remain optional; supplied
     invalid values remain invalid for the downstream fail-closed validator.
     """
-    projection = dict(portfolio.get("account_new_risk_snapshot") or {})
-    native_equity = next((key for key in (
-        "account_equity_usd", "total_equity", "total_strategy_equity", "equity",
-    ) if key in portfolio), None)
-    equity_usd = (_coerce_optional_float(portfolio[native_equity]) if native_equity
-                  else _coerce_optional_float(projection.get("equity_usd")))
-    if native_equity is None and "equity_usd" not in projection:
-        equity_usd = _resolve_equity_usd(portfolio, execution)
-
-    if equity_usd is not None and equity_usd <= 0:
-        equity_usd = None
+    projection = dict(_mapping_or_empty(portfolio.get("account_new_risk_snapshot")))
+    equity_usd = _resolve_equity_usd(portfolio, projection, execution)
     evidence = CycleNewRiskHealthEvidence(
         observation_ok=equity_usd is not None,
         unknown_pending=_resolve_unknown_pending(portfolio, projection),
@@ -168,14 +172,12 @@ def build_account_new_risk_snapshot(
     projection["equity_usd"] = equity_usd
     for key in ("peak_equity_usd", "realized_vol"):
         if key in portfolio:
-            projection[key] = _risk_input(portfolio[key]) if portfolio[key] is not None else "INVALID_RISK_INPUT"
+            projection[key] = _risk_input(portfolio[key], treat_none_as_invalid=True)
         elif key in projection:
             projection[key] = _risk_input(projection[key])
     if "drawdown_from_peak" in portfolio:
         # A timestamp belongs to its own measurement, never another source's cache.
-        projection.pop(_DRAWDOWN_TIMESTAMP_KEY, None)
-        if _DRAWDOWN_TIMESTAMP_KEY in portfolio:
-            projection[_DRAWDOWN_TIMESTAMP_KEY] = portfolio[_DRAWDOWN_TIMESTAMP_KEY]
+        _copy_drawdown_timestamp(projection, portfolio)
     native_drawdown = _coerce_optional_float(portfolio.get("drawdown_from_peak"))
     if native_drawdown is not None and native_drawdown >= 0.0:
         # Keep the current account read's explicit float exactly as main does.
@@ -206,7 +208,7 @@ def build_portfolio_from_account_values(
     signal_metadata: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Project a portfolio dict from an existing IBKR account_values read."""
-    metadata = dict(signal_metadata or {})
+    metadata = _mapping_or_empty(signal_metadata)
     portfolio: dict[str, Any] = {
         "total_equity": _coerce_optional_float(account_values.get("account_equity_usd", account_values.get("equity"))),
     }
@@ -216,21 +218,21 @@ def build_portfolio_from_account_values(
             portfolio[key] = account_values[key]
         elif key in metadata:
             portfolio[key] = metadata[key]
-    for key in ("peak_equity_usd", "drawdown_from_peak", "realized_vol", _DRAWDOWN_TIMESTAMP_KEY):
+    for key in ("peak_equity_usd", "drawdown_from_peak", "realized_vol"):
         if key in account_values:
             portfolio[key] = account_values[key]
-    if "drawdown_from_peak" in account_values and _DRAWDOWN_TIMESTAMP_KEY not in account_values:
-        portfolio.pop(_DRAWDOWN_TIMESTAMP_KEY, None)
-    projection = dict(metadata.get("account_new_risk_snapshot") or {})
+    if "drawdown_from_peak" in account_values:
+        _copy_drawdown_timestamp(portfolio, account_values)
+    elif _DRAWDOWN_TIMESTAMP_KEY in account_values:
+        portfolio[_DRAWDOWN_TIMESTAMP_KEY] = account_values[_DRAWDOWN_TIMESTAMP_KEY]
+    projection = dict(_mapping_or_empty(metadata.get("account_new_risk_snapshot")))
     for key in ("peak_equity_usd", "realized_vol"):
         if key not in account_values and key in metadata:
             projection[key] = metadata[key]
     if "drawdown_from_peak" not in account_values and "drawdown_from_peak" in metadata:
         # Keep late metadata copies in the cache path, including their own timestamp.
         projection["drawdown_from_peak"] = metadata["drawdown_from_peak"]
-        projection.pop(_DRAWDOWN_TIMESTAMP_KEY, None)
-        if _DRAWDOWN_TIMESTAMP_KEY in metadata:
-            projection[_DRAWDOWN_TIMESTAMP_KEY] = metadata[_DRAWDOWN_TIMESTAMP_KEY]
+        _copy_drawdown_timestamp(projection, metadata)
     # Facts from the native account read outrank a strategy's older projection.
     projection["equity_usd"] = portfolio["total_equity"]
     if "peak_equity_usd" in account_values and "drawdown_from_peak" not in account_values:
@@ -252,29 +254,44 @@ def build_portfolio_from_account_values(
     return portfolio
 
 
-def _resolve_strategy_profile(portfolio: Mapping[str, Any], projection: Mapping[str, Any]) -> str:
-    for source in (projection, portfolio, _portfolio_metadata(portfolio)):
-        value = source.get("strategy_profile")
+def _resolve_text_from_sources(
+    sources: tuple[Mapping[str, Any], ...],
+    keys: tuple[str, ...],
+    *,
+    env_key: str,
+    default: str,
+) -> str:
+    for source in sources:
+        value = next((source.get(key) for key in keys if source.get(key)), None)
         if isinstance(value, str) and value.strip():
             return value.strip()
-    env = str(os.environ.get("STRATEGY_PROFILE") or "").strip()
-    return env or _DEFAULT_STRATEGY_PROFILE
+    env = str(os.environ.get(env_key) or "").strip()
+    return env or default
+
+
+def _resolve_strategy_profile(portfolio: Mapping[str, Any], projection: Mapping[str, Any]) -> str:
+    return _resolve_text_from_sources(
+        (projection, portfolio, _mapping_or_empty(portfolio.get("metadata"))),
+        ("strategy_profile",),
+        env_key="STRATEGY_PROFILE",
+        default=_DEFAULT_STRATEGY_PROFILE,
+    )
 
 
 def _resolve_domain(portfolio: Mapping[str, Any], projection: Mapping[str, Any]) -> str:
-    for source in (projection, portfolio, _portfolio_metadata(portfolio)):
-        value = source.get("strategy_domain") or source.get("domain")
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    env = str(os.environ.get("STRATEGY_DOMAIN") or "").strip()
-    return env or _DEFAULT_DOMAIN
+    return _resolve_text_from_sources(
+        (projection, portfolio, _mapping_or_empty(portfolio.get("metadata"))),
+        ("strategy_domain", "domain"),
+        env_key="STRATEGY_DOMAIN",
+        default=_DEFAULT_DOMAIN,
+    )
 
 
 def _resolve_production_drift_status(
     portfolio: Mapping[str, Any], projection: Mapping[str, Any]
 ) -> str | None:
     """Prefer explicit inject; else read-only PerformanceStore (Policy A). Fail-soft on store errors."""
-    for source in (portfolio, projection, _portfolio_metadata(portfolio)):
+    for source in (portfolio, projection, _mapping_or_empty(portfolio.get("metadata"))):
         raw = source.get("production_drift_status")
         if raw is not None and raw != "":
             return str(raw).strip()
@@ -336,7 +353,7 @@ def _max_daily_loss_from_runtime_target_json() -> float | None:
     policy = payload.get("runtime_risk_limits")
     if not isinstance(policy, dict) or "max_daily_loss_usd" not in policy:
         return None
-    return _positive_limit_or_none(policy.get("max_daily_loss_usd"))
+    return _positive_float_or_none(policy.get("max_daily_loss_usd"))
 
 
 def resolve_max_daily_loss_usd(
@@ -351,7 +368,7 @@ def resolve_max_daily_loss_usd(
         projection = _mapping_or_empty(portfolio.get("account_new_risk_snapshot"))
         for source in (projection, portfolio):
             if "max_daily_loss_usd" in source:
-                return _positive_limit_or_none(source.get("max_daily_loss_usd"))
+                return _positive_float_or_none(source.get("max_daily_loss_usd"))
     policy_limit = _max_daily_loss_from_runtime_target_json()
     if policy_limit is not None:
         return policy_limit
@@ -359,7 +376,7 @@ def resolve_max_daily_loss_usd(
         raw = os.environ.get(key)
         if raw is None or not str(raw).strip():
             continue
-        limit = _positive_limit_or_none(raw)
+        limit = _positive_float_or_none(raw)
         if limit is not None:
             return limit
     return None
@@ -394,20 +411,36 @@ def build_snapshot_from_portfolio(
 ) -> InjectedReconciliationSnapshot:
     """Project an injected reconciliation snapshot from an existing portfolio read."""
     projection = build_account_new_risk_snapshot(portfolio, execution=execution)
-    equity_usd = _coerce_optional_float(projection.get("equity_usd"))
-    peak_equity_usd = _risk_input(projection.get("peak_equity_usd"))
-    explicit_dd = _risk_input(projection.get("drawdown_from_peak"))
     return InjectedReconciliationSnapshot(
         observation_status=str(projection.get("observation_status") or "UNAVAILABLE"),
         reconciliation_status=str(projection.get("reconciliation_status") or "UNVERIFIED"),
         circuit_breaker_state=str(projection.get("circuit_breaker_state") or "OPEN"),
-        equity_usd=equity_usd,
-        peak_equity_usd=peak_equity_usd,
-        drawdown_from_peak=explicit_dd,
+        equity_usd=_coerce_optional_float(projection.get("equity_usd")),
+        peak_equity_usd=_risk_input(projection.get("peak_equity_usd")),
+        drawdown_from_peak=_risk_input(projection.get("drawdown_from_peak")),
         realized_vol=_risk_input(projection.get("realized_vol")),
         production_drift_status=_resolve_production_drift_status(portfolio, projection),
         daily_loss_usd=_resolve_explicit_daily_loss_usd(projection, portfolio, execution),
     )
+
+
+def _fail_closed_admission(reason_code: str) -> NewRiskAdmissionResult:
+    return NewRiskAdmissionResult(
+        disposition=NewRiskDisposition.NEW_RISK_PROHIBITED,
+        reason_codes=(reason_code,),
+    )
+
+
+def _evaluate_snapshot_fail_closed(
+    snapshot: InjectedReconciliationSnapshot,
+    *,
+    portfolio: Mapping[str, Any] | None = None,
+) -> NewRiskAdmissionResult:
+    try:
+        limits = runtime_risk_limits_for_daily_loss_axis(resolve_max_daily_loss_usd(portfolio))
+        return evaluate_new_risk_admission(snapshot, limits)
+    except AccountNewRiskGateError:
+        return _fail_closed_admission("SNAPSHOT_VALIDATION_FAIL_CLOSED")
 
 
 def evaluate_portfolio_new_risk_admission(
@@ -417,13 +450,9 @@ def evaluate_portfolio_new_risk_admission(
 ) -> NewRiskAdmissionResult:
     try:
         snapshot = build_snapshot_from_portfolio(portfolio, execution=execution)
-        limits = runtime_risk_limits_for_daily_loss_axis(resolve_max_daily_loss_usd(portfolio))
-        return evaluate_new_risk_admission(snapshot, limits)
     except AccountNewRiskGateError:
-        return NewRiskAdmissionResult(
-            disposition=NewRiskDisposition.NEW_RISK_PROHIBITED,
-            reason_codes=("SNAPSHOT_VALIDATION_FAIL_CLOSED",),
-        )
+        return _fail_closed_admission("SNAPSHOT_VALIDATION_FAIL_CLOSED")
+    return _evaluate_snapshot_fail_closed(snapshot, portfolio=portfolio)
 
 
 def evaluate_account_values_new_risk_admission(
@@ -512,15 +541,6 @@ _OPERATIONAL_UNCERTAIN_REASONS = frozenset(
 _attention_sent_keys: set[str] = set()
 
 
-def _resolve_attention_strategy_profile(portfolio: Mapping[str, Any]) -> str:
-    projection = _mapping_or_empty(portfolio.get("account_new_risk_snapshot"))
-    for source in (projection, portfolio, _mapping_or_empty(portfolio.get("metadata"))):
-        value = source.get("strategy_profile")
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return str(os.environ.get("STRATEGY_PROFILE") or "").strip() or _DEFAULT_STRATEGY_PROFILE
-
-
 def _resolve_attention_account_alias(
     portfolio: Mapping[str, Any],
     execution: Mapping[str, Any] | None,
@@ -574,7 +594,10 @@ def maybe_publish_attention_for_admission(
     reasons = tuple(admission.reason_codes or ())
     prohibited = new_risk_buy_prohibited(admission)
     operational_uncertain = any(code in _OPERATIONAL_UNCERTAIN_REASONS for code in reasons)
-    profile = _resolve_attention_strategy_profile(portfolio)
+    profile = _resolve_strategy_profile(
+        portfolio,
+        _mapping_or_empty(portfolio.get("account_new_risk_snapshot")),
+    )
     drawdown = None if snapshot is None else snapshot.drawdown_from_peak
     decision = evaluate_attention(
         AttentionAxes(
@@ -584,29 +607,32 @@ def maybe_publish_attention_for_admission(
             mandate_dd_budget=resolve_mandate_dd_budget(profile),
         )
     )
+    account_alias = _resolve_attention_account_alias(portfolio, execution)
+
+    def _publish_transition(**extra: Any) -> Mapping[str, int]:
+        return publish_attention_telegram_transition(
+            decision=decision,
+            platform=_ATTENTION_PLATFORM,
+            account_alias=account_alias,
+            strategy_profile=profile,
+            previous_level=None,
+            telegram_sender=telegram_sender,
+            log_message=log_message,
+            **extra,
+        )
+
     from notifications.unified_adapter import enabled as unified_enabled, publish_risk_attention
     if unified_enabled():
         return publish_risk_attention(
             decision,
-            lambda: publish_attention_telegram_transition(
-                decision=decision, platform=_ATTENTION_PLATFORM,
-                account_alias=_resolve_attention_account_alias(portfolio, execution),
-                strategy_profile=profile, previous_level=None,
-                telegram_sender=telegram_sender, log_message=log_message,
-            ),
-            profile=profile, reasons=reasons,
+            _publish_transition,
+            profile=profile,
+            reasons=reasons,
             recovery_proven=admission.disposition == NewRiskDisposition.ALLOW_NEW_RISK and not operational_uncertain,
         )
-    return publish_attention_telegram_transition(
-        decision=decision,
-        platform=_ATTENTION_PLATFORM,
-        account_alias=_resolve_attention_account_alias(portfolio, execution),
-        strategy_profile=profile,
-        previous_level=None,
+    return _publish_transition(
         already_sent_keys=list(_attention_sent_keys),
         record_sent_key=_attention_sent_keys.add,
-        telegram_sender=telegram_sender,
-        log_message=log_message,
     )
 
 
@@ -641,15 +667,5 @@ def account_new_risk_gate_cycle(
 
 def evaluate_cycle_new_risk_admission() -> NewRiskAdmissionResult:
     if _cycle_snapshot is None:
-        return NewRiskAdmissionResult(
-            disposition=NewRiskDisposition.NEW_RISK_PROHIBITED,
-            reason_codes=("EQUITY_UNKNOWN_FAIL_CLOSED",),
-        )
-    try:
-        limits = runtime_risk_limits_for_daily_loss_axis(resolve_max_daily_loss_usd())
-        return evaluate_new_risk_admission(_cycle_snapshot, limits)
-    except AccountNewRiskGateError:
-        return NewRiskAdmissionResult(
-            disposition=NewRiskDisposition.NEW_RISK_PROHIBITED,
-            reason_codes=("SNAPSHOT_VALIDATION_FAIL_CLOSED",),
-        )
+        return _fail_closed_admission("EQUITY_UNKNOWN_FAIL_CLOSED")
+    return _evaluate_snapshot_fail_closed(_cycle_snapshot)

@@ -9,9 +9,14 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from application.execution_service import check_order_submitted, execute_rebalance as _execute_rebalance, get_available_buying_power
+from application.execution_service import (
+    RebalanceExecutionOptions,
+    check_order_submitted,
+    execute_rebalance as _execute_rebalance,
+    get_available_buying_power,
+)
 from notifications.telegram import build_translator
-from quant_platform_kit.common.models import OrderIntent
+from quant_platform_kit.common.models import ExecutionReport, OrderIntent, QuoteSnapshot
 from quant_platform_kit.common.strategy_release import build_runtime_loaded_receipt
 
 
@@ -2639,3 +2644,150 @@ def test_invalid_vol_does_not_create_liquidation(monkeypatch, tmp_path):
     )
     assert submitted == []
     assert "INVALID_REALIZED_VOL_FAIL_CLOSED" in admissions[0].reason_codes
+
+
+def test_execute_rebalance_accepts_options_dataclass_and_overrides(tmp_path):
+    class FakeIB(SyntheticAccountRefresh):
+        def openTrades(self):
+            return []
+        reqAllOpenOrders = openTrades
+
+        def fills(self):
+            return []
+
+        def accountValues(self):
+            return [
+                SimpleNamespace(tag="CashBalance", currency="USD", value="1000"),
+                SimpleNamespace(account="DU00000003", tag="SettledCash", currency="USD", value="1000"),
+            ]
+
+    targets = {"VOO": 0.5}
+    metadata = _signal_metadata(targets, risk_symbols=("VOO",), trade_date="2026-10-21")
+    metadata.update(
+        risk_gate="APPROVE",
+        risk_flags=("risk_gate:passed",),
+        risk_authority={
+            "strategy_profile": "synthetic-profile",
+            "account_ids": ("DU00000003",),
+            "trade_date": "2026-10-21",
+            "signal_date": None,
+            "effective_date": None,
+            "snapshot_as_of": None,
+            "portfolio_equity": 1000.0,
+            "targets": targets,
+            "max_target_values": {"VOO": 500.0},
+        },
+    )
+    submitted = []
+    options = RebalanceExecutionOptions(
+        strategy_profile="synthetic-profile",
+        account_ids=("DU00000003",),
+        dry_run_only=False,
+        cash_reserve_ratio=0.0,
+        rebalance_threshold_ratio=0.0,
+        limit_buy_premium=1.0,
+        sell_settle_delay_sec=0,
+        execution_lock_dir=tmp_path,
+        return_summary=True,
+    )
+    logs, summary = _execute_rebalance(
+        FakeIB(),
+        targets,
+        {},
+        {"peak_equity_usd": 1000.0, "equity": 1000.0, "buying_power": 1000.0},
+        fetch_quote_snapshots=lambda _ib, symbols: {
+            symbol: QuoteSnapshot(
+                symbol=symbol,
+                as_of=datetime(2026, 10, 21, 14, 0),
+                last_price=100.0,
+                bid_price=99.9,
+                ask_price=100.1,
+                currency="USD",
+            )
+            for symbol in symbols
+        },
+        submit_order_intent=lambda _ib, intent: submitted.append(intent),
+        order_intent_cls=OrderIntent,
+        translator=translate,
+        signal_metadata=metadata,
+        dry_run_only=True,
+        options=options,
+    )
+    assert submitted == []
+    assert summary["mode"] == "dry_run"
+    assert summary["orders_submitted"] == [
+        {"symbol": "VOO", "side": "buy", "quantity": 5, "limit_price": 100.0, "status": "dry_run"}
+    ]
+    assert summary["quote_snapshot"]["quotes"][0]["bid_price"] == 99.9
+    assert any(line.startswith("DRY_RUN buy VOO") for line in logs)
+
+
+def test_execute_rebalance_requires_mandatory_options_without_options_bundle():
+    with pytest.raises(TypeError, match="cash_reserve_ratio"):
+        _execute_rebalance(
+            SimpleNamespace(),
+            {},
+            {},
+            {"equity": 1000.0},
+            fetch_quote_snapshots=lambda *_a, **_kw: {},
+            submit_order_intent=lambda *_a, **_kw: None,
+            order_intent_cls=OrderIntent,
+            translator=translate,
+        )
+
+
+def test_execute_rebalance_handles_typed_quote_snapshot_and_execution_report(monkeypatch, tmp_path):
+    class FakeIB(SyntheticAccountRefresh):
+        def openTrades(self):
+            return []
+        reqAllOpenOrders = openTrades
+
+        def fills(self):
+            return []
+
+        def accountValues(self):
+            return [
+                SimpleNamespace(tag="CashBalance", currency="USD", value="1000"),
+                SimpleNamespace(account="DU00000003", tag="SettledCash", currency="USD", value="1000"),
+            ]
+
+    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+    _logs, summary = execute_rebalance(
+        FakeIB(),
+        {"VOO": 0.0},
+        {"VOO": {"quantity": 2}},
+        {"peak_equity_usd": 1000.0, "equity": 1000.0, "buying_power": 1000.0},
+        fetch_quote_snapshots=lambda _ib, symbols: {
+            symbol: QuoteSnapshot(
+                symbol=symbol,
+                as_of=datetime(2026, 10, 21, 14, 0),
+                last_price=100.0,
+                currency="USD",
+            )
+            for symbol in symbols
+        },
+        submit_order_intent=lambda _ib, intent: ExecutionReport(
+            symbol=intent.symbol,
+            side=intent.side,
+            quantity=intent.quantity,
+            status="Filled",
+            filled_quantity=intent.quantity,
+            average_fill_price=101.0,
+            broker_order_id="typed-report-1",
+        ),
+        order_intent_cls=OrderIntent,
+        acquire_execution_claim=lambda: True,
+        translator=build_translator("en"),
+        signal_metadata=_signal_metadata({"VOO": 0.0}, risk_symbols=("VOO",), trade_date="2026-10-21"),
+        dry_run_only=False,
+        cash_reserve_ratio=0.0,
+        rebalance_threshold_ratio=0.0,
+        limit_buy_premium=1.0,
+        sell_settle_delay_sec=0,
+        execution_lock_dir=tmp_path,
+        return_summary=True,
+    )
+    assert summary["execution_status"] == "executed"
+    assert summary["projected_sell_release_value"] == 202.0
+    assert summary["orders_filled"][0]["broker_order_id"] == "typed-report-1"
+    assert summary["quote_snapshot"]["quotes"][0]["symbol"] == "VOO"
