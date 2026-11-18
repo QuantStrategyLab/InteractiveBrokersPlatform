@@ -5,9 +5,9 @@ from xml.etree import ElementTree
 
 import pytest
 
-from application.ibkr_external_flow import build_ibkr_external_flow, project_flex_external_flows
-from application.ibkr_flex_ledger import build_flex_ledger
-from application.ibkr_flex_source import FlexReport
+from interactive_brokers_platform.application.ibkr_external_flow import build_ibkr_external_flow, project_flex_external_flows
+from interactive_brokers_platform.application.ibkr_flex_ledger import build_flex_ledger
+from interactive_brokers_platform.application.ibkr_flex_source import FlexReport
 from scripts import publish_ibkr_flex_period_return as cli
 from tests.test_publish_ibkr_flex_period_return import configure, FlexSession, Response
 
@@ -83,7 +83,7 @@ def test_legacy_flow_total_uses_the_identity_checked_projection():
 
 
 def test_repeated_id_never_omits_flows_under_legacy_activity_code_normalization():
-    from application.ibkr_flex_ledger import build_flex_ledger_diagnostic
+    from interactive_brokers_platform.application.ibkr_flex_ledger import build_flex_ledger_diagnostic
 
     for rows in (row(activityCode="dep") * 2, row(activityCode="DEP ") * 2,
                  row() * 2 + row(activityCode="dep", transactionID="other")):
@@ -138,7 +138,7 @@ def test_invalid_ack_is_unknown_and_never_retried(monkeypatch, patch):
 
 
 def test_native_period_return_is_not_replaced_by_date_only_flows():
-    from application.ibkr_period_return import build_ibkr_period_return
+    from interactive_brokers_platform.application.ibkr_period_return import build_ibkr_period_return
     values = dict(target_id="synthetic-target", source_binding_id="a"*64, account_scope="synthetic-live", expected_account_ids=(ACCOUNT,))
     source = ledger()
     payload = build_ibkr_period_return(source, **values, observed_at=datetime.now(timezone.utc))

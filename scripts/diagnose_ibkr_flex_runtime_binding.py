@@ -7,11 +7,17 @@ import hashlib
 import io
 import json
 import os
+from pathlib import Path
 import re
 import subprocess
+import sys
 import zipfile
 
-from application.account_facts_target_config import (
+_SRC_DIR = Path(__file__).resolve().parents[1] / "src"
+if _SRC_DIR.is_dir() and str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
+
+from interactive_brokers_platform.application.account_facts_target_config import (
     account_selector, parse_additional_target_configs, single_line_text,
 )
 

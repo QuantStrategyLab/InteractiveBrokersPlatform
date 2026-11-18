@@ -7,7 +7,7 @@ from unittest import mock
 import pytest
 from quant_platform_kit.common import execution_receipts as receipts
 
-from application import execution_receipt_adapter as adapter
+from interactive_brokers_platform.application import execution_receipt_adapter as adapter
 from scripts import emit_digest_candidates as emitter
 from scripts.project_digest_candidates import project_digest_candidates
 

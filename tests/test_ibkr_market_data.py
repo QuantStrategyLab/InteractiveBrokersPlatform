@@ -2,7 +2,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event, Lock
 
-from application.ibkr_market_data import fetch_quote_snapshots_with_expected_error_summary
+from interactive_brokers_platform.application.ibkr_market_data import fetch_quote_snapshots_with_expected_error_summary
 
 
 class FakeErrorEvent:

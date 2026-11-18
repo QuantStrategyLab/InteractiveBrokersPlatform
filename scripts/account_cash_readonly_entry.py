@@ -122,8 +122,12 @@ def main():
     # Imports can initialize runtime configuration and print diagnostics.
     try:
         with _quiet_runtime_output():
-            import main as runtime
-            from application.account_facts import build_ibkr_account_facts
+            try:
+                from interactive_brokers_platform import main as runtime
+                from interactive_brokers_platform.application.account_facts import build_ibkr_account_facts
+            except ModuleNotFoundError:
+                import main as runtime
+                from application.account_facts import build_ibkr_account_facts
     except Exception:
         print(json.dumps({"status": "failed"}, sort_keys=True))
         return 1

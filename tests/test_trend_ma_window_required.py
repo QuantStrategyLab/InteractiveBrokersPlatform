@@ -1,6 +1,6 @@
 import pytest
 
-from strategy_runtime import required_trend_ma_window
+from interactive_brokers_platform.strategy_runtime import required_trend_ma_window
 
 
 def test_reads_manifest_value():

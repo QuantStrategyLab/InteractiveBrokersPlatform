@@ -13,21 +13,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  policy:
+    uses: QuantStrategyLab/.github/.github/workflows/docs-acceptance.yml@b4966bdd8780cad3ae5154ae50d8b98259a16dc6
+    with:
+      policy-revision: b4966bdd8780cad3ae5154ae50d8b98259a16dc6
+      mode: enforce
+
   docs:
     name: Documentation check
+    needs: policy
+    if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 2
     steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      # The checker runs before the tests because a rule that stopped working
-      # would otherwise report a clean repository. The tests are the only thing
-      # that notices the difference between "no findings" and "no checking".
-      - name: Test the documentation checker
-        run: python scripts/test_style.py
-      - name: Check documentation rules
-        run: python scripts/check_style.py --phase 2
+      - name: Require documentation policy acceptance
+        run: test "${{ needs.policy.result }}" = "success"

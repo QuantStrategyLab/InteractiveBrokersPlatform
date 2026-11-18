@@ -5,8 +5,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from application.account_facts import build_ibkr_account_facts
-from application.ibkr_cash_observations import capture_cash_observation_rows
+from interactive_brokers_platform.application.account_facts import build_ibkr_account_facts
+from interactive_brokers_platform.application.ibkr_cash_observations import capture_cash_observation_rows
 
 
 class AccountRiskFactReadinessTest(unittest.TestCase):
@@ -62,12 +62,16 @@ class AccountRiskFactReadinessTest(unittest.TestCase):
 def test_receipt_survives_account_bound_report_serialization(strategy_module_factory, monkeypatch, tmp_path):
     import json
     import sys
-    from application.cycle_result import StrategyCycleResult
+    from interactive_brokers_platform.application.cycle_result import StrategyCycleResult
     from quant_platform_kit.common.runtime_reports import finalize_runtime_report, write_runtime_report_json
 
-    # The existing factory replaces sys.modules["main"]. Restore its prior
+    # The existing factory replaces sys.modules["interactive_brokers_platform.main"]. Restore its prior
     # state as well as the factory's monkeypatched environment after the test.
-    monkeypatch.setitem(sys.modules, "main", sys.modules.get("main"))
+    monkeypatch.setitem(
+        sys.modules,
+        "interactive_brokers_platform.main",
+        sys.modules.get("interactive_brokers_platform.main"),
+    )
     main = strategy_module_factory()
     cases = AccountRiskFactReadinessTest()
     facts = cases.facts((cases.settled(),))

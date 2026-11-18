@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from application.account_facts import build_ibkr_account_facts
+from interactive_brokers_platform.application.account_facts import build_ibkr_account_facts
 
 
 def test_confirmed_empty_inventory_is_not_lost_or_inferred_from_unknown():
@@ -190,7 +190,7 @@ def test_cash_observations_survive_the_original_runtime_report_writer(tmp_path):
     from quant_platform_kit.common.runtime_reports import (
         build_runtime_report_base, finalize_runtime_report, write_runtime_report_json,
     )
-    from application.ibkr_cash_observations import inspect_cash_observations
+    from interactive_brokers_platform.application.ibkr_cash_observations import inspect_cash_observations
 
     snapshot = _snapshot(observed_at=datetime(2026, 9, 30, 12, tzinfo=timezone.utc),
         cash_balances=({"account_id": "DU123", "currency": "USD",
@@ -220,7 +220,7 @@ def test_schedule_survives_existing_local_and_cloud_report_normalization(tmp_pat
         build_runtime_report_base, finalize_runtime_report, persist_runtime_report,
     )
     from quant_platform_kit import cloud
-    from application.ibkr_cash_observations import inspect_cash_schedule_observations
+    from interactive_brokers_platform.application.ibkr_cash_observations import inspect_cash_schedule_observations
 
     snapshot = _snapshot(observed_at=datetime(2000, 1, 3, 12, tzinfo=timezone.utc),
         cash_balances=({"account_id": "DU123", "currency": "USD", "CashBalance": 100},),
@@ -261,7 +261,7 @@ def test_optional_schedule_is_not_reconstructed_from_legacy_cache_or_misbound_ro
 
 def test_cash_source_scope_survives_private_runtime_report(tmp_path):
     from types import SimpleNamespace
-    from application.ibkr_cash_observations import capture_cash_observation_rows, inspect_cash_observations, inspect_cash_source_details
+    from interactive_brokers_platform.application.ibkr_cash_observations import capture_cash_observation_rows, inspect_cash_observations, inspect_cash_source_details
     from quant_platform_kit.common.runtime_reports import build_runtime_report_base, finalize_runtime_report, write_runtime_report_json
 
     snapshot = _snapshot(observed_at=datetime(2026, 9, 30, 12, tzinfo=timezone.utc),

@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from application.broker_reconciliation_candidate import (
+from interactive_brokers_platform.application.broker_reconciliation_candidate import (
     SOURCE_RECEIPT_RECORD_SCHEMA_VERSION,
     SourceReceiptExpectation,
     build_reconciliation_candidate_v2,

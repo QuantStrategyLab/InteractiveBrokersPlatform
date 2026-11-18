@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from scripts.prepare_legacy_digest_overlay import OLD_ROUTE, ORIGINAL_ARCHIVE, patch_archive, patch_rebalance
+from scripts.prepare_legacy_digest_overlay import OLD_ROUTE, ORIGINAL_ARCHIVE, patch_archive, patch_etf_attention, patch_rebalance
 
 
 @pytest.mark.parametrize(("mode", "summary", "expected"), [
@@ -59,3 +59,21 @@ def test_legacy_archive_failures_become_real_alerts_without_changing_run_result(
 def test_legacy_patch_refuses_source_drift():
     with pytest.raises(ValueError, match="legacy_archive_source_changed"):
         patch_archive("pass\n")
+
+
+def test_patch_etf_attention_rewrites_src_imports_for_legacy_images():
+    legacy_source = (
+        "def _notification_evidence():\n"
+        "    return 'old'\n\n"
+        "def _cycle_attention_notification():\n"
+        "    return 'old'\n"
+    )
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    reviewed = (root / "src/interactive_brokers_platform/notifications/unified_adapter.py").read_text(
+        encoding="utf-8"
+    )
+    patched = patch_etf_attention(legacy_source, reviewed)
+    assert "interactive_brokers_platform" not in patched
+    assert "from notifications.events import RenderedNotification" in patched
+    assert "from strategy_registry import STRATEGY_CATALOG" in patched

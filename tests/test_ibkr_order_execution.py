@@ -4,8 +4,8 @@ import pytest
 from quant_platform_kit.common.models import OrderIntent
 from quant_platform_kit.risk.account_new_risk_gate import InjectedReconciliationSnapshot
 
-from application.account_new_risk_gate_support import set_cycle_snapshot
-from application.ibkr_order_execution import probe_order_write_access, submit_order_intent
+from interactive_brokers_platform.application.account_new_risk_gate_support import set_cycle_snapshot
+from interactive_brokers_platform.application.ibkr_order_execution import probe_order_write_access, submit_order_intent
 
 
 @pytest.fixture(autouse=True)

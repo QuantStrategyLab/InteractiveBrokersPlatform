@@ -1,0 +1,56 @@
+main:
+  steps:
+    - loadTargets:
+        assign:
+          - targets: ${json.decode(sys.get_env("DISPATCH_TARGETS"))}
+          - failures: 0
+          - outcomes: {}
+    - dispatch:
+        parallel:
+          shared: [failures, outcomes]
+          for:
+            value: target
+            in: ${targets}
+            steps:
+              - submit:
+                  try:
+                    steps:
+                      - chooseAuthentication:
+                          switch:
+                            - condition: ${target.kind == "job"}
+                              next: submitJob
+                      - invokeService:
+                          call: http.post
+                          args:
+                            url: ${target.audience + "/probe"}
+                            auth:
+                              type: OIDC
+                              audience: ${target.audience}
+                            body: {}
+                            timeout: 180
+                          next: reportSuccess
+                      - submitJob:
+                          call: http.post
+                          args:
+                            url: ${"https://run.googleapis.com/v2/" + target.job + ":run"}
+                            auth:
+                              type: OAuth2
+                            body: {}
+                            timeout: 180
+                  except:
+                    as: error
+                    steps:
+                      - countFailure:
+                          assign:
+                            - failures: ${failures + 1}
+                            - outcomes[target.label]: ${map.get(error, "code")}
+                          next: continue
+              - reportSuccess:
+                  assign:
+                    - outcomes[target.label]: accepted
+    - checkFailures:
+        switch:
+          - condition: ${failures > 0}
+            raise: ${outcomes}
+    - done:
+        return: ${outcomes}

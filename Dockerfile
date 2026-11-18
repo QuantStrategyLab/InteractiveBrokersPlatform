@@ -29,4 +29,4 @@ USER appuser
 
 RUN /app/.venv/bin/python -m scripts.publish_digest_before_read --help
 
-CMD ["/app/.venv/bin/python", "-m", "gunicorn", "--bind", ":8080", "--workers", "1", "--threads", "1", "--timeout", "300", "main:app"]
+CMD ["/app/.venv/bin/python", "-m", "gunicorn", "--bind", ":8080", "--workers", "1", "--threads", "1", "--timeout", "300", "interactive_brokers_platform.main:app"]

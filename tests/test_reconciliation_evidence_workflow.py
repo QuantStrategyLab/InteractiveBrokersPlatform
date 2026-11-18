@@ -257,7 +257,7 @@ def test_receipt_wait_budget_covers_scheduler_request_logs_and_cleanup():
 
 
 def test_producer_source_record_field_shape_reaches_strict_consumer():
-    from application.broker_reconciliation_candidate import canonical_source_receipt_records_json
+    from interactive_brokers_platform.application.broker_reconciliation_candidate import canonical_source_receipt_records_json
     from tests.test_broker_reconciliation_candidate import _expectations, _records
 
     workflow = WORKFLOW.read_text(encoding="utf-8")
@@ -276,7 +276,7 @@ def test_producer_source_record_field_shape_reaches_strict_consumer():
 
 
 def _producer_materials(tmp_path, *, receipt_fault=None):
-    from application.broker_reconciliation_candidate import SourceReceiptExpectation
+    from interactive_brokers_platform.application.broker_reconciliation_candidate import SourceReceiptExpectation
     from tests.test_reconciliation_recovery_verify_only import _evidence
 
     start = datetime(2026, 8, 31, 1, 0, tzinfo=timezone.utc)

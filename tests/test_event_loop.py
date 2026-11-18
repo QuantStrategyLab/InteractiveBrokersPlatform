@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from application.runtime_broker_adapters import IBKRGatewayUnavailableError
+from interactive_brokers_platform.application.runtime_broker_adapters import IBKRGatewayUnavailableError
 
 
 def test_ensure_event_loop_creates_loop_in_worker_thread(strategy_module):

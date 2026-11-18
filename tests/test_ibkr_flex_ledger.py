@@ -3,9 +3,9 @@ import json
 
 import pytest
 
-from application.ibkr_flex_ledger import build_flex_ledger
-from application import ibkr_flex_source
-from application.ibkr_flex_source import (
+from interactive_brokers_platform.application.ibkr_flex_ledger import build_flex_ledger
+from interactive_brokers_platform.application import ibkr_flex_source
+from interactive_brokers_platform.application.ibkr_flex_source import (
     FlexReport,
     FlexSourceError,
     import_activity_flex_ledger,
@@ -40,7 +40,7 @@ def _statement(
 
 
 def test_cash_report_shape_uses_only_target_usd_rows_without_amounts_or_qualification():
-    from application.ibkr_flex_ledger import build_flex_cash_diagnostic
+    from interactive_brokers_platform.application.ibkr_flex_ledger import build_flex_cash_diagnostic
     report = _wrap(_statement('<CashReport>'
         '<CashReportCurrency currency="BASE_SUMMARY" endingSettledCash="555.55"/>'
         '<CashReportCurrency currency="USD" endingCash="123.456" endingSettledCash="98.765" '
@@ -96,7 +96,7 @@ def _native_cash_row(**overrides):
 
 
 def test_native_period_cash_preserves_sign_precision_and_original_dates_without_current_authority():
-    from application.ibkr_flex_ledger import build_flex_cash_diagnostic
+    from interactive_brokers_platform.application.ibkr_flex_ledger import build_flex_cash_diagnostic
     report = _wrap(_statement('<CashReport>' + _native_cash_row() + '</CashReport>'))
     ledger = build_flex_ledger(report, expected_account_ids=(ACCOUNT,))
     facts = ledger["period_cash_facts"]
@@ -691,7 +691,7 @@ def test_nav_source_period_requires_matching_native_calendar_dates(field, value)
 
 def test_period_return_rejects_explicit_scope_conflicts_and_ambiguous_rows():
     from datetime import datetime, timezone
-    from application.ibkr_period_return import PeriodReturnError, build_ibkr_period_return
+    from interactive_brokers_platform.application.ibkr_period_return import PeriodReturnError, build_ibkr_period_return
 
     kwargs = dict(target_id="synthetic-target", source_binding_id="a" * 64,
                   account_scope="synthetic-scope", expected_account_ids=[ACCOUNT],

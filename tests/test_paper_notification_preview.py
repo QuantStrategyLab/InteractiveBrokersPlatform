@@ -17,6 +17,12 @@ SCRIPT_PATH = ROOT / "scripts" / "send_paper_notification_preview.py"
 
 _FORBIDDEN_IMPORT_ROOTS = (
     "ib_insync",
+    "interactive_brokers_platform.main",
+    "interactive_brokers_platform.application",
+    "interactive_brokers_platform.strategy_runtime",
+    "interactive_brokers_platform.decision_mapper",
+    "interactive_brokers_platform.entrypoints",
+    "interactive_brokers_platform.runtime_config_support",
     "main",
     "application",
     "strategy_runtime",
@@ -142,7 +148,7 @@ def test_preview_script_has_no_broker_or_execution_imports():
             name == forbidden or name.startswith(f"{forbidden}.") for name in imported
         )
 
-    assert "notifications.telegram" in imported
+    assert "interactive_brokers_platform.notifications.telegram" in imported
 
 
 def test_send_preview_fails_closed_without_telegram_target(monkeypatch):
@@ -233,6 +239,7 @@ def test_workflow_static_safety_constraints():
         "Cloud Run",
         "continue-on-error: true",
         "strategy_profile",
+        "interactive_brokers_platform",
         "main.py",
         "application/",
         "ib_insync",

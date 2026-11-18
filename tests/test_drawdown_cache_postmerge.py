@@ -6,7 +6,7 @@ import struct
 
 import pytest
 
-from application import account_new_risk_gate_support as gate
+from interactive_brokers_platform.application import account_new_risk_gate_support as gate
 from quant_platform_kit.common.execution_state import AccountSubmissionSession, ExecutionMarkerStore
 
 NOW = datetime(2026, 11, 4, 0, 0, tzinfo=timezone.utc)

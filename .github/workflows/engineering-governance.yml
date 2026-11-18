@@ -18,36 +18,10 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Install verified Gitleaks CLI
-        shell: bash
-        run: |
-          set -euo pipefail
-          archive="$RUNNER_TEMP/gitleaks.tar.gz"
-          curl --fail --silent --show-error --location --retry 2 \
-            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
-            --output "$archive"
-          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $archive" | sha256sum --check --status
-          mkdir -p "$RUNNER_TEMP/gitleaks-bin"
-          tar -xzf "$archive" -C "$RUNNER_TEMP/gitleaks-bin" gitleaks
       - name: Scan added commits with redacted findings
-        shell: bash
-        env:
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD: ${{ github.event.pull_request.head.sha }}
-          PUSH_BASE: ${{ github.event.before }}
-          PUSH_HEAD: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          base="${PR_BASE:-$PUSH_BASE}"
-          head="${PR_HEAD:-$PUSH_HEAD}"
-          if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
-            echo "No base commit is available for this event" >&2
-            exit 1
-          fi
-          python3 scripts/retain_native_scan.py \
-            --binary "$RUNNER_TEMP/gitleaks-bin/gitleaks" \
-            --output "$RUNNER_TEMP/gitleaks-evidence/event-range" \
-            --base "$base" --head "$head" --scope event-range
+        uses: Pigbibi/PrGovernance/pr-governance@ccda8de572d2893272b0137526ef3e2d45e5eee7
+        with:
+          mode: scan
 
   commitlint:
     name: Commit message convention
@@ -69,9 +43,15 @@ jobs:
           tool="$RUNNER_TEMP/governance-commitlint"
           npm install --prefix "$tool" --ignore-scripts --no-audit --no-fund \
             @commitlint/cli@21.2.4 @commitlint/config-conventional@21.2.4
-          printf '%s\n' "module.exports = {extends: [require.resolve('@commitlint/config-conventional')], defaultIgnores: true, ignores: [(message) => /^Merge /.test(message)], rules: {'subject-case': [0], 'header-max-length': [2, 'always', 72], 'type-enum': [2, 'always', ['feat', 'fix', 'docs', 'refactor', 'test', 'chore', 'perf', 'ci']]}};" > "$tool/commitlint.config.cjs"
+          printf '%s\n' "module.exports = {extends: [require.resolve('@commitlint/config-conventional')], defaultIgnores: true, rules: {'subject-case': [0], 'header-max-length': [2, 'always', 72], 'type-enum': [2, 'always', ['feat', 'fix', 'docs', 'refactor', 'test', 'chore', 'perf', 'ci', 'build']]}};" > "$tool/commitlint.config.cjs"
           node "$tool/node_modules/@commitlint/cli/cli.js" \
             --config "$tool/commitlint.config.cjs" --from "$PR_BASE" --to "$PR_HEAD" --verbose
+          for invalid_subject in 'Merge bypass' 'Merge fix: bypass'; do
+            if printf '%s\n' "$invalid_subject" | node "$tool/node_modules/@commitlint/cli/cli.js" --config "$tool/commitlint.config.cjs" >/dev/null 2>&1; then
+              echo "commitlint self-test failed: accepted non-conventional message '$invalid_subject'" >&2
+              exit 1
+            fi
+          done
 
   governance-contracts:
     name: Offline governance contracts

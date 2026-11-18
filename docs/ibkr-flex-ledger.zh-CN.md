@@ -1,7 +1,9 @@
+[English](ibkr-flex-ledger.md) | 简体中文
+
 # IBKR Activity Flex 本地账本解析
 
-`application.ibkr_flex_ledger` 把一份已经取回的 IBKR **XML Activity Flex 报表**
-转换成最小的、保留来源的账本事实。`application.ibkr_flex_source.import_activity_flex_ledger`
+`interactive_brokers_platform.application.ibkr_flex_ledger` 把一份已经取回的 IBKR **XML Activity Flex 报表**
+转换成最小的、保留来源的账本事实。`interactive_brokers_platform.application.ibkr_flex_source.import_activity_flex_ledger`
 把现有一次性 fetch、账户范围复核和解析器串成实际可调用的导入入口。完整账本含真实金额、
 账户标识与原生 TWR，只能留在获批云端内存或已有私有存储；不能写入本机日志。
 
@@ -21,7 +23,7 @@ code，不含账户标识、估值、费用、出入金金额或 TWR 数值。�
 ## 输入与账户合同
 
 ```python
-from application.ibkr_flex_source import diagnose_activity_flex_ledger
+from interactive_brokers_platform.application.ibkr_flex_source import diagnose_activity_flex_ledger
 
 safe_status = diagnose_activity_flex_ledger(
     token=..., query_id=..., expected_account_ids=("UXXXXXXX",)
@@ -164,7 +166,12 @@ TWR，不是账户收费计划、当前已交收资金、证券/碎股权限、�
 
 配置 `IBKR_FLEX_DIGEST_JOB_REFS` 和现有摘要存储的云身份后，定时任务从一份独立的
 Flex 报表取四个日报账户的 USD 期末已结算现金。每户通过现有 Cloud Run 日报任务的
-账号和身份核对，金额与报表日期保存到各自的私有对象。完整收益报表仍按原规则校验。
+账号和身份核对。最新摘要保持原格式，包含金额和结单日期，存储对象的元数据记录
+该版 Flex 报表的 SHA-256。每版摘要也写入现有私有存储的
+`flex-cash/versions/<slot>/<statement-date>/<sha256>.json`，同一日期修订时保留旧版。
+首次覆盖旧格式时同时保存原摘要，用原存储世代标记，因为旧记录未保存 Flex 来源。
+归档不包含报表原文或券商账户号。完整收益报表仍按原规则校验。
+采集定在新加坡时间周一至周六 18:23，为次日 07:00 日报留出调度余量。
 手动运行 `Publish IBKR Digest Settled Cash` 并选择 `read_once` 时只写现金摘要。
 现金和收益任务共用查询并发组，避免同时生成报表。
 

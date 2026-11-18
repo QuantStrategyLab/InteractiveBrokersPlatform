@@ -135,7 +135,7 @@ def test_explicit_summary_retains_source_decimal_and_target_only():
 
 
 def test_usd_ledger_keeps_native_cash_tags_without_promoting_other_currencies_or_aliases():
-    from application.ibkr_cash_observations import inspect_cash_observations
+    from interactive_brokers_platform.application.ibkr_cash_observations import inspect_cash_observations
     rows = [dict(account="DU00000001", tag=tag, currency="USD", value="12.00000001")
             for tag in ("CashBalance", "TotalCashBalance", "$LEDGER-CashBalance", "$LEDGER-TotalCashBalance")]
     rows += [dict(account="DU00000001", tag="SettledCash", currency=currency, value="PRIVATE_OTHER_CURRENCY")
@@ -181,7 +181,7 @@ def test_summary_failure_never_retries_or_retains_subscription(failure):
     ["1", "1"], ["1", "1.00"], ["-0", "0.00"], ["-2", "-2.00"], ["0.00000001", "1e-8"],
 ])
 def test_summary_identical_repeats_are_one_observation_not_spending_authority(amounts):
-    from application.ibkr_cash_observations import inspect_cash_observations
+    from interactive_brokers_platform.application.ibkr_cash_observations import inspect_cash_observations
     rows = [dict(account="DU00000001", tag="SettledCash", currency="USD", value=amount) for amount in amounts]
     broker = SummaryBroker(rows)
     try:

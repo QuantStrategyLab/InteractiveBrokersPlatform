@@ -37,7 +37,7 @@ def _should_add_local_src(candidate: Path) -> bool:
     return True
 
 
-for candidate in (ROOT, QPK_SRC, UES_SRC, HES_SRC):
+for candidate in (ROOT, ROOT / "src", QPK_SRC, UES_SRC, HES_SRC):
     if not _should_add_local_src(candidate):
         continue
     candidate_str = str(candidate)
@@ -46,7 +46,7 @@ for candidate in (ROOT, QPK_SRC, UES_SRC, HES_SRC):
 
 from quant_platform_kit.common.runtime_target import build_runtime_target  # noqa: E402
 from quant_platform_kit.common.strategies import derive_strategy_artifact_paths  # noqa: E402
-from strategy_registry import (  # noqa: E402
+from interactive_brokers_platform.strategy_registry import (  # noqa: E402
     HK_EQUITY_DOMAIN,
     IBKR_PLATFORM,
     STRATEGY_CATALOG,

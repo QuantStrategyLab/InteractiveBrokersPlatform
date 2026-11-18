@@ -4,7 +4,7 @@ import hashlib
 import json
 from types import SimpleNamespace
 
-import strategy_runtime as strategy_runtime_module
+import interactive_brokers_platform.strategy_runtime as strategy_runtime_module
 
 
 def _sha256_file(path: Path) -> str:
@@ -373,7 +373,7 @@ def russell_regime_platform(tmp_path, monkeypatch):
     from dataclasses import replace
     from tests.test_strategy_runtime import _build_runtime_settings
     from quant_platform_kit.common.models import PortfolioSnapshot
-    from decision_mapper import map_strategy_decision
+    from interactive_brokers_platform.decision_mapper import map_strategy_decision
     import pandas as pd
 
     payload = dict(plugin="market_regime_control", schema_version="market_regime_control.v1",

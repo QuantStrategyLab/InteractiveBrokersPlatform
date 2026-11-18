@@ -9,9 +9,14 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from application.execution_service import check_order_submitted, execute_rebalance as _execute_rebalance, get_available_buying_power
-from notifications.telegram import build_translator
-from quant_platform_kit.common.models import OrderIntent
+from interactive_brokers_platform.application.execution_service import (
+    RebalanceExecutionOptions,
+    check_order_submitted,
+    execute_rebalance as _execute_rebalance,
+    get_available_buying_power,
+)
+from interactive_brokers_platform.notifications.telegram import build_translator
+from quant_platform_kit.common.models import ExecutionReport, OrderIntent, QuoteSnapshot
 from quant_platform_kit.common.strategy_release import build_runtime_loaded_receipt
 
 
@@ -390,7 +395,7 @@ def test_execute_rebalance_reductions_follow_approved_target_without_retention_l
 
     submitted = []
     claims = []
-    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("interactive_brokers_platform.application.execution_service.time.sleep", lambda _seconds: None)
 
     _logs, summary = execute_rebalance(
         FakeIB(), {}, {symbol: {"quantity": held}},
@@ -448,7 +453,7 @@ def test_execute_rebalance_submits_limit_buy_for_underweight_position(monkeypatc
     def fake_fetch_quote_snapshots(_ib, symbols):
         return {symbol: SimpleNamespace(last_price=100.0) for symbol in symbols}
 
-    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("interactive_brokers_platform.application.execution_service.time.sleep", lambda _seconds: None)
 
     trade_logs = execute_rebalance(
         FakeIB(),
@@ -643,7 +648,7 @@ def test_execute_rebalance_uses_symbol_specific_limit_buy_premium(monkeypatch, t
         submitted.append(intent)
         return SimpleNamespace(broker_order_id="1", status="Submitted")
 
-    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("interactive_brokers_platform.application.execution_service.time.sleep", lambda _seconds: None)
 
     execute_rebalance(
         FakeIB(),
@@ -895,7 +900,7 @@ def test_execute_rebalance_caps_buy_budget_by_reserved_cash_after_sell(tmp_path,
             return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1412.12"), SimpleNamespace(tag="SettledCash", currency="USD", value="1412.12", account="DU00000003")]
 
     prices = {"SOXL": 225.19, "SOXX": 600.71}
-    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("interactive_brokers_platform.application.execution_service.time.sleep", lambda _seconds: None)
 
     _trade_logs, summary = execute_rebalance(
         FakeIB(),
@@ -958,7 +963,7 @@ def test_execute_rebalance_live_cash_only_uses_initial_settled_cash_when_cash_ba
 
     prices = {"SOXL": 192.50, "SOXX": 582.25}
     submitted = []
-    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("interactive_brokers_platform.application.execution_service.time.sleep", lambda _seconds: None)
 
     def fake_submit_order_intent(_ib, intent):
         submitted.append(intent)
@@ -1039,7 +1044,7 @@ def test_execute_rebalance_live_cash_only_does_not_bridge_unfilled_sell_submissi
 
     prices = {"SOXL": 192.50, "SOXX": 582.25}
     submitted = []
-    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("interactive_brokers_platform.application.execution_service.time.sleep", lambda _seconds: None)
 
     def fake_submit_order_intent(_ib, intent):
         submitted.append(intent)
@@ -1094,7 +1099,7 @@ def test_execute_rebalance_live_cash_only_uses_partial_fill_proceeds_and_fill_pr
 
     prices = {"SOXL": 200.0, "SOXX": 300.0}
     submitted = []
-    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("interactive_brokers_platform.application.execution_service.time.sleep", lambda _seconds: None)
 
     def fake_submit_order_intent(_ib, intent):
         submitted.append(intent)
@@ -1159,7 +1164,7 @@ def test_execute_rebalance_projects_unbuyable_weight_target_to_zero_with_settled
             return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="236.81"), SimpleNamespace(tag="SettledCash", currency="USD", value="773.69", account="DU00000003")]
 
     prices = {"SOXL": 191.15, "SOXX": 536.88, "BOXX": 100.0}
-    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("interactive_brokers_platform.application.execution_service.time.sleep", lambda _seconds: None)
 
     trade_logs, summary = execute_rebalance(
         FakeIB(),
@@ -1219,7 +1224,7 @@ def test_execute_rebalance_keeps_safe_haven_cash_when_only_risk_target_is_unbuya
 
     prices = {"SOXL": 175.0, "SOXX": 525.0, "BOXX": 116.83}
     submitted = []
-    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("interactive_brokers_platform.application.execution_service.time.sleep", lambda _seconds: None)
 
     trade_logs, summary = execute_rebalance(
         FakeIB(),
@@ -1281,7 +1286,7 @@ def test_execute_rebalance_blocks_small_account_buy_but_keeps_strategy_reduction
             return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="500.00"), SimpleNamespace(tag="SettledCash", currency="USD", value="500.00", account="DU00000003")]
 
     submitted = []
-    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("interactive_brokers_platform.application.execution_service.time.sleep", lambda _seconds: None)
 
     trade_logs, summary = execute_rebalance(
         FakeIB(),
@@ -1345,7 +1350,7 @@ def test_execute_rebalance_routes_order_to_single_account_id(monkeypatch, tmp_pa
         submitted.append(intent)
         return SimpleNamespace(broker_order_id="1", status="Submitted")
 
-    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("interactive_brokers_platform.application.execution_service.time.sleep", lambda _seconds: None)
 
     trade_logs, summary = execute_rebalance(
         FakeIB(),
@@ -1427,7 +1432,7 @@ def test_execute_rebalance_zero_target_sell_uses_position_quantity(monkeypatch, 
         submitted.append(intent)
         return SimpleNamespace(broker_order_id="1", status="Submitted")
 
-    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("interactive_brokers_platform.application.execution_service.time.sleep", lambda _seconds: None)
 
     _trade_logs, summary = execute_rebalance(
         FakeIB(),
@@ -1477,7 +1482,7 @@ def test_execute_rebalance_sells_existing_whole_shares_when_target_projects_to_c
         submitted.append(intent)
         return SimpleNamespace(broker_order_id="1", status="Submitted")
 
-    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("interactive_brokers_platform.application.execution_service.time.sleep", lambda _seconds: None)
 
     _trade_logs, summary = execute_rebalance(
         FakeIB(),
@@ -1530,7 +1535,7 @@ def test_execute_rebalance_projects_unbuyable_soxx_target_to_cash(monkeypatch, t
             return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="519.54"), SimpleNamespace(tag="SettledCash", currency="USD", value="519.54", account="DU00000003")]
 
     prices = {"SOXL": 232.99, "SOXX": 605.17, "BOXX": 117.06}
-    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("interactive_brokers_platform.application.execution_service.time.sleep", lambda _seconds: None)
 
     _trade_logs, summary = execute_rebalance(
         FakeIB(),
@@ -1601,7 +1606,7 @@ def test_execute_rebalance_caps_buy_to_cash_when_overweight_sell_rounds_to_zero(
             ]
 
     prices = {"SOXL": 219.80, "SOXX": 611.00, "BOXX": 100.0}
-    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("interactive_brokers_platform.application.execution_service.time.sleep", lambda _seconds: None)
 
     _trade_logs, summary = execute_rebalance(
         FakeIB(),
@@ -1658,7 +1663,7 @@ def test_execute_rebalance_does_not_bootstrap_unbuyable_core_target(monkeypatch,
             return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="623.39"), SimpleNamespace(tag="SettledCash", currency="USD", value="623.39", account="DU00000003")]
 
     prices = {"SOXL": 229.73, "SOXX": 603.00, "BOXX": 100.0}
-    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("interactive_brokers_platform.application.execution_service.time.sleep", lambda _seconds: None)
 
     trade_logs, summary = execute_rebalance(
         FakeIB(),
@@ -1720,7 +1725,7 @@ def test_execute_rebalance_skips_existing_top_up_smaller_than_one_share(monkeypa
             return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="700.00"), SimpleNamespace(tag="SettledCash", currency="USD", value="700.00", account="DU00000003")]
 
     prices = {"SOXX": 605.0}
-    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("interactive_brokers_platform.application.execution_service.time.sleep", lambda _seconds: None)
 
     _trade_logs, summary = execute_rebalance(
         FakeIB(),
@@ -1811,7 +1816,7 @@ def test_execute_rebalance_blocks_same_day_repeat_via_execution_lock(tmp_path, m
     def fake_fetch_quote_snapshots(_ib, symbols):
         return {symbol: SimpleNamespace(last_price=100.0) for symbol in symbols}
 
-    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("interactive_brokers_platform.application.execution_service.time.sleep", lambda _seconds: None)
 
     kwargs = dict(
         fetch_quote_snapshots=fake_fetch_quote_snapshots,
@@ -1930,7 +1935,7 @@ def test_execute_rebalance_returns_structured_summary_when_requested(monkeypatch
     def fake_fetch_quote_snapshots(_ib, symbols):
         return {symbol: SimpleNamespace(last_price=100.0) for symbol in symbols}
 
-    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("interactive_brokers_platform.application.execution_service.time.sleep", lambda _seconds: None)
 
     trade_logs, summary = execute_rebalance(
         FakeIB(),
@@ -1990,7 +1995,7 @@ def test_execute_rebalance_keeps_small_safe_haven_target_as_cash(monkeypatch, tm
         def accountValues(self):
             return [SimpleNamespace(tag="AvailableFunds", currency="USD", value="1500"), SimpleNamespace(tag="SettledCash", currency="USD", value="1500", account="DU00000003")]
 
-    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("interactive_brokers_platform.application.execution_service.time.sleep", lambda _seconds: None)
 
     trade_logs, summary = execute_rebalance(
         FakeIB(),
@@ -2066,7 +2071,7 @@ def test_execute_rebalance_sells_cash_sweep_symbol_when_buying_power_is_short(mo
         submitted.append(intent)
         return SimpleNamespace(broker_order_id=f"order-{len(submitted)}", status="Submitted")
 
-    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("interactive_brokers_platform.application.execution_service.time.sleep", lambda _seconds: None)
 
     trade_logs, summary = execute_rebalance(
         FakeIB(),
@@ -2272,7 +2277,7 @@ def test_execute_rebalance_uses_price_fallbacks_for_live_when_quotes_missing(mon
         submitted.append(intent)
         return SimpleNamespace(broker_order_id="1", status="Submitted")
 
-    monkeypatch.setattr("application.execution_service.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("interactive_brokers_platform.application.execution_service.time.sleep", lambda _seconds: None)
 
     trade_logs, summary = execute_rebalance(
         FakeIB(),
@@ -2316,12 +2321,12 @@ def test_execute_rebalance_uses_price_fallbacks_for_live_when_quotes_missing(mon
 def uncertain_cycle(tmp_path, monkeypatch):
     # Rule A requires an explicit fake peak equal to NAV so the original order checks exercise a measured zero drawdown.
     """Real executor/claim/identity lock with offline approval and broker reports."""
-    from application import execution_service as service
+    from interactive_brokers_platform.application import execution_service as service
 
     monkeypatch.setattr(service.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(service, "maybe_publish_attention_for_admission", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(
-        "application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
+        "interactive_brokers_platform.application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
         lambda **_kwargs: None,
     )
     state = SimpleNamespace(submitted=[], claims=[], receipt=None)
@@ -2515,7 +2520,7 @@ def test_known_outcome_retains_existing_continuation(uncertain_cycle, status):
 @pytest.mark.parametrize("failure", ["disconnect", "receipt-persistence"])
 def test_partial_fill_then_failure_retains_actual_adapter_facts(uncertain_cycle, failure):
     # Rule A requires measured peak evidence; peak = NAV gives zero drawdown and preserves this order invariant.
-    from application.ibkr_order_execution import submit_order_intent
+    from interactive_brokers_platform.application.ibkr_order_execution import submit_order_intent
 
     class DisconnectedStatus:
         filled = 1.0
@@ -2561,7 +2566,7 @@ def test_partial_fill_then_failure_retains_actual_adapter_facts(uncertain_cycle,
 
 
 def test_unknown_summary_uses_existing_reconciliation_receipt(uncertain_cycle):
-    from application.execution_receipt_adapter import attach_cycle_execution_receipt
+    from interactive_brokers_platform.application.execution_receipt_adapter import attach_cycle_execution_receipt
 
     _logs, summary = uncertain_cycle.run(SimpleNamespace(
         broker_order_id="original-order", status="Unknown", filled_quantity=1.0,
@@ -2619,13 +2624,13 @@ def test_invalid_vol_does_not_create_liquidation(monkeypatch, tmp_path):
                     SimpleNamespace(account="DU00000003", tag="SettledCash", currency="USD", value="1000")]
 
     submitted = []
-    from application.account_new_risk_gate_support import evaluate_account_values_new_risk_admission
+    from interactive_brokers_platform.application.account_new_risk_gate_support import evaluate_account_values_new_risk_admission
     admissions = []
     def capture(*args, **kwargs):
         result = evaluate_account_values_new_risk_admission(*args, **kwargs)
         admissions.append(result)
         return result
-    monkeypatch.setattr("application.execution_service.evaluate_account_values_new_risk_admission", capture)
+    monkeypatch.setattr("interactive_brokers_platform.application.execution_service.evaluate_account_values_new_risk_admission", capture)
     metadata = _signal_metadata({"VOO": 0.4}, risk_symbols=("VOO",), trade_date="2026-09-05")
     metadata["realized_vol"] = float("nan")
     _logs, summary = execute_rebalance(
@@ -2639,3 +2644,150 @@ def test_invalid_vol_does_not_create_liquidation(monkeypatch, tmp_path):
     )
     assert submitted == []
     assert "INVALID_REALIZED_VOL_FAIL_CLOSED" in admissions[0].reason_codes
+
+
+def test_execute_rebalance_accepts_options_dataclass_and_overrides(tmp_path):
+    class FakeIB(SyntheticAccountRefresh):
+        def openTrades(self):
+            return []
+        reqAllOpenOrders = openTrades
+
+        def fills(self):
+            return []
+
+        def accountValues(self):
+            return [
+                SimpleNamespace(tag="CashBalance", currency="USD", value="1000"),
+                SimpleNamespace(account="DU00000003", tag="SettledCash", currency="USD", value="1000"),
+            ]
+
+    targets = {"VOO": 0.5}
+    metadata = _signal_metadata(targets, risk_symbols=("VOO",), trade_date="2026-10-21")
+    metadata.update(
+        risk_gate="APPROVE",
+        risk_flags=("risk_gate:passed",),
+        risk_authority={
+            "strategy_profile": "synthetic-profile",
+            "account_ids": ("DU00000003",),
+            "trade_date": "2026-10-21",
+            "signal_date": None,
+            "effective_date": None,
+            "snapshot_as_of": None,
+            "portfolio_equity": 1000.0,
+            "targets": targets,
+            "max_target_values": {"VOO": 500.0},
+        },
+    )
+    submitted = []
+    options = RebalanceExecutionOptions(
+        strategy_profile="synthetic-profile",
+        account_ids=("DU00000003",),
+        dry_run_only=False,
+        cash_reserve_ratio=0.0,
+        rebalance_threshold_ratio=0.0,
+        limit_buy_premium=1.0,
+        sell_settle_delay_sec=0,
+        execution_lock_dir=tmp_path,
+        return_summary=True,
+    )
+    logs, summary = _execute_rebalance(
+        FakeIB(),
+        targets,
+        {},
+        {"peak_equity_usd": 1000.0, "equity": 1000.0, "buying_power": 1000.0},
+        fetch_quote_snapshots=lambda _ib, symbols: {
+            symbol: QuoteSnapshot(
+                symbol=symbol,
+                as_of=datetime(2026, 10, 21, 14, 0),
+                last_price=100.0,
+                bid_price=99.9,
+                ask_price=100.1,
+                currency="USD",
+            )
+            for symbol in symbols
+        },
+        submit_order_intent=lambda _ib, intent: submitted.append(intent),
+        order_intent_cls=OrderIntent,
+        translator=translate,
+        signal_metadata=metadata,
+        dry_run_only=True,
+        options=options,
+    )
+    assert submitted == []
+    assert summary["mode"] == "dry_run"
+    assert summary["orders_submitted"] == [
+        {"symbol": "VOO", "side": "buy", "quantity": 5, "limit_price": 100.0, "status": "dry_run"}
+    ]
+    assert summary["quote_snapshot"]["quotes"][0]["bid_price"] == 99.9
+    assert any(line.startswith("DRY_RUN buy VOO") for line in logs)
+
+
+def test_execute_rebalance_requires_mandatory_options_without_options_bundle():
+    with pytest.raises(TypeError, match="cash_reserve_ratio"):
+        _execute_rebalance(
+            SimpleNamespace(),
+            {},
+            {},
+            {"equity": 1000.0},
+            fetch_quote_snapshots=lambda *_a, **_kw: {},
+            submit_order_intent=lambda *_a, **_kw: None,
+            order_intent_cls=OrderIntent,
+            translator=translate,
+        )
+
+
+def test_execute_rebalance_handles_typed_quote_snapshot_and_execution_report(monkeypatch, tmp_path):
+    class FakeIB(SyntheticAccountRefresh):
+        def openTrades(self):
+            return []
+        reqAllOpenOrders = openTrades
+
+        def fills(self):
+            return []
+
+        def accountValues(self):
+            return [
+                SimpleNamespace(tag="CashBalance", currency="USD", value="1000"),
+                SimpleNamespace(account="DU00000003", tag="SettledCash", currency="USD", value="1000"),
+            ]
+
+    monkeypatch.setattr("interactive_brokers_platform.application.execution_service.time.sleep", lambda _seconds: None)
+    _logs, summary = execute_rebalance(
+        FakeIB(),
+        {"VOO": 0.0},
+        {"VOO": {"quantity": 2}},
+        {"peak_equity_usd": 1000.0, "equity": 1000.0, "buying_power": 1000.0},
+        fetch_quote_snapshots=lambda _ib, symbols: {
+            symbol: QuoteSnapshot(
+                symbol=symbol,
+                as_of=datetime(2026, 10, 21, 14, 0),
+                last_price=100.0,
+                currency="USD",
+            )
+            for symbol in symbols
+        },
+        submit_order_intent=lambda _ib, intent: ExecutionReport(
+            symbol=intent.symbol,
+            side=intent.side,
+            quantity=intent.quantity,
+            status="Filled",
+            filled_quantity=intent.quantity,
+            average_fill_price=101.0,
+            broker_order_id="typed-report-1",
+        ),
+        order_intent_cls=OrderIntent,
+        acquire_execution_claim=lambda: True,
+        translator=build_translator("en"),
+        signal_metadata=_signal_metadata({"VOO": 0.0}, risk_symbols=("VOO",), trade_date="2026-10-21"),
+        dry_run_only=False,
+        cash_reserve_ratio=0.0,
+        rebalance_threshold_ratio=0.0,
+        limit_buy_premium=1.0,
+        sell_settle_delay_sec=0,
+        execution_lock_dir=tmp_path,
+        return_summary=True,
+    )
+    assert summary["execution_status"] == "executed"
+    assert summary["projected_sell_release_value"] == 202.0
+    assert summary["orders_filled"][0]["broker_order_id"] == "typed-report-1"
+    assert summary["quote_snapshot"]["quotes"][0]["symbol"] == "VOO"

@@ -14,9 +14,12 @@ from pathlib import Path
 import sys
 
 if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    _repo_root = Path(__file__).resolve().parents[1]
+    for _path in (_repo_root, _repo_root / "src"):
+        if str(_path) not in sys.path:
+            sys.path.insert(0, str(_path))
 
-from notifications.unified_adapter import enabled as unified_enabled, monitor_message, publish_monitor
+from interactive_brokers_platform.notifications.unified_adapter import enabled as unified_enabled, monitor_message, publish_monitor
 
 try:
     from scripts.execution_report_heartbeat import _is_quiet_report, _send_telegram
@@ -294,7 +297,7 @@ def _target_status(target: DrillTarget, now: dt.datetime) -> tuple[dt.date, str,
                     quiet = False
         if quiet:
             if unified_enabled() and os.environ.get("DRILL_DIGEST_PREVIEW") != "true":
-                from notifications.unified_adapter import receipt_notification_kind
+                from interactive_brokers_platform.notifications.unified_adapter import receipt_notification_kind
                 kind = receipt_notification_kind(report, quiet_eligible=True)
                 publish_monitor(kind=kind, report=report, now=now, family="drill",
                                 target={"service_name": target.service, "strategy_profile": target.profile,

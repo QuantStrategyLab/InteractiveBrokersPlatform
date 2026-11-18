@@ -4,8 +4,8 @@ from copy import deepcopy
 import pytest
 
 from tests import test_unified_notification_adapter as original
-from notifications import unified_adapter as adapter
-from notifications.events import NotificationPublisher, RenderedNotification
+from interactive_brokers_platform.notifications import unified_adapter as adapter
+from interactive_brokers_platform.notifications.events import NotificationPublisher, RenderedNotification
 
 routing = original.routing
 
@@ -48,7 +48,7 @@ def test_diagnostics_have_no_private_locations(routing, monkeypatch, flag, local
 @pytest.mark.parametrize("flag", ["false", "true"])
 @pytest.mark.parametrize("boundary", ["diagnostic", "final"])
 def test_redactor_exception_blocks_all_sinks(routing, monkeypatch, flag, boundary):
-    from notifications import redaction
+    from interactive_brokers_platform.notifications import redaction
     from quant_platform_kit.notifications import _redaction
     monkeypatch.setenv(adapter.FLAG, flag)
     sent, logs = [], []

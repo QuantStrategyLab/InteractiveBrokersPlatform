@@ -14,8 +14,8 @@ for candidate in (ROOT, QPK_SRC, UES_SRC, HES_SRC):
     if candidate.exists() and str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
-import runtime_config_support as runtime_config_support_module
-from runtime_config_support import (
+import interactive_brokers_platform.runtime_config_support as runtime_config_support_module
+from interactive_brokers_platform.runtime_config_support import (
     DEFAULT_MARKET,
     DEFAULT_MARKET_CALENDAR,
     DEFAULT_MARKET_CURRENCY,
@@ -42,7 +42,7 @@ from runtime_config_support import (
     resolve_optional_non_negative_float_env,
     resolve_optional_ratio_env,
 )
-from strategy_registry import (
+from interactive_brokers_platform.strategy_registry import (
     HK_EQUITY_DOMAIN,
     IBKR_PLATFORM,
     US_EQUITY_DOMAIN,
@@ -736,7 +736,7 @@ def test_platform_supported_profiles_are_filtered_by_registry():
 
 
 def test_platform_policy_accepts_future_hk_equity_domain():
-    from strategy_registry import PLATFORM_SUPPORTED_DOMAINS
+    from interactive_brokers_platform.strategy_registry import PLATFORM_SUPPORTED_DOMAINS
 
     assert HK_EQUITY_DOMAIN in PLATFORM_SUPPORTED_DOMAINS[IBKR_PLATFORM]
     assert US_EQUITY_DOMAIN in PLATFORM_SUPPORTED_DOMAINS[IBKR_PLATFORM]

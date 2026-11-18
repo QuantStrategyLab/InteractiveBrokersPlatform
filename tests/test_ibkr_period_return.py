@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from application.ibkr_period_return import PeriodReturnError, build_ibkr_period_return
+from interactive_brokers_platform.application.ibkr_period_return import PeriodReturnError, build_ibkr_period_return
 
 
 OBSERVED = datetime(2026, 10, 8, 10, tzinfo=timezone.utc)

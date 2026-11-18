@@ -58,10 +58,12 @@ def cli_workspace(tmp_path):
         "diagnose_serving_image_identity.py", "diagnose_image_static_source.py",
     ):
         shutil.copyfile(ROOT / "scripts" / name, scripts / name)
-    application = tmp_path / "application"
-    application.mkdir()
-    for name in ("__init__.py", "account_facts_target_config.py"):
-        shutil.copyfile(ROOT / "application" / name, application / name)
+    pkg_root = tmp_path / "src" / "interactive_brokers_platform"
+    application = pkg_root / "application"
+    application.mkdir(parents=True)
+    shutil.copyfile(ROOT / "src/interactive_brokers_platform/__init__.py", pkg_root / "__init__.py")
+    for name in ("__init__.py", "account_facts_projection.py", "account_facts_target_config.py"):
+        shutil.copyfile(ROOT / "src/interactive_brokers_platform/application" / name, application / name)
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "synthetic-account-facts-cli"\nversion = "0.0.0"\n'
         'requires-python = ">=3.11"\n[tool.uv]\npackage = false\n'

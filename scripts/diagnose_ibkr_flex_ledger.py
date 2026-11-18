@@ -10,13 +10,13 @@ from collections.abc import Sequence
 from datetime import date
 from typing import Any
 
-from application.account_facts_target_config import account_selector, parse_additional_target_configs
-from application.ibkr_flex_source import (
+from interactive_brokers_platform.application.account_facts_target_config import account_selector, parse_additional_target_configs
+from interactive_brokers_platform.application.ibkr_flex_source import (
     CONFIGURED_COVERAGE_SECTIONS, CONFIGURED_COVERAGE_SLOTS, FlexReportPending, FlexSourceError,
     diagnose_activity_flex_ledger, diagnose_configured_flex_coverage,
 )
-from application.ibkr_flex_ledger import CASH_REPORT_MISSING_CODES
-from application.ibkr_flex_executions import EXECUTION_SOURCE_FIELDS, FlexExecutionsError
+from interactive_brokers_platform.application.ibkr_flex_ledger import CASH_REPORT_MISSING_CODES
+from interactive_brokers_platform.application.ibkr_flex_executions import EXECUTION_SOURCE_FIELDS, FlexExecutionsError
 
 
 _SCHEMA_VERSION = "ibkr_flex_diagnostic.v1"
@@ -378,7 +378,7 @@ def _validated_coverage_report(value: object) -> dict[str, Any]:
                         (not present or type(total) is not int or not 0 <= total <= 8 * 1024 * 1024))):
                 return invalid
             sections[name] = counts
-        from application.ibkr_flex_source import RECOVERY_COMPARABILITY_REASONS
+        from interactive_brokers_platform.application.ibkr_flex_source import RECOVERY_COMPARABILITY_REASONS
         recovery = row.get("recovery_comparability")
         if not isinstance(recovery, dict) or set(recovery) != {"positions", "cash"}:
             return invalid

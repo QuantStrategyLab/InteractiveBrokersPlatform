@@ -180,6 +180,6 @@ jobs:
           DIGEST_TARGET_BINDINGS_JSON: ${{ secrets.DIGEST_TARGET_BINDINGS_JSON }}
           DIGEST_NOTIFICATION_SCHEDULE_JSON: ${{ vars.DIGEST_NOTIFICATION_SCHEDULE_JSON }}
         run: |
-          if uv run --no-sync python -c 'import os, sys; from notifications.unified_adapter import enabled; sys.exit(0 if enabled() or os.environ.get("LEGACY_PRODUCER_ALLOWED") == "true" else 1)'; then
+          if uv run --no-sync python -c 'import os, sys; from interactive_brokers_platform.notifications.unified_adapter import enabled; sys.exit(0 if enabled() or os.environ.get("LEGACY_PRODUCER_ALLOWED") == "true" else 1)'; then
             uv run --no-sync python scripts/emit_unified_digest_candidates.py
           fi

@@ -22,7 +22,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from application.broker_reconciliation_candidate import (
+from interactive_brokers_platform.application.broker_reconciliation_candidate import (
     SourceReceiptExpectation, calculate_source_receipts_sha256, canonical_source_receipt_records_json,
     validate_reconciliation_candidate_sources,
 )

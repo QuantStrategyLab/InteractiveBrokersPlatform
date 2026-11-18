@@ -3,8 +3,8 @@ import hashlib
 
 import pytest
 
-from application import ibkr_flex_source
-from application.ibkr_flex_source import FlexReport
+from interactive_brokers_platform.application import ibkr_flex_source
+from interactive_brokers_platform.application.ibkr_flex_source import FlexReport
 from scripts import diagnose_ibkr_flex_ledger as cli
 
 
@@ -189,7 +189,7 @@ def test_cash_cli_one_fetch_is_independent_of_missing_twr_and_never_prints_money
 
 
 def test_cash_stdout_accepts_verified_period_end_without_current_cash_authority():
-    from application.ibkr_flex_ledger import build_flex_cash_diagnostic, build_flex_ledger
+    from interactive_brokers_platform.application.ibkr_flex_ledger import build_flex_cash_diagnostic, build_flex_ledger
     report = _cash_report()
     content = report.content.replace(b'currency="USD" endingSettledCash=',
         b'accountId="DU0000000" model="" fromDate="20260101" toDate="20260131" currency="USD" endingCash="0" endingSettledCash=')
@@ -221,8 +221,8 @@ def test_cash_cli_reports_only_statement_account_capability_enum(monkeypatch, ca
 
 @pytest.mark.parametrize("foreign", [False, True])
 def test_account_capability_never_selects_first_duplicate_or_foreign_row(foreign):
-    from application.ibkr_flex_ledger import build_flex_cash_diagnostic, build_flex_ledger
-    from application.ibkr_flex_source import FlexSourceError
+    from interactive_brokers_platform.application.ibkr_flex_ledger import build_flex_cash_diagnostic, build_flex_ledger
+    from interactive_brokers_platform.application.ibkr_flex_source import FlexSourceError
     report = _cash_report()
     info = b'<AccountInformation accountId="DU0000000" currency="USD" accountCapabilities="Cash"/>'
     info += b'<AccountInformation accountId="DU0000001" currency="USD" accountCapabilities="Margin"/>' if foreign else info
@@ -238,7 +238,7 @@ def test_account_capability_never_selects_first_duplicate_or_foreign_row(foreign
 
 @pytest.mark.parametrize("raw", ["PRIVATE_CAPABILITY_CANARY", None, True, ["CASH"]])
 def test_cash_stdout_rejects_unvalidated_capability_values(raw):
-    from application.ibkr_flex_ledger import build_flex_cash_diagnostic, build_flex_ledger
+    from interactive_brokers_platform.application.ibkr_flex_ledger import build_flex_cash_diagnostic, build_flex_ledger
     value = build_flex_cash_diagnostic(build_flex_ledger(_cash_report(), expected_account_ids=("DU0000000",)))
     value["account_capabilities"] = raw
     result = cli._validated_cash_report(value)
@@ -248,7 +248,7 @@ def test_cash_stdout_rejects_unvalidated_capability_values(raw):
 
 @pytest.mark.parametrize("change", ["digest", "period", "field", "type", "count", "boolean", "cash_fact_code", "cash_fact_status"])
 def test_cash_stdout_rejects_invalid_or_private_dynamic_fields(change):
-    from application.ibkr_flex_ledger import build_flex_cash_diagnostic, build_flex_ledger
+    from interactive_brokers_platform.application.ibkr_flex_ledger import build_flex_cash_diagnostic, build_flex_ledger
     value = build_flex_cash_diagnostic(build_flex_ledger(_cash_report(), expected_account_ids=("DU0000000",)))
     shape = value["cash_report"]
     if change == "digest":
@@ -290,7 +290,7 @@ def test_cash_pending_collects_the_original_handle_without_regenerating(monkeypa
         raise ibkr_flex_source.FlexReportPending(request)
     def collect(handle, **_):
         calls.append(("collect", handle))
-        from application.ibkr_flex_ledger import build_flex_ledger
+        from interactive_brokers_platform.application.ibkr_flex_ledger import build_flex_ledger
         return build_flex_ledger(_cash_report(), expected_account_ids=("DU0000000",))
     monkeypatch.setattr(ibkr_flex_source, "fetch_activity_flex_xml", pending)
     monkeypatch.setattr(ibkr_flex_source, "collect_pending_activity_flex_ledger", collect)

@@ -23,7 +23,10 @@ def read_account_summary_cash(ib, account_ids, *, timeout_seconds=30,
     decimal repeats within this request may share one observation; conflicting
     values remain invalid rather than choosing the first, last or larger value.
     """
-    from application.ibkr_cash_observations import TAGS, capture_cash_observation_rows, build_cash_observations, _decimal_text
+    try:
+        from interactive_brokers_platform.application.ibkr_cash_observations import TAGS, capture_cash_observation_rows, build_cash_observations, _decimal_text
+    except ModuleNotFoundError:
+        from application.ibkr_cash_observations import TAGS, capture_cash_observation_rows, build_cash_observations, _decimal_text
     if (not isinstance(account_ids, (tuple, list)) or len(account_ids) != 1
             or not re.fullmatch(r"(?:U|DU)[0-9]+", account_ids[0])
             or account_ids[0] not in ib.managedAccounts() or ib.wrapper.acctSummary
@@ -108,8 +111,12 @@ def read_native_funding_inputs(ib, account_ids, *, configured_quantity_step, tim
     SDK's completed async request and the original reconciliation normalizer,
     retaining both response and unresolved cache rows without binding orders.
     """
-    from application.broker_reconciliation import _normalise_open_trade
-    from application.ibkr_cash_observations import _decimal_text
+    try:
+        from interactive_brokers_platform.application.broker_reconciliation import _normalise_open_trade
+        from interactive_brokers_platform.application.ibkr_cash_observations import _decimal_text
+    except ModuleNotFoundError:
+        from application.broker_reconciliation import _normalise_open_trade
+        from application.ibkr_cash_observations import _decimal_text
     from ib_insync import Stock
     if (not isinstance(account_ids, (list, tuple)) or len(account_ids) != 1
             or not re.fullmatch(r"(?:U|DU)[0-9]+", account_ids[0])
@@ -197,8 +204,12 @@ def observe(runtime, build_facts, env, *, summary_reader=None, funding_reader=No
 
 
 if __name__ == "__main__":
-    import main
-    from application.account_facts import build_ibkr_account_facts
+    try:
+        from interactive_brokers_platform import main
+        from interactive_brokers_platform.application.account_facts import build_ibkr_account_facts
+    except ModuleNotFoundError:
+        import main
+        from application.account_facts import build_ibkr_account_facts
     raise SystemExit(observe(main, build_ibkr_account_facts, os.environ, summary_reader=read_account_summary_cash,
         funding_reader=lambda ib, ids: read_native_funding_inputs(ib, ids,
             configured_quantity_step=main.RUNTIME_SETTINGS.quantity_step)))

@@ -16,21 +16,21 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 import requests
 
-from application.ibkr_flex_source import (
+from interactive_brokers_platform.application.ibkr_flex_source import (
     FlexReportPending, FlexSourceError, collect_pending_activity_flex_ledger,
     import_activity_flex_ledger, import_activity_flex_ledger_from_request,
     request_activity_flex_report,
     collect_activity_flex_xml,
 )
-from application.ibkr_flex_ledger import build_flex_ledger
-from application.ibkr_period_return import (
+from interactive_brokers_platform.application.ibkr_flex_ledger import build_flex_ledger
+from interactive_brokers_platform.application.ibkr_period_return import (
     _ACCOUNT as _PERIOD_ACCOUNT,
     _SCOPE as _PERIOD_SCOPE,
     _TARGET as _PERIOD_TARGET,
     PeriodReturnError, build_ibkr_period_return, validate_period_return_scope,
 )
-from application.ibkr_flex_executions import build_ibkr_executions
-from application.ibkr_external_flow import build_ibkr_external_flow
+from interactive_brokers_platform.application.ibkr_flex_executions import build_ibkr_executions
+from interactive_brokers_platform.application.ibkr_external_flow import build_ibkr_external_flow
 from scripts.publish_account_facts_from_report import (
     _NoRedirect, _additional_target_configs, _bound_source_id, _selector,
 )

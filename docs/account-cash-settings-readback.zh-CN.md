@@ -1,3 +1,5 @@
+[English](account-cash-settings-readback.md) | 简体中文
+
 # 实际承载版本的现金设置：只读诊断
 
 `scripts.diagnose_account_cash_settings` 读取既有 Cloud Run 元数据，核对实际承载流量版本的现金配置声明。它不调用服务业务接口，不读取账户报告、券商、Secret 内容或容器镜像，不发布事实、修改配置或恢复熔断。

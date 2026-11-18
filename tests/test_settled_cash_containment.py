@@ -10,8 +10,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from application import execution_service as service
-from decision_mapper import map_strategy_decision
+from interactive_brokers_platform.application import execution_service as service
+from interactive_brokers_platform.decision_mapper import map_strategy_decision
 from quant_platform_kit.common.execution_state import (
     AccountSubmissionSession, ExecutionMarkerStore, submission_intent_digest,
     submission_release_digest,
@@ -92,7 +92,7 @@ def gated(values, diagnostics=None, profile=PROFILE):
 def native(monkeypatch, tmp_path):
     from scripts.validate_cloud_run_startup import _install_smoke_environment
     _install_smoke_environment()
-    import main
+    from interactive_brokers_platform import main
     monkeypatch.delenv('ACCOUNT_NEW_RISK_GATE', raising=False)
     # Notification IO is independent of the financial path under examination.
     monkeypatch.setattr(service, 'maybe_publish_attention_for_admission', lambda *a, **k: {})

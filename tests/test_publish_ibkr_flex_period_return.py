@@ -7,7 +7,7 @@ from urllib.error import HTTPError
 import pytest
 
 from scripts import publish_ibkr_flex_period_return as cli
-from application.ibkr_flex_source import (
+from interactive_brokers_platform.application.ibkr_flex_source import (
     FlexReportPending, import_activity_flex_ledger_from_request,
 )
 

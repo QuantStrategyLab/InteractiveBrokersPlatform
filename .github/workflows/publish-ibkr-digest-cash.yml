@@ -8,8 +8,9 @@ on:
         type: boolean
         default: false
   schedule:
-    # Saturday UTC also collects Friday's completed statement if it was not ready on Friday.
-    - cron: "5 22 * * 1-6"
+    # 18:23 Singapore time, giving GitHub time to start before the next 07:00 digest.
+    # Saturday Singapore time also collects Friday's completed statement.
+    - cron: "23 10 * * 1-6"
 
 permissions: {}
 concurrency:

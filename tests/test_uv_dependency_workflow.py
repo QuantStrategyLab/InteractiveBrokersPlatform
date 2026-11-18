@@ -115,7 +115,7 @@ def test_ci_uses_declared_immutable_internal_dependency_revisions() -> None:
 
 def test_tqqq_research_overlay_is_immutable_isolated_and_has_no_cloud_identity() -> None:
     offline = _job_block(Path(".github/workflows/ci.yml").read_text(), "tqqq-offline-risk")
-    source = Path("application/tqqq_offline_risk.py").read_text()
+    source = Path("src/interactive_brokers_platform/application/tqqq_offline_risk.py").read_text()
     for env_key, code_key in (("UES_OFFLINE_SHA", "UES_REVISION"), ("QPK_OFFLINE_SHA", "QPK_REVISION")):
         sha = re.search(rf"{env_key}: ([0-9a-f]{{40}})$", offline, re.M).group(1)
         assert f'{code_key} = "{sha}"' in source

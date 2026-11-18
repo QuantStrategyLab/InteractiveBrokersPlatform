@@ -4,8 +4,8 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-from application import signal_provenance
-from application import runtime_strategy_adapters as rsa
+from interactive_brokers_platform.application import signal_provenance
+from interactive_brokers_platform.application import runtime_strategy_adapters as rsa
 
 
 @pytest.fixture(autouse=True)

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-from strategy_runtime import LoadedStrategyRuntime
+from interactive_brokers_platform.strategy_runtime import LoadedStrategyRuntime
 
 
 def runtime(profile, required):

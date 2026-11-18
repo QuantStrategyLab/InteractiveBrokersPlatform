@@ -301,7 +301,7 @@ def test_source_publisher_preserves_advisory_outcome_without_two_reviewers(outco
 @pytest.mark.parametrize("fault", ["source_changed", "expectation_changed", "member_substitution", "legacy_v1", "review_binding", "missing_source"])
 def test_both_consumers_revalidate_sources_and_candidate_members(consumer, fault):
     from dataclasses import replace
-    from application.broker_reconciliation_candidate import calculate_source_receipts_sha256
+    from interactive_brokers_platform.application.broker_reconciliation_candidate import calculate_source_receipts_sha256
     from quant_platform_kit.common.broker_reconciliation_enrollment import calculate_broker_reconciliation_baseline_candidate_sha256
     from scripts.verify_reconciliation_recovery import verify_reconciliation_recovery
     from tests.test_reconciliation_recovery_verify_only import _console_response, _evidence, _runtime_target

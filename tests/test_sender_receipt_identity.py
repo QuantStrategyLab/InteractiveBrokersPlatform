@@ -6,9 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from notifications import unified_adapter as adapter
+from interactive_brokers_platform.notifications import unified_adapter as adapter
 from quant_platform_kit.notifications.unified_contract import order_identity_digest
-from notifications.telegram import send_telegram_message
+from interactive_brokers_platform.notifications.telegram import send_telegram_message
 from tests.test_unified_notification_adapter import StateStore, event
 
 CASES = ["boolean", "boolean_false", "missing", "null", "empty", "blank", "negative_ack", "transport_ack",

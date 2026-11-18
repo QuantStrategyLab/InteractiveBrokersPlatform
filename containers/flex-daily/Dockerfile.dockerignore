@@ -2,7 +2,11 @@
 !containers/
 !containers/flex-daily/
 !containers/flex-daily/requirements.txt
-!application/
-!application/ibkr_flex_source.py
-!application/flex_daily/
-!application/flex_daily/*.py
+!src/
+!src/interactive_brokers_platform/
+!src/interactive_brokers_platform/__init__.py
+!src/interactive_brokers_platform/application/
+!src/interactive_brokers_platform/application/__init__.py
+!src/interactive_brokers_platform/application/ibkr_flex_source.py
+!src/interactive_brokers_platform/application/flex_daily/
+!src/interactive_brokers_platform/application/flex_daily/*.py

@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from quant_platform_kit.common.models import OrderIntent
 
-from application.paper_liquidation_service import build_liquidation_intents, execute_paper_liquidation
+from interactive_brokers_platform.application.paper_liquidation_service import build_liquidation_intents, execute_paper_liquidation
 
 
 def test_build_liquidation_intents_sells_longs_and_buys_shorts():

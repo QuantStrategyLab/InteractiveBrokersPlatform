@@ -24,10 +24,11 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+for _path in (ROOT, ROOT / "src"):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
-from notifications.telegram import send_telegram_message  # noqa: E402
+from interactive_brokers_platform.notifications.telegram import send_telegram_message  # noqa: E402
 
 _QRS_SNAPSHOT = ROOT / "tests" / "fixtures" / "qrs_notification_contract"
 _PREVIEW_PLATFORM_ID = "ibkr"

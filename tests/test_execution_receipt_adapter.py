@@ -5,8 +5,8 @@ from copy import deepcopy
 
 import pytest
 
-from application.cycle_result import StrategyCycleResult
-from application.execution_receipt_adapter import attach_cycle_execution_receipt
+from interactive_brokers_platform.application.cycle_result import StrategyCycleResult
+from interactive_brokers_platform.application.execution_receipt_adapter import attach_cycle_execution_receipt
 
 
 REVISION = "a" * 40
