@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from runtime_config_support import AccountGroupConfig
+from interactive_brokers_platform.runtime_config_support import AccountGroupConfig
 from scripts import deploy_pilot_no_traffic as pilot
 from scripts import pilot_cloud_tcp_server as server
 from scripts import run_pilot_cloud_tcp as cloud

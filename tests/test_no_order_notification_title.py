@@ -2,8 +2,8 @@ import copy
 
 import pytest
 
-from notifications.renderers import render_trade_notification, _localize_notification_text
-from notifications.telegram import build_translator
+from interactive_brokers_platform.notifications.renderers import render_trade_notification, _localize_notification_text
+from interactive_brokers_platform.notifications.telegram import build_translator
 
 
 def _render(summary, *, locale, trade_logs=()):

@@ -3,14 +3,14 @@ from dataclasses import replace
 
 import pytest
 
-from application import account_new_risk_gate_support as gate
-from application.ibkr_portfolio import fetch_portfolio_snapshot
-from application.rebalance_service import (
+from interactive_brokers_platform.application import account_new_risk_gate_support as gate
+from interactive_brokers_platform.application.ibkr_portfolio import fetch_portfolio_snapshot
+from interactive_brokers_platform.application.rebalance_service import (
     _snapshot_to_portfolio_view,
     _strategy_portfolio_view,
     run_strategy_core,
 )
-from application.runtime_dependencies import IBKRRebalanceConfig, IBKRRebalanceRuntime
+from interactive_brokers_platform.application.runtime_dependencies import IBKRRebalanceConfig, IBKRRebalanceRuntime
 from quant_platform_kit.common.execution_state import ExecutionMarkerStore
 from quant_platform_kit.common.port_adapters import CallableNotificationPort
 from tests.test_ibkr_portfolio import (

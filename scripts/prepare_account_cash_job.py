@@ -50,7 +50,14 @@ def prepare(env, expected, *, reader=preflight.binding._read):
     base, _ = preflight.image_identity.immutable_image(revision)
     if not IMAGE.fullmatch(base):
         raise ValueError("base_image_invalid")
-    sources = {name: (ROOT / name).read_bytes() for name in FILES}
+    sources = {
+        name: (
+            ROOT / "src" / "interactive_brokers_platform" / name
+            if name.startswith("application/")
+            else ROOT / name
+        ).read_bytes()
+        for name in FILES
+    }
     dockerfile = ("FROM " + base + "\nUSER root\n" + "".join(
         "COPY --chown=1000:1000 " + name + " /app/" + name + "\n" for name in FILES)
         + "RUN chmod 0644 " + " ".join("/app/" + name for name in FILES)

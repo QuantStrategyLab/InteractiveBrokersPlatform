@@ -2,8 +2,8 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
-from application.cycle_result import StrategyCycleResult
-from application import settlement_route, settlement_reporting
+from interactive_brokers_platform.application.cycle_result import StrategyCycleResult
+from interactive_brokers_platform.application import settlement_route, settlement_reporting
 
 
 @pytest.mark.parametrize('enabled', [False, True])
@@ -47,7 +47,7 @@ def test_settlement_preserves_existing_receipt_facts(strategy_module_factory, mo
     monkeypatch.setattr(module, 'run_strategy_core', lambda **k: StrategyCycleResult(
         result='synthetic cycle', execution_summary=deepcopy(summary)))
     monkeypatch.setattr(settlement_route, 'runtime_settlement_store', lambda m: SimpleNamespace(records=lambda: []))
-    monkeypatch.setattr('application.order_settlement.settlement_summary', lambda store: deepcopy(observed))
+    monkeypatch.setattr('interactive_brokers_platform.application.order_settlement.settlement_summary', lambda store: deepcopy(observed))
     monkeypatch.setattr(settlement_reporting, 'publish_settlement_notices', lambda *a, **k: None)
     monkeypatch.setattr(module, '_publish_runtime_failure_notification', lambda **k: None)
     reports = []

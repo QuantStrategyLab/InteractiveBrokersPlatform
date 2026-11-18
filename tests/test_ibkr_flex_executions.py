@@ -7,9 +7,9 @@ from xml.etree import ElementTree
 
 import pytest
 
-from application.ibkr_flex_executions import build_ibkr_executions
-from application.ibkr_flex_ledger import build_flex_ledger
-from application.ibkr_flex_source import FlexReport, FlexSourceError
+from interactive_brokers_platform.application.ibkr_flex_executions import build_ibkr_executions
+from interactive_brokers_platform.application.ibkr_flex_ledger import build_flex_ledger
+from interactive_brokers_platform.application.ibkr_flex_source import FlexReport, FlexSourceError
 
 
 ACCOUNT = "DU0000000"

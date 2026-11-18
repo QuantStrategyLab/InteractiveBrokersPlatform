@@ -8,8 +8,10 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+SRC = ROOT / "src"
+for _candidate in (ROOT, SRC):
+    if str(_candidate) not in sys.path:
+        sys.path.insert(0, str(_candidate))
 
 
 def synthetic_account_submission(venue, *, local_dir, metadata, profile, account_id, receipt=None):
@@ -179,8 +181,8 @@ def strategy_module_factory(monkeypatch):
         ib_insync_module.LimitOrder = type("LimitOrder", (), {})
         monkeypatch.setitem(sys.modules, "ib_insync", ib_insync_module)
 
-        sys.modules.pop("main", None)
-        module = importlib.import_module("main")
+        sys.modules.pop("interactive_brokers_platform.main", None)
+        module = importlib.import_module("interactive_brokers_platform.main")
         return importlib.reload(module)
 
     return load_strategy_module

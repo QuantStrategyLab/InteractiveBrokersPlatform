@@ -16,10 +16,10 @@ QuantPlatformKit and both strategy packages at pinned revisions.
 
 ## Layout
 
-- `application/` — execution, reconciliation, runtime and risk wiring.
-- `entrypoints/`, `main.py` — service entry points.
-- `strategy/` — strategy loading and registry.
-- `notifications/` — notification composition and routing.
+- `src/interactive_brokers_platform/application/` — execution, reconciliation, runtime and risk wiring.
+- `src/interactive_brokers_platform/entrypoints/`, `src/interactive_brokers_platform/main.py` — service entry points.
+- `src/interactive_brokers_platform/strategy/` — strategy loading and registry.
+- `src/interactive_brokers_platform/notifications/` — notification composition and routing.
 - `scripts/`, `config/`, `configs/` — operator tooling and runtime manifests.
 - `docs/` — runtime, reconciliation, notification and pilot-release contracts.
 - `tests/` — offline regression, workflow contract and research-consumer tests.

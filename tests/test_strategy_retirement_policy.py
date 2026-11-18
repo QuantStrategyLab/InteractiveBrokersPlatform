@@ -3,8 +3,8 @@
 import pytest
 
 from hk_equity_strategies import get_platform_runtime_adapter, get_strategy_catalog
-from strategy_loader import load_strategy_definition
-from strategy_registry import get_supported_profiles_for_platform, resolve_strategy_definition
+from interactive_brokers_platform.strategy_loader import load_strategy_definition
+from interactive_brokers_platform.strategy_registry import get_supported_profiles_for_platform, resolve_strategy_definition
 
 
 RETIRED_PROFILES = ('hk_global_etf_tactical_rotation', 'hk_low_vol_dividend_quality_snapshot')

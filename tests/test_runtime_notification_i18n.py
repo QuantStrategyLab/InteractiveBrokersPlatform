@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from notifications.telegram import build_translator
+from interactive_brokers_platform.notifications.telegram import build_translator
 
 
 @pytest.mark.parametrize("locale", ["zh-CN", "zh_TW", "ZH-hans", " zh "])
@@ -23,7 +23,7 @@ def runtime_function(name, **overrides):
         "_publish_runtime_failure_notification": "notifications_runtime.py",
         "_publish_runtime_failure_notification_legacy": "notifications_runtime.py",
     }.get(name, "main.py")
-    tree = ast.parse((root / source_name).read_text())
+    tree = ast.parse((root / "src" / "interactive_brokers_platform" / source_name).read_text())
     function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name)
     namespace = dict(os=os, request=SimpleNamespace(method="GET", path="/main"),
                      NOTIFY_LANG="zh-CN", SERVICE_NAME="Test service", SECRET_NAME="Test secret alias",
@@ -62,7 +62,7 @@ def test_startup_alert_is_compact_localized_and_does_not_embed_provider_text(loc
 
 @pytest.mark.parametrize("handler_name", ['_handle_request'])
 def test_actual_cycle_exception_handler_emits_no_provider_text(handler_name):
-    source = (Path(__file__).resolve().parents[1] / "http_routes.py").read_text()
+    source = (Path(__file__).resolve().parents[1] / "src/interactive_brokers_platform/http_routes.py").read_text()
     function = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name == handler_name)
     def _calls_append_runtime_report_error(node):
         for call in ast.walk(node):

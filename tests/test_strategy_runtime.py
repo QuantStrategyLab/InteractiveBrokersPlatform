@@ -14,7 +14,7 @@ for candidate in (ROOT, QPK_SRC, UES_SRC, HES_SRC):
     if candidate.exists() and str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
-import strategy_runtime as strategy_runtime_module
+import interactive_brokers_platform.strategy_runtime as strategy_runtime_module
 from quant_platform_kit.common.models import PortfolioSnapshot, Position
 from quant_platform_kit.common.runtime_target import build_runtime_target
 from quant_platform_kit.common.strategy_contracts import (
@@ -24,7 +24,7 @@ from quant_platform_kit.common.strategy_contracts import (
     StrategyRuntimeAdapter,
     StrategyRuntimePolicy,
 )
-from runtime_config_support import PlatformRuntimeSettings
+from interactive_brokers_platform.runtime_config_support import PlatformRuntimeSettings
 
 
 class _FakeStrategyPluginSignal:

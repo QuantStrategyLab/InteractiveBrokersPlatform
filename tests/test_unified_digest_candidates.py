@@ -56,7 +56,7 @@ def test_bad_source_stays_visible_or_rejects(mutation):
 ])
 def test_main_reports_allowlisted_reason_and_keeps_private_errors_generic(monkeypatch, capsys, error, reason):
     import json
-    import notifications.digest_snapshot.digest_archive as archive
+    import interactive_brokers_platform.notifications.digest_snapshot.digest_archive as archive
     def failed(_env):
         raise error
     monkeypatch.setattr(archive, "emit", failed)
@@ -67,7 +67,7 @@ def test_main_reports_allowlisted_reason_and_keeps_private_errors_generic(monkey
 
 
 def test_archive_default_off_and_disabled_target_never_read_or_upload():
-    from notifications.digest_snapshot.digest_archive import emit
+    from interactive_brokers_platform.notifications.digest_snapshot.digest_archive import emit
     def forbidden(*args): raise AssertionError("unexpected I/O")
     assert emit({}, read=forbidden, upload=forbidden)["status"] == "disabled"
     assert emit({"QSL_ROUTINE_NOTIFICATION_MODE": "daily_digest", "RUNTIME_TARGET_ENABLED": "false"},
@@ -76,7 +76,7 @@ def test_archive_default_off_and_disabled_target_never_read_or_upload():
 
 def test_archive_aggregates_window_and_uploads_once_without_private_output():
     import json
-    from notifications.digest_snapshot.digest_archive import emit
+    from interactive_brokers_platform.notifications.digest_snapshot.digest_archive import emit
     env = dict(QSL_ROUTINE_NOTIFICATION_MODE="daily_digest", RUNTIME_TARGET_ENABLED="true",
         RUNTIME_TARGET_JSON=json.dumps(TARGET), DIGEST_STORE_TARGET="synthetic-slot",
         DIGEST_OPAQUE_ACCOUNT_UID="synthetic-uid", DIGEST_TARGET_ID="synthetic-target",
@@ -106,7 +106,7 @@ def test_archive_aggregates_window_and_uploads_once_without_private_output():
 def test_configured_closed_session_proves_idle_without_inventing_runs(monkeypatch):
     import json
     import quant_platform_kit.common.runtime_heartbeat_policy as policy
-    from notifications.digest_snapshot.digest_archive import emit
+    from interactive_brokers_platform.notifications.digest_snapshot.digest_archive import emit
     env = dict(QSL_ROUTINE_NOTIFICATION_MODE="daily_digest", RUNTIME_TARGET_ENABLED="true",
         RUNTIME_TARGET_JSON=json.dumps(TARGET), DIGEST_STORE_TARGET="synthetic-slot",
         DIGEST_OPAQUE_ACCOUNT_UID="synthetic-uid", DIGEST_TARGET_ID="synthetic-target",
@@ -126,7 +126,7 @@ def test_configured_closed_session_proves_idle_without_inventing_runs(monkeypatc
 
 def test_multi_target_bindings_use_each_explicit_enablement_without_a_global_target():
     import json
-    from notifications.digest_snapshot.digest_archive import emit
+    from interactive_brokers_platform.notifications.digest_snapshot.digest_archive import emit
     result = emit({"QSL_ROUTINE_NOTIFICATION_MODE": "daily_digest",
         "DIGEST_TARGET_BINDINGS_JSON": json.dumps([{"RUNTIME_TARGET_ENABLED": "false"}])},
         read=lambda args: pytest.fail("disabled target must not be read"),
@@ -178,7 +178,7 @@ def _probe_report(*, started_at, observed_at, finished_at, account_id="U00000001
 def test_probe_report_carries_snapshot_onto_scheduled_idle_and_is_excluded_from_cycles(monkeypatch):
     import json
     import quant_platform_kit.common.runtime_heartbeat_policy as policy
-    from notifications.digest_snapshot.digest_archive import emit
+    from interactive_brokers_platform.notifications.digest_snapshot.digest_archive import emit
 
     target = {**TARGET, "platform_id": "ibkr", "account_selector": ["U00000001"], "dry_run_only": False}
     env = dict(
@@ -220,7 +220,7 @@ def test_probe_report_carries_snapshot_onto_scheduled_idle_and_is_excluded_from_
 def test_off_schedule_dry_run_suppressed_on_live_target_and_uses_7day_carryover(monkeypatch):
     import json
     import quant_platform_kit.common.runtime_heartbeat_policy as policy
-    from notifications.digest_snapshot.digest_archive import emit
+    from interactive_brokers_platform.notifications.digest_snapshot.digest_archive import emit
 
     target = {**TARGET, "platform_id": "ibkr", "account_selector": ["U00000001"], "dry_run_only": False}
     env = dict(
@@ -275,7 +275,7 @@ def test_off_schedule_dry_run_suppressed_on_live_target_and_uses_7day_carryover(
 
 def test_persist_archived_reports_carries_probe_snapshot_to_exec_run(monkeypatch):
     import json
-    import notifications.unified_adapter as adapter
+    import interactive_brokers_platform.notifications.unified_adapter as adapter
 
     target = {**TARGET, "platform_id": "ibkr", "account_selector": ["U00000001"], "dry_run_only": False}
     env = dict(
@@ -332,9 +332,9 @@ def test_notify_account_facts_failure_redacts_private_details():
 
 def test_failed_off_schedule_dry_run_is_preserved_not_suppressed_as_idle(monkeypatch):
     import json
-    import notifications.unified_adapter as adapter
+    import interactive_brokers_platform.notifications.unified_adapter as adapter
     import quant_platform_kit.common.runtime_heartbeat_policy as policy
-    from notifications.digest_snapshot.digest_archive import emit
+    from interactive_brokers_platform.notifications.digest_snapshot.digest_archive import emit
 
     class State:
         def __init__(self):
@@ -408,7 +408,7 @@ def test_failed_off_schedule_dry_run_is_preserved_not_suppressed_as_idle(monkeyp
 
 def test_persist_candidate_updates_borrowed_probe_without_dropping_snapshot():
     from quant_platform_kit.notifications.unified_contract import NotificationEvent
-    import notifications.unified_adapter as adapter
+    import interactive_brokers_platform.notifications.unified_adapter as adapter
 
     class State:
         def __init__(self):
@@ -471,7 +471,7 @@ def test_persist_candidate_updates_borrowed_probe_without_dropping_snapshot():
 
 def test_persist_candidate_preserves_authoritative_snapshot_conflict_across_replay():
     from quant_platform_kit.notifications.unified_contract import NotificationEvent
-    import notifications.unified_adapter as adapter
+    import interactive_brokers_platform.notifications.unified_adapter as adapter
 
     class State:
         def __init__(self):
@@ -527,7 +527,7 @@ def test_persist_candidate_preserves_authoritative_snapshot_conflict_across_repl
 def test_carryover_selects_latest_observation_time_over_archive_metadata(monkeypatch):
     import json
     import quant_platform_kit.common.runtime_heartbeat_policy as policy
-    from notifications.digest_snapshot.digest_archive import emit
+    from interactive_brokers_platform.notifications.digest_snapshot.digest_archive import emit
 
     target = {**TARGET, "platform_id": "ibkr", "account_selector": ["U00000001"], "dry_run_only": False}
     env = dict(

@@ -94,7 +94,7 @@ def project(report, uri, expected, *, candidate, started, now):
     if (observed < started or observed > now + timedelta(minutes=5)
             or observed < now - publisher.IBKR_ACCOUNT_FACTS_MAX_AGE):
         raise pilot.ReleaseError("candidate_report_time_invalid")
-    from application.ibkr_cash_observations import inspect_cash_observations
+    from interactive_brokers_platform.application.ibkr_cash_observations import inspect_cash_observations
     selected = [row for row in facts["cash"] if row["currency"] == "USD"]
     attachment = inspect_cash_observations(facts.get("broker_cash_observations"),
         observed_at=facts["observed_at"], selected_cash=selected[0] if len(selected) == 1 else None)

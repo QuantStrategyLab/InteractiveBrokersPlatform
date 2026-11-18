@@ -6,7 +6,7 @@ import pytest
 
 import pandas as pd
 
-from application.runtime_strategy_adapters import _coerce_yfinance_candles, build_runtime_strategy_adapters
+from interactive_brokers_platform.application.runtime_strategy_adapters import _coerce_yfinance_candles, build_runtime_strategy_adapters
 
 
 def test_strategy_plugin_signals_are_loaded_reported_and_rendered():

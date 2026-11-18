@@ -1057,7 +1057,7 @@ def project_notification_events(records: Sequence[Mapping[str, Any]]) -> dict[st
         if business and all(item.get("dry_run") is True for item in business):
             row["execution_mode"] = "dry_run"
         if any("settlement" in item for item in items):
-            from application.settlement_reporting import project_settlement_rows
+            from interactive_brokers_platform.application.settlement_reporting import project_settlement_rows
             project_settlement_rows(row, items)
         snapshots = [item["account_snapshot"] for item in items if "account_snapshot" in item]
         if snapshots and isinstance(snapshots[0], dict) and all(snapshot == snapshots[0] for snapshot in snapshots):

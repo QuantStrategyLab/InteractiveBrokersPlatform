@@ -2,9 +2,9 @@ English | [简体中文](ibkr-flex-ledger.zh-CN.md)
 
 # IBKR Activity Flex Local Ledger Parsing
 
-`application.ibkr_flex_ledger` converts a fetched IBKR **XML Activity Flex
+`interactive_brokers_platform.application.ibkr_flex_ledger` converts a fetched IBKR **XML Activity Flex
 statement** into minimal, provenance-preserving ledger facts.
-`application.ibkr_flex_source.import_activity_flex_ledger` wires the existing
+`interactive_brokers_platform.application.ibkr_flex_source.import_activity_flex_ledger` wires the existing
 one-shot fetch, account-scope check, and parser into a callable import entry
 point. Complete ledgers contain real amounts, account identifiers, and native
 TWR, so they stay in approved cloud memory or existing private storage and are
@@ -30,7 +30,7 @@ in for Flex tokens, and stdout stays a sanitized diagnostic report.
 ## Inputs and Account Contract
 
 ```python
-from application.ibkr_flex_source import diagnose_activity_flex_ledger
+from interactive_brokers_platform.application.ibkr_flex_source import diagnose_activity_flex_ledger
 
 safe_status = diagnose_activity_flex_ledger(
     token=..., query_id=..., expected_account_ids=("UXXXXXXX",)

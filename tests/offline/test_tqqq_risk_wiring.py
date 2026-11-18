@@ -25,9 +25,9 @@ from us_equity_strategies.research.auto_portfolio_preview import _hash
 from us_equity_strategies.research.portfolio_event_journal import PortfolioEventJournal
 from us_equity_strategies.research.portfolio_risk_events_preview import _portfolio_id
 
-from application.account_facts import build_ibkr_account_facts
-from application.tqqq_offline_risk import UES_REVISION, run_tqqq_offline_risk
-from strategy_runtime import LoadedStrategyRuntime
+from interactive_brokers_platform.application.account_facts import build_ibkr_account_facts
+from interactive_brokers_platform.application.tqqq_offline_risk import UES_REVISION, run_tqqq_offline_risk
+from interactive_brokers_platform.strategy_runtime import LoadedStrategyRuntime
 
 PROFILE = "tqqq_growth_income"
 
@@ -174,7 +174,7 @@ def attach_relative_comparison(args, request):
 
 
 def attach_account_reference(args, request, *, security_proxy=False):
-    from application.relative_risk_preview import _COMPARISON_FIELDS
+    from interactive_brokers_platform.application.relative_risk_preview import _COMPARISON_FIELDS
 
     attach_relative_comparison(args, request)
     evidence = args[3]["relative_risk_comparison"]
@@ -391,7 +391,7 @@ def test_unbound_relative_input_never_produces_a_draft_or_resets_state(tmp_path,
 def test_tqqq_account_policy_cash_quantity_event_draft_round_trip(tmp_path, mode, level, captured_native):
     args = fixture()
     if captured_native:
-        from application.ibkr_cash_observations import capture_cash_observation_rows
+        from interactive_brokers_platform.application.ibkr_cash_observations import capture_cash_observation_rows
         values = [SimpleNamespace(account=row["account_id"], currency=row["currency"], tag=tag, value=value)
             for row in args[1].metadata["cash_balances"] for tag, value in row.items()
             if tag not in {"account_id", "currency"}]
@@ -735,7 +735,7 @@ def test_missing_invalid_or_runtime_mismatched_floor_never_writes(tmp_path, floo
 
 
 def cash_only_fixture():
-    from application.tqqq_offline_risk import build_tqqq_offline_account_facts
+    from interactive_brokers_platform.application.tqqq_offline_risk import build_tqqq_offline_account_facts
     args = fixture()
     runtime, snapshot, p, c, b, proof = args
     snapshot = replace(snapshot, positions=())
@@ -894,7 +894,7 @@ def test_cash_policy_generates_one_reserve_for_all_levels_modes_and_preflight(
 
 
 def test_prepared_packet_and_explicit_same_reserve_are_idempotent_not_added(tmp_path):
-    from application.tqqq_offline_risk import _cash_policy_packet
+    from interactive_brokers_platform.application.tqqq_offline_risk import _cash_policy_packet
     args, evidence = cash_policy_fixture()
     p = args[2]
     p['account_contract']['reserved_cash'] = '10'
@@ -1011,7 +1011,7 @@ def test_cash_policy_fingerprint_binds_floor_even_when_ratio_dominates(tmp_path)
 
 
 def test_embedded_cash_policy_is_revalidated_when_optional_argument_is_omitted(tmp_path):
-    from application.tqqq_offline_risk import _cash_policy_packet
+    from interactive_brokers_platform.application.tqqq_offline_risk import _cash_policy_packet
     args, evidence = cash_policy_fixture(.1, 5.)
     prepared, _ = _cash_policy_packet(args[0], args[1], args[2], evidence)
     args = (args[0], args[1], prepared, *args[3:])
@@ -1272,7 +1272,7 @@ def test_open_state_read_does_not_consume_current_web_ledger(tmp_path):
 
 
 def test_web_ledger_mapping_is_idempotent_and_never_trusted_without_its_source(tmp_path):
-    from application.tqqq_offline_risk import _cash_policy_packet
+    from interactive_brokers_platform.application.tqqq_offline_risk import _cash_policy_packet
     args, policy = web_ledger_fixture()
     prepared, first = _cash_policy_packet(args[0], args[1], args[2], policy)
     repeated, second = _cash_policy_packet(args[0], args[1], prepared, policy)

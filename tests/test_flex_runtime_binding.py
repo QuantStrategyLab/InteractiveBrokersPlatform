@@ -194,7 +194,7 @@ def test_actual_group_account_source_never_falls_back_or_guesses(materials, chan
 
 
 def test_inline_group_parser_matches_runtime_normalization():
-    from runtime_config_support import parse_account_ids
+    from interactive_brokers_platform.runtime_config_support import parse_account_ids
 
     values = [None, ' DU0000001 ', '', '  ']
     env = {'ACCOUNT_GROUP': ' selected ', 'IB_ACCOUNT_GROUP_CONFIG_JSON': json.dumps({

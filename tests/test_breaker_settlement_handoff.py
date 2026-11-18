@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from application.account_new_risk_gate_support import build_snapshot_from_portfolio
+from interactive_brokers_platform.application.account_new_risk_gate_support import build_snapshot_from_portfolio
 from tests import test_settled_cash_containment as containment
 from tests.test_settled_cash_containment import FakeIB
 

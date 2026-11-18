@@ -132,7 +132,7 @@ def _runtime_target(*, state: str = "RECONCILE_ONLY") -> dict[str, object]:
 
 def test_initial_confirmation_consumes_bound_facts_and_same_scope_without_state_write():
     from scripts.build_reconciliation_baseline_candidate import evaluate_initial_receipt
-    from application.broker_reconciliation_candidate import initial_private_source_sha256
+    from interactive_brokers_platform.application.broker_reconciliation_candidate import initial_private_source_sha256
     start = datetime(2026, 8, 31, 1, 0, tzinfo=timezone.utc)
     original = _evidence(observed_at=start)
     request_id = "853a2e08-9396-4fe8-89ee-59fb17e40a1d"
@@ -536,7 +536,7 @@ def test_trusted_source_preflight_emits_no_receipt_or_target(monkeypatch, capsys
 
 def test_initial_ledger_accepts_only_matching_fresh_reobservation():
     from copy import deepcopy
-    from application.broker_reconciliation_candidate import initial_private_source_sha256
+    from interactive_brokers_platform.application.broker_reconciliation_candidate import initial_private_source_sha256
     from scripts.build_reconciliation_baseline_candidate import evaluate_initial_receipt
     from scripts.verify_reconciliation_recovery import verify_initial_ledger_reobservation
 

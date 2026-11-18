@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from application.broker_reconciliation import (
+from interactive_brokers_platform.application.broker_reconciliation import (
     IBKRReconciliationObservations,
     IBKRReconciliationReadError,
     build_reconciliation_candidate,

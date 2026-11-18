@@ -4,7 +4,7 @@ import struct
 
 import pytest
 
-from application import account_new_risk_gate_support as gate
+from interactive_brokers_platform.application import account_new_risk_gate_support as gate
 from tests.test_drawdown_cache_postmerge import facts, projected
 
 

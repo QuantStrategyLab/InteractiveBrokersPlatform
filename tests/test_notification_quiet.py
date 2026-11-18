@@ -10,7 +10,7 @@ import urllib.request
 
 import pytest
 
-from application import rebalance_service as rebalance
+from interactive_brokers_platform.application import rebalance_service as rebalance
 from scripts import daily_dry_run_digest as drill
 from scripts import execution_report_heartbeat as heartbeat
 

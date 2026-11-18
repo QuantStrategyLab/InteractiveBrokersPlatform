@@ -129,7 +129,8 @@ def build_verified_image(base, *, etf_attention=False):
     command("gcloud", "auth", "configure-docker", registry, "--quiet")
     command("docker", "pull", base, timeout=180)
     if etf_attention:
-        sources = {ADAPTER: patch_etf_attention(image_file(base, ADAPTER), Path(ADAPTER).read_text())}
+        reviewed = Path(__file__).resolve().parents[1] / "src" / "interactive_brokers_platform" / ADAPTER
+        sources = {ADAPTER: patch_etf_attention(image_file(base, ADAPTER), reviewed.read_text())}
         tag_prefix = "etf-attention"
     else:
         sources = {name: transform(image_file(base, name) + "\n")

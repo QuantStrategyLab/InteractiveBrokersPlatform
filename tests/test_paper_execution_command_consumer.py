@@ -8,11 +8,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from application.ibkr_portfolio import (
+from interactive_brokers_platform.application.ibkr_portfolio import (
     IBKRPortfolioSnapshotUnavailableError,
     fetch_reconciled_paper_portfolio_snapshot,
 )
-from application.paper_execution_command_consumer import (
+from interactive_brokers_platform.application.paper_execution_command_consumer import (
     IBKR_PAPER_EXECUTION_INTENT_SCHEMA_VERSION,
     consume_due_paper_execution_commands,
     resolve_paper_execution_command_consumer_enabled,

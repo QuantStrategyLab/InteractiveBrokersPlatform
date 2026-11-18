@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from runtime_config_support import parse_account_group_configs
+from interactive_brokers_platform.runtime_config_support import parse_account_group_configs
 
 
 def test_default_account_group_example_is_valid():

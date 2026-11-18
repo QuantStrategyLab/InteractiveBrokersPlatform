@@ -1,6 +1,6 @@
-from notifications.renderers import _build_order_batch_lines, _summarize_skipped_orders, build_dashboard, render_heartbeat_notification
-from notifications.telegram import build_strategy_display_name, build_translator, send_telegram_message
-from strategy_registry import SUPPORTED_STRATEGY_PROFILES
+from interactive_brokers_platform.notifications.renderers import _build_order_batch_lines, _summarize_skipped_orders, build_dashboard, render_heartbeat_notification
+from interactive_brokers_platform.notifications.telegram import build_strategy_display_name, build_translator, send_telegram_message
+from interactive_brokers_platform.strategy_registry import SUPPORTED_STRATEGY_PROFILES
 
 
 def test_no_trade_heartbeat_compact_copy_keeps_only_verified_account_equity():
@@ -268,7 +268,7 @@ def test_small_account_skip_is_not_a_broker_buy_failure_in_either_language():
 
 
 def test_compact_pending_detail_is_deduplicated_but_unmatched_logs_are_retained():
-    from notifications.renderers import _build_notification_trade_lines
+    from interactive_brokers_platform.notifications.renderers import _build_notification_trade_lines
 
     for language in ("zh", "en"):
         translate = build_translator(language)
@@ -289,7 +289,7 @@ def test_compact_pending_detail_is_deduplicated_but_unmatched_logs_are_retained(
 
 
 def test_compact_pending_buy_detail_deduplicates_without_hiding_detailed_log():
-    from notifications.renderers import _build_detailed_trade_lines, _build_notification_trade_lines
+    from interactive_brokers_platform.notifications.renderers import _build_detailed_trade_lines, _build_notification_trade_lines
 
     for language in ("zh", "en"):
         translate = build_translator(language)
@@ -302,7 +302,7 @@ def test_compact_pending_buy_detail_deduplicates_without_hiding_detailed_log():
 
 
 def test_small_account_compact_notice_keeps_actual_value_and_threshold():
-    from notifications.renderers import _build_notification_trade_lines
+    from interactive_brokers_platform.notifications.renderers import _build_notification_trade_lines
 
     for language in ("zh", "en"):
         translate = build_translator(language)

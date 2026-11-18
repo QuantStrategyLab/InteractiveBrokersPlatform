@@ -34,6 +34,6 @@ def test_startup_validation_accepts_post_only_execution_routes(monkeypatch):
         app.add_url_rule(path, f"route_{index}", lambda: "ok", methods=methods)
 
     monkeypatch.setattr(validate_cloud_run_startup, "_install_smoke_environment", lambda: None)
-    monkeypatch.setitem(sys.modules, "main", SimpleNamespace(app=app))
+    monkeypatch.setitem(sys.modules, "interactive_brokers_platform.main", SimpleNamespace(app=app))
 
     validate_cloud_run_startup.validate_startup()

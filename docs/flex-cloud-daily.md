@@ -1,6 +1,6 @@
 # Daily Flex collection
 
-The `application.flex_daily` command runs separately from the trading service.
+The `interactive_brokers_platform.application.flex_daily` command runs separately from the trading service.
 It imports the existing read-only Flex HTTP adapter and has no Gateway, order,
 strategy or funding entry point. The same minimal image supports `pull` and
 `watch` commands. Dependencies reuse the repository's requests and Cloud Storage

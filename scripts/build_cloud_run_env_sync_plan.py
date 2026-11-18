@@ -39,20 +39,20 @@ def _should_add_local_src(candidate: Path) -> bool:
     return True
 
 
-for candidate in (ROOT, QPK_SRC, UES_SRC, HES_SRC):
+for candidate in (ROOT, ROOT / "src", QPK_SRC, UES_SRC, HES_SRC):
     if not _should_add_local_src(candidate):
         continue
     candidate_str = str(candidate)
     if candidate_str not in sys.path:
         sys.path.insert(0, candidate_str)
 
-from strategy_registry import (  # noqa: E402
+from interactive_brokers_platform.strategy_registry import (  # noqa: E402
     IBKR_PLATFORM,
     describe_platform_runtime_requirements,
     get_platform_profile_status_matrix,
     resolve_strategy_definition,
 )
-from runtime_config_support import (  # noqa: E402
+from interactive_brokers_platform.runtime_config_support import (  # noqa: E402
     DEFAULT_MARKET,
     DEFAULT_MARKET_TIMEZONE,
     resolve_market,

@@ -8,7 +8,7 @@ from scripts import build_cloud_run_env_sync_plan as sync_plan
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "sync-cloud-run-env-protected.yml"
-RUNTIME_WIRING = ROOT / "runtime_wiring.py"
+RUNTIME_WIRING = ROOT / "src" / "interactive_brokers_platform" / "runtime_wiring.py"
 
 
 def test_live_gateway_run_deadline_exceeds_cloud_run_timeout() -> None:

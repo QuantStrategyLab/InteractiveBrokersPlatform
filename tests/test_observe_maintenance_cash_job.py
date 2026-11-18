@@ -350,7 +350,7 @@ def test_funding_readback_rejects_wrong_scope_incomplete_response_and_invalid_me
 
 @pytest.mark.parametrize("change", [None, "private_key", "negative", "counts", "request"])
 def test_summary_diagnostic_readback_allows_only_fixed_counts(change):
-    from application.ibkr_cash_observations import build_cash_observations
+    from interactive_brokers_platform.application.ibkr_cash_observations import build_cash_observations
     _, _, expected, report = setup()
     stamp = (NOW + timedelta(seconds=1)).isoformat()
     fields = {tag: dict(usd_rows=0, usd_invalid_values=0, usd_duplicate_rows=0, base_rows=1, other_currency_rows=0)
@@ -407,7 +407,7 @@ def test_usd_ledger_reader_saved_report_and_safe_readback(tmp_path, amounts, sta
 
 @pytest.mark.parametrize("change", ["all_currencies", "base_currency", "no_diagnostic", "legacy_diagnostic", "unscoped", "foreign_value"])
 def test_usd_ledger_readback_rejects_wrong_query_or_currency_scope(change):
-    from application.ibkr_cash_observations import TAGS, build_cash_observations
+    from interactive_brokers_platform.application.ibkr_cash_observations import TAGS, build_cash_observations
     _, _, expected, report = setup()
     stamp = (NOW + timedelta(seconds=1)).isoformat()
     fields = {tag: dict(usd_rows=0, usd_invalid_values=0, usd_duplicate_rows=0, base_rows=0, other_currency_rows=0)

@@ -14,14 +14,19 @@ import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 import subprocess
+import sys
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from application.account_facts_target_config import (
+_SRC_DIR = Path(__file__).resolve().parents[1] / "src"
+if _SRC_DIR.is_dir() and str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
+
+from interactive_brokers_platform.application.account_facts_target_config import (
     ADDITIONAL_TARGETS as IBKR_ACCOUNT_FACTS_ADDITIONAL_TARGETS,
     ADDITIONAL_TARGET_CONFIG_KEYS as _ADDITIONAL_TARGET_CONFIG_KEYS,
     AccountFactsTargetConfigError,
@@ -36,7 +41,10 @@ SNAPSHOT_SCHEMA = "ibkr_account_snapshot.v1"
 RUNTIME_REPORT_SCHEMA = "runtime_report.v1"
 SOURCE_BINDING_KIND = "deployment_runtime_account"
 IBKR_ACCOUNT_FACTS_SYNC_TOKEN_ENV = "IBKR_ACCOUNT_FACTS_SYNC_TOKEN"
-from scripts.console_config import console_base_url
+try:
+    from scripts.console_config import console_base_url
+except ModuleNotFoundError:
+    from console_config import console_base_url  # type: ignore[no-redef]
 
 
 IBKR_ACCOUNT_FACTS_SYNC_URL = console_base_url() + "/api/account-facts/sync"

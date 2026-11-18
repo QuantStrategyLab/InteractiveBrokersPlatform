@@ -3,7 +3,7 @@ from quant_platform_kit.common.strategy_contracts import (
     StrategyDecision,
 )
 
-from decision_mapper import map_strategy_decision
+from interactive_brokers_platform.decision_mapper import map_strategy_decision
 
 
 def test_map_strategy_decision_blocks_positions_without_riskengine_approval():

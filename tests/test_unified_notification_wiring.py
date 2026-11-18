@@ -1,8 +1,8 @@
 from types import SimpleNamespace
 from copy import deepcopy
 
-from application.rebalance_service import _should_publish_execution_notification
-from notifications.unified_adapter import _kind
+from interactive_brokers_platform.application.rebalance_service import _should_publish_execution_notification
+from interactive_brokers_platform.notifications.unified_adapter import _kind
 
 
 def test_confirmed_orders_defer_but_pending_failed_and_opt_out_stay_immediate(monkeypatch):

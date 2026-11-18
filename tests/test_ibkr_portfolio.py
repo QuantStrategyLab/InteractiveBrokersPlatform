@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from application import ibkr_portfolio
-from application.ibkr_portfolio import fetch_portfolio_snapshot
+from interactive_brokers_platform.application import ibkr_portfolio
+from interactive_brokers_platform.application.ibkr_portfolio import fetch_portfolio_snapshot
 
 
 class SnapshotIB:
@@ -113,8 +113,8 @@ def _usd_account_values(account, cash, nlv):
 @pytest.mark.parametrize("native", ["invalid", "NaN", "Infinity", True,
     "1e99999999", "1e-99999999", "0", "0.1234567890123456789"])
 def test_native_cash_field_integrity_survives_the_numeric_snapshot_adapter(native):
-    from application.account_facts import build_ibkr_account_facts
-    from application.ibkr_cash_observations import inspect_cash_observations
+    from interactive_brokers_platform.application.account_facts import build_ibkr_account_facts
+    from interactive_brokers_platform.application.ibkr_cash_observations import inspect_cash_observations
 
     values = _usd_account_values("DU123", 100, 100) + [
         SimpleNamespace(account="DU123", currency="USD", tag="SettledCash", value=native),
@@ -133,8 +133,8 @@ def test_native_cash_field_integrity_survives_the_numeric_snapshot_adapter(nativ
 
 
 def test_duplicate_native_settled_cash_is_ambiguous_even_when_the_values_match():
-    from application.account_facts import build_ibkr_account_facts
-    from application.ibkr_cash_observations import inspect_cash_observations
+    from interactive_brokers_platform.application.account_facts import build_ibkr_account_facts
+    from interactive_brokers_platform.application.ibkr_cash_observations import inspect_cash_observations
 
     values = _usd_account_values("DU123", 100, 100) + [
         SimpleNamespace(account="DU123", currency="USD", tag="SettledCash", value="50"),
@@ -150,8 +150,8 @@ def test_duplicate_native_settled_cash_is_ambiguous_even_when_the_values_match()
 
 @pytest.mark.parametrize("reconciled", [False, True])
 def test_native_schedule_capture_reuses_both_snapshot_paths_without_changing_cash(reconciled):
-    from application.account_facts import build_ibkr_account_facts
-    from application.ibkr_cash_observations import inspect_cash_observations
+    from interactive_brokers_platform.application.account_facts import build_ibkr_account_facts
+    from interactive_brokers_platform.application.ibkr_cash_observations import inspect_cash_observations
 
     values = _usd_account_values("DU123", 100, 100) + [
         SimpleNamespace(account="DU123", currency="USD", tag="SettledCashByDate", value="20991231:99"),
@@ -652,7 +652,7 @@ def test_fetch_portfolio_snapshot_allows_explicit_zero_cash_balance():
 
 
 def test_existing_account_cache_to_facts_preserves_distinct_native_cash_and_schedule():
-    from application.account_facts import build_ibkr_account_facts
+    from interactive_brokers_platform.application.account_facts import build_ibkr_account_facts
     rows = [
         SimpleNamespace(account="U1", currency="USD", tag="$LEDGER-CashBalance", value="100.00", modelCode=""),
         SimpleNamespace(account="U1", currency="USD", tag="SettledCash", value="75.25", modelCode=""),
@@ -673,7 +673,7 @@ def test_existing_account_cache_to_facts_preserves_distinct_native_cash_and_sche
 
 
 def test_existing_account_cache_marks_invalid_native_cash_without_inventing_zero():
-    from application.account_facts import build_ibkr_account_facts
+    from interactive_brokers_platform.application.account_facts import build_ibkr_account_facts
     rows = [
         SimpleNamespace(account="U1", currency="USD", tag="CashBalance", value="100", modelCode=""),
         SimpleNamespace(account="U1", currency="USD", tag="SettledCash", value="bad", modelCode=""),

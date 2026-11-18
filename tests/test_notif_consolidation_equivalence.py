@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from application import rebalance_service as cycle
-from application.runtime_dependencies import IBKRRebalanceConfig
-from notifications.telegram import build_translator
+from interactive_brokers_platform.application import rebalance_service as cycle
+from interactive_brokers_platform.application.runtime_dependencies import IBKRRebalanceConfig
+from interactive_brokers_platform.notifications.telegram import build_translator
 from scripts import daily_dry_run_digest as drill
 from scripts import execution_report_heartbeat as heartbeat
 
@@ -109,7 +109,7 @@ def capture_drill(monkeypatch, case, locale):
 
 
 def capture_attention(monkeypatch, case, locale):
-    from application.account_new_risk_gate_support import maybe_publish_attention_for_admission, reset_attention_sent_keys_for_tests
+    from interactive_brokers_platform.application.account_new_risk_gate_support import maybe_publish_attention_for_admission, reset_attention_sent_keys_for_tests
     from quant_platform_kit.risk.account_new_risk_gate import NewRiskAdmissionResult, NewRiskDisposition
     monkeypatch.setenv("NOTIFY_LANG", locale)
     monkeypatch.setenv("QSL_NOTIFY_LANG", locale)
@@ -150,7 +150,7 @@ CAPTURE = {"cycle": capture_cycle, "heartbeat": capture_heartbeat, "drill": capt
 
 
 def _candidate_capture(monkeypatch, function, *args, **kwargs):
-    from notifications import unified_adapter as adapter
+    from interactive_brokers_platform.notifications import unified_adapter as adapter
     candidates = []
     monkeypatch.setattr(adapter, "_identity", lambda target=None: ({"platform_id": "ibkr", "opaque_account_uid": "synthetic-account", "target_id": "synthetic-target", "strategy_profile": "synthetic_strategy"}, {}))
     monkeypatch.setattr(adapter, "_checked_candidate", lambda fact, **kw: candidates.append(fact) or True)

@@ -6,10 +6,10 @@ import threading
 import pytest
 from flask import Flask
 
-from application import settlement_route as route
-from application.order_settlement import settle_pending
-from application.settlement_reporting import settlement_candidate
-from notifications import unified_adapter as adapter
+from interactive_brokers_platform.application import settlement_route as route
+from interactive_brokers_platform.application.order_settlement import settle_pending
+from interactive_brokers_platform.application.settlement_reporting import settlement_candidate
+from interactive_brokers_platform.notifications import unified_adapter as adapter
 from tests.test_unified_notification_adapter import StateStore, CandidateStore, event
 from tests.test_order_settlement import store, seed, FILLED, PENDING
 

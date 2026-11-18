@@ -2,8 +2,8 @@
 
 # IBKR Activity Flex 本地账本解析
 
-`application.ibkr_flex_ledger` 把一份已经取回的 IBKR **XML Activity Flex 报表**
-转换成最小的、保留来源的账本事实。`application.ibkr_flex_source.import_activity_flex_ledger`
+`interactive_brokers_platform.application.ibkr_flex_ledger` 把一份已经取回的 IBKR **XML Activity Flex 报表**
+转换成最小的、保留来源的账本事实。`interactive_brokers_platform.application.ibkr_flex_source.import_activity_flex_ledger`
 把现有一次性 fetch、账户范围复核和解析器串成实际可调用的导入入口。完整账本含真实金额、
 账户标识与原生 TWR，只能留在获批云端内存或已有私有存储；不能写入本机日志。
 
@@ -23,7 +23,7 @@ code，不含账户标识、估值、费用、出入金金额或 TWR 数值。�
 ## 输入与账户合同
 
 ```python
-from application.ibkr_flex_source import diagnose_activity_flex_ledger
+from interactive_brokers_platform.application.ibkr_flex_source import diagnose_activity_flex_ledger
 
 safe_status = diagnose_activity_flex_ledger(
     token=..., query_id=..., expected_account_ids=("UXXXXXXX",)

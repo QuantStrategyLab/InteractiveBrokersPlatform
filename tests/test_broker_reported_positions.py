@@ -9,7 +9,7 @@ import pytest
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from application.account_facts import (
+from interactive_brokers_platform.application.account_facts import (
     POSITIONS_SCOPE,
     build_broker_reported_positions,
     build_ibkr_account_facts,

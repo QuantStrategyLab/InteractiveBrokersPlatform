@@ -18,9 +18,14 @@ import os
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
-from strategy_registry import IBKR_PLATFORM, resolve_strategy_definition
+_SRC_DIR = Path(__file__).resolve().parents[1] / "src"
+if _SRC_DIR.is_dir() and str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
+
+from interactive_brokers_platform.strategy_registry import IBKR_PLATFORM, resolve_strategy_definition
 
 
 class AdmissionError(ValueError):

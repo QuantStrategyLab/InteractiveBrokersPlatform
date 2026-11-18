@@ -7,7 +7,7 @@ import socket
 import pandas as pd
 import pytest
 
-from application.relative_risk_preview import RelativeRiskPreviewError, preview_relative_risk
+from interactive_brokers_platform.application.relative_risk_preview import RelativeRiskPreviewError, preview_relative_risk
 from quant_platform_kit.strategy_lifecycle.benchmark_catalog import StrategyBenchmarkBinding
 
 

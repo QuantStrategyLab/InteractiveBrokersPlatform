@@ -1,7 +1,7 @@
 """Current unsafe account facts cannot be cleared by strategy projections."""
 import pytest
 
-from application import account_new_risk_gate_support as gate
+from interactive_brokers_platform.application import account_new_risk_gate_support as gate
 from tests.test_persistent_drawdown_breaker import session_at
 
 

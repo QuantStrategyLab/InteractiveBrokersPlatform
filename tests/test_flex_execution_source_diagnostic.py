@@ -5,8 +5,8 @@ from xml.etree import ElementTree as ET
 
 import pytest
 
-from application import ibkr_flex_source as source
-from application.ibkr_flex_executions import diagnose_flex_execution_source
+from interactive_brokers_platform.application import ibkr_flex_source as source
+from interactive_brokers_platform.application.ibkr_flex_executions import diagnose_flex_execution_source
 from scripts import diagnose_ibkr_flex_ledger as cli
 
 
@@ -123,7 +123,7 @@ def test_missing_native_fields_stay_unknown():
 
 
 def test_comparison_domains_are_random_per_report(monkeypatch):
-    from application import ibkr_flex_executions as executions
+    from interactive_brokers_platform.application import ibkr_flex_executions as executions
     monkeypatch.setattr(executions.secrets, "token_bytes", lambda size: b"a" * size)
     first = diagnostic(trade(), trade())
     assert first == diagnostic(trade(), trade())
@@ -308,7 +308,7 @@ def test_safe_error_projection_rejects_malicious_fields_and_types():
     "execution_source_record_limit", "execution_source_account_mismatch", "execution_source_date_invalid",
     "execution_source_period_mismatch"])
 def test_cli_keeps_only_six_literal_execution_errors(monkeypatch, capsys, code):
-    from application.ibkr_flex_executions import FlexExecutionsError
+    from interactive_brokers_platform.application.ibkr_flex_executions import FlexExecutionsError
     configure(monkeypatch)
     def fail(**_):
         raise FlexExecutionsError(code)
@@ -321,7 +321,7 @@ def test_cli_keeps_only_six_literal_execution_errors(monkeypatch, capsys, code):
 
 @pytest.mark.parametrize("kind", ["runtime", "execution", "source"])
 def test_cli_unknown_errors_never_print_exception_text_type_or_handle(monkeypatch, capsys, kind):
-    from application.ibkr_flex_executions import FlexExecutionsError
+    from interactive_brokers_platform.application.ibkr_flex_executions import FlexExecutionsError
     configure(monkeypatch)
     def fail(**_):
         text = f"private-error:{TOKEN}:{REFERENCE}:{ACCOUNT}"

@@ -17,9 +17,12 @@ from typing import Any
 from pathlib import Path
 
 if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    _repo_root = Path(__file__).resolve().parents[1]
+    for _path in (_repo_root, _repo_root / "src"):
+        if str(_path) not in sys.path:
+            sys.path.insert(0, str(_path))
 
-from notifications.unified_adapter import enabled as unified_enabled, monitor_message, publish_monitor
+from interactive_brokers_platform.notifications.unified_adapter import enabled as unified_enabled, monitor_message, publish_monitor
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from quant_platform_kit.common.execution_receipts import validate_execution_receipt
@@ -983,7 +986,7 @@ def _market_closed_by_calendar(payload: dict[str, Any]) -> bool:
 
 def _is_quiet_report(payload: dict[str, Any], *, now: dt.datetime | None = None) -> bool:
     """Quiet a complete healthy receipt without duplicating the business notification."""
-    from notifications.unified_adapter import verified_pending_summary
+    from interactive_brokers_platform.notifications.unified_adapter import verified_pending_summary
     pending_is_known = verified_pending_summary(payload)
     if payload.get("errors") != [] or not isinstance(payload.get("errors"), list):
         return False
@@ -1200,7 +1203,7 @@ def _notify_normal_heartbeat(name: str, detail: str, *, quiet_eligible: bool = T
         coverage_confirmed = True
         for observation in reports or ():
             report, report_quiet = observation if isinstance(observation, tuple) else (observation, quiet_eligible)
-            from notifications.unified_adapter import receipt_notification_kind
+            from interactive_brokers_platform.notifications.unified_adapter import receipt_notification_kind
             kind = receipt_notification_kind(report, quiet_eligible=report_quiet)
             confirmed = publish_monitor(kind=kind, report=report, now=now,
                             send=lambda: _send_telegram(monitor_message(kind)),

@@ -2,7 +2,7 @@
 
 # TQQQ 风险政策、资金合同与状态账本的离线接线
 
-`application.tqqq_offline_risk.run_tqqq_offline_risk` 把一个 TQQQ 人工账户合同接入已有 UES 风险与配置草稿链。它只提供 `initialize`、`read`、`persist`、`preflight` 四个动作，不注册进 main、composer、生产策略分派或下单入口。
+`interactive_brokers_platform.application.tqqq_offline_risk.run_tqqq_offline_risk` 把一个 TQQQ 人工账户合同接入已有 UES 风险与配置草稿链。它只提供 `initialize`、`read`、`persist`、`preflight` 四个动作，不注册进 main、composer、生产策略分派或下单入口。
 
 这是一条明确的离线适配路径。原生产 `_build_runtime_risk_capabilities` 的 SOXL 分派保持原样；本包不把它改成 TQQQ 已获准实盘的路径，也不复制 SOXL 的现金保留比例或退出缓冲。生产 QPK/UES 依赖、部署文件和实际配置保持原版本。
 

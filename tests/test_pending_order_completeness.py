@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from application import execution_service as service
+from interactive_brokers_platform.application import execution_service as service
 from quant_platform_kit.common.models import OrderIntent
 from tests.conftest import synthetic_account_submission
 

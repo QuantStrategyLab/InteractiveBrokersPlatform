@@ -5,9 +5,9 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from application import account_new_risk_gate_support as gate
-from application import execution_service
-from application.rebalance_service import _snapshot_to_portfolio_view, _strategy_portfolio_view
+from interactive_brokers_platform.application import account_new_risk_gate_support as gate
+from interactive_brokers_platform.application import execution_service
+from interactive_brokers_platform.application.rebalance_service import _snapshot_to_portfolio_view, _strategy_portfolio_view
 from quant_platform_kit.common.execution_state import AccountSubmissionSession, ExecutionMarkerStore
 from quant_platform_kit.common.models import OrderIntent
 from tests.test_execution_service import _signal_metadata, execute_rebalance, translate
@@ -161,8 +161,8 @@ def test_persistence_failures_prohibit_new_risk(failure, tmp_path, monkeypatch):
 
 
 def test_no_target_cycle_records_open_before_return_and_never_calls_exit(tmp_path):
-    from application.rebalance_service import run_strategy_core
-    from application.runtime_dependencies import IBKRRebalanceConfig, IBKRRebalanceRuntime
+    from interactive_brokers_platform.application.rebalance_service import run_strategy_core
+    from interactive_brokers_platform.application.runtime_dependencies import IBKRRebalanceConfig, IBKRRebalanceRuntime
     from quant_platform_kit.common.port_adapters import CallableNotificationPort
     # Use the actual runtime ports, a local fake account journal and no broker adapter.
     snapshot = snapshot_for("TQQQ")

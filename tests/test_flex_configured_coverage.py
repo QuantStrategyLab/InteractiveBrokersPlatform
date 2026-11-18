@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from application import ibkr_flex_source as source
+from interactive_brokers_platform.application import ibkr_flex_source as source
 from scripts import diagnose_ibkr_flex_ledger as cli
 from tests.test_flex_protected_report_scope import set_scope
 from tests.test_ibkr_flex_source import PENDING, REFERENCE, SEND, TOKEN, XML, Session

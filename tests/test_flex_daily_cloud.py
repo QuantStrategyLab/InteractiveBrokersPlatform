@@ -6,11 +6,11 @@ from xml.etree import ElementTree as ET
 
 import pytest
 
-from application.flex_daily import __main__ as flex_main
-from application.flex_daily import checks, runner, state, watch
-from application.flex_daily.__main__ import pull_outcome
-from application.flex_daily.storage import Conflict, Lease
-from application.ibkr_flex_source import FlexSourceError
+from interactive_brokers_platform.application.flex_daily import __main__ as flex_main
+from interactive_brokers_platform.application.flex_daily import checks, runner, state, watch
+from interactive_brokers_platform.application.flex_daily.__main__ import pull_outcome
+from interactive_brokers_platform.application.flex_daily.storage import Conflict, Lease
+from interactive_brokers_platform.application.ibkr_flex_source import FlexSourceError
 from scripts import check_flex_daily_acceptance as acceptance
 
 

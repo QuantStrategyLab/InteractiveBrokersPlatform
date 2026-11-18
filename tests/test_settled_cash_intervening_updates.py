@@ -205,7 +205,7 @@ def test_post_reservation_update_blocks_final_write_and_retains_unknown(native, 
 
 
 def test_newer_update_does_not_extend_original_deadline(native, monkeypatch):
-    from application import execution_service as service
+    from interactive_brokers_platform.application import execution_service as service
 
     plan = native({'SOXL': 400.}, cash=500.)
     ib = FakeIB(cash=500., settled=500.)

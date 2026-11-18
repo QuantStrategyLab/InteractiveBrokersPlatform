@@ -9,12 +9,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from application.rebalance_service import (
+from interactive_brokers_platform.application.rebalance_service import (
     _is_physical_ibkr_account_id,
     _resolve_physical_account_id,
 )
-from application.runtime_dependencies import IBKRRebalanceConfig
-from notifications.telegram import build_translator
+from interactive_brokers_platform.application.runtime_dependencies import IBKRRebalanceConfig
+from interactive_brokers_platform.notifications.telegram import build_translator
 from quant_platform_kit.common.execution_state import ExecutionMarkerStore, claim_account_owner
 
 

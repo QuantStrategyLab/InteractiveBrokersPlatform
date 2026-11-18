@@ -7,7 +7,7 @@ import socket
 
 import pytest
 
-from application.relative_risk_preview import RelativeRiskPreviewError, preview_relative_risk
+from interactive_brokers_platform.application.relative_risk_preview import RelativeRiskPreviewError, preview_relative_risk
 from tests.test_relative_risk_preview import assert_unarmed, inputs
 
 requires_shared_reference = pytest.mark.skipif(importlib.util.find_spec(
@@ -180,7 +180,7 @@ def test_account_reference_is_selected_separately_from_the_strategy_underlying()
 
 
 def test_reference_metric_failure_uses_a_fixed_error_without_source_details(monkeypatch):
-    from application import relative_risk_preview as module
+    from interactive_brokers_platform.application import relative_risk_preview as module
     original = module.compute_window_metrics
 
     def fail_reference(path, **kwargs):

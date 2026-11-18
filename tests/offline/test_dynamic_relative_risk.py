@@ -10,8 +10,8 @@ if not os.environ.get("IBKR_OFFLINE_UES_SOURCE"):
     pytest.skip("requires isolated TQQQ research environment", allow_module_level=True)
 
 from tests.test_relative_risk_preview import assert_unarmed, inputs as base_inputs
-from application.relative_risk_preview import RelativeRiskPreviewError, preview_relative_risk
-from application.tqqq_offline_risk import _research_dependencies
+from interactive_brokers_platform.application.relative_risk_preview import RelativeRiskPreviewError, preview_relative_risk
+from interactive_brokers_platform.application.tqqq_offline_risk import _research_dependencies
 
 
 @pytest.fixture(autouse=True)

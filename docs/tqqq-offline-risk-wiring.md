@@ -2,7 +2,7 @@ English | [简体中文](tqqq-offline-risk-wiring.zh-CN.md)
 
 # TQQQ Risk Policy, Funding Contract, and State Journal Offline Wiring
 
-`application.tqqq_offline_risk.run_tqqq_offline_risk` wires a synthetic TQQQ
+`interactive_brokers_platform.application.tqqq_offline_risk.run_tqqq_offline_risk` wires a synthetic TQQQ
 account contract into the existing UES risk and settings-draft chain. It exposes
 four actions only (`initialize`, `read`, `persist`, and `preflight`) and is
 never registered in `main`, the composer, production strategy dispatch, or order

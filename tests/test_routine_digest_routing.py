@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from application.rebalance_service import _should_publish_execution_notification, _should_suppress_noop_notification
+from interactive_brokers_platform.application.rebalance_service import _should_publish_execution_notification, _should_suppress_noop_notification
 
 
 def _publish(summary):

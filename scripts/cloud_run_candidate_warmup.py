@@ -16,7 +16,7 @@ import signal
 import subprocess
 from typing import Callable
 
-from notifications.redaction import redact_notification_diagnostics
+from interactive_brokers_platform.notifications.redaction import redact_notification_diagnostics
 from scripts import reconcile_cloud_runtime as reconcile
 from scripts import cloud_run_tag_policy as tag_policy
 from scripts.runtime_target_continuity import verify_traffic_revision

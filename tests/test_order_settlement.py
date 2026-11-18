@@ -5,7 +5,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from application.order_settlement import SettlementStore, settle_pending, track_submission, settlement_summary
+from interactive_brokers_platform.application.order_settlement import SettlementStore, settle_pending, track_submission, settlement_summary
 from quant_platform_kit.common.execution_state import ExecutionMarkerStore
 from quant_platform_kit.common.models import ExecutionReport, OrderIntent
 from quant_platform_kit.ibkr.order_outcome import OrderOutcome, OutcomeFill
@@ -163,7 +163,7 @@ def test_default_wait_off_preserves_submit_report(tmp_path):
 
 
 def test_settled_notice_masks_id_and_never_exposes_account(tmp_path):
-    from application.settlement_reporting import settled_notice, publish_settlement_notices
+    from interactive_brokers_platform.application.settlement_reporting import settled_notice, publish_settlement_notices
     s = store(tmp_path); seed(s)
     summary = settle(s, lambda: FILLED)
     row = summary['orders_filled'][0]
@@ -179,7 +179,7 @@ def test_settled_notice_masks_id_and_never_exposes_account(tmp_path):
 
 
 def test_ambiguous_notice_is_not_retried(tmp_path):
-    from application.settlement_reporting import publish_settlement_notices
+    from interactive_brokers_platform.application.settlement_reporting import publish_settlement_notices
     s = store(tmp_path); seed(s); summary = settle(s, lambda: FILLED); sends = []
     with pytest.raises(RuntimeError, match='unconfirmed'):
         publish_settlement_notices(s, summary, send=lambda text: sends.append(text) or False,
@@ -192,7 +192,7 @@ def test_ambiguous_notice_is_not_retried(tmp_path):
 
 def test_settlement_route_requires_verified_identity_before_reads(monkeypatch):
     from flask import Flask
-    from application import settlement_route as route
+    from interactive_brokers_platform.application import settlement_route as route
     app = Flask(__name__)
     main = NS(connect_ib=lambda **k: pytest.fail('no broker reads'))
     with app.test_request_context('/settle', method='POST'):
@@ -208,7 +208,7 @@ def test_settlement_route_requires_verified_identity_before_reads(monkeypatch):
 
 
 def test_unconfirmed_terminal_fill_is_not_a_receipt():
-    from application.execution_receipt_adapter import attach_cycle_execution_receipt
+    from interactive_brokers_platform.application.execution_receipt_adapter import attach_cycle_execution_receipt
     report = {'platform': 'ibkr', 'strategy_profile': 'synthetic-alpha', 'dry_run': False,
               'runtime_target': {'execution_mode': 'live'},
               'runtime_release_receipt': {'attestation_state': 'self_attested',
@@ -218,7 +218,7 @@ def test_unconfirmed_terminal_fill_is_not_a_receipt():
 
 
 def test_nonterminal_partial_is_not_a_fill_receipt():
-    from application.execution_receipt_adapter import attach_cycle_execution_receipt
+    from interactive_brokers_platform.application.execution_receipt_adapter import attach_cycle_execution_receipt
     report = {'platform': 'ibkr', 'strategy_profile': 'synthetic-alpha', 'dry_run': False,
               'runtime_target': {'execution_mode': 'live'},
               'runtime_release_receipt': {'attestation_state': 'self_attested',
@@ -229,7 +229,7 @@ def test_nonterminal_partial_is_not_a_fill_receipt():
 
 
 def test_wait_sets_actual_sdk_timeout_beneath_submit_proxy(tmp_path, monkeypatch):
-    from application import order_settlement as module
+    from interactive_brokers_platform.application import order_settlement as module
     s = store(tmp_path)
     reader = NS(RequestTimeout=0)
     broker = NS(client=NS(clientId=7))
