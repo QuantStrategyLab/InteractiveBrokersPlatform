@@ -75,7 +75,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$OTHER_MODES" == "false" && "$DAILY_COMPARISON_NONCE" =~ ^[a-f0-9]{64}$ ]] || exit 1
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Compare the fixed primary binding without a report read
         run: python3 -m scripts.compare_website_daily_binding
 
@@ -128,7 +128,7 @@ jobs:
           fi
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Verify the existing primary scope before cloud authentication
         run: |
@@ -160,13 +160,13 @@ jobs:
           PY
 
       - name: Authenticate with the existing read identity
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
           service_account: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Set up existing read commands
-        uses: google-github-actions/setup-gcloud@v3
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
 
       - name: Read the existing report and service identity without publishing
         if: inputs.maintenance_source_commit == '' && !inputs.completed_summary_logs

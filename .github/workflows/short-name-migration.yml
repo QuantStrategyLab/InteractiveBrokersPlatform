@@ -51,7 +51,7 @@ jobs:
       CLOUDSDK_CORE_DISABLE_FILE_LOGGING: 'true'
       CLOUDSDK_CORE_LOG_HTTP: 'false'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -68,11 +68,11 @@ jobs:
           except Exception:
               raise SystemExit('Migration admission blocked; private diagnostics suppressed') from None
           PY
-      - uses: google-github-actions/auth@v3
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v3
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
         with:
           version: '>= 416.0.0'
       - name: Observe or initialize inert destinations without cutover
@@ -82,7 +82,7 @@ jobs:
           python3 -m scripts.short_name_migration --mode "$INPUT_MODE" --report "$RUNNER_TEMP/short-name-migration.safe.json"
       - name: Retain anonymous reference-only result
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: short-name-migration-${{ github.run_id }}
           path: ${{ runner.temp }}/short-name-migration.safe.json
