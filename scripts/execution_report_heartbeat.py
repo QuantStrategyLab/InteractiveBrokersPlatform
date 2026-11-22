@@ -13,7 +13,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any
+from typing import Any, Mapping
 from pathlib import Path
 
 if __package__ in {None, ""}:
