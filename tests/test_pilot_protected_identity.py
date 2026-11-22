@@ -84,4 +84,4 @@ def test_each_workflow_passes_required_provider_through_protected_secret(module,
     assert f"          {binding}: {expression}" in preflight
     assert "--bootstrap-identity" in preflight
     assert "workload_identity_provider: ${{ env.PILOT_WIF_PROVIDER }}" in protected
-    assert protected.index("--preflight") < protected.index("/auth@v3")
+    assert protected.index("--preflight") < protected.index("/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093")
