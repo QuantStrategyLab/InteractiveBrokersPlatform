@@ -1765,7 +1765,7 @@ def test_primary_backup_workflow_is_explicit_primary_only_and_preflights_before_
     assert "inputs.backup_primary_source_state && fromJSON('[\"primary-live\"]')" in workflow
     assert "!(inputs.backup_primary_source_state && (inputs.serving_source_metadata_only" in workflow
     preflight = workflow.index("python3 -m scripts.backup_primary_account_facts_state --preflight")
-    assert preflight < workflow.index("uses: google-github-actions/auth@v3")
+    assert preflight < workflow.index("uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093")
     assert "if: ${{ !inputs.backup_primary_source_state && !inputs.serving_source_metadata_only" in workflow
     assert "schedule:" not in workflow and "actions: write" not in workflow
 

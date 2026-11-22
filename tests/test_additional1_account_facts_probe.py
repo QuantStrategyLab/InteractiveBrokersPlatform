@@ -490,7 +490,7 @@ def test_access_token_only_in_one_control_header_after_reverification(scheduler_
 def test_workflow_has_only_existing_wif_scheduler_path():
     text = Path('.github/workflows/additional1-account-facts-probe.yml').read_text()
     source = Path('scripts/invoke_additional1_account_facts_probe.py').read_text()
-    assert text.count('uses: google-github-actions/auth@v3') == 1
+    assert text.count('uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093') == 1
     assert 'Reverify reviewed fingerprints and run the existing Scheduler once' in text
     assert 'token_format: id_token' not in text and 'id_token_audience:' not in text
     assert 'ACCOUNT_FACTS_PROBE_ID_TOKEN' not in source + text
