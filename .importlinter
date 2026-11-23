@@ -1,0 +1,11 @@
+[importlinter]
+root_package = interactive_brokers_platform
+
+[importlinter:contract:application_no_entrypoints]
+name = Application must not import entrypoints or http_routes
+type = forbidden
+source_modules =
+    interactive_brokers_platform.application
+forbidden_modules =
+    interactive_brokers_platform.entrypoints
+    interactive_brokers_platform.http_routes
