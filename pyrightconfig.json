@@ -1,0 +1,18 @@
+{
+  "include": [
+    "src/interactive_brokers_platform/application/cycle_result.py",
+    "src/interactive_brokers_platform/application/flex_daily/runner.py",
+    "src/interactive_brokers_platform/application/flex_daily/state.py",
+    "src/interactive_brokers_platform/application/flex_daily/watch.py"
+  ],
+  "extraPaths": [
+    "src",
+    "external/QuantPlatformKit/src",
+    "external/UsEquityStrategies/src",
+    "external/HkEquityStrategies/src"
+  ],
+  "pythonVersion": "3.11",
+  "venvPath": ".",
+  "venv": ".venv",
+  "typeCheckingMode": "basic"
+}
