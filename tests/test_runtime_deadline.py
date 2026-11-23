@@ -45,6 +45,8 @@ def test_real_alarm_classifies_observed_quote_wait_without_private_data() -> Non
 
 
 @pytest.mark.parametrize("module,name,stage", [
+    ("interactive_brokers_platform.application.execution_service", "get_market_prices", "market_quote"),
+    ("interactive_brokers_platform.application._execution_account_state", "get_market_prices", "market_quote"),
     ("interactive_brokers_platform.strategy_runtime", "_build_historical_close_map", "historical_price_fallback"),
     ("interactive_brokers_platform.application.runtime_strategy_adapters", "get_historical_close", "historical_data"),
     ("quant_platform_kit.common.execution_state", "has_marker", "execution_dedup_read"),
@@ -60,6 +62,18 @@ def test_deadline_stage_mapping(module, name, stage) -> None:
     with pytest.raises(RuntimeDeadlineExceeded) as caught:
         _synthetic_operation(module, name, fail)()
     assert classify_runtime_deadline_stage(caught.value) == stage
+
+
+def test_real_relocated_get_market_prices_deadline_classification() -> None:
+    from interactive_brokers_platform.application.execution_service import get_market_prices
+
+    def _stall(_ib, _symbols):
+        time.sleep(5)
+
+    with pytest.raises(RuntimeDeadlineExceeded) as caught:
+        with enforce_runtime_deadline(1, operation="quote"):
+            get_market_prices(None, ["SOXL"], fetch_quote_snapshots=_stall)
+    assert classify_runtime_deadline_stage(caught.value) == "market_quote"
 
 
 @pytest.mark.parametrize("exception_type", [RuntimeError, TimeoutError])

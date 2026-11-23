@@ -31,7 +31,10 @@ _DEADLINE_STAGES = (
         ("quant_platform_kit.common.execution_state", "has_marker"),
         ("quant_platform_kit.common.execution_state", "has_prior_execution_report"),
     }),
-    ("market_quote", {("interactive_brokers_platform.application.execution_service", "get_market_prices")}),
+    ("market_quote", {
+        ("interactive_brokers_platform.application.execution_service", "get_market_prices"),
+        ("interactive_brokers_platform.application._execution_account_state", "get_market_prices"),
+    }),
     ("historical_price_fallback", {("interactive_brokers_platform.strategy_runtime", "_build_historical_close_map")}),
     ("historical_data", {
         ("interactive_brokers_platform.application.runtime_strategy_adapters", "get_historical_close"),
