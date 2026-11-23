@@ -453,7 +453,7 @@ def test_protected_workflows_keep_original_identity_lock_and_safe_artifact_only(
     assert "DEPLOY_GATE: ${{ vars.ENABLE_GITHUB_CLOUD_RUN_DEPLOY }}" in wrapper
     assert "CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ vars.CLOUD_RUN_SERVICE_TARGETS_JSON || secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}" in wrapper
     assert "--preflight --bootstrap-identity" in protected and "${{ env.PILOT_WIF_PROVIDER }}" in protected
-    assert protected.index("path: source") < protected.index("google-github-actions/auth@v3")
+    assert protected.index("path: source") < protected.index("google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093")
     assert "uv sync --frozen --no-dev" in protected and "--source-dir source" in protected
     assert "options: [capture, readback]" in wrapper and "PILOT_READBACK_SNAPSHOT_SHA256:" in protected
     assert "path: ${{ runner.temp }}/pilot-release-source.safe.json" in protected

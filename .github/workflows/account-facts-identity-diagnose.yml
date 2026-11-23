@@ -122,7 +122,7 @@ jobs:
           done
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Reject invalid slot or protected configuration without cloud reads
         if: ${{ !inputs.backup_primary_source_state }}
@@ -137,13 +137,13 @@ jobs:
           fi
 
       - name: Authenticate with the existing identity
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
           service_account: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Set up read-only cloud commands
-        uses: google-github-actions/setup-gcloud@v3
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
 
       - name: Read report and service revision equality
         if: ${{ !inputs.backup_primary_source_state && !inputs.serving_source_metadata_only && !inputs.registry_source_metadata_only && !inputs.static_source_only }}

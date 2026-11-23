@@ -1365,9 +1365,9 @@ def test_workflow_explicit_report_name_skips_only_manual_heartbeat():
     assert "inputs.account_facts_target == 'additional-3'" in publisher_job
     assert "target: ${{ fromJSON(" in publisher_job
     assert publisher_job.index("Select protected additional target before cloud authentication") < publisher_job.index(
-        "google-github-actions/auth@v3"
+        "google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093"
     )
-    assert publisher_job.index("google-github-actions/auth@v3") < publisher_job.index(
+    assert publisher_job.index("google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093") < publisher_job.index(
         "Publish one validated report"
     )
 
@@ -1381,7 +1381,7 @@ def test_workflow_natural_additional_publication_has_independent_default_off_fla
     assert "vars.IBKR_ACCOUNT_FACTS_ADDITIONAL_DAILY_ENABLED == 'true'" in publisher_job
     assert "Select protected additional target before cloud authentication" in publisher_job
     assert publisher_job.index("Select protected additional target before cloud authentication") < publisher_job.index(
-        "google-github-actions/auth@v3"
+        "google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093"
     )
     assert "target: ${{ fromJSON(" in publisher_job
     assert "[\"primary-live\"{0}{1}]" in publisher_job

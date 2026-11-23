@@ -224,7 +224,7 @@ def test_missing_environment_is_rejected_before_credential_acquisition():
     from pathlib import Path
     text = Path('.github/workflows/bootstrap-recovery-evidence.yml').read_text()
     guard = text.index('name: Verify protected environment binding')
-    auth = text.index('uses: google-github-actions/auth@v3')
+    auth = text.index('uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093')
     assert guard < auth
     assert "if not os.environ.get('RECOVERY_PROTECTED_ENVIRONMENT')" in text[guard:auth]
     assert 'raise SystemExit' in text[guard:auth]

@@ -277,7 +277,7 @@ def test_workflow_protection_contract():
     assert 'environment: ${{ vars.IBKR_DEPLOY_ENVIRONMENT }}' in workflow
     assert "github.ref == 'refs/heads/main'" in workflow
     assert 'github.run_attempt == 1' in workflow
-    assert workflow.index('admit exact scope') < workflow.index('google-github-actions/auth@v3')
+    assert workflow.index('admit exact scope') < workflow.index('google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093')
     assert 'persist-credentials: false' in workflow
     assert 'ref: ${{ github.sha }}' in workflow
     assert 'path: ${{ runner.temp }}/short-name-migration.safe.json' in workflow

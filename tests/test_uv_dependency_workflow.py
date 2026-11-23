@@ -52,7 +52,7 @@ def test_ci_docker_and_runtime_monitoring_use_uv_lock() -> None:
     for workflow in (runtime_guard, runtime_target_lifecycle, heartbeat_job):
         assert setup_uv in workflow
         assert workflow.count(setup_uv) == 1
-        assert workflow.index(setup_uv) < workflow.index("google-github-actions/auth@v3")
+        assert workflow.index(setup_uv) < workflow.index("google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093")
         assert "actions/setup-python" not in workflow
         assert "python -m pip install" not in workflow
         assert workflow.count("uv sync --frozen --no-dev") == 1
@@ -63,8 +63,8 @@ def test_ci_docker_and_runtime_monitoring_use_uv_lock() -> None:
     assert "uv run --no-sync python -m scripts.publish_account_facts_from_report" in publisher_job
     assert publisher_job.count(setup_uv) == 1
     assert publisher_job.count("uv sync --frozen --no-dev") == 1
-    assert publisher_job.count("google-github-actions/auth@v3") == 1
-    assert publisher_job.index(setup_uv) < publisher_job.index("google-github-actions/auth@v3")
+    assert publisher_job.count("google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093") == 1
+    assert publisher_job.index(setup_uv) < publisher_job.index("google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093")
     assert "needs:" not in publisher_job
     assert "run: python scripts/cloud_run_runtime_guard.py" not in runtime_guard
     assert "          python scripts/cloud_run_runtime_guard.py" not in runtime_target_lifecycle

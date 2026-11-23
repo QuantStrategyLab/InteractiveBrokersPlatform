@@ -53,12 +53,12 @@ jobs:
               exit 2
             fi
           done
-      - uses: actions/checkout@v6
-      - uses: google-github-actions/auth@v3
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ secrets.ACCOUNT_FACTS_RECOVERY_WIF_PROVIDER }}
           service_account: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v3
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
       - name: Install existing encryption tool only for source request sealing
         if: inputs.action == 'seal-source'
         run: python3 -m pip install --disable-pip-version-check --quiet --target "$RUNNER_TEMP/seal-python" PyNaCl==1.5.0
