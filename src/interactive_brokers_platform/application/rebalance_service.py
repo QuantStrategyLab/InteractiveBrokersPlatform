@@ -1207,7 +1207,7 @@ def run_strategy_core(
                 + json.dumps({"path": str(record_path), "status": record.get("execution_status"), "no_op_reason": record.get("no_op_reason")}, ensure_ascii=False),
                 flush=True,
             )
-            order_count = len(orders) if 'orders' in dir() and orders else 0
+            order_count = 0
             has_error = decision_unavailable or bool(fail_reason or execution_blocked_reason) or _has_notification_attention(
                 signal_metadata, blocked_summary,
                 reason_codes=getattr(config, "notification_attention_reason_codes", ()),
