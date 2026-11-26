@@ -52,6 +52,8 @@ on:
         required: false
       IBKR_DIGEST_TARGET_ID:
         required: false
+      GCP_WORKLOAD_IDENTITY_PROVIDER:
+        required: false
       RUNTIME_TARGET_JSON:
         required: false
 
@@ -71,7 +73,7 @@ jobs:
       IBKR_UNIFIED_NOTIFICATION_ENABLED: ${{ vars.IBKR_UNIFIED_NOTIFICATION_ENABLED || 'false' }}
       GCP_PROJECT_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID }}
       IBKR_ACCOUNT_FACTS_PROJECT_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID }}
-      GCP_WORKLOAD_IDENTITY_PROVIDER: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       IBKR_ACCOUNT_FACTS_TARGET: ${{ inputs.target }}
       IBKR_ACCOUNT_FACTS_REPORT_NAME: ${{ inputs.report_name }}

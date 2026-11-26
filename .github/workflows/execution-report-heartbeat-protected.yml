@@ -24,6 +24,8 @@ on:
         type: string
         required: false
     secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER:
+        required: false
       IBKR_NOTIFICATION_MARKER_GCS_URI:
         required: false
       DIGEST_OPAQUE_ACCOUNT_UID:
@@ -73,7 +75,7 @@ jobs:
       DIGEST_TARGET_ID: ${{ secrets.DIGEST_TARGET_ID }}
       DIGEST_TARGET_BINDINGS_JSON: ${{ secrets.DIGEST_TARGET_BINDINGS_JSON }}
       GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
-      GCP_WORKLOAD_IDENTITY_PROVIDER: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       RUNTIME_HEARTBEAT_NAME: InteractiveBrokersPlatform
       RUNTIME_HEARTBEAT_REPORT_PLATFORM: interactive_brokers
