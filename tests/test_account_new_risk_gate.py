@@ -717,7 +717,10 @@ def test_fuse2_hk_market_timezone_removed_observe_and_legacy_transport(monkeypat
     monkeypatch.delenv("IBKR_MARKET_TIMEZONE", raising=False)
     monkeypatch.delenv("RUNTIME_TARGET_JSON", raising=False)
     assert gate._resolve_fuse_market_timezone() == "Asia/Hong_Kong"
-    # IBKR_MARKET must take precedence over RUNTIME_TARGET_JSON["market"].
+    # IBKR_MARKET must take precedence over RUNTIME_TARGET_JSON["market"], and QSL_RUNTIME_TARGET_JSON must be honored.
+    monkeypatch.setenv("QSL_RUNTIME_TARGET_JSON", '{"market": "HK"}')
+    assert gate._resolve_fuse_market_timezone() == "Asia/Hong_Kong"
+    monkeypatch.delenv("QSL_RUNTIME_TARGET_JSON", raising=False)
     monkeypatch.setenv("RUNTIME_TARGET_JSON", '{"market": "US"}')
     monkeypatch.setenv("IBKR_MARKET", "HK")
     assert gate._resolve_fuse_market_timezone() == "Asia/Hong_Kong"

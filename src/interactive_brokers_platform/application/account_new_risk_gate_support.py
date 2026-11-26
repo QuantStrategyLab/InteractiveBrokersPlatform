@@ -92,7 +92,9 @@ def _resolve_fuse_market_timezone(
     env_tz = str(os.environ.get("IBKR_MARKET_TIMEZONE") or "").strip()
     if env_tz:
         return env_tz
-    raw_target = str(os.environ.get("RUNTIME_TARGET_JSON") or "").strip()
+    raw_target = str(
+        os.environ.get("QSL_RUNTIME_TARGET_JSON") or os.environ.get("RUNTIME_TARGET_JSON") or ""
+    ).strip()
     target_market = ""
     if raw_target:
         try:
