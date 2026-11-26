@@ -616,6 +616,10 @@ def validate_probe(session, report, *, sleep=time.sleep, clock=time.monotonic):
         phase='job_validate_only')
     name = value.get('name')
     project_number = os.environ.get('GCP_PROJECT_NUMBER', '').strip()
+    if not project_number:
+        wif_match = re.match(r'^projects/(\d+)/', os.environ.get('GCP_WORKLOAD_IDENTITY_PROVIDER', '').strip())
+        if wif_match:
+            project_number = wif_match.group(1)
     parents = (PARENT, f'projects/{project_number}/locations/{REGION}') if project_number else (PARENT,)
     require(isinstance(name, str) and any(re.fullmatch(re.escape(parent) + r'/operations/[A-Za-z0-9_-]+', name)
                                           for parent in parents), 'validation_operation_identity_rejected')

@@ -52,6 +52,8 @@ on:
         required: false
       IBKR_DIGEST_TARGET_ID:
         required: false
+      GCP_WORKLOAD_IDENTITY_PROVIDER:
+        required: false
       RUNTIME_TARGET_JSON:
         required: false
 

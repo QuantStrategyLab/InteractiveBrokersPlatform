@@ -1091,6 +1091,7 @@ def _publisher_job_environment(target: str = "primary-live") -> dict[str, str]:
     env_block = job.split("\n    env:\n", 1)[1].split("\n    steps:", 1)[0]
     placeholders = {
         ("secrets", "IBKR_ACCOUNT_FACTS_PROJECT_ID"): "example-project",
+        ("secrets", "GCP_WORKLOAD_IDENTITY_PROVIDER"): "projects/123456789012/locations/global/workloadIdentityPools/github-actions/providers/github-main",
         ("secrets", "IBKR_ACCOUNT_FACTS_REPORT_PREFIX"): "gs://example-private/ibkr/reports",
         ("secrets", "IBKR_ACCOUNT_FACTS_TARGET_ID"): "ibkr-example",
         ("secrets", "IBKR_ACCOUNT_FACTS_SERVICE_NAME"): "example-ibkr-service",
