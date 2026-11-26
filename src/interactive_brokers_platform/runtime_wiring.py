@@ -573,6 +573,8 @@ def _build_cycle_report_summary(cycle_result, execution_summary, reconciliation_
     orders_skipped_count = main._count_orders(execution_summary.get('orders_skipped'), reconciliation_record.get('orders_skipped'))
     orders_previewed_count = orders_submitted_count if dry_run else 0
     summary = {'result': cycle_result.result, 'execution_status': execution_summary.get('execution_status') or reconciliation_record.get('execution_status'), 'no_op_reason': execution_summary.get('no_op_reason') or reconciliation_record.get('no_op_reason'), 'orders_submitted_count': orders_submitted_count, 'orders_previewed_count': orders_previewed_count, 'orders_skipped_count': orders_skipped_count, 'dry_run_order_preview_available': None if dry_run and orders_previewed_count is None else bool(dry_run and orders_previewed_count > 0), 'snapshot_price_fallback_used': bool(execution_summary.get('snapshot_price_fallback_used') or reconciliation_record.get('snapshot_price_fallback_used')), 'snapshot_price_fallback_count': int(execution_summary.get('snapshot_price_fallback_count') or reconciliation_record.get('snapshot_price_fallback_count') or 0)}
+    from interactive_brokers_platform.application.account_new_risk_gate_support import copy_fuse_telemetry
+    copy_fuse_telemetry(summary, execution_summary)
     if brake_status is not None:
         summary['account_brake_submission_status'] = brake_status
         summary['orders_submitted_coverage'] = 'strategy_only_account_brake_details_unavailable'

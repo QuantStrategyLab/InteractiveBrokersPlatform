@@ -298,10 +298,14 @@ class IBKRRuntimeBrokerAdapters:
         if hasattr(ib, "reqPositions"):
             return self.fetch_account_portfolio_snapshot(ib)
         positions, account_values = get_current_portfolio_fallback(ib)
+        values = dict(account_values or {})
+        from interactive_brokers_platform.application.rebalance_service import _PORTFOLIO_SNAPSHOT_RISK_KEYS
+
+        metadata = {key: values[key] for key in _PORTFOLIO_SNAPSHOT_RISK_KEYS if key in values}
         return PortfolioSnapshot(
             as_of=datetime.now(timezone.utc),
-            total_equity=float(account_values.get("equity") or 0.0),
-            buying_power=float(account_values.get("buying_power") or 0.0),
+            total_equity=float(values.get("equity") or 0.0),
+            buying_power=float(values.get("buying_power") or 0.0),
             positions=tuple(
                 Position(
                     symbol=str(symbol).strip().upper(),
@@ -312,6 +316,7 @@ class IBKRRuntimeBrokerAdapters:
                 )
                 for symbol, details in dict(positions or {}).items()
             ),
+            metadata=metadata,
         )
 
     def get_market_prices(self, ib, symbols):

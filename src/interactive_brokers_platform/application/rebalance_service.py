@@ -50,26 +50,30 @@ def _record_platform_execution_telemetry(
     if not profile:
         return
     summary = dict(execution_summary or {})
+    from interactive_brokers_platform.application.account_new_risk_gate_support import copy_fuse_telemetry
+
+    payload = {
+        "platform": "ibkr",
+        "mode": summary.get("mode"),
+        "execution_status": summary.get("execution_status"),
+        "no_op_reason": summary.get("no_op_reason") or metadata.get("no_op_reason"),
+        "orders_submitted": list(summary.get("orders_submitted") or ()),
+        "orders_pending": list(summary.get("orders_pending") or ()),
+        "orders_filled": list(summary.get("orders_filled") or ()),
+        "orders_skipped": list(summary.get("orders_skipped") or ()),
+        "trade_date": summary.get("trade_date") or metadata.get("trade_date"),
+        "total_equity": (
+            summary.get("equity")
+            or summary.get("total_equity")
+            or metadata.get("equity")
+            or metadata.get("portfolio_total_equity")
+            or metadata.get("total_equity")
+        ),
+    }
+    copy_fuse_telemetry(payload, summary)
     try_record_platform_execution(
         profile,
-        {
-            "platform": "ibkr",
-            "mode": summary.get("mode"),
-            "execution_status": summary.get("execution_status"),
-            "no_op_reason": summary.get("no_op_reason") or metadata.get("no_op_reason"),
-            "orders_submitted": list(summary.get("orders_submitted") or ()),
-            "orders_pending": list(summary.get("orders_pending") or ()),
-            "orders_filled": list(summary.get("orders_filled") or ()),
-            "orders_skipped": list(summary.get("orders_skipped") or ()),
-            "trade_date": summary.get("trade_date") or metadata.get("trade_date"),
-            "total_equity": (
-                summary.get("equity")
-                or summary.get("total_equity")
-                or metadata.get("equity")
-                or metadata.get("portfolio_total_equity")
-                or metadata.get("total_equity")
-            ),
-        },
+        payload,
         domain=str(metadata.get("domain") or ""),
     )
 
@@ -659,8 +663,28 @@ def _build_compact_message(
     return "\n".join(lines)
 
 
+_PORTFOLIO_SNAPSHOT_RISK_KEYS = (
+    "unknown_pending_orders",
+    "durable_circuit_breaker_state",
+    "peak_equity_usd",
+    "drawdown_from_peak",
+    "drawdown_from_peak_observed_at",
+    "realized_vol",
+    "observation_status",
+    "reconciliation_status",
+    "circuit_breaker_state",
+    "production_drift_status",
+    "daily_loss_usd",
+    "fuse_readback",
+    "fuse_enabled",
+    "market_timezone",
+    "market",
+)
+
+
 def _legacy_portfolio_snapshot(ib, *, get_current_portfolio) -> PortfolioSnapshot:
     positions, account_values = get_current_portfolio(ib)
+    values = dict(account_values or {})
     snapshot_positions = tuple(
         Position(
             symbol=str(symbol).strip().upper(),
@@ -670,11 +694,13 @@ def _legacy_portfolio_snapshot(ib, *, get_current_portfolio) -> PortfolioSnapsho
         )
         for symbol, details in dict(positions or {}).items()
     )
+    metadata = {key: values[key] for key in _PORTFOLIO_SNAPSHOT_RISK_KEYS if key in values}
     return PortfolioSnapshot(
         as_of=datetime.now(timezone.utc),
-        total_equity=float(account_values.get("equity") or 0.0),
-        buying_power=float(account_values.get("buying_power") or 0.0),
+        total_equity=float(values.get("equity") or 0.0),
+        buying_power=float(values.get("buying_power") or 0.0),
         positions=snapshot_positions,
+        metadata=metadata,
     )
 
 
@@ -706,9 +732,7 @@ def _snapshot_to_portfolio_view(snapshot) -> tuple[dict[str, dict[str, float | i
     }
     # Carry explicit snapshot evidence to the existing account new-risk gate.
     # Missing fields stay absent; this projection does not read or reset state.
-    for key in ("unknown_pending_orders", "durable_circuit_breaker_state", "peak_equity_usd", "drawdown_from_peak",
-                "drawdown_from_peak_observed_at", "realized_vol", "observation_status", "reconciliation_status", "circuit_breaker_state",
-                "production_drift_status", "daily_loss_usd"):
+    for key in _PORTFOLIO_SNAPSHOT_RISK_KEYS:
         if key in metadata:
             account_values[key] = metadata[key]
     # Strategy equity is for sizing, not physical-account risk admission.
@@ -1031,15 +1055,19 @@ def run_strategy_core(
                     account_execution_session = None
 
         from interactive_brokers_platform.application.account_new_risk_gate_support import (
+            build_portfolio_from_account_values,
             evaluate_persistent_account_new_risk_admission,
-            is_account_new_risk_gate_enabled,
+            fuse_telemetry_from_admission,
+            is_effective_new_risk_gate_enabled,
             is_portfolio_loss_stoploss_enabled,
         )
         signal_metadata = dict(signal_metadata or {})
         admission = evaluate_persistent_account_new_risk_admission(
             account_values, signal_metadata=signal_metadata, session=account_execution_session,
         )
-        if is_account_new_risk_gate_enabled():
+        if is_effective_new_risk_gate_enabled(
+            build_portfolio_from_account_values(account_values, signal_metadata=signal_metadata)
+        ):
             if "CIRCUIT_BREAKER_OPEN" in admission.reason_codes:
                 account_values["durable_circuit_breaker_state"] = "OPEN"
         if target_weights is None:
@@ -1047,6 +1075,7 @@ def run_strategy_core(
             signal_metadata["account_brake_observation"] = {
                 "hard_brake_triggered": bool(getattr(admission, "hard_brake_triggered", False)),
                 "reason_codes": list(admission.reason_codes),
+                **fuse_telemetry_from_admission(admission),
             }
             if signal_metadata["account_brake_observation"]["hard_brake_triggered"]:
                 if (not is_portfolio_loss_stoploss_enabled() or getattr(config, "dry_run_only", False) or signal_metadata.get("dry_run_only") is True or account_brake_session is None

@@ -7,7 +7,8 @@ from typing import Any, Callable
 
 from interactive_brokers_platform.application.account_new_risk_gate_support import (
     evaluate_cycle_new_risk_admission,
-    is_account_new_risk_gate_enabled,
+    get_cycle_snapshot,
+    is_effective_new_risk_gate_enabled,
     new_risk_buy_prohibited,
 )
 from quant_platform_kit.common.models import ExecutionReport, OrderIntent
@@ -114,7 +115,7 @@ def submit_order_intent(
 
     intent = _intent_with_default_time_in_force(order_intent)
     side_normalized = str(intent.side or "").strip().lower()
-    if is_account_new_risk_gate_enabled():
+    if is_effective_new_risk_gate_enabled(snapshot=get_cycle_snapshot()):
         admission = evaluate_cycle_new_risk_admission()
         if new_risk_buy_prohibited(admission):
             from quant_platform_kit.risk.account_new_risk_gate import is_proven_risk_reducing_order
