@@ -84,6 +84,32 @@ def test_unknown_source_never_becomes_empty_records(section, reason):
     assert source["return_assessment"]["computable"] is True
 
 
+@pytest.mark.parametrize("trade_date,date_time,local", [
+    ("20260123", "20260122;200000", "2026-01-22T20:00:00"),   # 20:00 ET boundary -> next day
+    ("20260123", "20260122;235959", "2026-01-22T23:59:59"),
+    ("20260126", "20260125;210000", "2026-01-25T21:00:00"),   # Sunday-evening session -> Monday
+    ("20260123", "20260123;023000", "2026-01-23T02:30:00"),   # after midnight keeps its own date
+])
+def test_us_overnight_fill_dated_to_next_trade_date_is_accepted(trade_date, date_time, local):
+    source = ledger(f"<Trades>{trade(tradeDate=trade_date, dateTime=date_time)}</Trades>")
+    assert source["executions"]["status"] == "available"
+    record = source["executions"]["records"][0]
+    assert record["trade_date"] == f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}"
+    assert record["local_time"] == local
+    assert record["time_zone"] is None
+
+
+@pytest.mark.parametrize("trade_date,date_time", [
+    ("20260123", "20260122;195959"),   # before the 20:00 ET boundary
+    ("20260123", "20260121;220000"),   # two days earlier
+    ("20260122", "20260123;210000"),   # local time after the trade date
+])
+def test_off_boundary_datetime_still_makes_source_unknown(trade_date, date_time):
+    source = ledger(f"<Trades>{trade(tradeDate=trade_date, dateTime=date_time)}</Trades>")
+    assert source["executions"]["status"] == "source_unavailable"
+    assert source["executions"]["diagnostic"]["reason"] == "execution_datetime_invalid"
+
+
 @pytest.mark.parametrize("field", ["ibExecID", "tradeDate", "buySell", "quantity", "tradePrice",
                                     "currency", "assetCategory", "symbol", "accountId"])
 def test_missing_required_native_field_is_safe_and_does_not_drop_bad_row(field):

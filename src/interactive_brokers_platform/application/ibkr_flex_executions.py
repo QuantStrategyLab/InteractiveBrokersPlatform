@@ -12,7 +12,7 @@ import json
 import secrets
 import re
 from collections.abc import Mapping, Sequence
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 from xml.etree import ElementTree
@@ -75,15 +75,27 @@ def _text(value: object, limit: int) -> bool:
             and not any(ord(char) < 0x20 or ord(char) == 0x7F for char in value))
 
 
+# US 23/5: IBKR dates fills from 20:00 ET to midnight on the following day, so an
+# overnight execution's local wall time falls on the evening before its trade date.
+# This assumes the Flex query reports `dateTime` in US Eastern time; the zone is not
+# stated in the report (records keep `time_zone: None`).
+_TRADE_DATE_BOUNDARY = time(20, 0)
+
+
 def _local_time(value: str, trade_date: str) -> str | None:
     for pattern in ("%Y%m%d;%H%M%S", "%Y%m%d;%H:%M:%S", "%Y-%m-%d;%H:%M:%S",
                     "%Y-%m-%dT%H:%M:%S"):
         try:
             parsed = datetime.strptime(value, pattern)
-            if parsed.strftime(pattern) == value and parsed.date().isoformat() == trade_date:
-                return parsed.isoformat()
         except ValueError:
-            pass
+            continue
+        if parsed.strftime(pattern) != value:
+            continue
+        if parsed.date().isoformat() == trade_date:
+            return parsed.isoformat()
+        if (parsed.time() >= _TRADE_DATE_BOUNDARY
+                and (parsed.date() + timedelta(days=1)).isoformat() == trade_date):
+            return parsed.isoformat()
     return None
 
 
