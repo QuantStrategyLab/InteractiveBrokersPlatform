@@ -75,14 +75,21 @@ def _text(value: object, limit: int) -> bool:
             and not any(ord(char) < 0x20 or ord(char) == 0x7F for char in value))
 
 
-# US 23/5: IBKR dates fills from 20:00 ET to midnight on the following day, so an
-# overnight execution's local wall time falls on the evening before its trade date.
-# This assumes the Flex query reports `dateTime` in US Eastern time; the zone is not
-# stated in the report (records keep `time_zone: None`).
+# US 23/5: IBKR dates US overnight fills from 20:00 ET to midnight on the following
+# day, so such an execution's local wall time falls on the evening before its trade
+# date. The overnight session runs Sunday to Thursday evenings only. This assumes the
+# Flex query reports `dateTime` in US Eastern time; the zone is not stated in the
+# report (records keep `time_zone: None`).
 _TRADE_DATE_BOUNDARY = time(20, 0)
+_OVERNIGHT_EVENINGS = frozenset({6, 0, 1, 2, 3})  # Sunday..Thursday (date.weekday())
 
 
-def _local_time(value: str, trade_date: str) -> str | None:
+def _us_overnight_row(row: ElementTree.Element) -> bool:
+    """Only US-dollar stock executions can carry the US overnight rollover."""
+    return row.get("currency") == "USD" and row.get("assetCategory") == "STK"
+
+
+def _local_time(value: str, trade_date: str, *, us_overnight: bool = False) -> str | None:
     for pattern in ("%Y%m%d;%H%M%S", "%Y%m%d;%H:%M:%S", "%Y-%m-%d;%H:%M:%S",
                     "%Y-%m-%dT%H:%M:%S"):
         try:
@@ -93,9 +100,14 @@ def _local_time(value: str, trade_date: str) -> str | None:
             continue
         if parsed.date().isoformat() == trade_date:
             return parsed.isoformat()
-        if (parsed.time() >= _TRADE_DATE_BOUNDARY
-                and (parsed.date() + timedelta(days=1)).isoformat() == trade_date):
-            return parsed.isoformat()
+        if us_overnight and parsed.time() >= _TRADE_DATE_BOUNDARY and parsed.weekday() in _OVERNIGHT_EVENINGS:
+            try:
+                booked = date.fromisoformat(trade_date)
+            except ValueError:
+                continue
+            # Subtract rather than add a day, so a far-future timestamp cannot overflow.
+            if booked - parsed.date() == timedelta(days=1):
+                return parsed.isoformat()
     return None
 
 
@@ -185,7 +197,7 @@ def diagnose_flex_execution_source(
                 families.setdefault(prefix, set()).add(native_id)
         quantity, price = _number(row.get("quantity")), _number(row.get("tradePrice"))
         raw_time = row.get("dateTime")
-        local_time = _local_time(raw_time, day) if raw_time else None
+        local_time = _local_time(raw_time, day, us_overnight=_us_overnight_row(row)) if raw_time else None
         if (quantity is None or price is None or local_time is None
                 or row.get("buySell") not in {"BUY", "SELL"}
                 or not _text(row.get("symbol"), 64) or not _text(row.get("assetCategory"), 16)
@@ -286,7 +298,7 @@ def project_flex_executions(
         if not start <= trade_date <= end:
             return unavailable("execution_date_outside_period")
         raw_time = row.get("dateTime")
-        local_time = _local_time(raw_time, trade_date) if raw_time else None
+        local_time = _local_time(raw_time, trade_date, us_overnight=_us_overnight_row(row)) if raw_time else None
         if raw_time and not local_time:
             return unavailable("execution_datetime_invalid")
         quantity, price = _number(row.get("quantity")), _number(row.get("tradePrice"))

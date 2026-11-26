@@ -99,10 +99,20 @@ def test_us_overnight_fill_dated_to_next_trade_date_is_accepted(trade_date, date
     assert record["time_zone"] is None
 
 
+@pytest.mark.parametrize("changes", [{"currency": "HKD"}, {"assetCategory": "OPT"}])
+def test_overnight_rollover_is_limited_to_us_dollar_stocks(changes):
+    source = ledger(f"<Trades>{trade(tradeDate='20260123', dateTime='20260122;203000', **changes)}</Trades>")
+    assert source["executions"]["status"] == "source_unavailable"
+    assert source["executions"]["diagnostic"]["reason"] == "execution_datetime_invalid"
+
+
 @pytest.mark.parametrize("trade_date,date_time", [
     ("20260123", "20260122;195959"),   # before the 20:00 ET boundary
     ("20260123", "20260121;220000"),   # two days earlier
     ("20260122", "20260123;210000"),   # local time after the trade date
+    ("20260124", "20260123;210000"),   # Friday evening has no US overnight session
+    ("20260125", "20260124;210000"),   # nor Saturday evening
+    ("20260123", "99991231;200000"),   # far-future timestamp must not overflow
 ])
 def test_off_boundary_datetime_still_makes_source_unknown(trade_date, date_time):
     source = ledger(f"<Trades>{trade(tradeDate=trade_date, dateTime=date_time)}</Trades>")
