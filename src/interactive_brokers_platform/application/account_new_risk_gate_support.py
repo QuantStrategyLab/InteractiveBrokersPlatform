@@ -47,6 +47,7 @@ BROKER_DRAWDOWN_MAX_AGE_SECONDS = 300
 _DRAWDOWN_TIMESTAMP_KEY = "drawdown_from_peak_observed_at"
 
 _cycle_snapshot: InjectedReconciliationSnapshot | None = None
+_cycle_market_timezone: str | None = None
 
 
 def is_account_new_risk_gate_enabled() -> bool:
@@ -104,7 +105,7 @@ def _resolve_fuse_market_timezone(
                 return target_tz
             target_market = str(payload.get("market") or "").strip()
     market = resolve_market(
-        target_market or os.environ.get("IBKR_MARKET") or os.environ.get("MARKET"),
+        os.environ.get("IBKR_MARKET") or target_market or os.environ.get("MARKET"),
         account_group=str(os.environ.get("ACCOUNT_GROUP") or ""),
     )
     return market_default_settings(market)["market_timezone"]
@@ -114,9 +115,12 @@ def _current_fuse_trade_date(
     portfolio: Mapping[str, Any] | None = None,
     *,
     execution: Mapping[str, Any] | None = None,
+    market_timezone: str | None = None,
 ) -> str:
     """Return current trading date in the configured market timezone (fail-closed if invalid)."""
-    tz_name = _resolve_fuse_market_timezone(portfolio, execution=execution)
+    tz_name = str(market_timezone or "").strip() or _resolve_fuse_market_timezone(
+        portfolio, execution=execution
+    )
     try:
         tz = ZoneInfo(tz_name)
     except Exception:
@@ -820,9 +824,22 @@ def get_cycle_snapshot() -> InjectedReconciliationSnapshot | None:
     return _cycle_snapshot
 
 
-def set_cycle_snapshot(snapshot: InjectedReconciliationSnapshot | None) -> None:
-    global _cycle_snapshot
+def set_cycle_snapshot(
+    snapshot: InjectedReconciliationSnapshot | None,
+    *,
+    portfolio: Mapping[str, Any] | None = None,
+    market_timezone: str | None = None,
+) -> None:
+    global _cycle_snapshot, _cycle_market_timezone
     _cycle_snapshot = snapshot
+    if snapshot is None:
+        _cycle_market_timezone = None
+    elif market_timezone is not None:
+        _cycle_market_timezone = market_timezone
+    elif portfolio is not None:
+        _cycle_market_timezone = _resolve_fuse_market_timezone(portfolio)
+    else:
+        _cycle_market_timezone = None
 
 
 @contextmanager
@@ -833,12 +850,13 @@ def account_new_risk_gate_cycle(
 ):
     """Bind one account_values projection for the current execution cycle."""
     previous = _cycle_snapshot
+    previous_tz = _cycle_market_timezone
     portfolio = build_portfolio_from_account_values(account_values, signal_metadata=signal_metadata)
-    set_cycle_snapshot(build_snapshot_from_portfolio(portfolio))
+    set_cycle_snapshot(build_snapshot_from_portfolio(portfolio), portfolio=portfolio)
     try:
         yield
     finally:
-        set_cycle_snapshot(previous)
+        set_cycle_snapshot(previous, market_timezone=previous_tz)
 
 
 def evaluate_cycle_new_risk_admission() -> NewRiskAdmissionResult:
@@ -846,7 +864,7 @@ def evaluate_cycle_new_risk_admission() -> NewRiskAdmissionResult:
         return _fail_closed_admission("EQUITY_UNKNOWN_FAIL_CLOSED")
     snapshot = _cycle_snapshot
     runtime_inputs = resolve_fuse_readback_inputs(
-        {}, {}, current_trade_date=_current_fuse_trade_date()
+        {}, {}, current_trade_date=_current_fuse_trade_date(market_timezone=_cycle_market_timezone)
     )
     env_fuse_active = any(str(os.environ.get(key) or "").strip() for key in _FUSE_CONTROL_ENV_KEYS)
     legacy_enabled = snapshot.legacy_new_risk_switch_enabled if is_account_new_risk_gate_enabled() else False

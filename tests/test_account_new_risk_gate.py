@@ -717,6 +717,33 @@ def test_fuse2_hk_market_timezone_removed_observe_and_legacy_transport(monkeypat
     monkeypatch.delenv("IBKR_MARKET_TIMEZONE", raising=False)
     monkeypatch.delenv("RUNTIME_TARGET_JSON", raising=False)
     assert gate._resolve_fuse_market_timezone() == "Asia/Hong_Kong"
+    # IBKR_MARKET must take precedence over RUNTIME_TARGET_JSON["market"].
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", '{"market": "US"}')
+    monkeypatch.setenv("IBKR_MARKET", "HK")
+    assert gate._resolve_fuse_market_timezone() == "Asia/Hong_Kong"
+    monkeypatch.delenv("IBKR_MARKET", raising=False)
+    monkeypatch.delenv("RUNTIME_TARGET_JSON", raising=False)
+    # Cycle snapshot preserves portfolio-level market_timezone across submit-time checks.
+    monkeypatch.delenv("MARKET", raising=False)
+    observed_tz: list[str | None] = []
+    orig_trade_date = gate._current_fuse_trade_date
+    monkeypatch.setattr(
+        gate,
+        "_current_fuse_trade_date",
+        lambda *a, **kw: observed_tz.append(kw.get("market_timezone")) or "2026-12-09",
+    )
+    with mock.patch.object(gate, "resolve_production_drift_status_from_store", return_value=None):
+        with gate.account_new_risk_gate_cycle(
+            {
+                "account_equity_usd": 50_000.0,
+                "peak_equity_usd": 50_000.0,
+                "market_timezone": "Asia/Hong_Kong",
+                "fuse_readback": _clean_fuse_record("2026-12-09"),
+            }
+        ):
+            gate.evaluate_cycle_new_risk_admission()
+    assert observed_tz[-1] == "Asia/Hong_Kong"
+    monkeypatch.setattr(gate, "_current_fuse_trade_date", orig_trade_date)
 
     monkeypatch.setenv("ACCOUNT_NEW_RISK_GATE", "0")
     monkeypatch.setenv("FUSE_READBACK_MODE", "observe")
@@ -772,7 +799,17 @@ def test_fuse2_hk_market_timezone_removed_observe_and_legacy_transport(monkeypat
     recorded: list[dict[str, object]] = []
     with mock.patch.object(rebalance_service, "try_record_platform_execution", side_effect=lambda _p, payload, **_kw: recorded.append(payload)):
         rebalance_service._record_platform_execution_telemetry({"strategy_profile": "synthetic"}, exec_summary)
-    assert len(recorded) == 1
+        rebalance_service._record_platform_execution_telemetry(
+            {"strategy_profile": "synthetic", "account_brake_observation": {
+                "fuse_readback_effective_mode": "observe",
+                "fuse_readback_would_block": True,
+                "fuse_readback_reason_codes": ["FUSE_READBACK_MISSING_FAIL_CLOSED"],
+                "fuse_readback_observe_window_expired": False,
+            }},
+            {},
+        )
+    assert len(recorded) == 2
     assert recorded[0]["fuse_readback_effective_mode"] == "observe"
     assert recorded[0]["fuse_readback_would_block"] is True
     assert recorded[0]["fuse_readback_reason_codes"] == ["FUSE_READBACK_STALE_FAIL_CLOSED"]
+    assert recorded[1]["fuse_readback_reason_codes"] == ["FUSE_READBACK_MISSING_FAIL_CLOSED"]

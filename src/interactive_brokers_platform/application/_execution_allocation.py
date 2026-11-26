@@ -230,7 +230,7 @@ def _apply_account_new_risk_gate(
     copy_fuse_telemetry(execution_summary, fuse_telemetry_from_admission(admission))
     portfolio = build_portfolio_from_account_values(account_values, signal_metadata=signal_metadata)
     cycle_snapshot = build_snapshot_from_portfolio(portfolio)
-    set_cycle_snapshot(cycle_snapshot)
+    set_cycle_snapshot(cycle_snapshot, portfolio=portfolio)
     attention_counts = _facade_attr('maybe_publish_attention_for_admission', maybe_publish_attention_for_admission)(
         admission,
         portfolio=portfolio,

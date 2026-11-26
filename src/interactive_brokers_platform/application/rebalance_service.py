@@ -70,6 +70,7 @@ def _record_platform_execution_telemetry(
             or metadata.get("total_equity")
         ),
     }
+    copy_fuse_telemetry(payload, metadata.get("account_brake_observation"))
     copy_fuse_telemetry(payload, summary)
     try_record_platform_execution(
         profile,
@@ -1148,11 +1149,17 @@ def run_strategy_core(
             execution_blocked_reason = str(signal_metadata.get("execution_blocked_reason") or "").strip()
             no_op_reason = signal_metadata.get("no_op_reason")
             fail_reason = signal_metadata.get("fail_reason")
+            from interactive_brokers_platform.application.account_new_risk_gate_support import copy_fuse_telemetry
+
+            brake_observation = signal_metadata.get("account_brake_observation") or {}
             blocked_summary = (
                 {"execution_status": "blocked", "no_op_reason": execution_blocked_reason}
                 if execution_blocked_reason
-                else None
+                else {}
             )
+            copy_fuse_telemetry(blocked_summary, brake_observation)
+            if not blocked_summary:
+                blocked_summary = None
             notification_context = signal_metadata.get("notification_context")
             status_context = (
                 notification_context.get("status")
@@ -1174,7 +1181,6 @@ def run_strategy_core(
                     "outside_execution_window", "outside_monthly_execution_window",
                 }
             )
-            brake_observation = signal_metadata.get("account_brake_observation") or {}
             decision_unavailable = (
                 normalized_decision not in {"", "proceed", "no_op"}
                 or not known_no_signal
