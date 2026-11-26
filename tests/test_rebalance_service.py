@@ -1573,3 +1573,23 @@ def test_report_preserves_known_strategy_order_counts(strategy_module_factory, s
     assert summary["orders_submitted_count"] == len(orders)
     assert "orders_submitted_coverage" not in summary
 
+
+def test_cycle_report_summary_preserves_fuse_observe_telemetry(strategy_module_factory):
+    platform = strategy_module_factory()
+    cycle = SimpleNamespace(result="synthetic", signal_metadata={}, account_facts={})
+    summary = platform._build_cycle_report_summary(
+        cycle,
+        {
+            "orders_submitted": [],
+            "fuse_readback_effective_mode": "observe",
+            "fuse_readback_would_block": True,
+            "fuse_readback_reason_codes": ["FUSE_READBACK_STALE_FAIL_CLOSED"],
+            "fuse_readback_observe_window_expired": False,
+        },
+        {},
+        dry_run=True,
+    )
+    assert summary["fuse_readback_effective_mode"] == "observe"
+    assert summary["fuse_readback_would_block"] is True
+    assert summary["fuse_readback_reason_codes"] == ["FUSE_READBACK_STALE_FAIL_CLOSED"]
+

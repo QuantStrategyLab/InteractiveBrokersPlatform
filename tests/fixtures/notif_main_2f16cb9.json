@@ -1714,7 +1714,7 @@
   "heartbeat:missing:zh": {
     "sends": [
       [
-        "[执行回执心跳] Example\n检查范围：过去 36 小时\n问题：\n- 过去 36 小时内没有新的执行回执",
+        "[执行回执心跳] Example\n【结果】\n需核对；告警不代表订单或成交结果\n【范围】\n检查范围：过去 36 小时\n【证据】\n问题：\n- 过去 36 小时内没有新的执行回执\n运行记录：未提供运行链接\n【覆盖】\n范围仅限本次检查；订单：未知；成交：未知\n【下一步】\n核对该次运行、回执和缺失来源；保持现有执行限制。",
         {}
       ]
     ],
@@ -1723,7 +1723,7 @@
   "daily_digest:heartbeat:missing:zh": {
     "sends": [
       [
-        "[执行回执心跳] Example\n检查范围：过去 36 小时\n问题：\n- 过去 36 小时内没有新的执行回执",
+        "[执行回执心跳] Example\n【结果】\n需核对；告警不代表订单或成交结果\n【范围】\n检查范围：过去 36 小时\n【证据】\n问题：\n- 过去 36 小时内没有新的执行回执\n运行记录：未提供运行链接\n【覆盖】\n范围仅限本次检查；订单：未知；成交：未知\n【下一步】\n核对该次运行、回执和缺失来源；保持现有执行限制。",
         {}
       ]
     ],
@@ -1732,7 +1732,7 @@
   "heartbeat:missing:en": {
     "sends": [
       [
-        "[Execution Report Heartbeat] Example\nLookback: 36 hours\nIssues:\n- No new execution report in the last 36 hours",
+        "[Execution Report Heartbeat] Example\n[Result]\nNeeds review; an alert does not establish order or fill outcomes\n[Scope]\nLookback: 36 hours\n[Evidence]\nIssues:\n- No new execution report in the last 36 hours\nRun record: run link not provided\n[Coverage]\nThis check only; orders: unknown; fills: unknown\n[Next step]\nReview the source run, receipt and missing sources; retain existing execution restrictions.",
         {}
       ]
     ],
@@ -1741,7 +1741,7 @@
   "daily_digest:heartbeat:missing:en": {
     "sends": [
       [
-        "[Execution Report Heartbeat] Example\nLookback: 36 hours\nIssues:\n- No new execution report in the last 36 hours",
+        "[Execution Report Heartbeat] Example\n[Result]\nNeeds review; an alert does not establish order or fill outcomes\n[Scope]\nLookback: 36 hours\n[Evidence]\nIssues:\n- No new execution report in the last 36 hours\nRun record: run link not provided\n[Coverage]\nThis check only; orders: unknown; fills: unknown\n[Next step]\nReview the source run, receipt and missing sources; retain existing execution restrictions.",
         {}
       ]
     ],
@@ -1810,7 +1810,7 @@
   "attention:blocked:zh": {
     "sends": [
       {
-        "text": "🚨 IBKR · ••nt · 半导体趋势收益\n结果：已禁止新增风险\n原因：operational_uncertain: 运行状态不确定 / 故障; new_risk_prohibited: 风控已拦截；调用方未提供具体原因码\n运行时间：未知\n运行详情：未提供运行链接\n下一步：打开管理站处理恢复 / 复位（需授权）",
+        "text": "🚨 IBKR · ••nt · 半导体趋势收益\n【结果】\n结果：已禁止新增风险\n【范围】\n运行时间：未知\n【证据】\n原因：operational_uncertain: 运行状态不确定 / 故障; new_risk_prohibited: 风控已拦截；调用方未提供具体原因码\n运行详情：未提供运行链接\n【覆盖】\n单次运行；订单：未知；成交：未知\n【下一步】\n下一步：打开管理站处理恢复 / 复位（需授权）",
         "alert_key": "attention/ibkr/-account/soxl_soxx_trend_income/halt/operational_uncertain"
       }
     ],
@@ -1830,7 +1830,7 @@
   "daily_digest:attention:blocked:zh": {
     "sends": [
       {
-        "text": "🚨 IBKR · ••nt · 半导体趋势收益\n结果：已禁止新增风险\n原因：operational_uncertain: 运行状态不确定 / 故障; new_risk_prohibited: 风控已拦截；调用方未提供具体原因码\n运行时间：未知\n运行详情：未提供运行链接\n下一步：打开管理站处理恢复 / 复位（需授权）",
+        "text": "🚨 IBKR · ••nt · 半导体趋势收益\n【结果】\n结果：已禁止新增风险\n【范围】\n运行时间：未知\n【证据】\n原因：operational_uncertain: 运行状态不确定 / 故障; new_risk_prohibited: 风控已拦截；调用方未提供具体原因码\n运行详情：未提供运行链接\n【覆盖】\n单次运行；订单：未知；成交：未知\n【下一步】\n下一步：打开管理站处理恢复 / 复位（需授权）",
         "alert_key": "attention/ibkr/-account/soxl_soxx_trend_income/halt/operational_uncertain"
       }
     ],
@@ -1850,7 +1850,7 @@
   "attention:blocked:en": {
     "sends": [
       {
-        "text": "🚨 IBKR · ••nt · Semiconductor Trend Income\nResult: new risk additions prohibited\nReason: operational_uncertain: operational uncertainty / fault; new_risk_prohibited: a risk guard blocked additions; the caller did not provide the specific reason code\nRun time: Unknown\nRun details: Run link not provided\nNext: open the management console for recovery / reset (authorization required)",
+        "text": "🚨 IBKR · ••nt · Semiconductor Trend Income\n[Result]\nResult: new risk additions prohibited\n[Scope]\nRun time: Unknown\n[Evidence]\nReason: operational_uncertain: operational uncertainty / fault; new_risk_prohibited: a risk guard blocked additions; the caller did not provide the specific reason code\nRun details: Run link not provided\n[Coverage]\nSingle run; orders: unknown; fills: unknown\n[Next step]\nNext: open the management console for recovery / reset (authorization required)",
         "alert_key": "attention/ibkr/-account/soxl_soxx_trend_income/halt/operational_uncertain"
       }
     ],
@@ -1870,7 +1870,7 @@
   "daily_digest:attention:blocked:en": {
     "sends": [
       {
-        "text": "🚨 IBKR · ••nt · Semiconductor Trend Income\nResult: new risk additions prohibited\nReason: operational_uncertain: operational uncertainty / fault; new_risk_prohibited: a risk guard blocked additions; the caller did not provide the specific reason code\nRun time: Unknown\nRun details: Run link not provided\nNext: open the management console for recovery / reset (authorization required)",
+        "text": "🚨 IBKR · ••nt · Semiconductor Trend Income\n[Result]\nResult: new risk additions prohibited\n[Scope]\nRun time: Unknown\n[Evidence]\nReason: operational_uncertain: operational uncertainty / fault; new_risk_prohibited: a risk guard blocked additions; the caller did not provide the specific reason code\nRun details: Run link not provided\n[Coverage]\nSingle run; orders: unknown; fills: unknown\n[Next step]\nNext: open the management console for recovery / reset (authorization required)",
         "alert_key": "attention/ibkr/-account/soxl_soxx_trend_income/halt/operational_uncertain"
       }
     ],

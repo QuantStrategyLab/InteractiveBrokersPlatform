@@ -18,9 +18,9 @@ def render(execution=None, report=None, diagnostics=""):
 
 
 @pytest.mark.parametrize("code,description", [
-    ("blocked_run", "保护规则阻断"),
-    ("empty_position_decision", "空持仓决策"),
-    ("strategy_risk_rejected", "策略风控拒绝"),
+    ("blocked_run", "本轮已运行，执行被阻断"),
+    ("empty_position_decision", "本轮策略目标仓位为空"),
+    ("strategy_risk_rejected", "本轮策略风控未通过"),
     ("account_brake_source_or_submit_unavailable", "账户保护数据或提交服务不可用"),
     ("account_brake_submission_not_confirmed", "账户保护提交未确认"),
     ("rejected:too_many_positions", "策略风控拒绝"),

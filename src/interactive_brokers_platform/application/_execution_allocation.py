@@ -8,9 +8,11 @@ from interactive_brokers_platform.application.account_new_risk_gate_support impo
     scale_targets_for_admission,
     build_portfolio_from_account_values,
     build_snapshot_from_portfolio,
+    copy_fuse_telemetry,
     evaluate_account_values_new_risk_admission,
     evaluate_persistent_account_new_risk_admission,
-    is_account_new_risk_gate_enabled,
+    fuse_telemetry_from_admission,
+    is_effective_new_risk_gate_enabled,
     maybe_publish_attention_for_admission,
     new_risk_buy_prohibited,
     set_cycle_snapshot,
@@ -99,7 +101,8 @@ def _build_claimed_submitter(
             raise RuntimeError("IBKR execution claim required; refusing broker submission")
         # Shadow consult after successful claim; deny must not block submit.
         _consult_t1(identity_held=True, dry_run_bypass=False)
-        new_risk = str(order_intent.side).strip().lower() == "buy" and is_account_new_risk_gate_enabled()
+        portfolio = build_portfolio_from_account_values(account_values, signal_metadata=signal_metadata)
+        new_risk = str(order_intent.side).strip().lower() == "buy" and is_effective_new_risk_gate_enabled(portfolio)
         if new_risk:
             latest = evaluate_persistent_account_new_risk_admission(
                 account_values,
@@ -206,7 +209,8 @@ def _apply_account_new_risk_gate(
     execution_summary: dict[str, Any],
     dry_run_only: bool,
 ) -> tuple[dict[str, float], bool, tuple[str, ...]]:
-    if not is_account_new_risk_gate_enabled():
+    portfolio = build_portfolio_from_account_values(account_values, signal_metadata=signal_metadata)
+    if not is_effective_new_risk_gate_enabled(portfolio):
         set_cycle_snapshot(None)
         return target_weights, False, ()
     # Inner dry-run previews without a session retain their diagnostic
@@ -223,9 +227,10 @@ def _apply_account_new_risk_gate(
         )
     account_new_risk_buy_blocked = new_risk_buy_prohibited(admission)
     account_new_risk_reason_codes = tuple(admission.reason_codes)
+    copy_fuse_telemetry(execution_summary, fuse_telemetry_from_admission(admission))
     portfolio = build_portfolio_from_account_values(account_values, signal_metadata=signal_metadata)
     cycle_snapshot = build_snapshot_from_portfolio(portfolio)
-    set_cycle_snapshot(cycle_snapshot)
+    set_cycle_snapshot(cycle_snapshot, portfolio=portfolio)
     attention_counts = _facade_attr('maybe_publish_attention_for_admission', maybe_publish_attention_for_admission)(
         admission,
         portfolio=portfolio,

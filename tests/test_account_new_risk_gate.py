@@ -486,3 +486,333 @@ def test_submit_rejects_unproven_reduction_and_allows_short_cover():
         assert rejected.status == "rejected"
         submit_order_intent(SimpleNamespace(), OrderIntent(symbol="SPY", side="buy", quantity=1), reduction_position=-2, reduction_pending_quantity=0)
         submit.assert_called_once()
+
+
+def _clean_fuse_record(trade_date: str = "2026-11-27", **overrides):
+    record = {
+        "trade_date": trade_date,
+        "session_allowed": True,
+        "session_state": "regular",
+        "fuse_latched": False,
+        "fuse_level": "L0",
+        "blocks_orders": False,
+        "blocks_eligibility": False,
+        "calendar_version": "test-cal-v1",
+        "spec_digest": "0" * 64,
+    }
+    record.update(overrides)
+    return record
+
+
+def test_fuse2_same_day_clean_readback_allows_and_missing_or_stale_blocks(monkeypatch):
+    from interactive_brokers_platform.application import account_new_risk_gate_support as gate
+    from interactive_brokers_platform.application.account_new_risk_gate_support import (
+        evaluate_account_values_new_risk_admission,
+        is_effective_new_risk_gate_enabled,
+    )
+
+    monkeypatch.setenv("FUSE_READBACK_MODE", "enforce")
+    monkeypatch.setattr(gate, "_current_fuse_trade_date", lambda *a, **kw: "2026-11-27")
+    monkeypatch.delenv("FUSE_TRADE_DATE", raising=False)
+    monkeypatch.delenv("ACCOUNT_NEW_RISK_GATE", raising=False)
+
+    with mock.patch(
+        "interactive_brokers_platform.application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
+        return_value=None,
+    ):
+        allowed = evaluate_account_values_new_risk_admission(
+            {"account_equity_usd": 50_000.0, "peak_equity_usd": 50_000.0, "fuse_readback": _clean_fuse_record()},
+        )
+        assert allowed.disposition == NewRiskDisposition.ALLOW_NEW_RISK
+        assert allowed.fuse_decision is not None
+        assert not allowed.fuse_decision.blocks_new_risk
+
+        stale = evaluate_account_values_new_risk_admission(
+            {"account_equity_usd": 50_000.0, "peak_equity_usd": 50_000.0, "fuse_readback": _clean_fuse_record("2026-11-26")},
+        )
+        assert stale.disposition == NewRiskDisposition.NEW_RISK_PROHIBITED
+        assert "FUSE_READBACK_STALE_FAIL_CLOSED" in stale.reason_codes
+
+        null_payload = evaluate_account_values_new_risk_admission(
+            {"account_equity_usd": 50_000.0, "peak_equity_usd": 50_000.0, "fuse_readback": None},
+        )
+        assert null_payload.disposition == NewRiskDisposition.NEW_RISK_PROHIBITED
+        assert "FUSE_READBACK_MISSING_FAIL_CLOSED" in null_payload.reason_codes
+
+        latched = evaluate_account_values_new_risk_admission(
+            {"account_equity_usd": 50_000.0, "peak_equity_usd": 50_000.0, "fuse_readback": _clean_fuse_record(fuse_latched=True)},
+        )
+        assert latched.disposition == NewRiskDisposition.NEW_RISK_PROHIBITED
+        assert "FUSE_LATCHED_BLOCKED" in latched.reason_codes
+        assert is_effective_new_risk_gate_enabled()
+
+
+def test_fuse2_legacy_switch_off_cannot_disable_fuse_and_observe_window_transitions(monkeypatch):
+    from interactive_brokers_platform.application import account_new_risk_gate_support as gate
+    from interactive_brokers_platform.application.account_new_risk_gate_support import (
+        account_new_risk_gate_cycle,
+        evaluate_account_values_new_risk_admission,
+        is_effective_new_risk_gate_enabled,
+    )
+
+    monkeypatch.setenv("ACCOUNT_NEW_RISK_GATE", "0")
+    monkeypatch.setenv("FUSE_READBACK_MODE", "observe")
+    monkeypatch.setenv("FUSE_OBSERVE_UNTIL", "2026-12-11")
+    monkeypatch.delenv("FUSE_TRADE_DATE", raising=False)
+    monkeypatch.setattr(gate, "_current_fuse_trade_date", lambda *a, **kw: "2026-12-01")
+
+    with mock.patch(
+        "interactive_brokers_platform.application.account_new_risk_gate_support.resolve_production_drift_status_from_store",
+        return_value=None,
+    ):
+        with account_new_risk_gate_cycle(
+            {"account_equity_usd": 50_000.0, "peak_equity_usd": 50_000.0, "fuse_readback": _clean_fuse_record("2026-12-01")}
+        ):
+            assert is_effective_new_risk_gate_enabled() is True
+            with mock.patch("interactive_brokers_platform.application.ibkr_order_execution._submit_order_intent") as submit_mock:
+                rejected = submit_order_intent(SimpleNamespace(), OrderIntent(symbol="SPY", side="buy", quantity=1.0))
+                assert rejected.status == "rejected"
+                assert "LEGACY_NEW_RISK_SWITCH_DISABLED" in rejected.raw_payload["reason_codes"]
+                submit_mock.assert_not_called()
+
+        monkeypatch.setenv("ACCOUNT_NEW_RISK_GATE", "1")
+        observed_stale = evaluate_account_values_new_risk_admission(
+            {"account_equity_usd": 50_000.0, "peak_equity_usd": 50_000.0, "fuse_readback": _clean_fuse_record("2026-11-30")},
+        )
+        assert observed_stale.disposition == NewRiskDisposition.ALLOW_NEW_RISK
+        assert observed_stale.fuse_decision is not None
+        assert observed_stale.fuse_decision.effective_mode == "observe"
+        assert observed_stale.fuse_decision.would_block is True
+
+        monkeypatch.setattr(gate, "_current_fuse_trade_date", lambda *a, **kw: "2026-12-12")
+        expired_latched = evaluate_account_values_new_risk_admission(
+            {"account_equity_usd": 50_000.0, "peak_equity_usd": 50_000.0, "fuse_readback": _clean_fuse_record("2026-12-12", fuse_latched=True)},
+        )
+        assert expired_latched.disposition == NewRiskDisposition.NEW_RISK_PROHIBITED
+        assert expired_latched.fuse_decision is not None
+        assert expired_latched.fuse_decision.effective_mode == "enforce"
+        assert expired_latched.fuse_decision.observe_window_expired is True
+
+
+def test_fuse2_native_readback_precedence_and_stale_env_isolation(monkeypatch):
+    from interactive_brokers_platform.application import account_new_risk_gate_support as gate
+
+    monkeypatch.setenv("FUSE_READBACK_MODE", "enforce")
+    monkeypatch.setenv("FUSE_TRADE_DATE", "2026-11-26")
+    monkeypatch.setattr(gate, "_current_fuse_trade_date", lambda *a, **kw: "2026-11-27")
+    monkeypatch.delenv("ACCOUNT_NEW_RISK_GATE", raising=False)
+
+    clean_cached = {"account_new_risk_snapshot": {"fuse_readback": _clean_fuse_record("2026-11-27")}}
+    with mock.patch.object(gate, "resolve_production_drift_status_from_store", return_value=None):
+        for bad_native, expected_code in (
+            (None, "FUSE_READBACK_MISSING_FAIL_CLOSED"),
+            ({"trade_date": "2026-11-27", "fuse_latched": "yes"}, "FUSE_READBACK_INVALID_FAIL_CLOSED"),
+            (_clean_fuse_record("2026-11-27", fuse_latched=True), "FUSE_LATCHED_BLOCKED"),
+        ):
+            blocked = gate.evaluate_account_values_new_risk_admission(
+                {"account_equity_usd": 50_000.0, "peak_equity_usd": 50_000.0, "fuse_readback": bad_native},
+                signal_metadata=clean_cached,
+            )
+            assert blocked.disposition == NewRiskDisposition.NEW_RISK_PROHIBITED
+            assert expected_code in blocked.reason_codes
+
+        stale_day = gate.evaluate_account_values_new_risk_admission(
+            {"account_equity_usd": 50_000.0, "peak_equity_usd": 50_000.0, "fuse_readback": _clean_fuse_record("2026-11-26")},
+        )
+        assert stale_day.disposition == NewRiskDisposition.NEW_RISK_PROHIBITED
+        assert "FUSE_READBACK_STALE_FAIL_CLOSED" in stale_day.reason_codes
+
+        today_ok = gate.evaluate_account_values_new_risk_admission(
+            {"account_equity_usd": 50_000.0, "peak_equity_usd": 50_000.0, "fuse_readback": _clean_fuse_record("2026-11-27")},
+        )
+        assert today_ok.disposition == NewRiskDisposition.ALLOW_NEW_RISK
+
+
+def test_fuse2_rebalance_snapshot_transport_preserves_explicit_null_and_gate(monkeypatch):
+    from interactive_brokers_platform.application import account_new_risk_gate_support as gate
+
+    for key in ("FUSE_READBACK_MODE", "FUSE_TRADE_DATE", "FUSE_OBSERVE_UNTIL"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("ACCOUNT_NEW_RISK_GATE", "0")
+    monkeypatch.setattr(gate, "_current_fuse_trade_date", lambda *a, **kw: "2026-11-27")
+
+    snapshot = SimpleNamespace(
+        total_equity=50_000.0,
+        buying_power=50_000.0,
+        as_of=None,
+        positions={},
+        metadata={
+            "currency": "USD",
+            "broker_net_liquidation": 50_000.0,
+            "total_equity_source": "broker_net_liquidation",
+            "peak_equity_usd": 50_000.0,
+            "fuse_readback": None,
+        },
+    )
+    _positions, account_values = _snapshot_to_portfolio_view(snapshot)
+    assert "fuse_readback" in account_values and account_values["fuse_readback"] is None
+    portfolio = build_portfolio_from_account_values(account_values)
+    assert gate.is_effective_new_risk_gate_enabled(portfolio) is True
+    with mock.patch.object(gate, "resolve_production_drift_status_from_store", return_value=None):
+        result = evaluate_account_values_new_risk_admission(account_values)
+    assert result.disposition == NewRiskDisposition.NEW_RISK_PROHIBITED
+    assert "FUSE_READBACK_MISSING_FAIL_CLOSED" in result.reason_codes
+
+
+def test_fuse2_cycle_snapshot_and_observe_summary_telemetry(monkeypatch):
+    from interactive_brokers_platform.application import _execution_allocation as alloc
+    from interactive_brokers_platform.application import account_new_risk_gate_support as gate
+
+    monkeypatch.setenv("ACCOUNT_NEW_RISK_GATE", "0")
+    monkeypatch.setenv("FUSE_READBACK_MODE", "enforce")
+    monkeypatch.setattr(gate, "_current_fuse_trade_date", lambda *a, **kw: "2026-11-27")
+
+    bound_snapshot = InjectedReconciliationSnapshot(
+        observation_status="COMPLETE",
+        reconciliation_status="VERIFIED",
+        circuit_breaker_state="CLOSED",
+        equity_usd=50_000.0,
+        peak_equity_usd=50_000.0,
+        fuse_enabled=False,
+        fuse_readback={"trade_date": "2026-11-27", "fuse_latched": "yes"},
+    )
+    set_cycle_snapshot(bound_snapshot)
+    with mock.patch.object(gate, "resolve_production_drift_status_from_store", return_value=None):
+        with mock.patch("interactive_brokers_platform.application.ibkr_order_execution._submit_order_intent") as submit_mock:
+            rejected = submit_order_intent(SimpleNamespace(), OrderIntent(symbol="SPY", side="buy", quantity=1.0))
+            assert rejected.status == "rejected"
+            assert "FUSE_READBACK_INVALID_FAIL_CLOSED" in rejected.raw_payload["reason_codes"]
+            submit_mock.assert_not_called()
+
+    set_cycle_snapshot(None)
+    monkeypatch.setenv("ACCOUNT_NEW_RISK_GATE", "1")
+    monkeypatch.setenv("FUSE_READBACK_MODE", "observe")
+    monkeypatch.setenv("FUSE_OBSERVE_UNTIL", "2026-12-11")
+    monkeypatch.setattr(gate, "_current_fuse_trade_date", lambda *a, **kw: "2026-12-01")
+    summary: dict[str, object] = {}
+    with mock.patch.object(gate, "resolve_production_drift_status_from_store", return_value=None):
+        _weights, blocked, _codes = alloc._apply_account_new_risk_gate(
+            {"SPY": 0.5},
+            account_values={
+                "account_equity_usd": 50_000.0,
+                "peak_equity_usd": 50_000.0,
+                "fuse_readback": _clean_fuse_record("2026-11-30"),
+            },
+            signal_metadata={},
+            account_execution_session=None,
+            execution_summary=summary,
+            dry_run_only=True,
+        )
+    assert blocked is False
+    assert summary["fuse_readback_effective_mode"] == "observe"
+    assert summary["fuse_readback_would_block"] is True
+    assert "FUSE_READBACK_STALE_FAIL_CLOSED" in summary["fuse_readback_reason_codes"]  # type: ignore[operator]
+
+
+def test_fuse2_hk_market_timezone_removed_observe_and_legacy_transport(monkeypatch):
+    from interactive_brokers_platform.application import account_new_risk_gate_support as gate
+    from interactive_brokers_platform.application import rebalance_service
+
+    monkeypatch.setenv("MARKET", "HK")
+    monkeypatch.delenv("IBKR_MARKET_TIMEZONE", raising=False)
+    monkeypatch.delenv("RUNTIME_TARGET_JSON", raising=False)
+    assert gate._resolve_fuse_market_timezone() == "Asia/Hong_Kong"
+    # IBKR_MARKET must take precedence over RUNTIME_TARGET_JSON["market"], and QSL_RUNTIME_TARGET_JSON must be honored.
+    monkeypatch.setenv("QSL_RUNTIME_TARGET_JSON", '{"market": "HK"}')
+    assert gate._resolve_fuse_market_timezone() == "Asia/Hong_Kong"
+    monkeypatch.delenv("QSL_RUNTIME_TARGET_JSON", raising=False)
+    monkeypatch.setenv("RUNTIME_TARGET_JSON", '{"market": "US"}')
+    monkeypatch.setenv("IBKR_MARKET", "HK")
+    assert gate._resolve_fuse_market_timezone() == "Asia/Hong_Kong"
+    monkeypatch.delenv("IBKR_MARKET", raising=False)
+    monkeypatch.delenv("RUNTIME_TARGET_JSON", raising=False)
+    # Cycle snapshot preserves portfolio-level market_timezone across submit-time checks.
+    monkeypatch.delenv("MARKET", raising=False)
+    observed_tz: list[str | None] = []
+    orig_trade_date = gate._current_fuse_trade_date
+    monkeypatch.setattr(
+        gate,
+        "_current_fuse_trade_date",
+        lambda *a, **kw: observed_tz.append(kw.get("market_timezone")) or "2026-12-09",
+    )
+    with mock.patch.object(gate, "resolve_production_drift_status_from_store", return_value=None):
+        with gate.account_new_risk_gate_cycle(
+            {
+                "account_equity_usd": 50_000.0,
+                "peak_equity_usd": 50_000.0,
+                "market_timezone": "Asia/Hong_Kong",
+                "fuse_readback": _clean_fuse_record("2026-12-09"),
+            }
+        ):
+            gate.evaluate_cycle_new_risk_admission()
+    assert observed_tz[-1] == "Asia/Hong_Kong"
+    monkeypatch.setattr(gate, "_current_fuse_trade_date", orig_trade_date)
+
+    monkeypatch.setenv("ACCOUNT_NEW_RISK_GATE", "0")
+    monkeypatch.setenv("FUSE_READBACK_MODE", "observe")
+    monkeypatch.setenv("FUSE_OBSERVE_UNTIL", "2026-12-11")
+    monkeypatch.setattr(gate, "_current_fuse_trade_date", lambda *a, **kw: "2026-12-09")
+
+    with mock.patch.object(gate, "resolve_production_drift_status_from_store", return_value=None):
+        with gate.account_new_risk_gate_cycle(
+            {
+                "account_equity_usd": 50_000.0,
+                "peak_equity_usd": 50_000.0,
+                "fuse_readback": _clean_fuse_record("2026-12-09", fuse_latched=True),
+            }
+        ):
+            # Removing observe env mid-cycle must promote submit_order_intent to enforce immediately.
+            monkeypatch.delenv("FUSE_OBSERVE_UNTIL", raising=False)
+            monkeypatch.delenv("FUSE_READBACK_MODE", raising=False)
+            with mock.patch("interactive_brokers_platform.application.ibkr_order_execution._submit_order_intent") as submit_mock:
+                rejected = submit_order_intent(SimpleNamespace(), OrderIntent(symbol="SPY", side="buy", quantity=1.0))
+                assert rejected.status == "rejected"
+                assert "FUSE_LATCHED_BLOCKED" in rejected.raw_payload["reason_codes"]
+                submit_mock.assert_not_called()
+
+    # Legacy portfolio -> PortfolioSnapshot -> _snapshot_to_portfolio_view preserves fuse_readback and fuse_enabled.
+    for key in ("FUSE_READBACK_MODE", "FUSE_TRADE_DATE", "FUSE_OBSERVE_UNTIL"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("ACCOUNT_NEW_RISK_GATE", "0")
+    for raw_values, expected_code in (
+        ({"equity": 50_000.0, "buying_power": 10_000.0, "fuse_readback": _clean_fuse_record("2026-12-09", fuse_latched=True)}, "FUSE_LATCHED_BLOCKED"),
+        ({"equity": 50_000.0, "buying_power": 10_000.0, "fuse_enabled": True}, "FUSE_READBACK_MISSING_FAIL_CLOSED"),
+    ):
+        snap = rebalance_service._legacy_portfolio_snapshot(
+            SimpleNamespace(), get_current_portfolio=lambda _ib, v=raw_values: ({}, v)
+        )
+        _pos, transported = _snapshot_to_portfolio_view(snap)
+        portfolio = build_portfolio_from_account_values(transported)
+        assert gate.is_effective_new_risk_gate_enabled(portfolio) is True
+        with mock.patch.object(gate, "resolve_production_drift_status_from_store", return_value=None):
+            res = evaluate_account_values_new_risk_admission(transported)
+        assert res.disposition == NewRiskDisposition.NEW_RISK_PROHIBITED
+        assert expected_code in res.reason_codes
+
+    # Platform telemetry helper preserves observe findings.
+    exec_summary = {
+        "execution_status": "completed",
+        "orders_submitted": [],
+        "orders_skipped": [],
+        "fuse_readback_effective_mode": "observe",
+        "fuse_readback_would_block": True,
+        "fuse_readback_reason_codes": ["FUSE_READBACK_STALE_FAIL_CLOSED"],
+        "fuse_readback_observe_window_expired": False,
+    }
+    recorded: list[dict[str, object]] = []
+    with mock.patch.object(rebalance_service, "try_record_platform_execution", side_effect=lambda _p, payload, **_kw: recorded.append(payload)):
+        rebalance_service._record_platform_execution_telemetry({"strategy_profile": "synthetic"}, exec_summary)
+        rebalance_service._record_platform_execution_telemetry(
+            {"strategy_profile": "synthetic", "account_brake_observation": {
+                "fuse_readback_effective_mode": "observe",
+                "fuse_readback_would_block": True,
+                "fuse_readback_reason_codes": ["FUSE_READBACK_MISSING_FAIL_CLOSED"],
+                "fuse_readback_observe_window_expired": False,
+            }},
+            {},
+        )
+    assert len(recorded) == 2
+    assert recorded[0]["fuse_readback_effective_mode"] == "observe"
+    assert recorded[0]["fuse_readback_would_block"] is True
+    assert recorded[0]["fuse_readback_reason_codes"] == ["FUSE_READBACK_STALE_FAIL_CLOSED"]
+    assert recorded[1]["fuse_readback_reason_codes"] == ["FUSE_READBACK_MISSING_FAIL_CLOSED"]
