@@ -56,7 +56,7 @@ jobs:
       - name: Authenticate with existing identity
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
-          workload_identity_provider: projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Set up existing read-only cloud tools

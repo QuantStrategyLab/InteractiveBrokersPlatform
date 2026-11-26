@@ -18,7 +18,7 @@ WORKFLOWS = (
 NOTIFY_ROUTE_ADDITIONAL_SECRET_CONTRACTS = {
     "GCP_PROJECT_ID": (True, "vars.IBKR_GCP_PROJECT_ID"),
     "GCP_WORKLOAD_IDENTITY_PROVIDER": (
-        True, "'projects/303168642265/locations/global/workloadIdentityPools/github-actions/providers/github-main'",
+        True, "secrets.GCP_WORKLOAD_IDENTITY_PROVIDER",
     ),
     "GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT": (
         True, "vars.IBKR_DEPLOY_SERVICE_ACCOUNT",

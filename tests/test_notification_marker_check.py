@@ -1049,8 +1049,22 @@ def test_validation_rejects_missing_or_foreign_operation_name_before_poll(name):
     assert [method for method, _, _ in session.calls] == ['GET', 'POST']
 
 
-def test_validation_accepts_exact_known_project_number_operation_prefix():
-    name = 'projects/303168642265/locations/us-central1/operations/synthetic-validation'
+def test_validation_accepts_exact_known_project_number_operation_prefix(monkeypatch):
+    monkeypatch.setenv('GCP_PROJECT_NUMBER', '123456789012')
+    name = 'projects/123456789012/locations/us-central1/operations/synthetic-validation'
+    session = ValidationSession(post_response={'name': name, 'done': True})
+    report = {}
+    control.validate_probe(session, report)
+    assert report['status'] == 'validated_only_job_absent'
+
+
+def test_validation_accepts_project_number_derived_from_wif_provider(monkeypatch):
+    monkeypatch.delenv('GCP_PROJECT_NUMBER', raising=False)
+    monkeypatch.setenv(
+        'GCP_WORKLOAD_IDENTITY_PROVIDER',
+        'projects/123456789012/locations/global/workloadIdentityPools/github-actions/providers/github-main',
+    )
+    name = 'projects/123456789012/locations/us-central1/operations/synthetic-validation'
     session = ValidationSession(post_response={'name': name, 'done': True})
     report = {}
     control.validate_probe(session, report)
