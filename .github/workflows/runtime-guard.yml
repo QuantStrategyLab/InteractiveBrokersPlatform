@@ -46,6 +46,7 @@ jobs:
       require_success: ${{ inputs.require_success }}
       fail_workflow_on_alert: ${{ inputs.fail_workflow_on_alert }}
     secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       CLOUD_RUN_SERVICE: ${{ secrets.CLOUD_RUN_SERVICE }}
       CLOUD_RUN_SERVICES: ${{ secrets.CLOUD_RUN_SERVICES }}
       CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ vars.CLOUD_RUN_SERVICE_TARGETS_JSON || secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}
