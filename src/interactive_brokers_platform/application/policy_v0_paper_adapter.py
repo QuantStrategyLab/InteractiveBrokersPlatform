@@ -14,16 +14,15 @@ import math
 
 from quant_platform_kit.risk import (
     CorporateActionSplit,
+    DEFAULT_SLEEVE_BETA_SHARES,
     ExternalCashFlow,
     FlowAdjustedHwmState,
     FlowAdjustedHwmUpdate,
     PILOT_SYMBOLS,
     POLICY_V0_TIERS,
-    PolicyV0SafetyInvariants,
     PolicyV0SizingResult,
     advance_flow_adjusted_hwm,
     compute_policy_v0_rebalance,
-    DEFAULT_SLEEVE_BETA_SHARES,
 )
 
 
@@ -40,8 +39,8 @@ class PilotQuoteSnapshot:
 class PolicyV0PaperCycleDecision:
     """Offline Phase 9 PAPER cycle decision binding HWM, sizing, and V7 quote health."""
 
-    hwm_update: FlowAdjustedHwmUpdate
-    sizing_result: PolicyV0SizingResult
+    hwm_update: FlowAdjustedHwmUpdate | None
+    sizing_result: PolicyV0SizingResult | None
     v7_spread_collar_tripped: bool
     v7_spread_reasons: tuple[str, ...]
     half_spreads_bps: dict[str, float]
@@ -67,23 +66,28 @@ def evaluate_v7_spread_collar(
     *,
     max_half_spread_bps: float = 25.0,
 ) -> tuple[bool, tuple[str, ...], dict[str, float]]:
-    """Evaluate the ``V7`` fail-closed abnormal-spread collar on pilot quotes.
+    """Evaluate the ``V7`` fail-closed abnormal-spread collar on ``PILOT_SYMBOLS``.
 
-    Returns ``(tripped, reasons, half_spreads_bps)``. Missing, non-finite,
-    crossed, or overly wide quotes trip the collar so new risk-increasing buys
-    are blocked while risk-reducing sells remain permitted.
+    Returns ``(tripped, reasons, half_spreads_bps)``. Absent (``None``),
+    invalid, crossed, or wide quotes, as well as invalid threshold inputs,
+    trip the collar fail-closed so new risk-increasing buys are blocked while
+    risk-reducing sells remain permitted when sizing inputs are valid.
     """
     reasons: list[str] = []
     half_spreads_bps: dict[str, float] = {}
 
-    if not _is_finite_pos(max_half_spread_bps):
+    valid_limit = _is_finite_pos(max_half_spread_bps)
+    if not valid_limit:
         reasons.append("INVALID_V7_SPREAD_COLLAR_BPS")
-    if quotes is None:
-        return False, (), {}
-    if not isinstance(quotes, Mapping):
-        return True, ("INVALID_V7_QUOTES_MAPPING",), {}
 
-    limit_bps = float(max_half_spread_bps) if _is_finite_pos(max_half_spread_bps) else 0.0
+    if quotes is None:
+        reasons.append("MISSING_V7_QUOTES")
+        return True, tuple(reasons), half_spreads_bps
+    if not isinstance(quotes, Mapping):
+        reasons.append("INVALID_V7_QUOTES_MAPPING")
+        return True, tuple(reasons), half_spreads_bps
+
+    limit_bps = float(max_half_spread_bps) if valid_limit else 0.0
     for sym in PILOT_SYMBOLS:
         snap = quotes.get(sym)
         if not isinstance(snap, PilotQuoteSnapshot) or snap.symbol != sym:
@@ -100,7 +104,7 @@ def evaluate_v7_spread_collar(
         mid = 0.5 * (bid + ask)
         half_bps = ((ask - bid) / (2.0 * mid)) * 10_000.0
         half_spreads_bps[sym] = half_bps
-        if limit_bps > 0.0 and half_bps > limit_bps:
+        if valid_limit and half_bps > limit_bps:
             reasons.append(f"V7_ABNORMAL_SPREAD_{sym}")
 
     return bool(reasons), tuple(reasons), half_spreads_bps
@@ -113,10 +117,10 @@ def compute_policy_v0_paper_cycle(
     settled_cash_usd: float,
     prices_usd: Mapping[str, float],
     current_shares: Mapping[str, int],
+    quotes: Mapping[str, PilotQuoteSnapshot] | None,
     tier: str = "BALANCED_COMPOUNDING",
     flows: Iterable[ExternalCashFlow] = (),
     splits: Iterable[CorporateActionSplit] = (),
-    quotes: Mapping[str, PilotQuoteSnapshot] | None = None,
     max_half_spread_bps: float = 25.0,
     fuse_new_risk_allowed: bool = True,
     sleeve_beta_shares: tuple[float, float] = DEFAULT_SLEEVE_BETA_SHARES,
@@ -124,52 +128,48 @@ def compute_policy_v0_paper_cycle(
     whole_shares_only: bool = True,
 ) -> PolicyV0PaperCycleDecision:
     """Compute one deterministic offline Phase 9 PAPER rebalance decision."""
-    tier_spec = POLICY_V0_TIERS.get(tier)
-    drawdown_budget_d = tier_spec.drawdown_budget_d if tier_spec is not None else 0.30
+    collar_tripped, collar_reasons, half_spreads_bps = evaluate_v7_spread_collar(
+        quotes,
+        max_half_spread_bps=max_half_spread_bps,
+    )
+
+    tier_spec = POLICY_V0_TIERS.get(tier) if isinstance(tier, str) else None
+    if tier_spec is None:
+        reasons = tuple(dict.fromkeys(("UNKNOWN_POLICY_V0_TIER", *collar_reasons)))
+        return PolicyV0PaperCycleDecision(
+            hwm_update=None,
+            sizing_result=None,
+            v7_spread_collar_tripped=collar_tripped,
+            v7_spread_reasons=collar_reasons,
+            half_spreads_bps=half_spreads_bps,
+            effective_new_risk_allowed=False,
+            fail_closed_reasons=reasons,
+        )
 
     hwm_update = advance_flow_adjusted_hwm(
         prior_hwm_state,
         ending_equity_usd=ending_equity_usd,
         flows=flows,
         splits=splits,
-        tier_loss_budget_d=drawdown_budget_d,
+        tier_loss_budget_d=tier_spec.drawdown_budget_d,
     )
-    collar_tripped, collar_reasons, half_spreads_bps = evaluate_v7_spread_collar(
-        quotes,
-        max_half_spread_bps=max_half_spread_bps,
-    )
-    effective_new_risk = bool(
-        isinstance(fuse_new_risk_allowed, bool)
-        and fuse_new_risk_allowed
-        and not collar_tripped
-        and hwm_update.ok
-    )
-
     if not hwm_update.ok:
-        # Fail closed on accounting/flow/split anomalies: propose no orders.
-        safe_res = PolicyV0SizingResult(
-            tier=tier if isinstance(tier, str) else "",
-            pricing_plan=pricing_plan if isinstance(pricing_plan, str) else "",
-            cushion=0.0,
-            target_effective_exposure=0.0,
-            cash_target_weight=1.0,
-            projected_settled_cash_usd=0.0,
-            proposals={},
-            safety_invariants=PolicyV0SafetyInvariants(
-                whole_shares_only=bool(whole_shares_only),
-            ),
-            fail_closed_reasons=hwm_update.fail_closed_reasons,
-        )
+        reasons = tuple(dict.fromkeys((*hwm_update.fail_closed_reasons, *collar_reasons)))
         return PolicyV0PaperCycleDecision(
             hwm_update=hwm_update,
-            sizing_result=safe_res,
+            sizing_result=None,
             v7_spread_collar_tripped=collar_tripped,
             v7_spread_reasons=collar_reasons,
             half_spreads_bps=half_spreads_bps,
             effective_new_risk_allowed=False,
-            fail_closed_reasons=hwm_update.fail_closed_reasons,
+            fail_closed_reasons=reasons,
         )
 
+    effective_new_risk = bool(
+        isinstance(fuse_new_risk_allowed, bool)
+        and fuse_new_risk_allowed
+        and not collar_tripped
+    )
     sizing_result = compute_policy_v0_rebalance(
         tier=tier,
         equity_usd=hwm_update.next_state.equity_usd,
@@ -182,7 +182,6 @@ def compute_policy_v0_paper_cycle(
         pricing_plan=pricing_plan,
         whole_shares_only=whole_shares_only,
     )
-    combined_reasons = tuple(sizing_result.fail_closed_reasons)
     return PolicyV0PaperCycleDecision(
         hwm_update=hwm_update,
         sizing_result=sizing_result,
@@ -190,7 +189,7 @@ def compute_policy_v0_paper_cycle(
         v7_spread_reasons=collar_reasons,
         half_spreads_bps=half_spreads_bps,
         effective_new_risk_allowed=effective_new_risk,
-        fail_closed_reasons=combined_reasons,
+        fail_closed_reasons=tuple(sizing_result.fail_closed_reasons),
     )
 
 
