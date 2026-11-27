@@ -124,6 +124,8 @@ on:
         required: false
       STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN:
         required: false
+      STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS:
+        required: false
       TELEGRAM_TOKEN:
         required: false
       TG_TOKEN:
@@ -601,6 +603,7 @@ jobs:
       - name: Fetch opt-in immutable recovery state ledger
         if: steps.config.outputs.enabled == 'true' && inputs.runtime_switch_only != true && (env.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_URI != '' || inputs.initial_state_source_run_id != '')
         env:
+          AUTHORIZED_LEDGER_PREFIX: ${{ env.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX || vars.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX }}
           RECOVERY_STATE_LEDGER_URI: ${{ env.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_URI }}
         run: |
           set -euo pipefail
@@ -611,12 +614,14 @@ jobs:
             fi
             RECOVERY_STATE_LEDGER_URI="${IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX%/}/initial-run-${INPUT_INITIAL_STATE_SOURCE_RUN_ID}.json"
           fi
-          if [[ ! "${RECOVERY_STATE_LEDGER_URI}" =~ ^gs://[a-z0-9][a-z0-9._-]*/reconciliation-recovery/ibkr/state/[^/]+\.json$ ]]; then
-            echo "Recovery state ledger URI must use the dedicated private immutable prefix." >&2
+          if [[ ! "${AUTHORIZED_LEDGER_PREFIX:-}" =~ ^gs://[a-z0-9][a-z0-9._-]*/reconciliation-recovery/ibkr/state/?$ ]]; then
+            echo "Recovery state ledger prefix must be configured with the dedicated private immutable prefix." >&2
             exit 1
           fi
-          if [ -n "${IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX:-}" ] && [[ "${RECOVERY_STATE_LEDGER_URI}" != "${IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX%/}/"*.json ]]; then
-            echo "Recovery state ledger URI must match the configured private prefix." >&2
+          authorized_prefix="${AUTHORIZED_LEDGER_PREFIX%/}/"
+          ledger_suffix="${RECOVERY_STATE_LEDGER_URI#"$authorized_prefix"}"
+          if [ "$ledger_suffix" = "$RECOVERY_STATE_LEDGER_URI" ] || [[ ! "$ledger_suffix" =~ ^[^/]+\.json$ ]] || [[ "$ledger_suffix" == *".."* ]]; then
+            echo "Recovery state ledger URI must use the dedicated private immutable prefix." >&2
             exit 1
           fi
           recovery_state_ledger_path="${RUNNER_TEMP}/ibkr-reconciliation-recovery-state-ledger.json"

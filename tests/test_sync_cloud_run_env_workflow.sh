@@ -24,7 +24,44 @@ grep -Fq 'uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1' "
 grep -Fq 'uv sync --frozen --no-dev' "$workflow_file"
 grep -Fq 'IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_URI: ${{ vars.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_URI }}' "$workflow_file"
 grep -Fq 'Fetch opt-in immutable recovery state ledger' "$workflow_file"
-grep -Fq '^gs://[a-z0-9][a-z0-9._-]*/reconciliation-recovery/ibkr/state/[^/]+\.json$' "$workflow_file"
+grep -Fq 'AUTHORIZED_LEDGER_PREFIX: ${{ env.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX || vars.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX }}' "$workflow_file"
+grep -Fq 'ledger_suffix="${RECOVERY_STATE_LEDGER_URI#"$authorized_prefix"}"' "$workflow_file"
+python3 - "$workflow_file" <<'PY'
+from pathlib import Path
+import subprocess, sys
+
+lines = Path(sys.argv[1]).read_text().splitlines()
+start = next(i for i, line in enumerate(lines) if "Fetch opt-in immutable recovery state ledger" in line)
+run_start = next(i for i in range(start + 1, len(lines)) if lines[i].strip() == "run: |") + 1
+guard_lines = []
+for line in lines[run_start:]:
+    stripped = line[10:] if line.startswith("          ") else line.lstrip()
+    guard_lines.append(stripped)
+    if stripped.strip() == "fi" and any("ledger_suffix" in g for g in guard_lines):
+        break
+snippet = "\n".join(guard_lines)
+
+def run_guard(prefix: str, uri: str) -> int:
+    proc = subprocess.run(
+        ["bash", "-c", snippet],
+        env={
+            "PATH": "/usr/bin:/bin",
+            "AUTHORIZED_LEDGER_PREFIX": prefix,
+            "RECOVERY_STATE_LEDGER_URI": uri,
+            "INPUT_INITIAL_STATE_SOURCE_RUN_ID": "",
+        },
+        capture_output=True,
+        text=True,
+    )
+    return proc.returncode
+
+valid_prefix = "gs://synthetic-ledger/reconciliation-recovery/ibkr/state"
+assert run_guard(valid_prefix, f"{valid_prefix}/ledger-1.json") == 0
+assert run_guard("", f"{valid_prefix}/ledger-1.json") != 0
+assert run_guard(valid_prefix, "gs://synthetic-other/reconciliation-recovery/ibkr/state/ledger-1.json") != 0
+assert run_guard(valid_prefix, f"{valid_prefix}/nested/ledger-1.json") != 0
+assert run_guard(valid_prefix, f"{valid_prefix}/..json") != 0
+PY
 grep -Fq 'gcloud storage cp --quiet "${RECOVERY_STATE_LEDGER_URI}" "${recovery_state_ledger_path}" >/dev/null' "$workflow_file"
 grep -Fq 'echo "IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PATH=${recovery_state_ledger_path}" >> "$GITHUB_ENV"' "$workflow_file"
 

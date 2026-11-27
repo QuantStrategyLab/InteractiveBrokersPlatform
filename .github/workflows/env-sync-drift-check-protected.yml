@@ -29,6 +29,8 @@ on:
         required: false
       STRATEGY_PLUGIN_ALERT_SMS_AUTH_TOKEN:
         required: false
+      STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS:
+        required: false
       TELEGRAM_TOKEN:
         required: false
       TG_TOKEN:
