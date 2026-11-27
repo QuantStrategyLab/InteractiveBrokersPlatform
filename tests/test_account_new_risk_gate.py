@@ -837,8 +837,38 @@ def test_fuse3_state_path_readback_allow_and_fail_closed(tmp_path, monkeypatch):
 
         state_file.unlink()
         monkeypatch.setenv("ACCOUNT_NEW_RISK_GATE", "0")
+        assert gate.is_effective_new_risk_gate_enabled(snapshot=None) is True
+        with mock.patch("interactive_brokers_platform.application.ibkr_order_execution._submit_order_intent") as submit_mock:
+            rejected = submit_order_intent(SimpleNamespace(), OrderIntent(symbol="SPY", side="buy", quantity=1.0))
+            assert rejected.status == "rejected"
+            submit_mock.assert_not_called()
+
         blocked = evaluate_account_values_new_risk_admission(
             {"account_equity_usd": 50_000.0, "peak_equity_usd": 50_000.0},
         )
         assert blocked.disposition == NewRiskDisposition.NEW_RISK_PROHIBITED
         assert "FUSE_READBACK_MISSING_FAIL_CLOSED" in blocked.reason_codes
+
+        # Mid-cycle external state update / deletion must refresh at evaluate_cycle_new_risk_admission().
+        monkeypatch.delenv("ACCOUNT_NEW_RISK_GATE", raising=False)
+        state_file.write_text(json.dumps(_clean_fuse_record("2026-12-09")), encoding="utf-8")
+        with gate.account_new_risk_gate_cycle({"account_equity_usd": 50_000.0, "peak_equity_usd": 50_000.0}):
+            assert gate.evaluate_cycle_new_risk_admission().disposition == NewRiskDisposition.ALLOW_NEW_RISK
+            state_file.write_text(json.dumps(_clean_fuse_record("2026-12-09", fuse_latched=True)), encoding="utf-8")
+            latched_res = gate.evaluate_cycle_new_risk_admission()
+            assert latched_res.disposition == NewRiskDisposition.NEW_RISK_PROHIBITED
+            assert "FUSE_LATCHED_BLOCKED" in latched_res.reason_codes
+            state_file.unlink()
+            missing_res = gate.evaluate_cycle_new_risk_admission()
+            assert missing_res.disposition == NewRiskDisposition.NEW_RISK_PROHIBITED
+            assert "FUSE_READBACK_MISSING_FAIL_CLOSED" in missing_res.reason_codes
+
+        # Explicit payload takes precedence over FUSE_READBACK_STATE_PATH throughout the cycle.
+        with gate.account_new_risk_gate_cycle(
+            {
+                "account_equity_usd": 50_000.0,
+                "peak_equity_usd": 50_000.0,
+                "fuse_readback": _clean_fuse_record("2026-12-09"),
+            }
+        ):
+            assert gate.evaluate_cycle_new_risk_admission().disposition == NewRiskDisposition.ALLOW_NEW_RISK
