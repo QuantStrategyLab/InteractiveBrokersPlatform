@@ -614,13 +614,14 @@ jobs:
             fi
             RECOVERY_STATE_LEDGER_URI="${IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX%/}/initial-run-${INPUT_INITIAL_STATE_SOURCE_RUN_ID}.json"
           fi
+          # Intentionally fail-closed: AUTHORIZED_LEDGER_PREFIX is configured in repo vars/secrets and never inferred from the URI.
           if [[ ! "${AUTHORIZED_LEDGER_PREFIX:-}" =~ ^gs://[a-z0-9][a-z0-9._-]*/reconciliation-recovery/ibkr/state/?$ ]]; then
             echo "Recovery state ledger prefix must be configured with the dedicated private immutable prefix." >&2
             exit 1
           fi
           authorized_prefix="${AUTHORIZED_LEDGER_PREFIX%/}/"
           ledger_suffix="${RECOVERY_STATE_LEDGER_URI#"$authorized_prefix"}"
-          if [ "$ledger_suffix" = "$RECOVERY_STATE_LEDGER_URI" ] || [[ ! "$ledger_suffix" =~ ^[^/]+\.json$ ]] || [[ "$ledger_suffix" == *".."* ]]; then
+          if [ "$ledger_suffix" = "$RECOVERY_STATE_LEDGER_URI" ] || [[ ! "$ledger_suffix" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.json$ ]] || [[ "$ledger_suffix" == *".."* ]]; then
             echo "Recovery state ledger URI must use the dedicated private immutable prefix." >&2
             exit 1
           fi

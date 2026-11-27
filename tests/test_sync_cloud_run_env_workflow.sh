@@ -35,11 +35,16 @@ start = next(i for i, line in enumerate(lines) if "Fetch opt-in immutable recove
 run_start = next(i for i in range(start + 1, len(lines)) if lines[i].strip() == "run: |") + 1
 guard_lines = []
 for line in lines[run_start:]:
-    stripped = line[10:] if line.startswith("          ") else line.lstrip()
-    guard_lines.append(stripped)
-    if stripped.strip() == "fi" and any("ledger_suffix" in g for g in guard_lines):
+    if line.strip() and not line.startswith("          "):
         break
+    stripped = line[10:] if line.startswith("          ") else line
+    if "recovery_state_ledger_path=" in stripped:
+        break
+    guard_lines.append(stripped)
 snippet = "\n".join(guard_lines)
+assert "AUTHORIZED_LEDGER_PREFIX" in snippet
+assert "ledger_suffix" in snippet
+assert "^[A-Za-z0-9]" in snippet
 
 def run_guard(prefix: str, uri: str) -> int:
     proc = subprocess.run(
@@ -61,6 +66,8 @@ assert run_guard("", f"{valid_prefix}/ledger-1.json") != 0
 assert run_guard(valid_prefix, "gs://synthetic-other/reconciliation-recovery/ibkr/state/ledger-1.json") != 0
 assert run_guard(valid_prefix, f"{valid_prefix}/nested/ledger-1.json") != 0
 assert run_guard(valid_prefix, f"{valid_prefix}/..json") != 0
+assert run_guard(valid_prefix, f"{valid_prefix}/.json") != 0
+assert run_guard(valid_prefix, f"{valid_prefix}/") != 0
 PY
 grep -Fq 'gcloud storage cp --quiet "${RECOVERY_STATE_LEDGER_URI}" "${recovery_state_ledger_path}" >/dev/null' "$workflow_file"
 grep -Fq 'echo "IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PATH=${recovery_state_ledger_path}" >> "$GITHUB_ENV"' "$workflow_file"
@@ -117,6 +124,9 @@ grep -Fq 'STRATEGY_PLUGIN_ALERT_CHANNELS: ${{ vars.STRATEGY_PLUGIN_ALERT_CHANNEL
 grep -Fq 'STRATEGY_PLUGIN_ALERT_EMAIL_RECIPIENTS: ${{ vars.STRATEGY_PLUGIN_ALERT_EMAIL_RECIPIENTS }}' "$workflow_file"
 grep -Fq 'STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD_SECRET_NAME: ${{ vars.STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD_SECRET_NAME }}' "$workflow_file"
 grep -Fq 'STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS: ${{ secrets.STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS }}' "$workflow_file"
+grep -Fq 'STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS: ${{ secrets.STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS }}' "$caller_file"
+grep -Fq 'STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS: ${{ secrets.STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS }}' "$repo_dir/.github/workflows/env-sync-drift-check.yml"
+grep -Fq 'STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS: ${{ secrets.STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS }}' "$repo_dir/.github/workflows/env-sync-drift-check-protected.yml"
 grep -Fq 'STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME: ${{ vars.STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME }}' "$workflow_file"
 grep -Fq 'TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}' "$workflow_file"
 grep -Fq 'STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD: ${{ secrets.STRATEGY_PLUGIN_ALERT_EMAIL_SENDER_PASSWORD }}' "$workflow_file"

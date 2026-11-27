@@ -108,7 +108,7 @@ def test_json_crosses_secret_boundary_before_any_execution(name: str) -> None:
     for key in referenced:
         if key == "IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX" and name in {"collect-reconciliation-evidence", "sync-cloud-run-env"}:
             assert f"      {key}:\n        required: false" in declared
-            gate = "inputs.archive_initial_state_ledger" if name == "collect-reconciliation-evidence" else "inputs.initial_state_source_run_id != ''"
+            gate = "inputs.archive_initial_state_ledger" if name == "collect-reconciliation-evidence" else "(inputs.initial_state_source_run_id != '' || vars.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_URI != '')"
             assert f"      {key}: ${{{{ {gate} && (vars.{key} || secrets.{key}) || '' }}}}" in passed
         elif name == "collect-reconciliation-evidence" and key in {
             "RECONCILIATION_RECOVERY_SYNC_TOKEN", "RECONCILIATION_RECOVERY_CONTROLLER_TOKEN",
