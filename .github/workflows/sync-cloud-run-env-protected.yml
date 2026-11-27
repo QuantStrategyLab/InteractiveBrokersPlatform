@@ -313,7 +313,7 @@ jobs:
       STRATEGY_PLUGIN_ALERT_PUSH_PRIORITY: ${{ vars.STRATEGY_PLUGIN_ALERT_PUSH_PRIORITY }}
       STRATEGY_PLUGIN_ALERT_PUSH_TAGS: ${{ vars.STRATEGY_PLUGIN_ALERT_PUSH_TAGS }}
       STRATEGY_PLUGIN_ALERT_PUSH_BODY_MAX_CHARS: ${{ vars.STRATEGY_PLUGIN_ALERT_PUSH_BODY_MAX_CHARS }}
-      STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS: ${{ vars.STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS }}
+      STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS: ${{ secrets.STRATEGY_PLUGIN_ALERT_TELEGRAM_CHAT_IDS }}
       STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME: ${{ vars.STRATEGY_PLUGIN_ALERT_TELEGRAM_BOT_TOKEN_SECRET_NAME }}
       STRATEGY_PLUGIN_ALERT_TELEGRAM_API_BASE_URL: ${{ vars.STRATEGY_PLUGIN_ALERT_TELEGRAM_API_BASE_URL }}
       STRATEGY_PLUGIN_ALERT_TELEGRAM_PARSE_MODE: ${{ vars.STRATEGY_PLUGIN_ALERT_TELEGRAM_PARSE_MODE }}
@@ -611,13 +611,14 @@ jobs:
             fi
             RECOVERY_STATE_LEDGER_URI="${IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX%/}/initial-run-${INPUT_INITIAL_STATE_SOURCE_RUN_ID}.json"
           fi
-          case "${RECOVERY_STATE_LEDGER_URI}" in
-            gs://qsl-reconciliation-recovery-private-ibkr/reconciliation-recovery/ibkr/state/*.json) ;;
-            *)
-              echo "Recovery state ledger URI must use the dedicated private immutable prefix." >&2
-              exit 1
-              ;;
-          esac
+          if [[ ! "${RECOVERY_STATE_LEDGER_URI}" =~ ^gs://[a-z0-9][a-z0-9._-]*/reconciliation-recovery/ibkr/state/[^/]+\.json$ ]]; then
+            echo "Recovery state ledger URI must use the dedicated private immutable prefix." >&2
+            exit 1
+          fi
+          if [ -n "${IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX:-}" ] && [[ "${RECOVERY_STATE_LEDGER_URI}" != "${IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX%/}/"*.json ]]; then
+            echo "Recovery state ledger URI must match the configured private prefix." >&2
+            exit 1
+          fi
           recovery_state_ledger_path="${RUNNER_TEMP}/ibkr-reconciliation-recovery-state-ledger.json"
           if [ -n "${INPUT_INITIAL_STATE_SOURCE_RUN_ID:-}" ]; then
             if ! gcloud storage cp --quiet "${RECOVERY_STATE_LEDGER_URI}" "${recovery_state_ledger_path}" >/dev/null 2>"${RUNNER_TEMP}/initial-ledger-error.log"; then
