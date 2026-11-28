@@ -8,6 +8,10 @@ on:
         required: true
         type: string
     secrets:
+      IBKR_GCP_PROJECT_ID:
+        required: false
+      IBKR_SCHEDULER_SERVICE_ACCOUNT:
+        required: false
       GCP_WORKLOAD_IDENTITY_PROVIDER:
         required: false
       CLOUD_RUN_SERVICE_TARGETS_JSON:
@@ -18,20 +22,21 @@ permissions:
   id-token: write
 
 env:
-  GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
   GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
-  GCP_SCHEDULER_SERVICE_ACCOUNT: ${{ vars.IBKR_SCHEDULER_SERVICE_ACCOUNT }}
 
 jobs:
   probe:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
+      GCP_SCHEDULER_SERVICE_ACCOUNT: ${{ secrets.IBKR_SCHEDULER_SERVICE_ACCOUNT }}
     steps:
       - name: Require infrastructure variables
         env:
           IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
-          IBKR_GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
-          IBKR_SCHEDULER_SERVICE_ACCOUNT: ${{ vars.IBKR_SCHEDULER_SERVICE_ACCOUNT }}
+          IBKR_GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
+          IBKR_SCHEDULER_SERVICE_ACCOUNT: ${{ secrets.IBKR_SCHEDULER_SERVICE_ACCOUNT }}
         shell: bash
         run: |
           set -euo pipefail

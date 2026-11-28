@@ -36,6 +36,10 @@ on:
         required: false
       DIGEST_CANDIDATES_GCS_URI:
         required: false
+      EXECUTION_REPORT_GCS_URI:
+        required: false
+      IBKR_GCP_PROJECT_ID:
+        required: false
       CLOUD_RUN_SERVICE:
         required: false
       CLOUD_RUN_SERVICES:
@@ -69,18 +73,18 @@ jobs:
     env:
       IBKR_UNIFIED_NOTIFICATION_ENABLED: ${{ vars.IBKR_UNIFIED_NOTIFICATION_ENABLED || 'false' }}
       IBKR_NOTIFICATION_MARKER_GCS_URI: ${{ secrets.IBKR_NOTIFICATION_MARKER_GCS_URI }}
-      DIGEST_CANDIDATES_GCS_URI: ${{ vars.DIGEST_CANDIDATES_GCS_URI || secrets.DIGEST_CANDIDATES_GCS_URI }}
+      DIGEST_CANDIDATES_GCS_URI: ${{ secrets.DIGEST_CANDIDATES_GCS_URI }}
       DIGEST_STORE_TARGET: ${{ vars.DIGEST_STORE_TARGET }}
       DIGEST_OPAQUE_ACCOUNT_UID: ${{ secrets.DIGEST_OPAQUE_ACCOUNT_UID }}
       DIGEST_TARGET_ID: ${{ secrets.DIGEST_TARGET_ID }}
       DIGEST_TARGET_BINDINGS_JSON: ${{ secrets.DIGEST_TARGET_BINDINGS_JSON }}
-      GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
+      GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       RUNTIME_HEARTBEAT_NAME: InteractiveBrokersPlatform
       RUNTIME_HEARTBEAT_REPORT_PLATFORM: interactive_brokers
       RUNTIME_HEARTBEAT_REQUIRED_SERVICES: ${{ secrets.RUNTIME_HEARTBEAT_REQUIRED_SERVICES }}
-      RUNTIME_HEARTBEAT_GCS_URIS: ${{ vars.RUNTIME_HEARTBEAT_GCS_URIS || vars.EXECUTION_REPORT_GCS_URI }}
+      RUNTIME_HEARTBEAT_GCS_URIS: ${{ vars.RUNTIME_HEARTBEAT_GCS_URIS || secrets.EXECUTION_REPORT_GCS_URI }}
       RUNTIME_HEARTBEAT_LOOKBACK_HOURS: ${{ inputs.lookback_hours || vars.RUNTIME_HEARTBEAT_LOOKBACK_HOURS || '36' }}
       RUNTIME_HEARTBEAT_FAIL_WORKFLOW_ON_ALERT: ${{ inputs.fail_workflow_on_alert || vars.RUNTIME_HEARTBEAT_FAIL_WORKFLOW_ON_ALERT || 'true' }}
       RUNTIME_HEARTBEAT_ACCEPT_STATUSES: ${{ vars.RUNTIME_HEARTBEAT_ACCEPT_STATUSES }}
@@ -106,7 +110,7 @@ jobs:
       - name: Require infrastructure variables
         env:
           IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
-          IBKR_GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
+          IBKR_GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
         shell: bash
         run: |
           set -euo pipefail
@@ -158,7 +162,7 @@ jobs:
         with:
           source-id: runtime-reports-ibkr
           report-platform: interactive_brokers
-          report-prefix: ${{ vars.RUNTIME_HEARTBEAT_GCS_URIS || vars.EXECUTION_REPORT_GCS_URI }}
+          report-prefix: ${{ vars.RUNTIME_HEARTBEAT_GCS_URIS || secrets.EXECUTION_REPORT_GCS_URI }}
           sync-url: ${{ vars.EXECUTION_EVIDENCE_SYNC_URL }}
         env:
           EXECUTION_EVIDENCE_SYNC_TOKEN: ${{ secrets.EXECUTION_EVIDENCE_SYNC_TOKEN }}
@@ -174,8 +178,8 @@ jobs:
           QSL_ROUTINE_NOTIFICATION_MODE: ${{ vars.QSL_ROUTINE_NOTIFICATION_MODE || 'immediate' }}
           RUNTIME_TARGET_ENABLED: ${{ vars.RUNTIME_TARGET_ENABLED }}
           RUNTIME_TARGET_JSON: ${{ secrets.RUNTIME_TARGET_JSON }}
-          EXECUTION_REPORT_GCS_URI: ${{ vars.EXECUTION_REPORT_GCS_URI }}
-          DIGEST_CANDIDATES_GCS_URI: ${{ vars.DIGEST_CANDIDATES_GCS_URI || secrets.DIGEST_CANDIDATES_GCS_URI }}
+          EXECUTION_REPORT_GCS_URI: ${{ secrets.EXECUTION_REPORT_GCS_URI }}
+          DIGEST_CANDIDATES_GCS_URI: ${{ secrets.DIGEST_CANDIDATES_GCS_URI }}
           DIGEST_STORE_TARGET: ${{ vars.DIGEST_STORE_TARGET }}
           DIGEST_OPAQUE_ACCOUNT_UID: ${{ secrets.DIGEST_OPAQUE_ACCOUNT_UID }}
           DIGEST_TARGET_ID: ${{ secrets.DIGEST_TARGET_ID }}

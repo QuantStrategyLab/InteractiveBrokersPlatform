@@ -25,7 +25,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
+      GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       # Production runtime target stays fail-closed for this manual preview path.
@@ -40,7 +40,7 @@ jobs:
         if: ${{ inputs.send == true }}
         env:
           IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
-          IBKR_GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
+          IBKR_GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
         shell: bash
         run: |
           set -euo pipefail

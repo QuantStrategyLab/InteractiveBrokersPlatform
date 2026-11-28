@@ -53,6 +53,12 @@ def test_drift_workflow_env_mirrors_sync_workflow():
         ("GCP_SCHEDULER_SERVICE_ACCOUNT", "IBKR_SCHEDULER_SERVICE_ACCOUNT"),
     ):
         assert sync_env.pop(key) == "${{ secrets." + secret + " }}"
+    for key, secret in (
+        ("GCP_PROJECT_ID", "IBKR_GCP_PROJECT_ID"),
+        ("GCP_RUNTIME_SERVICE_ACCOUNT", "IBKR_RUNTIME_SERVICE_ACCOUNT"),
+        ("GCP_SCHEDULER_SERVICE_ACCOUNT", "IBKR_SCHEDULER_SERVICE_ACCOUNT"),
+    ):
+        assert drift_env.pop(key) == "${{ secrets." + secret + " }}"
     assert drift_env == sync_env
 
 

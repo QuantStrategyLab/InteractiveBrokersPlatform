@@ -16,6 +16,8 @@ on:
         required: false
         default: ''
     secrets:
+      IBKR_GCP_PROJECT_ID:
+        required: false
       IBKR_PERIOD_RETURN_ADDITIONAL_ACCOUNT_KEYS_JSON:
         required: false
       IBKR_PERIOD_RETURN_ADDITIONAL1_ACCOUNT_KEY:
@@ -61,7 +63,7 @@ jobs:
       REQUESTED_TARGET: ${{ inputs.target }}
       IBKR_ACCOUNT_FACTS_ARCHIVE_DATE: ${{ inputs.archive_date }}
       IBKR_ACCOUNT_FACTS_ARCHIVE_MODE: ${{ inputs.scope }}
-      GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
+      GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
       GCP_REGION: us-central1
       CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}
       IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON: ${{ secrets.IBKR_FLEX_EXPECTED_ACCOUNT_IDS_JSON }}
