@@ -9,6 +9,8 @@ on:
         type: boolean
         required: false
     secrets:
+      IBKR_DEPLOY_SERVICE_ACCOUNT:
+        required: false
       IBKR_GCP_PROJECT_ID:
         required: false
       IBKR_RUNTIME_SERVICE_ACCOUNT:
@@ -49,7 +51,6 @@ permissions:
   id-token: write
 
 env:
-  GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
   GCP_ARTIFACT_REGISTRY_REPOSITORY: cloud-run-source-deploy
 
 jobs:
@@ -61,6 +62,7 @@ jobs:
       contents: read
       id-token: write
     env:
+      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
       GCP_RUNTIME_SERVICE_ACCOUNT: ${{ secrets.IBKR_RUNTIME_SERVICE_ACCOUNT }}
       GCP_SCHEDULER_SERVICE_ACCOUNT: ${{ secrets.IBKR_SCHEDULER_SERVICE_ACCOUNT }}
@@ -189,7 +191,7 @@ jobs:
     steps:
       - name: Require infrastructure variables
         env:
-          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
           IBKR_GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
           IBKR_RUNTIME_SERVICE_ACCOUNT: ${{ secrets.IBKR_RUNTIME_SERVICE_ACCOUNT }}
           IBKR_SCHEDULER_SERVICE_ACCOUNT: ${{ secrets.IBKR_SCHEDULER_SERVICE_ACCOUNT }}

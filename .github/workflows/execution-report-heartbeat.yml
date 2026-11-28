@@ -84,6 +84,7 @@ jobs:
       account_facts_target: ${{ inputs.account_facts_target }}
       account_facts_report_name: ${{ inputs.account_facts_report_name }}
     secrets:
+      IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       CLOUD_RUN_SERVICE: ${{ secrets.CLOUD_RUN_SERVICE }}
       CLOUD_RUN_SERVICES: ${{ secrets.CLOUD_RUN_SERVICES }}
@@ -117,7 +118,7 @@ jobs:
       GCP_PROJECT_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID }}
       IBKR_ACCOUNT_FACTS_PROJECT_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID }}
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       IBKR_ACCOUNT_FACTS_TARGET: ${{ matrix.target }}
       CLOUD_RUN_REGION: ${{ vars.CLOUD_RUN_REGION }}
       IBKR_ACCOUNT_FACTS_RESOLVE_SERVING_REVISION: ${{ github.event_name == 'schedule' && 'true' || 'false' }}
@@ -135,7 +136,7 @@ jobs:
     steps:
       - name: Require infrastructure variables
         env:
-          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
           QSL_CONSOLE_BASE_URL: ${{ vars.QSL_CONSOLE_BASE_URL }}
         shell: bash
         run: |
@@ -248,7 +249,7 @@ jobs:
       GCP_PROJECT_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID }}
       IBKR_ACCOUNT_FACTS_PROJECT_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID }}
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       IBKR_ACCOUNT_FACTS_TARGET: additional-1
       IBKR_ACCOUNT_FACTS_REPORT_PREFIX: ${{ secrets.IBKR_ACCOUNT_FACTS_REPORT_PREFIX }}
       IBKR_ACCOUNT_FACTS_TARGET_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_TARGET_ID }}
@@ -262,7 +263,7 @@ jobs:
     steps:
       - name: Require infrastructure variables
         env:
-          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
           QSL_CONSOLE_BASE_URL: ${{ vars.QSL_CONSOLE_BASE_URL }}
         shell: bash
         run: |
@@ -316,6 +317,7 @@ jobs:
       report_name: ${{ inputs.account_facts_report_name }}
       capture_artifact: ${{ inputs.capture_digest_candidates_artifact }}
     secrets:
+      IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ vars.CLOUD_RUN_SERVICE_TARGETS_JSON || secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}
       IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE }}
       IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON: ${{ secrets.IBKR_ACCOUNT_FACTS_ACCOUNT_SELECTOR_JSON }}

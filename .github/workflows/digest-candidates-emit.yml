@@ -24,6 +24,8 @@ on:
         required: false
         default: false
     secrets:
+      IBKR_DEPLOY_SERVICE_ACCOUNT:
+        required: false
       CLOUD_RUN_SERVICE_TARGETS_JSON:
         required: false
       IBKR_ACCOUNT_FACTS_ACCOUNT_SCOPE:
@@ -76,7 +78,7 @@ jobs:
       GCP_PROJECT_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID }}
       IBKR_ACCOUNT_FACTS_PROJECT_ID: ${{ secrets.IBKR_ACCOUNT_FACTS_PROJECT_ID }}
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       IBKR_ACCOUNT_FACTS_TARGET: ${{ inputs.target }}
       IBKR_ACCOUNT_FACTS_REPORT_NAME: ${{ inputs.report_name }}
       IBKR_ACCOUNT_FACTS_REPORT_PREFIX: ${{ secrets.IBKR_ACCOUNT_FACTS_REPORT_PREFIX }}
@@ -96,7 +98,7 @@ jobs:
     steps:
       - name: Require infrastructure variables
         env:
-          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
         shell: bash
         run: |
           set -euo pipefail

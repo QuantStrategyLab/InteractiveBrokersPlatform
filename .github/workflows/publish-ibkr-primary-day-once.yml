@@ -35,7 +35,7 @@ jobs:
     steps:
       - name: Require infrastructure variables
         env:
-          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
           QSL_CONSOLE_BASE_URL: ${{ vars.QSL_CONSOLE_BASE_URL }}
         shell: bash
         run: |
@@ -56,7 +56,7 @@ jobs:
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          service_account: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
       - name: Publish one selected date once
         run: uv run --no-sync python -m scripts.publish_primary_day_once

@@ -12,9 +12,6 @@ on:
 permissions:
   contents: read
 
-env:
-  GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
-
 jobs:
   parity-check:
     name: Strategy parity check (read-only)
@@ -24,6 +21,7 @@ jobs:
       contents: read
       id-token: write
     env:
+      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
       CLOUD_RUN_REGION: ${{ vars.CLOUD_RUN_REGION }}
       PARITY_SERVICES: interactive-brokers-quant-live-u15998061-service,interactive-brokers-quant-live-u16608560-service
@@ -39,7 +37,7 @@ jobs:
     steps:
       - name: Require infrastructure variables
         env:
-          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
           IBKR_GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
           QSL_DIGEST_BUCKET: ${{ secrets.QSL_DIGEST_BUCKET }}
         shell: bash
