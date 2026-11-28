@@ -24,7 +24,7 @@ grep -Fq 'uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1' "
 grep -Fq 'uv sync --frozen --no-dev' "$workflow_file"
 grep -Fq 'IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_URI: ${{ vars.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_URI }}' "$workflow_file"
 grep -Fq 'Fetch opt-in immutable recovery state ledger' "$workflow_file"
-grep -Fq 'AUTHORIZED_LEDGER_PREFIX: ${{ env.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX || vars.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX }}' "$workflow_file"
+grep -Fq 'AUTHORIZED_LEDGER_PREFIX: ${{ env.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX || secrets.IBKR_RECONCILIATION_RECOVERY_STATE_LEDGER_PREFIX }}' "$workflow_file"
 grep -Fq 'ledger_suffix="${RECOVERY_STATE_LEDGER_URI#"$authorized_prefix"}"' "$workflow_file"
 python3 - "$workflow_file" <<'PY'
 from pathlib import Path

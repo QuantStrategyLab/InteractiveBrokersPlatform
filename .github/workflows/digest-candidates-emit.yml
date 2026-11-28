@@ -54,6 +54,8 @@ on:
         required: false
       GCP_WORKLOAD_IDENTITY_PROVIDER:
         required: false
+      DIGEST_CANDIDATES_GCS_URI:
+        required: false
       RUNTIME_TARGET_JSON:
         required: false
 
@@ -88,7 +90,7 @@ jobs:
       IBKR_DIGEST_TARGET_ID: ${{ secrets.IBKR_DIGEST_TARGET_ID }}
       IBKR_DIGEST_ACCOUNT_HINT: ${{ secrets.IBKR_DIGEST_ACCOUNT_HINT }}
       IBKR_DIGEST_ACCOUNT_SCOPE: ${{ secrets.IBKR_DIGEST_ACCOUNT_SCOPE }}
-      DIGEST_CANDIDATES_GCS_URI: ${{ vars.DIGEST_CANDIDATES_GCS_URI || '' }}
+      DIGEST_CANDIDATES_GCS_URI: ${{ secrets.DIGEST_CANDIDATES_GCS_URI || '' }}
       CLOUD_RUN_SERVICE_TARGETS_JSON: ${{ secrets.CLOUD_RUN_SERVICE_TARGETS_JSON }}
       RUNTIME_TARGET_JSON: ${{ secrets.RUNTIME_TARGET_JSON }}
     steps:
@@ -155,7 +157,7 @@ jobs:
             exit 0
           fi
           if [[ -z "${DIGEST_CANDIDATES_GCS_URI}" ]]; then
-            echo "dry_run: vars.DIGEST_CANDIDATES_GCS_URI is unset; candidates stay in runner temp (not uploaded)."
+            echo "dry_run: secrets.DIGEST_CANDIDATES_GCS_URI is unset; candidates stay in runner temp (not uploaded)."
             python3 scripts/digest_candidates_store.py summarize --path "$CANDIDATES_PATH"
             exit 0
           fi

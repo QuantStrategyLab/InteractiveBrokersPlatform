@@ -62,7 +62,7 @@ jobs:
       isolated_cleanup_run_id: ${{ inputs.isolated_cleanup_run_id }}
     secrets:
       DEPLOY_GATE: ${{ vars.ENABLE_GITHUB_CLOUD_RUN_DEPLOY }}
-      GCP_PROJECT_ID: ${{ vars.IBKR_GCP_PROJECT_ID }}
+      GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       CLOUD_RUN_REGION: ${{ vars.CLOUD_RUN_REGION }}

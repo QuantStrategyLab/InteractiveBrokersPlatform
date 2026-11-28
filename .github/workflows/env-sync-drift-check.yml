@@ -31,6 +31,10 @@ jobs:
     with:
       show_runtime_target_diff: ${{ inputs.show_runtime_target_diff }}
     secrets:
+      IBKR_GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
+      IBKR_RUNTIME_SERVICE_ACCOUNT: ${{ secrets.IBKR_RUNTIME_SERVICE_ACCOUNT }}
+      IBKR_SCHEDULER_SERVICE_ACCOUNT: ${{ secrets.IBKR_SCHEDULER_SERVICE_ACCOUNT }}
+      EXECUTION_REPORT_GCS_URI: ${{ secrets.EXECUTION_REPORT_GCS_URI }}
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
       CLOUD_RUN_SERVICE: ${{ secrets.CLOUD_RUN_SERVICE }}
       CLOUD_RUN_SERVICES: ${{ secrets.CLOUD_RUN_SERVICES }}

@@ -5,7 +5,7 @@ name: Digest Candidates Daily
 # execution-report-heartbeat `emit_digest_candidates` job (runtime report
 # projection; no account-facts POST, no broker calls, no artifact).
 #
-# Dry-run by default: without vars.DIGEST_CANDIDATES_GCS_URI the JSON stays in
+# Dry-run by default: without secrets.DIGEST_CANDIDATES_GCS_URI the JSON stays in
 # runner temp and only a redacted summary is printed. Production value:
 # DIGEST_CANDIDATES_GCS_URI=gs://<bucket>/digest-candidates
 # (shared bucket; deploy SA has prefix-conditioned objectUser on
@@ -71,4 +71,5 @@ jobs:
       IBKR_DIGEST_OPAQUE_ACCOUNT_UID: ${{ secrets.IBKR_DIGEST_OPAQUE_ACCOUNT_UID }}
       IBKR_DIGEST_TARGET_ID: ${{ secrets.IBKR_DIGEST_TARGET_ID }}
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      DIGEST_CANDIDATES_GCS_URI: ${{ secrets.DIGEST_CANDIDATES_GCS_URI }}
       RUNTIME_TARGET_JSON: ${{ vars.RUNTIME_TARGET_JSON || secrets.RUNTIME_TARGET_JSON }}
