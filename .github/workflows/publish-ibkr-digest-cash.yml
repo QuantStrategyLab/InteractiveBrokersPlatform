@@ -31,7 +31,7 @@ jobs:
     steps:
       - name: Require infrastructure variables
         env:
-          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
         shell: bash
         run: |
           set -euo pipefail
@@ -66,7 +66,7 @@ jobs:
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           workload_identity_provider: ${{ secrets.IBKR_FLEX_DIGEST_WIF_PROVIDER }}
-          service_account: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          service_account: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       - name: Generate one Flex report and write bound cash objects
         if: steps.config.outputs.enabled == 'true'
         run: uv run --no-sync python -m scripts.publish_ibkr_digest_cash

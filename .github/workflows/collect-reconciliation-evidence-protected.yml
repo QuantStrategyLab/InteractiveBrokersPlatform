@@ -36,6 +36,8 @@ on:
         type: boolean
         required: false
     secrets:
+      IBKR_DEPLOY_SERVICE_ACCOUNT:
+        required: false
       IBKR_GCP_PROJECT_ID:
         required: false
       IBKR_SCHEDULER_SERVICE_ACCOUNT:
@@ -74,7 +76,6 @@ permissions:
 
 env:
   GCP_REGION: us-central1
-  GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
 
 jobs:
   resolve-matrix:
@@ -86,7 +87,7 @@ jobs:
     steps:
       - name: Require infrastructure variables
         env:
-          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
           IBKR_GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
           IBKR_SCHEDULER_SERVICE_ACCOUNT: ${{ secrets.IBKR_SCHEDULER_SERVICE_ACCOUNT }}
         shell: bash
@@ -145,6 +146,7 @@ jobs:
       actions: read
       id-token: write
     env:
+      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
       REQUESTED_TARGET: ${{ inputs.target }}
       SOURCE_RUN_ID: ${{ inputs.publish_initial_run_id }}
@@ -164,7 +166,7 @@ jobs:
       - name: Require infrastructure variables
         env:
           IBKR_GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
-          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
           QSL_CONSOLE_BASE_URL: ${{ vars.QSL_CONSOLE_BASE_URL }}
         run: |
           set -euo pipefail
@@ -201,6 +203,7 @@ jobs:
       actions: read
       id-token: write
     env:
+      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
       REQUESTED_TARGET: ${{ inputs.target }}
       SOURCE_RUN_ID: ${{ inputs.verify_initial_source_run_id }}
@@ -224,7 +227,7 @@ jobs:
       - name: Require infrastructure variables
         env:
           IBKR_GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
-          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
           QSL_CONSOLE_BASE_URL: ${{ vars.QSL_CONSOLE_BASE_URL }}
         run: |
           set -euo pipefail
@@ -263,6 +266,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
+      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
       REQUESTED_TARGET: ${{ inputs.target }}
       RECONCILIATION_RUN_ID: ${{ inputs.reconciliation_run_id }}
@@ -278,7 +282,7 @@ jobs:
     steps:
       - name: Require infrastructure variables
         env:
-          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
           IBKR_GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
         shell: bash
         run: |
@@ -329,12 +333,13 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.resolve-matrix.outputs.matrix) }}
     env:
+      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
       GCP_SCHEDULER_SERVICE_ACCOUNT: ${{ secrets.IBKR_SCHEDULER_SERVICE_ACCOUNT }}
     steps:
       - name: Require infrastructure variables
         env:
-          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
           IBKR_GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
           IBKR_SCHEDULER_SERVICE_ACCOUNT: ${{ secrets.IBKR_SCHEDULER_SERVICE_ACCOUNT }}
         shell: bash

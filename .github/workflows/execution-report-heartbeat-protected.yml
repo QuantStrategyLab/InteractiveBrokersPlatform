@@ -24,6 +24,8 @@ on:
         type: string
         required: false
     secrets:
+      IBKR_DEPLOY_SERVICE_ACCOUNT:
+        required: false
       GCP_WORKLOAD_IDENTITY_PROVIDER:
         required: false
       IBKR_NOTIFICATION_MARKER_GCS_URI:
@@ -80,7 +82,7 @@ jobs:
       DIGEST_TARGET_BINDINGS_JSON: ${{ secrets.DIGEST_TARGET_BINDINGS_JSON }}
       GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       RUNTIME_HEARTBEAT_NAME: InteractiveBrokersPlatform
       RUNTIME_HEARTBEAT_REPORT_PLATFORM: interactive_brokers
       RUNTIME_HEARTBEAT_REQUIRED_SERVICES: ${{ secrets.RUNTIME_HEARTBEAT_REQUIRED_SERVICES }}
@@ -109,7 +111,7 @@ jobs:
     steps:
       - name: Require infrastructure variables
         env:
-          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
           IBKR_GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
         shell: bash
         run: |

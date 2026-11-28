@@ -15,6 +15,8 @@ on:
         type: string
         required: false
     secrets:
+      IBKR_DEPLOY_SERVICE_ACCOUNT:
+        required: false
       IBKR_GCP_PROJECT_ID:
         required: false
       GCP_WORKLOAD_IDENTITY_PROVIDER:
@@ -36,9 +38,6 @@ permissions:
   contents: read
   id-token: write
 
-env:
-  GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
-
 jobs:
   guard:
     name: Check Cloud Run runtime
@@ -48,6 +47,7 @@ jobs:
       contents: read
       id-token: write
     env:
+      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
       RUNTIME_GUARD_NAME: InteractiveBrokersPlatform
       RUNTIME_GUARD_CLOUD_RUN_SERVICES: ${{ vars.RUNTIME_GUARD_CLOUD_RUN_SERVICES }}
@@ -70,7 +70,7 @@ jobs:
     steps:
       - name: Require infrastructure variables
         env:
-          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
           IBKR_GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
         shell: bash
         run: |

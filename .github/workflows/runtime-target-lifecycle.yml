@@ -8,9 +8,6 @@ on:
   schedule:
     - cron: "42 * * * *"
 
-env:
-  GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
-
 permissions:
   contents: read
 
@@ -46,6 +43,7 @@ jobs:
       contents: read
       id-token: write
     env:
+      GCP_WORKLOAD_IDENTITY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
       GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
       CLOUD_RUN_REGION: us-central1
       RUNTIME_GUARD_LOOKBACK_MINUTES: ${{ vars.RUNTIME_GUARD_LOOKBACK_MINUTES || '180' }}
@@ -66,7 +64,7 @@ jobs:
     steps:
       - name: Require infrastructure variables
         env:
-          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ vars.IBKR_DEPLOY_SERVICE_ACCOUNT }}
+          IBKR_DEPLOY_SERVICE_ACCOUNT: ${{ secrets.IBKR_DEPLOY_SERVICE_ACCOUNT }}
           IBKR_GCP_PROJECT_ID: ${{ secrets.IBKR_GCP_PROJECT_ID }}
         shell: bash
         run: |

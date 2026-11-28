@@ -193,7 +193,7 @@ def test_workflow_is_manual_fixed_slot_original_identity_and_no_scheduler():
     assert 'IBKR_ACCOUNT_FACTS_TARGET: additional-1' in text
     assert 'github.run_attempt == 1' in text
     assert 'ACCOUNT_FACTS_RECOVERY_WIF_PROVIDER' in text
-    assert 'vars.IBKR_DEPLOY_SERVICE_ACCOUNT' in text
+    assert 'secrets.IBKR_DEPLOY_SERVICE_ACCOUNT' in text
     assert 'X-QSL-Maintenance' not in text
     assert 'gcloud scheduler' not in text and 'gcloud run deploy' not in text
     assert 'secrets: write' not in text
